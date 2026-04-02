@@ -1,0 +1,24 @@
+[project]
+name = "gui-system"
+version = "0.1.0"
+description = "Web-based AI agent automation for Claude.ai and ChatGPT"
+requires-python = ">=3.10"
+dependencies = [
+    # Core workflow dependencies
+    "playwright>=1.54.0",
+    "pyyaml>=6.0.2",
+    "python-dotenv>=1.0.0",
+    # Web automation
+    "patchright>=0.0.1",
+    # Data processing
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "openpyxl>=3.1.0",
+    "pathlib2>=2.3.7",
+    # HTTP and web requests
+    "httpx>=0.24.0",
+    "requests>=2.31.0",
+    # Development and testing
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]

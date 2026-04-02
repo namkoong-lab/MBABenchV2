@@ -1,0 +1,12 @@
+# Quick E2E smoke test for ChatGPT web agent
+# Tests: navigation, features, file upload, prompt, response detection, artifact download
+#
+# Usage:
+#   .venv/bin/python claude_web_batch_runner.py \
+#     --tasks tasks_configs/test_chatgpt_e2e.yaml \
+#     --template tasks_configs/template_chatgpt_e2e.yaml \
+#     --provider chatgpt
+task_source: "test"
+
+tasks:
+  - "Example-Task"

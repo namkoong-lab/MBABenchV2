@@ -1,0 +1,53 @@
+# Claude Web Agent Template Configuration
+# For running tasks through https://claude.ai
+
+template:
+  agent_type: "claude_web"
+  prompt_version: 2
+
+  prompts:
+    - "I will be giving you a task in three steps. Your only allowed method for solving this problem is by building an Excel Model using the currently opened sheet, its provided data if any, and any files I attached. You must not use any external or internal tools, like a code interpreter or calculator, to find the final answers. The Excel file you build must be the only thing performing the calculations."
+    - "Your first task is to analyze the attached problem statement and data file(s) and output them in a new sheet called 'Summary'. Do not build the model yet. Provide a brief summary of 1. The primary questions to answer. 2. The key inputs and assumptions. 3. A high-level plan for solving it. Confirm when you have completed this analysis."
+    - "Your next step is actually making the model.  Create a new Excel sheet called 'model_main'. All logic should be on this 'model_main' tab.  If you need additional sheets, you can create them in the name of 'model_{number}' where the number is an incrementing number (e.g. 'model_1', 'model_2', etc.). Adhere to these standards: professional formatting, robust (inputs in separate cells, no hard-coding in formulas), accurate, and tractable.  For example, this model should be up to the standards and presentation abilities of a white-collar worker in a top professional services firm. Let me know when the model is complete."
+    - "Your final task is to create the answers sheet. Create a new tab named 'answers_final'. On this sheet, present the final answers to all questions. Every single answer on this sheet must be directly referenceable to your 'model_main' sheet (or other 'model_' sheets). Hard coded values are to be generally avoided on the answers sheet. If you need additional answer sheets, name them 'answers_1', 'answers_2', etc."
+
+  # Upload finished artifacts + logs to S3/DB
+  upload_to_cloud: false
+  db_enabled: false
+
+  claude_web:
+    project_id: "your-project-id-here"
+
+    # Model selection (optional). If null or omitted, uses the currently
+    # active model in your Claude.ai session.
+    # Options: opus_4_6, sonnet_4_6, haiku_4_5
+    model: null
+
+    max_sec_per_task: 7200          # 2 hour timeout
+
+    retry:
+      max_agent_attempts: 3         # Max attempts where agent actually ran
+      max_total_attempts: 10        # Hard cap across all failure types
+      max_sec_per_task: 7200        # Also read from retry block
+      max_sec_per_attempt: 7200     # Per-attempt budget
+
+    # Local output: {base_dir}/{YYYYMMDD}_{folder_prefix}/{solutions,json_logs}/
+    output:
+      base_dir: "."                 # Current working dir (project root)
+      folder_prefix: "claudeGUI"    # Creates e.g. 20260212_claudeGUI/
+
+    browser:
+      type: "chrome"
+      headless: false
+      timeout: 30000
+
+    check_interval_seconds: 2
+    max_wait_per_prompt_seconds: 7200  # 2 hours
+
+    logging:
+      level: "INFO"
+      save_to_file: true
+      log_directory: "claude_web_logs"
+
+    runtime:
+      no_hold: true

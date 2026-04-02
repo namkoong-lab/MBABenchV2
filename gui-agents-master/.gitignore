@@ -1,0 +1,68 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*_auth_state.json
+**/credentials*
+**/secrets*
+
+# Browser session data
+browser_session_*/
+firefox_profile_for_playwright/
+
+# Logging and output directories
+logging_completions/
+*_logs/
+20*/
+main_tasks/
+artifacts/
+
+# Data files
+*.xlsx
+!test_artifacts/*.xlsx
+*.png
+*_result_*.json
+
+# Claude and tool state
+.claude/
+.playwright-mcp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+._*
+
+# Temporary files
+temp_parallel_tasks/
+excel_agent/task_*.yaml
+excel_agent/debug_screenshots/
+excel_agent/logs/

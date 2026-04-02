@@ -1,0 +1,50 @@
+# ChatGPT E2E Test Template - local only, no cloud upload, 1 attempt
+# For quick validation of the ChatGPT web agent pipeline
+
+template:
+  agent_type: "chatgpt_web"
+
+  # 4 sequential prompts matching production templates
+  prompts:
+    - "I will be giving you a task in three steps. Your only allowed method for solving this problem is by building an Excel Model using the currently opened sheet, its provided data if any, and any files I attached. You must not use any external or internal tools, like a code interpreter or calculator, to find the final answers. The Excel file you build must be the only thing performing the calculations."
+    - "Your first task is to analyze the attached problem statement and data file(s) and output them in a new sheet called 'Summary'. Do not build the model yet. Provide a brief summary of 1. The primary questions to answer. 2. The key inputs and assumptions. 3. A high-level plan for solving it. Confirm when you have completed this analysis."
+    - "Your next step is actually making the model. Create a new Excel sheet called 'model_main'. All logic should be on this 'model_main' tab. If you need additional sheets, you can create them in the name of 'model_{number}' where the number is an incrementing number (e.g. 'model_1', 'model_2', etc.). Adhere to these standards: professional formatting, robust (inputs in separate cells, no hard-coding in formulas), accurate, and tractable. For example, this model should be up to the standards and presentation abilities of a white-collar worker in a top professional services firm. Let me know when the model is complete."
+    - "Your final task is to create the answers sheet. Create a new tab named 'answers_final'. On this sheet, present the final answers to all questions. Every single answer on this sheet must be directly referenceable to your 'model_main' sheet (or other 'model_' sheets). Hard coded values are to be generally avoided on the answers sheet. If you need additional answer sheets, name them 'answers_1', 'answers_2', etc."
+
+  # Download artifacts locally but skip cloud upload
+  download_artifacts: true
+  artifact_download_dir: "./artifacts"
+  upload_to_cloud: false
+
+  chatgpt_web:
+    project_id: "your-project-id-here"
+    project_slug: "your-project-slug"
+
+    agent_mode: true
+
+    max_sec_per_task: 1800  # 30 min (shorter for test)
+
+    browser:
+      type: "chrome_canary"
+      headless: false
+      timeout: 30000
+
+    check_interval_seconds: 3
+    max_wait_per_prompt_seconds: 1800  # 30 min (agent mode tasks can be long)
+
+    retry:
+      max_agent_attempts: 1    # Single attempt for test
+      max_total_attempts: 3
+      max_sec_per_attempt: 1800  # Must match max_wait_per_prompt_seconds
+      sleep_between_retries: 5
+
+    output:
+      folder_prefix: "chatgptGUI_test"
+
+    session:
+      agent_name: "chatgpt_web"
+
+    logging:
+      level: "INFO"
+      save_to_file: true
+      log_directory: "chatgpt_web_logs"

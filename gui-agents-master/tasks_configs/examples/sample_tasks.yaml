@@ -1,0 +1,28 @@
+# Sample Task List Configuration
+# ================================
+# Each task entry defines a single Excel modeling task for the automation system.
+# The batch runner iterates through these tasks sequentially.
+#
+# Required fields:
+#   task_name    - Name of the task (used for logging and output file naming)
+#   task_source  - Source category for the task
+#
+# Optional fields:
+#   files_to_upload - List of local file paths to upload to the chat
+#   skip            - Set to true to skip this task (default: false)
+
+task_source: "my_tasks"
+
+tasks:
+  - task_name: "Example-DCF-Model"
+    task_source: "my_tasks"
+    files_to_upload:
+      - "/path/to/task_description.pdf"
+      - "/path/to/starting_data.xlsx"
+
+  - task_name: "Example-Valuation"
+    task_source: "my_tasks"
+    files_to_upload:
+      - "/path/to/valuation_prompt.pdf"
+      - "/path/to/company_data.xlsx"
+    # skip: true  # Uncomment to skip this task

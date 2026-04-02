@@ -1,0 +1,1211 @@
+"""
+ChatGPT Web Agent - Automate interactions with chatgpt.com web interface.
+
+Uses Playwright to:
+1. Navigate to a ChatGPT project
+2. Enable agent mode + extended thinking
+3. Upload files and submit prompts
+4. Wait for response completion
+5. Download Excel artifacts
+"""
+
+import asyncio
+import logging
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from claude_web_agent.web_agent import WebAgent, WebAgentState, ConversationMessage
+
+logger = logging.getLogger(__name__)
+
+
+class ChatGPTWebAgent(WebAgent):
+    """Agent for automating ChatGPT web interface."""
+
+    CHATGPT_BASE_URL = "https://chatgpt.com"
+
+    SELECTORS = {
+        # Chat input — visible ProseMirror contenteditable div
+        "chat_input": 'div.ProseMirror[contenteditable="true"]',
+        # Hidden textarea (for page-type detection; display:none so not usable for visibility checks)
+        "textarea_project": 'textarea[placeholder*="New chat in"]',
+        "textarea_conversation": 'textarea[placeholder="Ask anything"]',
+        # Buttons
+        "send_button": 'button:has-text("Send prompt"), button[aria-label="Send prompt"], [data-testid="send-button"]',
+        "plus_menu_button": '[data-testid="composer-plus-btn"]',
+        "stop_button": 'button:has-text("Stop")',
+        "answer_now_button": 'button:has-text("Answer now")',
+        # File upload
+        "add_files_menuitem": '[role="menuitem"]:has-text("Add photos & files")',
+        # Feature toggles
+        # Agent mode: + menu → hover "More" → click "Agent mode" (menuitemradio)
+        # Extended Pro: composer pill button
+        "extended_pro_button": 'button:has-text("Extended Pro")',
+        "extended_pro_active": 'button:has-text("Extended Pro, click to remove")',
+        # State detection
+        "login_button": 'button:has-text("Log in")',
+        "thinking_active": 'button:has-text("Pro thinking")',
+        "thinking_complete": 'button:text-matches("Thought for \\d")',
+        # Response
+        "chatgpt_said": 'heading:has-text("ChatGPT said:")',
+        "user_said": 'heading:has-text("You said:")',
+        # Model
+        "model_selector": 'button:has-text("Model selector")',
+    }
+
+    def __init__(self, page, config: dict, shutdown_event=None, completion_logger=None):
+        super().__init__(page, config, shutdown_event, completion_logger)
+        self.agent_config = config.get("chatgpt_web", {})
+        self.project_id = self.agent_config.get("project_id", "")
+        self.project_slug = self.agent_config.get("project_slug", "")
+        self.max_wait_per_prompt = self.agent_config.get(
+            "max_wait_per_prompt_seconds", 1800
+        )
+        self.check_interval = self.agent_config.get("check_interval_seconds", 3)
+        self.agent_mode = self.agent_config.get("agent_mode", True)
+        # Tracks how many response articles existed BEFORE the first prompt,
+        # so download_all_artifacts searches all articles from the conversation.
+        # Set once before the first prompt; not overwritten by subsequent prompts.
+        self._baseline_article_count = 0
+        self._baseline_set = False
+
+    @property
+    def project_url(self) -> str:
+        slug_part = f"-{self.project_slug}" if self.project_slug else ""
+        return f"{self.CHATGPT_BASE_URL}/g/g-p-{self.project_id}{slug_part}/project"
+
+    async def navigate_to_new_chat(self) -> bool:
+        """Navigate to the ChatGPT project page (which is a new chat).
+
+        Returns True if the page loaded (even if login is required).
+        The engine's auth-wait loop handles the login case.
+        """
+        try:
+            # Reset baseline for the new conversation so download_all_artifacts
+            # will search all articles from this chat (not carry over from prior task).
+            self._baseline_article_count = 0
+            self._baseline_set = False
+
+            logger.info(f"Navigating to ChatGPT project: {self.project_url}")
+
+            # NOTE: Do NOT call set_viewport_size on CDP pages — it uses
+            # Emulation.setDeviceMetricsOverride which crashes ChatGPT tabs.
+            await self.page.goto(
+                self.project_url, wait_until="domcontentloaded", timeout=60000
+            )
+
+            # Debug: log where we ended up
+            current_url = self.page.url
+            page_title = await self.page.title()
+            logger.info(f"Page loaded — URL: {current_url}")
+            logger.info(f"Page loaded — Title: {page_title}")
+
+            # Check if we were redirected to an auth page (not on chatgpt.com)
+            if "chatgpt.com" not in current_url:
+                logger.warning(f"Redirected to auth page: {current_url}")
+                return True  # Let the engine's auth-wait loop handle it
+
+            # Check if we need to authenticate (login button on chatgpt.com)
+            state = await self.get_state()
+            if state == WebAgentState.AUTH_REQUIRED:
+                logger.warning("Authentication required - please log in manually")
+                return True  # Let the engine's auth-wait loop handle it
+
+            logger.info(f"Page state: {state.value}")
+
+            # Wait for chat input — the React SPA may need time to hydrate.
+            # Try ProseMirror editor first, then fall back to paragraph placeholder.
+            # Use wait_for(state="attached") since is_visible() is unreliable on CDP.
+            chat_input = self.page.locator(
+                'div.ProseMirror[contenteditable="true"], '
+                'p[data-placeholder*="New chat"]'
+            )
+
+            for attempt_label in ("initial load", "after reload"):
+                try:
+                    await chat_input.first.wait_for(state="attached", timeout=15000)
+                    logger.info(f"ChatGPT chat input visible ({attempt_label})")
+                    return True
+                except Exception:
+                    if attempt_label == "initial load":
+                        logger.info("Chat input not visible yet — reloading page")
+                        await self.page.reload(
+                            wait_until="domcontentloaded", timeout=30000
+                        )
+                        await self.page.wait_for_timeout(3000)
+
+            # Last resort: dump page content for debugging
+            try:
+                body_text = await self.page.locator("body").inner_text()
+                logger.error(
+                    f"Could not find chat input. Page text (first 500 chars): {body_text[:500]}"
+                )
+            except Exception:
+                logger.error("Could not find chat input on ChatGPT page")
+            return False
+        except Exception as e:
+            logger.error(f"Navigation failed: {e}")
+            return False
+
+    async def get_state(self) -> WebAgentState:
+        """Detect ChatGPT page state.
+
+        Uses JS evaluate instead of Playwright ``is_visible()`` because the
+        latter is unreliable on Chrome CDP connections.
+        """
+        try:
+            current_url = self.page.url
+            if "chatgpt.com" not in current_url:
+                return WebAgentState.AUTH_REQUIRED
+
+            state_info = await self.page.evaluate(
+                """() => {
+                const btns = Array.from(document.querySelectorAll('button'));
+                const hasLogin = btns.some(b => b.textContent.trim() === 'Log in');
+                const hasStop = btns.some(b => b.textContent.trim() === 'Stop');
+                const hasThinking = btns.some(b => b.textContent.includes('Pro thinking'));
+                const hasInput = !!document.querySelector(
+                    'div.ProseMirror[contenteditable="true"], p[data-placeholder]'
+                );
+                return { hasLogin, hasStop, hasThinking, hasInput };
+            }"""
+            )
+
+            if state_info["hasLogin"]:
+                return WebAgentState.AUTH_REQUIRED
+            if state_info["hasStop"] or state_info["hasThinking"]:
+                return WebAgentState.RUNNING
+            if state_info["hasInput"]:
+                return WebAgentState.READY
+
+            return WebAgentState.UNKNOWN
+        except Exception as e:
+            logger.error(f"State detection error: {e}")
+            return WebAgentState.ERROR
+
+    async def _check_button_text(self, text: str) -> bool:
+        """CDP-safe check: does any button on the page contain *text*?
+
+        Checks both ``textContent`` and ``aria-label`` because ChatGPT uses
+        aria-labels like "Agent, click to remove" while the visible text is
+        just "Agent".  Playwright's ``is_visible()`` is unreliable on CDP
+        connections, so we query the DOM directly via JavaScript.
+        """
+        try:
+            return await self.page.evaluate(
+                "(t) => Array.from(document.querySelectorAll('button'))"
+                ".some(b => b.textContent.includes(t)"
+                " || (b.getAttribute('aria-label') || '').includes(t))",
+                text,
+            )
+        except Exception:
+            return False
+
+    async def _select_model(self, model_testid: str, model_name: str) -> bool:
+        """Select a model from the top-left model switcher dropdown.
+
+        Args:
+            model_testid: The data-testid of the model menu item
+                          (e.g. 'model-switcher-gpt-5-4-pro').
+            model_name: Human-readable name for logging (e.g. 'Pro').
+        """
+        try:
+            # Open model selector dropdown
+            switcher = self.page.locator(
+                '[data-testid="model-switcher-dropdown-button"]'
+            )
+            await switcher.click(timeout=5000)
+            await asyncio.sleep(1)
+
+            # Click the target model
+            target = self.page.locator(f'[data-testid="{model_testid}"]')
+            if await target.count() == 0:
+                logger.warning(f"Model option {model_testid} not found in dropdown")
+                await self.page.keyboard.press("Escape")
+                return False
+
+            await target.click(timeout=5000)
+            await asyncio.sleep(1)
+
+            # Note: ChatGPT button text is always "ChatGPT" regardless of
+            # model selection, so a successful click is treated as confirmation.
+            logger.info(f"Model switched to {model_name} (clicked {model_testid})")
+            return True
+        except Exception as e:
+            logger.warning(f"Model selection failed for {model_name}: {e}")
+            try:
+                await self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+            return False
+
+    # Maps config model names to keywords for matching ChatGPT's Intelligence panel.
+    # UI shows: "Instant 5.3", "Thinking 5.4", "Pro 5.4"
+    MODEL_KEYWORDS = {
+        "instant": "instant",
+        "thinking": "thinking",
+        "pro": "pro",
+    }
+
+    async def ensure_model_selected(self) -> bool:
+        """
+        Select a ChatGPT model via the Intelligence panel.
+
+        Reads ``chatgpt_web.model`` from config. If not set (null/None),
+        skips selection and uses the current default.
+
+        Supported values: ``instant``, ``thinking``, ``pro``.
+
+        The Intelligence panel is opened by clicking the model selector
+        button at the top of the chat. Model items are matched by
+        case-insensitive substring.
+
+        Returns:
+            True if the desired model is selected (or none was specified).
+        """
+        target_model = self.agent_config.get("model")
+        if not target_model:
+            logger.info("No ChatGPT model specified in config — using current default")
+            return True
+
+        keyword = self.MODEL_KEYWORDS.get(target_model)
+        if not keyword:
+            logger.warning(
+                "Unknown ChatGPT model '%s'. Valid options: %s. Using current default.",
+                target_model,
+                ", ".join(self.MODEL_KEYWORDS.keys()),
+            )
+            return True
+
+        try:
+            logger.info("Selecting ChatGPT model: %s", target_model)
+
+            # The model selector button at the top of the chat
+            model_btn = await self.page.query_selector(
+                'button[data-testid="model-switcher-dropdown-button"]'
+            )
+            if not model_btn or not await model_btn.is_visible():
+                logger.warning(
+                    "ChatGPT model selector not found — skipping model selection"
+                )
+                return True
+
+            # Open the dropdown menu
+            await model_btn.click()
+            await asyncio.sleep(1)
+
+            # Scan menu items for one whose text contains our keyword
+            menu_items = await self.page.query_selector_all(
+                'div[role="menuitem"], [role="option"]'
+            )
+            target_item = None
+            for item in menu_items:
+                text = (await item.text_content() or "").lower()
+                if keyword in text and await item.is_visible():
+                    target_item = item
+                    break
+
+            if not target_item:
+                logger.warning(
+                    "Model '%s' not found in dropdown — using current default",
+                    keyword,
+                )
+                await self.page.keyboard.press("Escape")
+                return True
+
+            await target_item.click()
+            await asyncio.sleep(0.5)
+            logger.info("ChatGPT model '%s' selected successfully", keyword)
+
+            return True
+
+        except Exception as e:
+            logger.error("Error selecting ChatGPT model: %s", e)
+            try:
+                await self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+            return True
+
+    async def _enable_agent_mode(self) -> bool:
+        """Enable Agent mode via + menu > hover More > click Agent mode."""
+        try:
+            # Open + menu
+            plus_btn = self.page.locator('[data-testid="composer-plus-btn"]')
+            await plus_btn.click(timeout=5000)
+            await asyncio.sleep(1)
+
+            # Hover over "More" to reveal submenu
+            more = self.page.get_by_role("menuitem", name="More")
+            await more.hover()
+            await asyncio.sleep(3)
+
+            # Click "Agent mode"
+            agent = self.page.get_by_role("menuitemradio", name="Agent mode")
+            checked = await agent.get_attribute("aria-checked")
+            if checked == "true":
+                logger.info("Agent mode already enabled")
+                await self.page.keyboard.press("Escape")
+                return True
+
+            await agent.click(timeout=5000)
+            await asyncio.sleep(1)
+            logger.info("Agent mode enabled")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to enable agent mode: {e}")
+            try:
+                await self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+            return False
+
+    async def ensure_features_enabled(self) -> bool:
+        """Enable Agent mode or Pro model as configured, and select model.
+
+        When ``agent_mode`` is True: + menu > More > Agent mode toggle.
+        When ``agent_mode`` is False: top-left model switcher > Pro.
+
+        If ``model`` is set in config, also selects the specified model
+        via the Intelligence panel before enabling agent mode.
+        """
+        await asyncio.sleep(2)
+
+        # Select model first (if configured)
+        await self.ensure_model_selected()
+
+        if self.agent_mode:
+            return await self._enable_agent_mode()
+        else:
+            # Default is already extended pro — no toggle needed
+            logger.info("Extended Pro mode (default) — no toggle needed")
+            return True
+
+    async def upload_files(self, file_paths: list[str]) -> bool:
+        """Upload files via the + menu > Add photos & files flow.
+
+        Falls back to the "Add files and more" button (bottom-left of composer)
+        if the + menu approach fails — the button text changes depending on
+        whether agent mode is active.
+        """
+        try:
+            for file_path in file_paths:
+                logger.info(f"Uploading file: {file_path}")
+
+                uploaded = False
+
+                # Approach 1: + menu > "Add photos & files"
+                try:
+                    # Dismiss any stale popup first
+                    await self.page.keyboard.press("Escape")
+                    await self.page.wait_for_timeout(300)
+
+                    plus_btn = self.page.locator(self.SELECTORS["plus_menu_button"])
+                    if await plus_btn.count() > 0:
+                        await plus_btn.click(timeout=5000)
+                        await self.page.wait_for_timeout(1000)
+
+                        add_files = self.page.locator(
+                            self.SELECTORS["add_files_menuitem"]
+                        )
+                        try:
+                            await add_files.wait_for(state="attached", timeout=5000)
+                            await self.page.wait_for_timeout(500)
+
+                            async with self.page.expect_file_chooser(
+                                timeout=10000
+                            ) as fc_info:
+                                await add_files.click(timeout=5000)
+
+                            file_chooser = await fc_info.value
+                            await file_chooser.set_files(file_path)
+                            uploaded = True
+                        except Exception:
+                            logger.info(
+                                "+ menu 'Add photos & files' not found, trying fallback"
+                            )
+                            await self.page.keyboard.press("Escape")
+                            await self.page.wait_for_timeout(500)
+                except Exception:
+                    logger.info("+ menu approach failed, trying fallback")
+
+                # Approach 2: "Add files and more" button (visible when agent mode is active)
+                if not uploaded:
+                    try:
+                        add_files_btn = self.page.locator(
+                            'button:has-text("Add files and more"), '
+                            'button:has-text("Add files"), '
+                            'button[aria-label*="file"]'
+                        )
+                        if await add_files_btn.count() > 0:
+                            async with self.page.expect_file_chooser(
+                                timeout=10000
+                            ) as fc_info:
+                                await add_files_btn.first.click()
+
+                            file_chooser = await fc_info.value
+                            await file_chooser.set_files(file_path)
+                            uploaded = True
+                            logger.info("Used 'Add files' button fallback")
+                    except Exception as e:
+                        logger.warning(f"Fallback file upload also failed: {e}")
+
+                if not uploaded:
+                    raise RuntimeError(f"Could not upload file: {file_path}")
+
+                await self.page.wait_for_timeout(2000)
+
+                # Verify file appears as attachment
+                filename = Path(file_path).name
+                attachment = self.page.locator(f'[role="group"]:has-text("{filename}")')
+                try:
+                    await attachment.wait_for(state="attached", timeout=5000)
+                    logger.info(f"File attached: {filename}")
+                except Exception:
+                    logger.warning(f"File attachment not confirmed for: {filename}")
+
+            return True
+        except Exception as e:
+            logger.error(f"File upload failed: {e}")
+            return False
+
+    async def submit_prompt(self, prompt: str, prompt_number: int = 1) -> bool:
+        """Type prompt text and click send."""
+        try:
+            logger.info(f"Submitting prompt {prompt_number} ({len(prompt)} chars)")
+
+            # Focus the chat input (ProseMirror div OR paragraph placeholder)
+            editor = self.page.locator(
+                'div.ProseMirror[contenteditable="true"], '
+                'p[data-placeholder*="New chat"]'
+            )
+            try:
+                await editor.first.wait_for(state="attached", timeout=10000)
+            except Exception:
+                logger.error("Chat input not found")
+                return False
+            await editor.first.click()
+            await self.page.wait_for_timeout(300)
+
+            # Clear any leftover text
+            select_all = "Meta+a" if sys.platform == "darwin" else "Control+a"
+            await self.page.keyboard.press(select_all)
+            await self.page.keyboard.press("Backspace")
+            await self.page.wait_for_timeout(200)
+
+            # Fill prompt — try Playwright fill() first, fall back to clipboard paste
+            try:
+                await editor.first.fill(prompt)
+            except Exception:
+                logger.info("fill() failed, falling back to clipboard paste")
+                paste = "Meta+v" if sys.platform == "darwin" else "Control+v"
+                await self.page.evaluate(
+                    "(text) => navigator.clipboard.writeText(text)", prompt
+                )
+                await self.page.keyboard.press(paste)
+                await self.page.wait_for_timeout(500)
+            await self.page.wait_for_timeout(1000)
+
+            # Enable agent mode or extended thinking after files are attached
+            # and prompt is typed, but before sending (only on first prompt).
+            if prompt_number == 1:
+                features_ok = await self.ensure_features_enabled()
+                if not features_ok:
+                    logger.warning("Failed to enable features before sending")
+
+            # Click send button
+            url_before = self.page.url
+            send_btn = self.page.locator(self.SELECTORS["send_button"])
+            try:
+                await send_btn.first.wait_for(state="visible", timeout=10000)
+                await send_btn.first.click()
+            except Exception:
+                # Fallback: try pressing Enter to send
+                logger.info("Send button not clickable, trying Enter key")
+                await self.page.keyboard.press("Enter")
+
+            # Wait for confirmation that the prompt was sent.
+            # For prompt 1: URL changes from project page to /c/{id}
+            # For prompts 2+: URL already has /c/ — check generation indicators
+            already_in_conversation = "/c/" in url_before
+            for _ in range(30):  # 30s max wait for send confirmation
+                await self.page.wait_for_timeout(1000)
+                current_url = self.page.url
+                if current_url != url_before and "/c/" in current_url:
+                    logger.info(f"Prompt sent — conversation: {current_url}")
+                    return True
+                # Check if generation started (Stop button visible) — CDP-safe
+                if await self._check_button_text("Stop"):
+                    logger.info("Prompt sent (Stop button appeared)")
+                    return True
+                # For follow-up prompts, also check if a new article appeared
+                if already_in_conversation and await self._is_generating():
+                    logger.info("Prompt sent (generation indicators detected)")
+                    return True
+
+            logger.error(
+                f"Prompt may not have been sent (URL unchanged: {self.page.url})"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"Submit prompt failed: {e}")
+            return False
+
+    async def _is_generating(self) -> bool:
+        """Check if ChatGPT is still generating using JS DOM queries.
+
+        CDP tabs may not render overlay elements as "visible" to Playwright,
+        so we query the DOM directly via JavaScript. Checks for:
+        - Stop button via data-testid (reliable during Code Interpreter execution)
+        - Stop button via text (present during Pro thinking)
+        - Answer now button (present during extended thinking)
+        - Pro thinking indicator (extended thinking in progress)
+        - result-streaming class (text streaming)
+        - "Writing code" / "Analyzing" text (agent mode code execution)
+        - "ChatGPT is generating" status text
+        - Send button absence (no send button while generating)
+        """
+        try:
+            return await self.page.evaluate(
+                """() => {
+                // Most reliable: data-testid="stop-button" (present during ALL generation phases)
+                const hasStopBtn = !!document.querySelector('[data-testid="stop-button"]');
+                // Only check buttons INSIDE the main chat area, not sidebar history items
+                // (sidebar items like "Early Stopping in Experiments" have aria-labels containing "Stop")
+                const mainArea = document.querySelector('main') || document.body;
+                const btns = Array.from(mainArea.querySelectorAll('button'));
+                const hasStop = btns.some(b => b.textContent.trim() === 'Stop');
+                const hasAnswerNow = btns.some(b => b.textContent.trim() === 'Answer now');
+                const hasThinking = btns.some(b => b.textContent.includes('Pro thinking'));
+                const hasGenerating = !!document.querySelector('[class*="result-streaming"]');
+                // Agent mode indicators: only check within the conversation area
+                const mainText = mainArea.innerText || '';
+                const hasWritingCode = mainText.includes('Writing code');
+                const hasAnalyzing = /Analyz(ing|ed)/.test(mainText) && (hasStop || hasStopBtn);
+                return hasStopBtn || hasStop || hasAnswerNow || hasThinking || hasGenerating || hasWritingCode || hasAnalyzing;
+            }"""
+            )
+        except Exception:
+            return False
+
+    async def _count_response_articles(self) -> int:
+        """Count ChatGPT response articles currently on the page.
+
+        Uses JS evaluate for CDP reliability. Tries current DOM structure
+        first (data-message-author-role), falls back to legacy <article>.
+        """
+        try:
+            return await self.page.evaluate(
+                """() => {
+                // Current DOM: data-message-author-role='assistant'
+                const assistants = document.querySelectorAll("[data-message-author-role='assistant']");
+                if (assistants.length > 0) return assistants.length;
+                // Legacy: <article> with <h6> ChatGPT said
+                return Array.from(document.querySelectorAll('article'))
+                    .filter(a => {
+                        const h6 = a.querySelector('h6');
+                        return h6 && h6.textContent.includes('ChatGPT said:');
+                    }).length;
+            }"""
+            )
+        except Exception:
+            return 0
+
+    async def wait_for_response(self, prompt_number: int = 1) -> Optional[str]:
+        """Wait for ChatGPT to finish responding.
+
+        Uses a three-phase approach:
+        1. Snapshot existing articles so we only track NEW responses.
+        2. Wait for generation to actually start (new article OR generation
+           indicators like Stop/Pro thinking).
+        3. Wait for completion using content stabilization — the response text
+           must stop changing for a sustained period AND generation indicators
+           must be gone.
+
+        This prevents premature completion when:
+        - Stale articles from prior conversations are on the page
+        - There's a gap between extended thinking and agent code execution
+        - Agent mode pauses between code execution steps
+        """
+        logger.info(f"Waiting for response to prompt {prompt_number}...")
+        start_time = asyncio.get_event_loop().time()
+
+        # Phase 0: Snapshot how many response articles exist BEFORE this response
+        baseline_article_count = await self._count_response_articles()
+        if not self._baseline_set:
+            # Only store baseline before the FIRST prompt so that
+            # download_all_artifacts searches ALL conversation articles,
+            # not just those from the last prompt.
+            self._baseline_article_count = baseline_article_count
+            self._baseline_set = True
+            logger.info(
+                f"Baseline response articles on page (first prompt): {baseline_article_count}"
+            )
+        else:
+            logger.info(
+                f"Current response articles on page: {baseline_article_count} (baseline kept at {self._baseline_article_count})"
+            )
+
+        # Minimum time before accepting completion (agent mode tasks take 15-30 min,
+        # Pro/Thinking mode tasks also need substantial time for Excel building).
+        # However, if a file card is detected (Spreadsheet/.xlsx), we accept sooner
+        # since the model may have finished quickly with just a file output.
+        min_elapsed_sec = 300 if self.agent_mode else 120
+        min_elapsed_sec_with_file = 30  # Accept quickly if file card present
+
+        # Give ChatGPT time to start generating
+        await self.page.wait_for_timeout(5000)
+
+        # Phase 1: Wait for generation to start (up to 120s)
+        # Require EITHER generation indicators OR a NEW article (beyond baseline)
+        generation_started = False
+        for _ in range(60):
+            if self.shutdown_event and self.shutdown_event.is_set():
+                return None
+
+            if await self._is_generating():
+                generation_started = True
+                logger.info("Response generation started (indicators detected)")
+                break
+
+            # Check for a NEW ChatGPT article (beyond baseline count)
+            current_count = await self._count_response_articles()
+            if current_count > baseline_article_count:
+                generation_started = True
+                logger.info(
+                    f"New ChatGPT response article appeared ({current_count} > {baseline_article_count})"
+                )
+                break
+
+            await self.page.wait_for_timeout(2000)
+
+        if not generation_started:
+            logger.error("Response generation did not start within 120s")
+            return None
+
+        # Phase 2: Wait for completion using content stabilization
+        # The response text must stop changing AND generation indicators must be
+        # gone for required_stable consecutive checks.
+        stable_count = 0
+        required_stable = 5  # 5 consecutive checks × check_interval (15s at 3s)
+        last_response_text = ""
+        last_article_count = baseline_article_count
+        while (asyncio.get_event_loop().time() - start_time) < self.max_wait_per_prompt:
+            if self.shutdown_event and self.shutdown_event.is_set():
+                return None
+
+            generating = await self._is_generating()
+
+            # Also track article count — agent mode creates multiple response articles
+            current_article_count = await self._count_response_articles()
+            articles_changed = current_article_count != last_article_count
+            if articles_changed:
+                logger.info(
+                    f"Article count changed: {last_article_count} -> {current_article_count}"
+                )
+                last_article_count = current_article_count
+
+            # Always sample response text (even during generation) for monitoring
+            current_response = await self._extract_last_response() or ""
+
+            if generating or articles_changed:
+                stable_count = 0
+                # Track text even during generation so we know progress
+                last_response_text = current_response
+            else:
+                # Check if response text is still changing (content stabilization)
+                text_changed = current_response != last_response_text
+                last_response_text = current_response
+
+                if text_changed:
+                    stable_count = 0  # Content still growing
+                else:
+                    stable_count += 1
+
+                elapsed = asyncio.get_event_loop().time() - start_time
+
+                if stable_count >= required_stable:
+                    # Content is stable and generation stopped.
+                    # Accept if we have content and enough time elapsed.
+                    # File card responses can be very short (e.g. "Here is your file:\nSpreadsheet" = ~37 chars)
+                    has_file_indicator = any(
+                        kw in current_response
+                        for kw in [
+                            "Spreadsheet",
+                            ".xlsx",
+                            ".xls",
+                            "Excel file",
+                            "Download",
+                        ]
+                    )
+                    content_ok = len(current_response) > 50 or has_file_indicator
+                    if content_ok:
+                        effective_min = (
+                            min_elapsed_sec_with_file
+                            if has_file_indicator
+                            else min_elapsed_sec
+                        )
+                        if elapsed >= effective_min:
+                            logger.info(
+                                f"Response complete ({int(elapsed)}s elapsed, "
+                                f"{len(current_response)} chars, file_indicator={has_file_indicator})"
+                            )
+                            return current_response
+                        else:
+                            logger.info(
+                                f"Content stable but too early ({int(elapsed)}s < {min_elapsed_sec}s min), "
+                                f"continuing to wait..."
+                            )
+                            stable_count = 0
+                    else:
+                        # Content too short and no file indicators — keep waiting
+                        stable_count = 0
+
+            elapsed = int(asyncio.get_event_loop().time() - start_time)
+            # Log every ~30s (use range check since loop interval may skip exact multiples)
+            if elapsed > 0 and elapsed % 30 < (self.check_interval + 1):
+                resp_len = len(last_response_text)
+                logger.info(
+                    f"Waiting... {elapsed}s elapsed, generating={generating}, "
+                    f"response_len={resp_len}, stable={stable_count}/{required_stable}"
+                )
+
+            await self.page.wait_for_timeout(self.check_interval * 1000)
+
+        # Timeout — return whatever we have if it looks reasonable
+        logger.warning(f"Response timeout after {self.max_wait_per_prompt}s")
+        final_response = await self._extract_last_response()
+        if final_response and len(final_response) > 50:
+            logger.info(
+                f"Returning partial response ({len(final_response)} chars) after timeout"
+            )
+            return final_response
+        return None
+
+    async def _extract_last_response(self) -> Optional[str]:
+        """Extract text from the last ChatGPT response.
+
+        Uses JS evaluate instead of Playwright locators for CDP reliability.
+        Tries multiple DOM strategies since ChatGPT's structure changes:
+        1. data-message-author-role='assistant' (current, 2025+)
+        2. <article> with <h6> 'ChatGPT said:' (legacy)
+        """
+        try:
+            text = await self.page.evaluate(
+                """() => {
+                // Strategy 1: data-message-author-role (current DOM structure)
+                const assistants = document.querySelectorAll("[data-message-author-role='assistant']");
+                if (assistants.length > 0) {
+                    return assistants[assistants.length - 1].innerText;
+                }
+                // Strategy 2: <article> with <h6> ChatGPT said (legacy)
+                const articles = Array.from(document.querySelectorAll('article'));
+                for (let i = articles.length - 1; i >= 0; i--) {
+                    const h6 = articles[i].querySelector('h6');
+                    if (h6 && h6.textContent.includes('ChatGPT said:')) {
+                        return articles[i].innerText;
+                    }
+                }
+                return null;
+            }"""
+            )
+            if text:
+                text = text.replace("ChatGPT said:\n", "").strip()
+                return text if text else None
+            return None
+        except Exception as e:
+            logger.error(f"Response extraction failed: {e}")
+            return None
+
+    async def download_all_artifacts(
+        self, download_dir: Optional[str] = None, timeout: int = 30000
+    ) -> list[str]:
+        """Download all Excel artifacts from the ChatGPT conversation.
+
+        ChatGPT agent mode produces file artifacts as inline preview cards
+        embedded in the response article. The DOM structure is:
+
+            paragraph
+              └── generic (outer container)
+                    └── generic (header row)
+                          ├── generic (left: img icon + filename text)
+                          └── generic (right: icon-only buttons)
+                                ├── button (expand/preview)
+                                └── button (download)   ← TARGET
+                    └── generic (sheet tabs: "model", "answers", etc.)
+
+        The download buttons have NO text — just an <img> icon. We identify
+        artifact cards using JS to find the correct structure, then click the
+        last button in the action row (which is the download button).
+
+        Falls back to sandbox download links (/mnt/data/ paths) if no
+        preview cards are found.
+        """
+        downloaded = []
+        download_path = Path(download_dir) if download_dir else Path(".")
+        download_path.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Scroll to the bottom of the conversation to ensure all file cards
+            # are rendered in the DOM before searching.
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.page.wait_for_timeout(2000)
+
+            # Strategy 1: Find artifact preview cards via JS DOM inspection.
+            # Only search articles AFTER the baseline count (i.e., new articles
+            # from the current response), to avoid picking up file cards from
+            # previous conversations in the project.
+            baseline = self._baseline_article_count
+            logger.info(
+                f"Searching for artifacts in articles after baseline={baseline}"
+            )
+
+            artifact_info = await self.page.evaluate(
+                """(baseline) => {
+                // Find ChatGPT response containers (try current DOM, then legacy)
+                let responseElements = Array.from(
+                    document.querySelectorAll("[data-message-author-role='assistant']")
+                );
+                if (responseElements.length === 0) {
+                    // Legacy: <article> with <h6> ChatGPT said
+                    responseElements = Array.from(document.querySelectorAll('article'))
+                        .filter(a => {
+                            const h6 = a.querySelector('h6');
+                            return h6 && h6.textContent.includes('ChatGPT said:');
+                        });
+                }
+                // Only search elements that appeared AFTER the baseline
+                const newArticles = responseElements.slice(baseline);
+                const artifacts = [];
+
+                // File card keywords: ChatGPT may show "Spreadsheet", the actual
+                // filename with .xlsx extension, or other file type labels.
+                const FILE_KEYWORDS = ['.xlsx', '.xls', 'Spreadsheet', 'Excel'];
+
+                for (const article of newArticles) {
+                    // Strategy 1: Find text nodes matching file keywords
+                    const walker = document.createTreeWalker(
+                        article,
+                        NodeFilter.SHOW_TEXT,
+                        { acceptNode: (node) => {
+                            const text = node.textContent.trim();
+                            if (!text) return NodeFilter.FILTER_REJECT;
+                            const isFile = FILE_KEYWORDS.some(kw => text.includes(kw));
+                            if (!isFile) return NodeFilter.FILTER_REJECT;
+                            // Reject if inside a code block
+                            let el = node.parentElement;
+                            while (el && el !== article) {
+                                if (el.tagName === 'CODE' || el.tagName === 'PRE') return NodeFilter.FILTER_REJECT;
+                                el = el.parentElement;
+                            }
+                            return NodeFilter.FILTER_ACCEPT;
+                        }}
+                    );
+
+                    let node;
+                    const seenCards = new Set();
+                    while (node = walker.nextNode()) {
+                        const filename = node.textContent.trim();
+                        // Navigate up to find the container with icon-only buttons
+                        let container = node.parentElement;
+                        for (let depth = 0; depth < 8 && container; depth++) {
+                            const buttons = container.querySelectorAll('button');
+                            // Artifact cards have icon-only buttons (SVG icons)
+                            // Agent mode: 2-3 buttons. Extended pro: 1 button.
+                            const iconButtons = Array.from(buttons).filter(b => {
+                                const hasIcon = b.querySelector('img') || b.querySelector('svg');
+                                const isSmall = b.textContent.trim().length === 0 ||
+                                                b.textContent.trim().length < 5;
+                                return hasIcon && isSmall;
+                            });
+                            // Also detect file cards by their container class (rounded-2xl)
+                            const isFileCard = container.className &&
+                                container.className.includes('rounded-2xl') &&
+                                container.className.includes('my-4');
+                            if (iconButtons.length >= 1 || isFileCard) {
+                                // Deduplicate: avoid marking the same card twice
+                                const cardKey = container.outerHTML.substring(0, 100);
+                                if (seenCards.has(cardKey)) break;
+                                seenCards.add(cardKey);
+                                // Prefer rounded-full button for download, fallback to first icon button
+                                const downloadBtn = iconButtons.find(b =>
+                                    b.className.includes('rounded-full')
+                                ) || iconButtons[0];
+                                const id = 'artifact-dl-' + artifacts.length;
+                                downloadBtn.setAttribute('data-artifact-download', id);
+                                // Use actual filename if it has extension, else generic
+                                const displayName = filename.includes('.xls')
+                                    ? filename : 'ai_attempt.xlsx';
+                                artifacts.push({ filename: displayName, downloadId: id });
+                                break;
+                            }
+                            container = container.parentElement;
+                        }
+                    }
+                }
+                return artifacts;
+            }""",
+                baseline,
+            )
+
+            logger.info(f"Found {len(artifact_info)} artifact preview card(s)")
+
+            # Set up CDP download behavior so Chrome saves files to our
+            # directory.  page.expect_download() does NOT work on CDP
+            # connections — Chrome handles downloads natively.
+            download_path.mkdir(parents=True, exist_ok=True)
+            use_cdp_download = False
+            try:
+                cdp = await self.page.context.new_cdp_session(self.page)
+                await cdp.send(
+                    "Browser.setDownloadBehavior",
+                    {
+                        "behavior": "allowAndName",
+                        "downloadPath": str(download_path.resolve()),
+                        "eventsEnabled": True,
+                    },
+                )
+                use_cdp_download = True
+                logger.info(f"CDP download path: {download_path.resolve()}")
+            except Exception as e:
+                logger.info(
+                    f"CDP download setup failed ({e}), using Playwright fallback"
+                )
+
+            for info in artifact_info:
+                filename = info["filename"]
+                dl_id = info["downloadId"]
+                logger.info(f"Downloading artifact: {filename}")
+
+                try:
+                    dl_btn = self.page.locator(f'[data-artifact-download="{dl_id}"]')
+                    if await dl_btn.count() == 0:
+                        logger.warning(f"Download button not found for {filename}")
+                        continue
+
+                    if use_cdp_download:
+                        # CDP: click and poll directory for new files
+                        files_before = set(download_path.iterdir())
+                        await dl_btn.click()
+
+                        deadline = asyncio.get_event_loop().time() + timeout / 1000
+                        save_path = None
+                        while asyncio.get_event_loop().time() < deadline:
+                            current_files = set(download_path.iterdir())
+                            new_files = current_files - files_before
+                            # Ignore Chrome partial-download temp files
+                            complete = [
+                                f
+                                for f in new_files
+                                if not f.name.endswith(".crdownload")
+                            ]
+                            if complete:
+                                save_path = complete[0]
+                                break
+                            await asyncio.sleep(0.5)
+
+                        if save_path:
+                            # CDP downloads may use UUID filenames; rename
+                            # to the original filename from the file card.
+                            target = download_path / filename
+                            if save_path.name != filename:
+                                save_path.rename(target)
+                                save_path = target
+                            logger.info(f"Downloaded: {save_path}")
+                            downloaded.append(str(save_path))
+                        else:
+                            logger.warning(f"Download timeout for {filename}")
+                    else:
+                        # Playwright fallback (non-CDP connections)
+                        async with self.page.expect_download(
+                            timeout=timeout
+                        ) as dl_info:
+                            await dl_btn.click()
+                        download = await dl_info.value
+                        save_path = download_path / download.suggested_filename
+                        await download.save_as(str(save_path))
+                        logger.info(f"Downloaded: {save_path}")
+                        downloaded.append(str(save_path))
+
+                except Exception as e:
+                    logger.warning(f"Failed to download {filename}: {e}")
+                    continue
+
+            if downloaded:
+                return downloaded
+
+            # Strategy 2: Fallback — look for sandbox download links in NEW articles only.
+            # ChatGPT agent mode sometimes produces download links for files
+            # saved to /mnt/data/ instead of inline preview cards.
+            logger.info("No preview cards found, trying sandbox download links...")
+            download_links = await self.page.evaluate(
+                """(baseline) => {
+                const allArticles = Array.from(document.querySelectorAll('article'));
+                const chatgptArticles = allArticles.filter(a => {
+                    const h6 = a.querySelector('h6');
+                    return h6 && h6.textContent.includes('ChatGPT said:');
+                });
+                const newArticles = chatgptArticles.slice(baseline);
+                const links = [];
+                for (const article of newArticles) {
+                    const articleLinks = Array.from(article.querySelectorAll('a[href*="sandbox"]'));
+                    for (const a of articleLinks) {
+                        if (a.href && (a.href.includes('.xlsx') || a.href.includes('.xls'))) {
+                            links.push({ href: a.href, text: a.textContent.trim() });
+                        }
+                    }
+                }
+                return links;
+            }""",
+                baseline,
+            )
+
+            for link_info in download_links:
+                try:
+                    logger.info(f"Trying sandbox link: {link_info['text']}")
+                    link = self.page.locator(
+                        f'a[href*="sandbox"]:has-text("{link_info["text"]}")'
+                    )
+
+                    if use_cdp_download:
+                        files_before = set(download_path.iterdir())
+                        await link.first.click()
+
+                        deadline = asyncio.get_event_loop().time() + timeout / 1000
+                        save_path = None
+                        while asyncio.get_event_loop().time() < deadline:
+                            current_files = set(download_path.iterdir())
+                            new_files = current_files - files_before
+                            complete = [
+                                f
+                                for f in new_files
+                                if not f.name.endswith(".crdownload")
+                            ]
+                            if complete:
+                                save_path = complete[0]
+                                break
+                            await asyncio.sleep(0.5)
+
+                        if save_path:
+                            logger.info(f"Downloaded via sandbox link: {save_path}")
+                            downloaded.append(str(save_path))
+                        else:
+                            logger.warning(
+                                f"Sandbox download timeout for {link_info['text']}"
+                            )
+                    else:
+                        async with self.page.expect_download(
+                            timeout=timeout
+                        ) as dl_info:
+                            await link.first.click()
+                        download = await dl_info.value
+                        save_path = download_path / download.suggested_filename
+                        await download.save_as(str(save_path))
+                        logger.info(f"Downloaded via sandbox link: {save_path}")
+                        downloaded.append(str(save_path))
+
+                except Exception as e:
+                    logger.warning(
+                        f"Sandbox download failed for {link_info['text']}: {e}"
+                    )
+                    continue
+
+            if not downloaded:
+                logger.warning(
+                    "No artifacts downloaded (no preview cards or sandbox links found)"
+                )
+
+        except Exception as e:
+            logger.error(f"Artifact download failed: {e}")
+
+        return downloaded
+
+    async def get_conversation_history(self) -> list[dict]:
+        """Extract conversation as list of message dicts."""
+        messages = []
+        try:
+            articles = self.page.locator("article")
+            count = await articles.count()
+
+            for i in range(count):
+                article = articles.nth(i)
+                text = await article.inner_text()
+
+                # Determine role from heading
+                user_heading = article.locator('h5:has-text("You said:")')
+                if await user_heading.count() > 0:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": text.replace("You said:\n", "").strip(),
+                        }
+                    )
+                else:
+                    assistant_heading = article.locator('h6:has-text("ChatGPT said:")')
+                    if await assistant_heading.count() > 0:
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": text.replace("ChatGPT said:\n", "").strip(),
+                            }
+                        )
+        except Exception as e:
+            logger.error(f"Conversation history extraction failed: {e}")
+
+        return messages
+
+    async def process_all_prompts(self, files_to_upload: list = None) -> bool:
+        """Process all prompts: upload files, enable features, send prompts, wait."""
+        prompts = self.config.get("prompts", [])
+        if not prompts:
+            logger.error("No prompts configured")
+            return False
+
+        # Upload files if provided (engine may have already uploaded in Phase 1)
+        if files_to_upload:
+            if not await self.upload_files(files_to_upload):
+                logger.error("File upload failed")
+                return False
+
+        # Process each prompt
+        for i, prompt in enumerate(prompts, 1):
+            logger.info(f"Processing prompt {i}/{len(prompts)}")
+
+            if self.completion_logger:
+                self.completion_logger.start_prompt(prompt)
+
+            if not await self.submit_prompt(prompt, i):
+                logger.error(f"Failed to submit prompt {i}")
+                if self.completion_logger:
+                    self.completion_logger.end_prompt(success=False)
+                return False
+
+            response = await self.wait_for_response(i)
+            if response is None:
+                logger.error(f"No response for prompt {i}")
+                if self.completion_logger:
+                    self.completion_logger.end_prompt(success=False)
+                return False
+
+            if self.completion_logger:
+                self.completion_logger.end_prompt(
+                    success=True, response_length=len(response)
+                )
+
+            self.messages.append(
+                ConversationMessage(
+                    role="user", content=prompt, timestamp=datetime.now()
+                )
+            )
+            self.messages.append(
+                ConversationMessage(
+                    role="assistant", content=response, timestamp=datetime.now()
+                )
+            )
+            self.current_response_count += 1
+
+        logger.info(f"All {len(prompts)} prompt(s) processed successfully")
+        return True
