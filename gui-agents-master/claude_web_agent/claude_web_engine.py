@@ -125,11 +125,11 @@ def rename_solution_file(
 
     new_path = file_path.parent / new_name
 
-    # Handle collision
+    # Handle collision — increment counter on the BASE name, not the collided name
+    base_stem = new_path.stem
     counter = 1
     while new_path.exists():
-        stem = new_path.stem + f"_{counter}"
-        new_path = file_path.parent / f"{stem}{file_path.suffix}"
+        new_path = file_path.parent / f"{base_stem}_{counter}{file_path.suffix}"
         counter += 1
 
     shutil.move(str(file_path), str(new_path))
