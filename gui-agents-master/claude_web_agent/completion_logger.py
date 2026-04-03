@@ -1,17 +1,16 @@
 """
-Enhanced CompletionLogger for the Claude Web Agent.
+CompletionLogger for the Web Agent Engine.
 
-Produces JSON compatible with upload_single_solution.py and upload_tabai_folder.py.
-Writes to disk on every state change for crash safety.
+Writes JSON completion logs to disk on every state change for crash safety.
 
 JSON schema:
 {
     "session_start": "ISO-8601",
     "agent_name": "claude_web",
     "prompt_version": 1,
-    "task_source": "wsp",
+    "task_source": "my_tasks",
     "tasks": [{
-        "task_name": "01-03-Time-Value-Money",
+        "task_name": "Example-Task",
         "attempt_number": 1,
         "start_time": "ISO-8601",
         "end_time": "ISO-8601",
@@ -45,10 +44,10 @@ logger = logging.getLogger(__name__)
 
 class CompletionLogger:
     """
-    Tracks task and prompt timing, produces JSON for upload scripts.
+    Tracks task and prompt timing, writes JSON completion logs.
 
     Usage:
-        cl = CompletionLogger(log_dir, "task-name", "claude_web", 1, "wsp")
+        cl = CompletionLogger(log_dir, "task-name", "claude_web", 1, "my_tasks")
         cl.start_task("task-name", attempt_number=1)
         cl.start_prompt("prompt text...")
         cl.end_prompt(success=True, response_length=1234)
@@ -61,7 +60,7 @@ class CompletionLogger:
         task_identifier: str | None = None,
         agent_name: str = "claude_web",
         prompt_version: int = 1,
-        task_source: str = "wsp",
+        task_source: str = "my_tasks",
     ):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)

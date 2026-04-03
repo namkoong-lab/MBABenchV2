@@ -91,7 +91,6 @@ class ClaudeWebAgent(WebAgent):
         # Web search checkbox in the dropdown menu
         "web_search_checkbox": 'div[role="menuitemcheckbox"]:has-text("Web search")',
         # Download button in artifact card
-        # Multiple selectors for fallback, matching working run_wsp_task_with_file.py
         "download_button": 'button:has-text("Download")',
         "download_button_aria": '[aria-label="Download"]',
         "download_button_text": 'button:text("Download")',
@@ -916,7 +915,6 @@ class ClaudeWebAgent(WebAgent):
             # Wait a moment for any UI animations to settle
             await asyncio.sleep(1)
 
-            # Use query_selector like the working run_wsp_task_with_file.py
             # Try multiple selectors in order of preference
             download_selectors = [
                 self.SELECTORS["download_button"],  # button:has-text("Download")

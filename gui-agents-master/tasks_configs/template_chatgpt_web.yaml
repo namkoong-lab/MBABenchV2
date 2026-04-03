@@ -12,9 +12,10 @@ template:
   # If omitted, paths are resolved from the current working directory.
   # local_files_base: "project_data/"
 
-  # Single prompt with all instructions sent with attachments
+  # Single prompt — all instructions in one message (ChatGPT agent mode works best this way).
+  # Replace with your own instructions. These are generic placeholders.
   prompts:
-    - "I will be giving you a task in three steps. Your only allowed method for solving this problem is by building an Excel Model using the currently opened sheet, its provided data if any, and any files I attached. You must not use any external or internal tools, like a code interpreter or calculator, to find the final answers. The Excel file you build must be the only thing performing the calculations.\n\nYour first task is to analyze the attached problem statement and data file(s) and output them in a new sheet called 'Summary'. Do not build the model yet. Provide a brief summary of 1. The primary questions to answer. 2. The key inputs and assumptions. 3. A high-level plan for solving it. Confirm when you have completed this analysis.\n\nYour next step is actually making the model. Create a new Excel sheet called 'model_main'. All logic should be on this 'model_main' tab. If you need additional sheets, you can create them in the name of 'model_{number}' where the number is an incrementing number (e.g. 'model_1', 'model_2', etc.). Adhere to these standards: professional formatting, robust (inputs in separate cells, no hard-coding in formulas), accurate, and tractable. For example, this model should be up to the standards and presentation abilities of a white-collar worker in a top professional services firm. Let me know when the model is complete.\n\nYour final task is to create the answers sheet. Create a new tab named 'answers_final'. On this sheet, present the final answers to all questions. Every single answer on this sheet must be directly referenceable to your 'model_main' sheet (or other 'model_' sheets). Hard coded values are to be generally avoided on the answers sheet. If you need additional answer sheets, name them 'answers_1', 'answers_2', etc."
+    - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."
 
   # Enable artifact download
   download_artifacts: true

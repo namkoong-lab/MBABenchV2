@@ -161,7 +161,7 @@ tasks:
 
 ### Template Config
 
-Templates live in `tasks_configs/`. The `prompts` list is what gets sent to the AI — **replace these with your own instructions** for your use case. The default prompts are financial modeling prompts; delete them and write whatever you need.
+Templates live in `tasks_configs/`. The `prompts` list is what gets sent to the AI — **replace these with your own instructions** for your use case.
 
 ```yaml
 # tasks_configs/template_claude_web.yaml
@@ -173,9 +173,9 @@ template:
   # local_files_base: "project_data/"
 
   prompts:
-    - "Analyze the attached dataset and summarize key findings."
-    - "Build a model on a new sheet called 'model_main'."
-    - "Create an 'answers' sheet with your conclusions."
+    - "Analyze the attached files. Summarize the key data and questions."
+    - "Build an Excel solution on a new sheet."
+    - "Create a summary sheet with your conclusions. Download the workbook."
 ```
 
 ### Recommended directory layout
