@@ -1,9 +1,17 @@
-# Claude Web Agent Template Configuration
-# For running tasks through https://claude.ai
+# Claude Web Agent — Template Configuration
+# ==========================================
+# This file defines AGENT settings shared across all tasks.
+# Task-specific settings (files, output naming) go in your tasks YAML.
+#
+# See tasks_configs/examples/sample_tasks.yaml for task list format.
 
 template:
   agent_type: "claude_web"
   prompt_version: 2
+
+  # Base directory for resolving relative paths in upload_files.
+  # If omitted, paths are resolved from the current working directory.
+  # local_files_base: "project_data/"
 
   prompts:
     - "I will be giving you a task in three steps. Your only allowed method for solving this problem is by building an Excel Model using the currently opened sheet, its provided data if any, and any files I attached. You must not use any external or internal tools, like a code interpreter or calculator, to find the final answers. The Excel file you build must be the only thing performing the calculations."

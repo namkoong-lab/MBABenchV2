@@ -130,22 +130,52 @@ The automation navigates to a specific ChatGPT project page to start each task. 
 
 **For Agent mode**: The automation enables agent mode automatically via the `+` menu before sending the first prompt. No project-level setting needed.
 
-## Task Files
+## Task Configuration
 
-Task files (PDFs, Excel workbooks, data files) are uploaded directly into the chat via the browser. Organize them locally so the automation can find them.
+Configuration is split into two files:
 
-### Local file paths
+| File | Purpose | You edit per... |
+|------|---------|-----------------|
+| **Tasks YAML** (`tasks_configs/examples/`) | Which files to upload, what to name output | Each task / project |
+| **Template YAML** (`tasks_configs/`) | Which agent, what prompts, retry/timeout settings | Each agent type |
 
-Specify files to upload in your task config or template under `files_to_upload`:
+### Task List Format
 
 ```yaml
-# In your task list YAML or per-task config
-files_to_upload:
-  - "/path/to/task_description.pdf"
-  - "/path/to/starting_data.xlsx"
+task_source: "my_tasks"
+
+tasks:
+  - task_name: "My_Analysis"
+
+    # LOCAL — Files on your machine to upload into the AI chat.
+    # Paths are relative to local_files_base (in template) or CWD.
+    upload_files:
+      - "tasks/My_Analysis/problem_statement.pdf"
+      - "tasks/My_Analysis/data.xlsx"
+
+    # OUTPUT — Base name for the solution file (optional).
+    # Omit to default to "{task_name}_Solution_{agent}_Model".
+    solution_name: "My_Analysis_Solution"
 ```
 
-File paths can be absolute or relative to the working directory where you run the batch runner.
+> **Note:** The legacy field name `files_to_upload` still works as a fallback for `upload_files`.
+
+### Template Config
+
+Templates define agent settings shared across all tasks. Key fields:
+
+```yaml
+template:
+  agent_type: "claude_web"      # or "chatgpt_web"
+
+  # Base directory for resolving relative paths in upload_files.
+  # If omitted, resolved from current working directory.
+  # local_files_base: "project_data/"
+
+  prompts:
+    - "First prompt..."
+    - "Second prompt..."
+```
 
 ### Recommended directory layout
 

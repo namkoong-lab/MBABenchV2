@@ -1,8 +1,16 @@
-# ChatGPT Web Agent Template Configuration
-# For running tasks through https://chatgpt.com
+# ChatGPT Web Agent — Template Configuration
+# ===========================================
+# This file defines AGENT settings shared across all tasks.
+# Task-specific settings (files, output naming) go in your tasks YAML.
+#
+# See tasks_configs/examples/sample_tasks.yaml for task list format.
 
 template:
   agent_type: "chatgpt_web"
+
+  # Base directory for resolving relative paths in upload_files.
+  # If omitted, paths are resolved from the current working directory.
+  # local_files_base: "project_data/"
 
   # Single prompt with all instructions sent with attachments
   prompts:

@@ -1,8 +1,13 @@
-# ChatGPT E2E Test Template - local only, no cloud upload, 1 attempt
-# For quick validation of the ChatGPT web agent pipeline
+# ChatGPT E2E Test — Template Configuration
+# ==========================================
+# Local only, no cloud upload, 1 attempt.
+# For quick validation of the ChatGPT web agent pipeline.
 
 template:
   agent_type: "chatgpt_web"
+
+  # Base directory for resolving relative paths in upload_files.
+  # local_files_base: "project_data/"
 
   # 4 sequential prompts matching production templates
   prompts:

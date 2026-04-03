@@ -53,29 +53,33 @@ Set to `null` or omit to use whatever model is currently active in your session.
 
 ### Step 2 — Define your task list
 
-**GUI branch** — files are local; you list them and they get uploaded into the chat:
+All files are **local** — you list them and they get uploaded directly into the chat.
+
 ```yaml
-# tasks_configs/examples/my_tasks.yaml
-task_source: "my_project"
 tasks:
   - task_name: "Q1-Revenue-Analysis"
-    files_to_upload:
-      - "/path/to/q1_data.csv"
-      - "/path/to/problem_statement.pdf"
+
+    # Local files to upload into the AI chat
+    upload_files:
+      - "tasks/Q1/q1_data.csv"
+      - "tasks/Q1/problem_statement.pdf"
+
+    # Custom output file name (optional)
+    solution_name: "Q1_Revenue_Solution"
+
   - task_name: "Q2-Revenue-Analysis"
-    files_to_upload:
-      - "/path/to/q2_data.csv"
+    upload_files:
+      - "tasks/Q2/q2_data.csv"
 ```
 
-**Excel add-in branch** — files live on OneDrive; the engine navigates there (or use `direct_url` to skip folder navigation):
+**Excel add-in branch** — files live on OneDrive; the engine navigates there:
 ```yaml
-# tasks_configs/examples/my_tasks.yaml
 tasks:
   - task_name: "Q1-Revenue-Analysis"
-    task_source: "fmwc"
-    # direct_url: "https://onedrive.live.com/edit.aspx?..."
-  - task_name: "Q2-Revenue-Analysis"
-    task_source: "fmwc"
+    onedrive_path: ["My files", "ProjectX", "Q1"]
+    template_file: "Q1_Template.xlsx"
+    upload_files:
+      - "problem_statement.pdf"
 ```
 
 ### Step 3 — Run

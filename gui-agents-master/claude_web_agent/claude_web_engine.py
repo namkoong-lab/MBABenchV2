@@ -97,26 +97,38 @@ def rename_solution_file(
     file_path: str | Path,
     task_name: str,
     agent_name: str = "claude_web",
+    solution_name: str | None = None,
 ) -> Path:
     """
-    Rename a downloaded solution file to match upload_tabai_folder.py regex.
+    Rename a downloaded solution file.
 
-    Target pattern (Pattern 2):
+    If *solution_name* is provided (v2 config):
+        {YYYYMMDD}_{HHMMSS}_{solution_name}_{agent}.xlsx
+    Otherwise (legacy):
         {YYYYMMDD}_{HHMMSS}_{task_name}_Solution_{agent}_Model.xlsx
 
     Returns the new file path.
     """
     file_path = Path(file_path)
-    safe_task = task_name.replace("/", "-").replace(" ", "_")
-    safe_task = re.sub(r"[^a-zA-Z0-9._-]", "", safe_task)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    new_name = f"{timestamp}_{safe_task}_Solution_{agent_name}_Model{file_path.suffix}"
+
+    if solution_name:
+        safe_name = solution_name.replace("/", "-").replace(" ", "_")
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "", safe_name)
+        new_name = f"{timestamp}_{safe_name}_{agent_name}{file_path.suffix}"
+    else:
+        safe_task = task_name.replace("/", "-").replace(" ", "_")
+        safe_task = re.sub(r"[^a-zA-Z0-9._-]", "", safe_task)
+        new_name = (
+            f"{timestamp}_{safe_task}_Solution_{agent_name}_Model{file_path.suffix}"
+        )
+
     new_path = file_path.parent / new_name
 
     # Handle collision
     counter = 1
     while new_path.exists():
-        stem = f"{timestamp}_{safe_task}_Solution_{agent_name}_Model_{counter}"
+        stem = new_path.stem + f"_{counter}"
         new_path = file_path.parent / f"{stem}{file_path.suffix}"
         counter += 1
 
@@ -327,7 +339,22 @@ async def run_automation(config: dict) -> bool:
     task_id = config.get("task_id")
     task_name = config.get("task_name", "unnamed_task")
     task_source = config.get("task_source", "claude_web")
-    files_to_upload = config.get("files_to_upload", [])
+    solution_name = config.get("solution_name")
+
+    # File upload: prefer "upload_files" (v2), fall back to "files_to_upload" (v1)
+    files_to_upload = config.get("upload_files", config.get("files_to_upload", []))
+
+    # Resolve relative paths using local_files_base if provided
+    local_files_base = config.get("local_files_base")
+    if local_files_base and files_to_upload:
+        base = Path(local_files_base)
+        resolved = []
+        for f in files_to_upload:
+            p = Path(f)
+            if not p.is_absolute():
+                p = (base / p).resolve()
+            resolved.append(str(p))
+        files_to_upload = resolved
 
     if max_sec_per_task > 0:
         logger.info(f"Task timeout: {max_sec_per_task}s ({max_sec_per_task // 60}m)")
@@ -664,11 +691,13 @@ async def run_automation(config: dict) -> bool:
                     await asyncio.sleep(sleep_between_retries)
                     continue
 
-                # Rename solution files to match upload_tabai_folder.py pattern
+                # Rename solution files
                 renamed_files = []
                 for fpath in downloaded_files:
                     if fpath.lower().endswith((".xlsx", ".xls")):
-                        new_path = rename_solution_file(fpath, task_name, agent_name)
+                        new_path = rename_solution_file(
+                            fpath, task_name, agent_name, solution_name
+                        )
                         renamed_files.append(str(new_path))
                     else:
                         renamed_files.append(fpath)
