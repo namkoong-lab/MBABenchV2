@@ -26,18 +26,17 @@ This system follows a composable six-layer pipeline. Green components are user-c
 | **Input** | Task definitions, prompt templates, agent parameters | `tasks_configs/templates/*.yaml`, `tasks_configs/examples/*.yaml` |
 | **Orchestration** | Batch retry logic, subprocess isolation | `claude_web_batch_runner.py` |
 | **Engine** | Single-task pipeline (setup → navigate → AI → download) | `claude_web_agent/claude_web_engine.py` |
-| **Navigation** | OneDrive folder traversal OR direct URL (skip OneDrive) | Engine config: `direct_url` field |
+| **Navigation** | Browser navigates to claude.ai or chatgpt.com | Engine config |
 | **AI Interaction** | Claude, ChatGPT, or your custom agent | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
 | **Output** | Downloaded Excel files, validation, JSON logs | `claude_web_agent/file_validator.py`, `completion_logger.py` |
 
 ### Adapting for Your Research
 
-1. **Edit prompt templates** — `tasks_configs/templates/*.yaml` contains the prompt sequence sent to the AI. Replace with your own instructions.
-2. **Define your task list** — Create a YAML in `tasks_configs/examples/` listing your tasks.
+1. **Edit prompt templates** — `tasks_configs/template_claude_web.yaml` (or `template_chatgpt_web.yaml`) contains the prompt sequence sent to the AI. Replace with your own instructions.
+2. **Define your task list** — Create a YAML in `tasks_configs/examples/` listing your tasks and files.
 3. **Choose your model** — Set `model:` in the template (e.g., `opus_4_6`, `sonnet_4_6`, `haiku`).
-4. **Use direct URLs** — Set `direct_url` in task configs to skip OneDrive navigation entirely.
-5. **Customize validation** — Edit validation checks in `file_validator.py` to match your expected output schema.
-6. **Add a new agent** — Extend `WebAgent` base class with provider-specific selectors.
+4. **Customize validation** — Edit validation checks in `file_validator.py` to match your expected output schema.
+5. **Add a new agent** — Extend `WebAgent` base class with provider-specific selectors.
 
 > See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture guide.
 
@@ -162,9 +161,10 @@ tasks:
 
 ### Template Config
 
-Templates define agent settings shared across all tasks. Key fields:
+Templates live in `tasks_configs/`. The `prompts` list is what gets sent to the AI — **replace these with your own instructions** for your use case. The default prompts are financial modeling prompts; delete them and write whatever you need.
 
 ```yaml
+# tasks_configs/template_claude_web.yaml
 template:
   agent_type: "claude_web"      # or "chatgpt_web"
 
@@ -173,8 +173,9 @@ template:
   # local_files_base: "project_data/"
 
   prompts:
-    - "First prompt..."
-    - "Second prompt..."
+    - "Analyze the attached dataset and summarize key findings."
+    - "Build a model on a new sheet called 'model_main'."
+    - "Create an 'answers' sheet with your conclusions."
 ```
 
 ### Recommended directory layout

@@ -2,7 +2,7 @@
 # ================================
 #
 # Each task entry tells the automation:
-#   1. WHAT local files to upload into the chat
+#   1. WHAT local files to upload into the AI chat
 #   2. WHAT to name the output solution file
 #
 # The TEMPLATE config (e.g. template_claude_web.yaml) controls:
@@ -11,46 +11,46 @@
 #   - Retry / timeout settings
 #
 # ──────────────────────────────────────────────────────────────
-#  On this branch (gui-system-master), files are uploaded
-#  directly into the AI chat (Claude.ai / ChatGPT.com).
-#  There is NO OneDrive navigation — that's the excel-agents
-#  branch. All file paths here are LOCAL (your machine).
+#  Files are uploaded directly into the AI chat
+#  (Claude.ai / ChatGPT.com). All file paths are LOCAL
+#  (on your machine). No OneDrive navigation is needed.
 # ──────────────────────────────────────────────────────────────
 
 task_source: "my_tasks"
 
 tasks:
-  # ── Example 1: Full explicit config ──────────────────────────
-  - task_name: "Example_DCF_Model"
+  # ── Example 1: General-purpose task ─────────────────────────
+  # Works for ANY project — not just finance.
+  - task_name: "Dolphin_Migration_Analysis"
 
     # LOCAL — Files on your machine to upload into the AI chat.
     # Paths are relative to local_files_base (in template config)
     # or to the current working directory if local_files_base is not set.
     upload_files:
-      - "tasks/Example_DCF_Model/problem_statement.pdf"
-      - "tasks/Example_DCF_Model/data_tables.xlsx"
+      - "data/dolphin_sightings_2025.pdf"
+      - "data/gps_tracks.csv"
 
     # OUTPUT — Base name for the solution file.
     # Final name: {YYYYMMDD}_{HHMMSS}_{solution_name}_{agent}.xlsx
-    # Omit to default to "{task_name}_Solution_{agent}_Model".
-    solution_name: "DCF_Model_Solution"
+    # Omit to use default: {task_name}_Solution_{agent}_Model.
+    solution_name: "Dolphin_Migration_Q1"
 
   # ── Example 2: Minimal config (no custom solution name) ─────
-  - task_name: "Example_Valuation"
+  - task_name: "Sales_Forecast"
     upload_files:
-      - "tasks/Example_Valuation/valuation_prompt.pdf"
-      - "tasks/Example_Valuation/company_data.xlsx"
+      - "tasks/Sales_Forecast/quarterly_data.xlsx"
+      - "tasks/Sales_Forecast/brief.pdf"
     # skip: true  # Uncomment to skip this task
 
   # ── Example 3: Absolute paths ───────────────────────────────
-  - task_name: "Example_Quick_Test"
+  - task_name: "Quick_Test"
     upload_files:
       - "/Users/alex/data/test_brief.pdf"
     solution_name: "Quick_Test_Solution"
 
   # ── Example 4: Legacy format (still supported) ──────────────
   # The old field name "files_to_upload" still works as a fallback.
-  - task_name: "Example_Legacy"
+  - task_name: "Legacy_Example"
     files_to_upload:
       - "/path/to/task_description.pdf"
       - "/path/to/starting_data.xlsx"
