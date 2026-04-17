@@ -20,6 +20,8 @@ template:
   artifact_download_dir: "./artifacts"
 
   chatgpt_web:
+    # REQUIRED: paste from your ChatGPT project URL (see README §5).
+    # Example: https://chatgpt.com/g/g-p-{project_id}-{slug}/project
     project_id: "your-project-id-here"
     project_slug: "your-project-slug"
 

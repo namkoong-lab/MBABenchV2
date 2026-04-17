@@ -21,6 +21,10 @@ template:
     - "Create a summary sheet with your final answers and conclusions. Then download the workbook."
 
   claude_web:
+    # REQUIRED: paste the {project_id} from your Claude.ai project URL.
+    # Example URL: https://claude.ai/project/abc123-... -> project_id is "abc123-..."
+    # See README §5 for full instructions. Set to null to use the default chat
+    # outside of any project.
     project_id: "your-project-id-here"
 
     # Model selection (optional). If null or omitted, uses the currently

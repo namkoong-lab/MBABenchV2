@@ -23,7 +23,9 @@ template:
 
   # ChatGPT Web Agent specific settings
   chatgpt_web:
-    # Project for consistent instructions across all tasks
+    # REQUIRED: paste from your ChatGPT project URL.
+    # Example URL: https://chatgpt.com/g/g-p-{project_id}-{slug}/project
+    # See README §5 for full instructions. Both fields are required.
     project_id: "your-project-id-here"
     project_slug: "your-project-slug"
 
