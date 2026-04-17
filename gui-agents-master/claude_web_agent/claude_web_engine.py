@@ -277,6 +277,7 @@ PROVIDER_DEFAULTS = {
     "claude_web": {
         "folder_prefix": "claudeGUI",
         "agent_name": "claude_web",
+        "agent_model_name": "Opus 4.7",
     },
     "chatgpt_web": {
         "folder_prefix": "chatgptGUI",
@@ -334,7 +335,9 @@ async def run_automation(config: dict) -> bool:
     )
 
     agent_name = session_config.get("agent_name", provider_defaults["agent_name"])
-    prompt_version = session_config.get("prompt_version", 1)
+    prompt_version = session_config.get(
+        "prompt_version", config.get("prompt_version", 1)
+    )
 
     task_id = config.get("task_id")
     task_name = config.get("task_name", "unnamed_task")

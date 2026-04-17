@@ -72,7 +72,7 @@ class ClaudeWebAgent(WebAgent):
         # Response content (for fallback detection)
         "response_content": '[class*="prose"]',
         # File upload
-        "attach_button": 'button[aria-label="Attach files"]',
+        "attach_button": 'button[aria-label="Add files, connectors, and more"]',
         "file_input": 'input[type="file"]',
         # Response elements
         "assistant_message": "div[data-is-streaming]",
@@ -87,7 +87,8 @@ class ClaudeWebAgent(WebAgent):
         # Extended thinking button (clock icon)
         "extended_thinking_button": 'button[aria-label="Extended thinking"]',
         # Toggle menu button (+ button that opens dropdown)
-        "toggle_menu_button": 'button[aria-label="Toggle menu"]',
+        # Claude.ai renamed this from "Toggle menu" to "Add files, connectors, and more"
+        "toggle_menu_button": 'button[aria-label="Add files, connectors, and more"]',
         # Web search checkbox in the dropdown menu
         "web_search_checkbox": 'div[role="menuitemcheckbox"]:has-text("Web search")',
         # Download button in artifact card
@@ -159,13 +160,15 @@ class ClaudeWebAgent(WebAgent):
             # Clear any leftover text or files in the chat input
             await self._clear_chat_input()
 
-            # Select model if configured (before toggling features)
-            await self.ensure_model_selected()
-
-            # Always enable Extended Thinking
-            et_ok = await self.ensure_extended_thinking_enabled()
-            if not et_ok:
-                logger.error("Failed to enable Extended Thinking - aborting")
+            # Configure model + extended thinking
+            target_model = self.agent_config.get("model", "opus")
+            # Map config keys like "opus_4_6" to keyword "opus"
+            target_keyword = self.MODEL_KEYWORDS.get(target_model, target_model)
+            enable_et = self.agent_config.get("enable_extended_thinking", True)
+            if not await self.ensure_model_config(
+                model=target_keyword, extended_thinking=enable_et
+            ):
+                logger.error("Failed to configure model - aborting")
                 return False
 
             # Set Web Search per config (default: disabled)
@@ -179,169 +182,358 @@ class ClaudeWebAgent(WebAgent):
             return False
 
     # Maps config model names to keyword used for substring matching in the UI.
-    # Claude.ai may display models as "Opus 4.6", "opus4.6", "Claude Opus",
-    # etc. — we match case-insensitively on this keyword.
     MODEL_KEYWORDS = {
         "opus_4_6": "opus",
+        "opus": "opus",
         "sonnet_4_6": "sonnet",
+        "sonnet": "sonnet",
         "haiku_4_5": "haiku",
+        "haiku": "haiku",
     }
 
-    async def ensure_model_selected(self) -> bool:
-        """
-        Select a specific Claude model via the model selector dropdown.
+    # Model button: exact testid, with text-based fallbacks for the case
+    # where Anthropic renames/drops the testid. :has-text is case-insensitive.
+    MODEL_BUTTON_SELECTORS = (
+        'button[data-testid="model-selector-dropdown"]',
+        'button[aria-haspopup="menu"]:has-text("Opus")',
+        'button[aria-haspopup="menu"]:has-text("Sonnet")',
+        'button[aria-haspopup="menu"]:has-text("Haiku")',
+        'button[aria-haspopup="menu"]:has-text("Adaptive")',
+    )
 
-        Reads ``claude_web.model`` from config. If not set (null/None),
-        skips selection and uses whatever model is currently active.
+    # Adaptive thinking (formerly Extended thinking / Think longer).
+    # Structural fallback lives in _find_extended_thinking_item.
+    ET_MENUITEM_SELECTORS = (
+        '[role="menuitem"]:has-text("Adaptive thinking")',
+        '[role="menuitemradio"]:has-text("Adaptive thinking")',
+        '[role="menuitem"]:has-text("Extended thinking")',
+        '[role="menuitemradio"]:has-text("Extended thinking")',
+        '[role="menuitem"]:has-text("Think longer")',
+        '[role="menuitemradio"]:has-text("Think longer")',
+    )
 
-        Supported values: ``opus_4_6``, ``sonnet_4_6``, ``haiku_4_5``.
+    # Interactive toggle inside the menuitem — click targets. Ordered
+    # specific-to-general so we click the real control, not a wrapper div.
+    ET_SWITCH_SELECTORS = (
+        'input[role="switch"]',
+        'input[type="checkbox"]',
+        '[role="switch"]',
+    )
 
-        Matching is case-insensitive substring: "opus" matches "Opus 4.6",
-        "Claude Opus", "opus4.6", etc.
+    async def _get_model_button(self):
+        for sel in self.MODEL_BUTTON_SELECTORS:
+            try:
+                btn = await self.page.query_selector(sel)
+                if btn and await btn.is_visible():
+                    return btn
+            except Exception:
+                continue
+        return None
 
-        Returns:
-            True if the desired model is selected (or no model was specified).
-        """
-        target_model = self.agent_config.get("model")
-        if not target_model:
-            logger.info("No model specified in config — using current default")
-            return True
-
-        keyword = self.MODEL_KEYWORDS.get(target_model)
-        if not keyword:
-            logger.warning(
-                "Unknown model '%s'. Valid options: %s. Using current default.",
-                target_model,
-                ", ".join(self.MODEL_KEYWORDS.keys()),
+    async def _open_model_dropdown(self) -> bool:
+        """Open the model selector dropdown if not already open. Retries once."""
+        btn = await self._get_model_button()
+        if not btn:
+            logger.warning("Model selector dropdown button not found")
+            return False
+        for attempt in (1, 2):
+            if (await btn.get_attribute("aria-expanded")) == "true":
+                return True
+            try:
+                await btn.click()
+            except Exception:
+                try:
+                    await btn.click(force=True)
+                except Exception as e:
+                    logger.warning(f"Dropdown click attempt {attempt} failed: {e}")
+                    continue
+            await asyncio.sleep(0.8)
+            menu = await self.page.query_selector(
+                '[role="menu"]:visible, [role="listbox"]:visible'
             )
-            return True
+            if menu or (await btn.get_attribute("aria-expanded")) == "true":
+                return True
+        return False
 
+    async def _close_model_dropdown(self) -> None:
         try:
-            logger.info("Selecting model: %s (keyword: %s)", target_model, keyword)
+            btn = await self._get_model_button()
+            if btn and (await btn.get_attribute("aria-expanded")) == "true":
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+        except Exception:
+            pass
 
-            model_btn = await self.page.query_selector(
-                'button[data-testid="model-selector-dropdown"]'
+    async def _find_extended_thinking_item(self):
+        for sel in self.ET_MENUITEM_SELECTORS:
+            try:
+                item = await self.page.query_selector(sel)
+                if item and await item.is_visible():
+                    return item
+            except Exception:
+                continue
+        # Last-resort structural search: a menuitem whose text mentions
+        # "think" and which contains some form of toggle control.
+        try:
+            items = await self.page.query_selector_all(
+                '[role="menuitem"], [role="menuitemradio"]'
             )
-            if not model_btn or not await model_btn.is_visible():
-                logger.warning(
-                    "Model selector dropdown not found — skipping model selection"
-                )
+            for item in items:
+                try:
+                    if not await item.is_visible():
+                        continue
+                    text = ((await item.text_content()) or "").lower()
+                    if "think" not in text:
+                        continue
+                    has_toggle = await item.query_selector(
+                        'input, [role="switch"], [aria-checked], [data-state]'
+                    )
+                    if has_toggle:
+                        return item
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    async def _read_extended_thinking_switch(self) -> Optional[bool]:
+        """Read the Extended thinking switch state. Dropdown must be open.
+
+        Tries ``is_checked()``, then ``aria-checked``, then ``data-state``
+        (Radix convention). Returns True/False, or None if no switch found.
+        """
+        item = await self._find_extended_thinking_item()
+        if not item:
+            return None
+        for sel in self.ET_SWITCH_SELECTORS:
+            try:
+                el = await item.query_selector(sel)
+            except Exception:
+                continue
+            if not el:
+                continue
+            try:
+                return await el.is_checked()
+            except Exception:
+                pass
+            aria = await el.get_attribute("aria-checked")
+            if aria in ("true", "false"):
+                return aria == "true"
+            state = await el.get_attribute("data-state")
+            if state in ("checked", "unchecked"):
+                return state == "checked"
+        return None
+
+    async def _watch_extended_thinking(
+        self, stop_event: asyncio.Event, interval: int = 20
+    ) -> None:
+        """Background watcher — re-enables Extended thinking if claude.ai
+        flips it off mid-generation. Polls until ``stop_event`` fires.
+        """
+        while not stop_event.is_set():
+            try:
+                await self.ensure_extended_thinking(enabled=True)
+            except Exception as e:
+                logger.debug(f"ET watcher iteration error: {e}")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+
+    async def _log_dropdown_dom(self) -> None:
+        """Dump a compact summary of dropdown contents for debugging selector drift."""
+        try:
+            items = await self.page.query_selector_all(
+                '[role="menuitem"], [role="menuitemradio"]'
+            )
+            summaries = []
+            for it in items[:12]:
+                try:
+                    if not await it.is_visible():
+                        continue
+                    text = ((await it.text_content()) or "").strip()[:60]
+                    has_switch = bool(
+                        await it.query_selector(
+                            'input, [role="switch"], [aria-checked]'
+                        )
+                    )
+                    summaries.append(f"'{text}'{'[switch]' if has_switch else ''}")
+                except Exception:
+                    continue
+            logger.warning(f"Dropdown menuitems seen: {summaries}")
+        except Exception:
+            pass
+
+    async def ensure_extended_thinking(self, enabled: bool = True) -> bool:
+        """Ensure Extended thinking is ``enabled`` by reading the dropdown switch.
+
+        Opens the model dropdown, reads the switch state, clicks to toggle
+        if needed, then closes. Safe to call between prompts — the dropdown
+        doesn't touch the composer.
+
+        Returns True when the desired state is reached.
+        """
+        try:
+            if not await self._open_model_dropdown():
                 return False
 
-            # Check if already on the target model (case-insensitive substring)
-            btn_text = (await model_btn.text_content()) or ""
-            if keyword in btn_text.lower():
-                logger.info(
-                    "Model '%s' is already selected (button: '%s')",
-                    keyword,
-                    btn_text.strip(),
-                )
+            current = await self._read_extended_thinking_switch()
+            if current is None:
+                logger.warning("Extended thinking switch not found in dropdown")
+                await self._log_dropdown_dom()
+                await self._close_model_dropdown()
+                return False
+
+            if current == enabled:
+                logger.info(f"Extended thinking already {'on' if enabled else 'off'}")
+                await self._close_model_dropdown()
                 return True
 
-            # Open dropdown
-            await model_btn.click()
-            await asyncio.sleep(1)
-
-            # Scan all menu items for one whose text contains our keyword
-            menu_items = await self.page.query_selector_all('div[role="menuitem"]')
-            target_item = None
-            for item in menu_items:
-                item_text = (await item.text_content()) or ""
-                if keyword in item_text.lower():
-                    target_item = item
-                    break
-
-            if not target_item or not await target_item.is_visible():
-                logger.warning(
-                    "Model '%s' not found in dropdown — using current default",
-                    keyword,
-                )
-                await self.page.keyboard.press("Escape")
+            item = await self._find_extended_thinking_item()
+            if not item:
+                await self._close_model_dropdown()
                 return False
 
-            await target_item.click()
+            # Prefer clicking a real switch/checkbox; fall back to the menuitem.
+            clicked = False
+            for sel in self.ET_SWITCH_SELECTORS:
+                try:
+                    el = await item.query_selector(sel)
+                    if el and await el.is_visible():
+                        try:
+                            await el.click(force=True)
+                        except Exception:
+                            await el.click()
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+            if not clicked:
+                try:
+                    await item.click()
+                    clicked = True
+                except Exception as e:
+                    logger.error(f"Failed to click ET menuitem: {e}")
             await asyncio.sleep(0.5)
-            logger.info("Model '%s' selected successfully", keyword)
 
-            # Close dropdown if still open
-            try:
-                await self.page.keyboard.press("Escape")
-            except Exception:
-                pass
+            final = await self._read_extended_thinking_switch()
+            await self._close_model_dropdown()
 
-            return True
-
+            if final == enabled:
+                logger.info(f"Extended thinking {'enabled' if enabled else 'disabled'}")
+                return True
+            logger.error(
+                f"Extended thinking toggle failed: wanted={enabled}, got={final}"
+            )
+            return False
         except Exception as e:
-            logger.error("Error selecting model: %s", e)
-            try:
-                await self.page.keyboard.press("Escape")
-            except Exception:
-                pass
+            logger.error(f"Error toggling extended thinking: {e}")
+            await self._close_model_dropdown()
             return False
 
-    async def ensure_extended_thinking_enabled(self) -> bool:
-        """
-        Ensure Extended Thinking is enabled.
-        Uses the model selector dropdown (data-testid="model-selector-dropdown").
-        If button already shows "Extended", it's already on.
+    async def ensure_model_config(
+        self, model: str = "opus", extended_thinking: bool = True
+    ) -> bool:
+        """Configure model and extended thinking via the model selector dropdown.
+
+        State source of truth is the switch element inside the dropdown menu,
+        not the dropdown button label (Claude.ai no longer includes
+        "Extended" in the button text).
+
+        Args:
+            model: Target model keyword — ``"opus"``, ``"sonnet"``, or
+                   ``"haiku"``. Matched case-insensitively.
+            extended_thinking: Whether extended thinking should be on.
 
         Returns:
-            True if Extended Thinking is enabled (or was already enabled)
+            True if the desired state was reached.
         """
         try:
-            logger.info("Checking Extended Thinking status...")
-
-            # Step 1: Find the model selector dropdown button
-            model_btn = await self.page.query_selector(
-                'button[data-testid="model-selector-dropdown"]'
+            model_lower = model.lower()
+            logger.info(
+                f"Configuring model={model_lower}, "
+                f"extended_thinking={extended_thinking}..."
             )
-            if not model_btn or not await model_btn.is_visible():
-                logger.warning("Model selector dropdown button not found")
+
+            model_btn = await self._get_model_button()
+            if not model_btn:
                 return False
 
-            # Quick check: if button already shows "Extended", it's on
-            btn_text = await model_btn.text_content()
-            if btn_text and "Extended" in btn_text:
-                logger.info("Extended Thinking is already enabled")
-                return True
+            btn_text = (await model_btn.text_content() or "").lower()
+            current_model_ok = model_lower in btn_text
 
-            # Step 2: Open dropdown and find ET switch
-            await model_btn.click()
-            logger.info("Opened model selector dropdown")
-            await asyncio.sleep(1)
+            if not current_model_ok:
+                if not await self._open_model_dropdown():
+                    return False
 
-            et_item = await self.page.query_selector(
-                'div[role="menuitem"]:has-text("Extended thinking")'
+                items = await self.page.query_selector_all(
+                    'div[role="menuitemradio"], div[role="menuitem"], div[role="option"]'
+                )
+                clicked_model = False
+                for item in items:
+                    try:
+                        text = (await item.text_content() or "").lower()
+                        if model_lower in text and await item.is_visible():
+                            await item.click()
+                            logger.info(f"Selected model: {text.strip()}")
+                            clicked_model = True
+                            await asyncio.sleep(1)
+                            break
+                    except Exception:
+                        continue
+
+                if not clicked_model:
+                    more_item = await self.page.query_selector(
+                        '[role="menuitem"]:has-text("More models")'
+                    )
+                    if more_item and await more_item.is_visible():
+                        await more_item.hover()
+                        await asyncio.sleep(0.5)
+                        sub_items = await self.page.query_selector_all(
+                            'div[role="menuitemradio"], div[role="menuitem"]'
+                        )
+                        for item in sub_items:
+                            try:
+                                text = (await item.text_content() or "").lower()
+                                if model_lower in text and await item.is_visible():
+                                    await item.click()
+                                    logger.info(
+                                        f"Selected model from submenu: "
+                                        f"{text.strip()}"
+                                    )
+                                    clicked_model = True
+                                    await asyncio.sleep(1)
+                                    break
+                            except Exception:
+                                continue
+
+                if not clicked_model:
+                    logger.warning(f"Could not find model '{model_lower}' in dropdown")
+                    await self._close_model_dropdown()
+                    return False
+
+                model_btn = await self._get_model_button()
+                btn_text = (
+                    (await model_btn.text_content() or "").lower() if model_btn else ""
+                )
+                current_model_ok = model_lower in btn_text
+
+            if not current_model_ok:
+                logger.error(f"Model not set after selection attempt: got {btn_text!r}")
+                return False
+
+            if not await self.ensure_extended_thinking(enabled=extended_thinking):
+                return False
+
+            logger.info(
+                f"Model configured: model={model_lower}, "
+                f"extended_thinking={extended_thinking}"
             )
-            if not et_item or not await et_item.is_visible():
-                logger.warning("Extended Thinking menuitem not found in dropdown")
-                await self.page.keyboard.press("Escape")
-                return False
-
-            switch = await et_item.query_selector('input[role="switch"]')
-            if not switch:
-                logger.warning("Extended Thinking switch not found")
-                await self.page.keyboard.press("Escape")
-                return False
-
-            is_checked = await switch.is_checked()
-            if is_checked:
-                logger.info("Extended Thinking is already enabled")
-                await self.page.keyboard.press("Escape")
-                return True
-
-            await switch.click(force=True)
-            await asyncio.sleep(0.5)
-            logger.info("Extended Thinking enabled successfully")
-            await self.page.keyboard.press("Escape")
             return True
 
         except Exception as e:
-            logger.error(f"Error enabling Extended Thinking: {e}")
-            try:
-                await self.page.keyboard.press("Escape")
-            except Exception:
-                pass
+            logger.error(f"Error configuring model: {e}")
+            await self._close_model_dropdown()
             return False
 
     async def ensure_web_search_set(self, enabled: bool = False) -> bool:
@@ -360,7 +552,9 @@ class ClaudeWebAgent(WebAgent):
 
             # First, open the toggle menu (+ button)
             try:
-                menu_btn = self.page.get_by_role("button", name="Toggle menu")
+                menu_btn = self.page.get_by_role(
+                    "button", name="Add files, connectors, and more"
+                )
                 if await menu_btn.is_visible(timeout=3000):
                     await menu_btn.click()
                     await asyncio.sleep(0.5)
@@ -433,11 +627,16 @@ class ClaudeWebAgent(WebAgent):
             return False
 
     async def ensure_features_enabled(self) -> bool:
-        """Enable extended thinking and set web search per config."""
-        et_ok = await self.ensure_extended_thinking_enabled()
+        """Configure model, extended thinking, and web search per config."""
+        target_model = self.agent_config.get("model", "opus")
+        target_keyword = self.MODEL_KEYWORDS.get(target_model, target_model)
+        enable_et = self.agent_config.get("enable_extended_thinking", True)
+        model_ok = await self.ensure_model_config(
+            model=target_keyword, extended_thinking=enable_et
+        )
         enable_ws = self.agent_config.get("enable_web_search", False)
         ws_ok = await self.ensure_web_search_set(enabled=enable_ws)
-        return et_ok and ws_ok
+        return model_ok and ws_ok
 
     async def get_state(self) -> WebAgentState:
         """
@@ -556,6 +755,14 @@ class ClaudeWebAgent(WebAgent):
         """
         Upload files to the current conversation.
 
+        The Claude.ai UI has a two-step flow:
+        1. Click the "+" button (aria-label "Add files, connectors, and more")
+           which opens a submenu.
+        2. Click "Add files or photos" in the submenu, which triggers the
+           browser file chooser.
+
+        Falls back to a hidden ``input[type="file"]`` if available.
+
         Args:
             file_paths: List of file paths to upload
 
@@ -568,26 +775,54 @@ class ClaudeWebAgent(WebAgent):
         try:
             logger.info(f"Uploading {len(file_paths)} file(s)...")
 
-            # Find file input or attach button
+            # Strategy 1: hidden file input (fastest, no UI clicks needed)
             file_input = await self.page.query_selector(self.SELECTORS["file_input"])
-
             if file_input:
-                # Direct file input available
                 await file_input.set_input_files(file_paths)
-            else:
-                # Need to click attach button first
-                attach_btn = await self.page.query_selector(
-                    self.SELECTORS["attach_button"]
-                )
-                if not attach_btn:
-                    logger.error("Could not find file upload mechanism")
-                    return False
+                await asyncio.sleep(2 + len(file_paths))
+                logger.info(f"Uploaded {len(file_paths)} file(s) via file input")
+                return True
 
-                # Use file chooser
-                async with self.page.expect_file_chooser() as fc:
-                    await attach_btn.click()
+            # Strategy 2: click "+" button -> "Add files or photos" submenu
+            attach_btn = await self.page.query_selector(self.SELECTORS["attach_button"])
+            if not attach_btn or not await attach_btn.is_visible():
+                logger.error("Could not find attach button (+)")
+                return False
+
+            # Click "+" to open the submenu
+            await attach_btn.click()
+            await asyncio.sleep(0.5)
+
+            # Find "Add files or photos" in the submenu and click it
+            # while expecting the file chooser to open
+            add_files_item = self.page.get_by_text("Add files or photos")
+            try:
+                async with self.page.expect_file_chooser(timeout=5000) as fc:
+                    await add_files_item.click(timeout=3000)
                 chooser = await fc.value
                 await chooser.set_files(file_paths)
+            except Exception as e:
+                logger.debug(f"Submenu approach failed: {e}")
+                # Fallback: try clicking any visible "Add files" text
+                try:
+                    await self.page.keyboard.press("Escape")
+                    await asyncio.sleep(0.3)
+                    await attach_btn.click()
+                    await asyncio.sleep(0.5)
+                    async with self.page.expect_file_chooser(timeout=5000) as fc:
+                        menu_item = await self.page.query_selector(
+                            'div[role="menuitem"]:has-text("file")'
+                        )
+                        if menu_item:
+                            await menu_item.click()
+                        else:
+                            await attach_btn.click()
+                    chooser = await fc.value
+                    await chooser.set_files(file_paths)
+                except Exception as e2:
+                    logger.error(f"File upload failed: {e2}")
+                    await self.page.keyboard.press("Escape")
+                    return False
 
             # Wait for uploads to complete
             await asyncio.sleep(2 + len(file_paths))
@@ -820,6 +1055,8 @@ class ClaudeWebAgent(WebAgent):
         # Process each prompt
         logger.info(f"Processing {len(prompts)} prompt(s)...")
 
+        enable_et = self.agent_config.get("enable_extended_thinking", True)
+
         for i, prompt in enumerate(prompts, 1):
             # Check for shutdown
             if self.shutdown_event and self.shutdown_event.is_set():
@@ -835,6 +1072,13 @@ class ClaudeWebAgent(WebAgent):
             logger.info(f"PROMPT {i}/{len(prompts)}")
             logger.info(f"{'='*60}")
 
+            # Re-assert Extended thinking before every submission — claude.ai
+            # resets the toggle on each turn, so we must re-enable each time.
+            if not await self.ensure_extended_thinking(enabled=enable_et):
+                logger.warning(
+                    f"Could not verify Extended thinking state before prompt #{i}"
+                )
+
             # Start prompt logging
             if self.completion_logger:
                 self.completion_logger.start_prompt(prompt)
@@ -846,8 +1090,23 @@ class ClaudeWebAgent(WebAgent):
                     self.completion_logger.end_prompt(success=False)
                 return False
 
-            # Wait for response
-            response = await self.wait_for_response(i)
+            # Claude.ai flips the Extended thinking switch off mid-stream;
+            # run a watcher during wait_for_response that re-enables it.
+            et_stop = asyncio.Event()
+            et_task = (
+                asyncio.create_task(self._watch_extended_thinking(et_stop))
+                if enable_et
+                else None
+            )
+            try:
+                response = await self.wait_for_response(i)
+            finally:
+                et_stop.set()
+                if et_task:
+                    try:
+                        await asyncio.wait_for(et_task, timeout=5)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        et_task.cancel()
             if response is None:
                 logger.error(f"Failed to get response for prompt #{i}")
                 if self.completion_logger:

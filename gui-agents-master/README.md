@@ -157,7 +157,7 @@ tasks:
     solution_name: "My_Analysis_Solution"
 ```
 
-> **Note:** The legacy field name `files_to_upload` still works as a fallback for `upload_files`.
+> **Note:** `files_to_upload` is accepted as an alias for `upload_files`.
 
 ### Template Config
 

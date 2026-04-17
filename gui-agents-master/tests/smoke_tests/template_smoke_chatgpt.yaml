@@ -1,0 +1,50 @@
+# Smoke Test: ChatGPT web agent (Agent mode)
+# Sends trivial prompts to verify the full pipeline.
+# Expected: SUCCESS on first attempt, Excel workbook downloaded.
+
+template:
+  agent_type: "chatgpt_web"
+
+  prompts:
+    - "Create a new Excel workbook. Add a sheet called 'test_output' and write the word 'test' in cell A1. Add a sheet called 'model_smoke' and write 'smoke test passed' in cell A1. Add a sheet called 'answers_smoke' and write 'done' in cell A1. Then download the workbook as an .xlsx file."
+
+  download_artifacts: true
+  artifact_download_dir: "./artifacts"
+  upload_to_cloud: false
+
+  chatgpt_web:
+    project_id: "your-project-id-here"
+    project_slug: "your-project-slug"
+
+    agent_mode: true
+    model: null
+
+    max_sec_per_task: 600
+
+    browser:
+      type: "chrome"
+      headless: false
+      timeout: 30000
+
+    check_interval_seconds: 3
+    max_wait_per_prompt_seconds: 300
+
+    retry:
+      max_agent_attempts: 1
+      max_total_attempts: 2
+      max_sec_per_attempt: 600
+      sleep_between_retries: 5
+
+    output:
+      folder_prefix: "smoke_chatgptGUI"
+
+    session:
+      agent_name: "chatgpt_web"
+
+    logging:
+      level: "DEBUG"
+      save_to_file: true
+      log_directory: "chatgpt_web_logs"
+
+    runtime:
+      no_hold: true

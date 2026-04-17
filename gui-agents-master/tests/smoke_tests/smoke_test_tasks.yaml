@@ -1,0 +1,6 @@
+# Smoke Test Tasks — no file uploads, pure prompt test
+task_source: "smoke_test"
+
+tasks:
+  - task_name: "Smoke_Test"
+    solution_name: "Smoke_Test_Solution"

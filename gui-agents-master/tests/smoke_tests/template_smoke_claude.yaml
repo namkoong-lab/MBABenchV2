@@ -1,0 +1,47 @@
+# Smoke Test: Claude.ai web agent
+# Sends trivial prompts to verify the full pipeline.
+# Expected: SUCCESS on first attempt, Excel workbook downloaded.
+
+template:
+  agent_type: "claude_web"
+  prompt_version: 2
+
+  prompts:
+    - "Create a new Excel workbook. Add a sheet called 'test_output' and write the word 'test' in cell A1."
+    - "Add a sheet called 'model_smoke' and write 'smoke test passed' in cell A1."
+    - "Add a sheet called 'answers_smoke' and write 'done' in cell A1. Then download the workbook as an .xlsx file."
+
+  upload_to_cloud: false
+  db_enabled: false
+
+  claude_web:
+    project_id: "your-project-id-here"
+    model: null
+
+    max_sec_per_task: 600
+
+    retry:
+      max_agent_attempts: 1
+      max_total_attempts: 2
+      max_sec_per_task: 600
+      max_sec_per_attempt: 600
+
+    output:
+      base_dir: "."
+      folder_prefix: "smoke_claudeGUI"
+
+    browser:
+      type: "chrome"
+      headless: false
+      timeout: 30000
+
+    check_interval_seconds: 2
+    max_wait_per_prompt_seconds: 120
+
+    logging:
+      level: "DEBUG"
+      save_to_file: true
+      log_directory: "claude_web_logs"
+
+    runtime:
+      no_hold: true
