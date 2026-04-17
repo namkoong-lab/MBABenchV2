@@ -20,10 +20,6 @@ template:
     - "Build an Excel solution on a new sheet. Use formulas (no hardcoded values) and organize the workbook clearly."
     - "Create a summary sheet with your final answers and conclusions. Then download the workbook."
 
-  # Upload finished artifacts + logs to S3/DB
-  upload_to_cloud: false
-  db_enabled: false
-
   claude_web:
     project_id: "your-project-id-here"
 

@@ -17,13 +17,9 @@ template:
   prompts:
     - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."
 
-  # Enable artifact download
+  # Where the downloaded .xlsx artifact is saved (relative to CWD).
   download_artifacts: true
   artifact_download_dir: "./artifacts"
-
-  # Enable S3 and database upload
-  upload_to_cloud: false
-  db_enabled: false
 
   # ChatGPT Web Agent specific settings
   chatgpt_web:
@@ -42,7 +38,7 @@ template:
     max_sec_per_task: 5400  # 90 min timeout
 
     browser:
-      type: "chrome_canary"
+      type: "chrome"
       headless: false
       timeout: 30000
 

@@ -23,7 +23,7 @@ This system follows a composable six-layer pipeline. Green components are user-c
 
 | Layer | Role | Key files |
 |-------|------|-----------|
-| **Input** | Task definitions, prompt templates, agent parameters | `tasks_configs/templates/*.yaml`, `tasks_configs/examples/*.yaml` |
+| **Input** | Task definitions, prompt templates, agent parameters | `tasks_configs/template_*.yaml`, `tasks_configs/examples/*.yaml` |
 | **Orchestration** | Batch retry logic, subprocess isolation | `claude_web_batch_runner.py` |
 | **Engine** | Single-task pipeline (setup → navigate → AI → download) | `claude_web_agent/claude_web_engine.py` |
 | **Navigation** | Browser navigates to claude.ai or chatgpt.com | Engine config |
@@ -115,19 +115,40 @@ In the Chrome window that opens:
 
 Leave the browser open. The automation connects to it.
 
-### 5. Set up ChatGPT project (ChatGPT runs only)
+### 5. Configure the project ID (per provider)
 
-The automation navigates to a specific ChatGPT project page to start each task. You need to create a project in ChatGPT first:
+Both providers identify a "project" or "workspace" you want each task to start
+in. You set this once per template config — the automation uses the project to
+keep all task conversations together and (for ChatGPT) to inherit project-level
+settings like the default model.
 
-1. Go to https://chatgpt.com
-2. Click **"Projects"** in the left sidebar
-3. Create a new project (e.g. "excel-tasks")
-4. Note the project URL -- it looks like: `https://chatgpt.com/g/g-p-{project_id}-{slug}/project`
-5. Copy the `project_id` (the hex string after `g-p-`) and `slug` into your template config
+**For Claude.ai:**
 
-**For Extended Pro mode**: In the project settings, set the default model to "Extended Pro" (or "Pro"). This way every new chat in the project will use Extended Pro without needing a toggle.
+1. Go to https://claude.ai/projects and either pick an existing project or
+   create a new one (any name works).
+2. Open the project. The URL looks like:
+   `https://claude.ai/project/{project_id}` — copy the `{project_id}`.
+3. Paste it into `tasks_configs/template_claude_web.yaml` under
+   `claude_web.project_id`. Leave `null` if you want the automation to use
+   your default Claude.ai chat instead.
 
-**For Agent mode**: The automation enables agent mode automatically via the `+` menu before sending the first prompt. No project-level setting needed.
+**For ChatGPT:**
+
+1. Go to https://chatgpt.com and click **"Projects"** in the left sidebar.
+2. Create a new project (e.g. `excel-tasks`).
+3. Open the project. The URL looks like:
+   `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` — copy both the
+   hex `{project_id}` (after `g-p-`) and the URL `{slug}`.
+4. Paste them into `tasks_configs/template_chatgpt_web.yaml` under
+   `chatgpt_web.project_id` and `chatgpt_web.project_slug`.
+
+**ChatGPT — Extended Pro mode:** in the project settings, set the default
+model to "Extended Pro" (or "Pro"). Every new chat in the project will then
+use Extended Pro without any further toggle.
+
+**ChatGPT — Agent mode:** the automation enables agent mode automatically
+via the `+` menu before sending the first prompt. No project-level setting
+needed.
 
 ## Task Configuration
 

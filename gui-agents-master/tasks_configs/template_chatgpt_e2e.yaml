@@ -15,10 +15,9 @@ template:
     - "Build an Excel solution on a new sheet. Use formulas (no hardcoded values) and organize the workbook clearly."
     - "Create a summary sheet with your final answers and conclusions. Then download the workbook."
 
-  # Download artifacts locally but skip cloud upload
+  # Where the downloaded .xlsx artifact is saved (relative to CWD).
   download_artifacts: true
   artifact_download_dir: "./artifacts"
-  upload_to_cloud: false
 
   chatgpt_web:
     project_id: "your-project-id-here"

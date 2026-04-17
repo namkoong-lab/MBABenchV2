@@ -102,9 +102,9 @@ def rename_solution_file(
     """
     Rename a downloaded solution file.
 
-    If *solution_name* is provided (v2 config):
+    If *solution_name* is provided:
         {YYYYMMDD}_{HHMMSS}_{solution_name}_{agent}.xlsx
-    Otherwise (legacy):
+    Otherwise:
         {YYYYMMDD}_{HHMMSS}_{task_name}_Solution_{agent}_Model.xlsx
 
     Returns the new file path.
@@ -344,7 +344,7 @@ async def run_automation(config: dict) -> bool:
     task_source = config.get("task_source", "claude_web")
     solution_name = config.get("solution_name")
 
-    # File upload: prefer "upload_files" (v2), fall back to "files_to_upload" (v1)
+    # File upload: prefer "upload_files"; "files_to_upload" is accepted as an alias
     files_to_upload = config.get("upload_files", config.get("files_to_upload", []))
 
     # Resolve relative paths using local_files_base if provided

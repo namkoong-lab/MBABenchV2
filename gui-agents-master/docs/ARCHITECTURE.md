@@ -15,7 +15,7 @@ Suppose you want an AI agent to analyze a dataset and produce a summary spreadsh
 The prompt template defines what instructions the AI receives, in order. You can write anything here — the framework just sends the strings sequentially and waits for each response.
 
 ```yaml
-# tasks_configs/templates/claude.yaml
+# tasks_configs/template_claude_web.yaml
 template:
   agent_type: "claude_web"     # See agent_type table below
 
@@ -88,7 +88,7 @@ tasks:
 # GUI branch
 python claude_web_batch_runner.py \
   --tasks tasks_configs/examples/my_tasks.yaml \
-  --template tasks_configs/templates/claude.yaml
+  --template tasks_configs/template_claude_web.yaml
 
 # Excel add-in branch
 python batch_automation_runner.py \

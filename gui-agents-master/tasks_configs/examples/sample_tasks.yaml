@@ -43,14 +43,15 @@ tasks:
     # skip: true  # Uncomment to skip this task
 
   # ── Example 3: Absolute paths ───────────────────────────────
+  # Absolute paths are fine too. Replace with a real file on your machine.
   - task_name: "Quick_Test"
     upload_files:
-      - "/Users/alex/data/test_brief.pdf"
+      - "/absolute/path/to/test_brief.pdf"
     solution_name: "Quick_Test_Solution"
 
-  # ── Example 4: Legacy format (still supported) ──────────────
-  # The old field name "files_to_upload" still works as a fallback.
-  - task_name: "Legacy_Example"
+  # ── Example 4: Alternative field name ───────────────────────
+  # `files_to_upload` is accepted as an alias for `upload_files`.
+  - task_name: "Alias_Example"
     files_to_upload:
-      - "/path/to/task_description.pdf"
-      - "/path/to/starting_data.xlsx"
+      - "tasks/Alias_Example/task_description.pdf"
+      - "tasks/Alias_Example/starting_data.xlsx"
