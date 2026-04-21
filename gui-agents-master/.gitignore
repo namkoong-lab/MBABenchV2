@@ -5,6 +5,7 @@
 *_auth_state.json
 **/credentials*
 **/secrets*
+infra/configs/configs.yaml
 
 # Browser session data
 browser_session_*/

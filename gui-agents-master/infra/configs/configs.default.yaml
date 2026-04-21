@@ -1,0 +1,368 @@
+# ============================================================================
+# gui-agents infra — default config schema.
+#
+# This file defines EVERY configurable knob and its default.
+# To override anything, create a sibling `configs.yaml` (gitignored) and set
+# only the keys you want to change. Per-task YAMLs in `task_configs/` can also
+# deep-merge overrides scoped to a single task.
+#
+# Merge order (later wins):
+#   1. configs.default.yaml       (this file)
+#   2. configs.yaml               (user global overrides)
+#   3. task_configs/<task>.yaml   (task-level overrides, per task only)
+#
+# Leaf form: each concrete setting is a dict with two keys:
+#     value:    the default (or "" / [] / null if none)
+#     required: true  -> must be truthy after merge, else ConfigError
+#               false -> may be empty; callers decide when it's needed
+#
+# Override form: in configs.yaml and task YAMLs you may use EITHER the full
+# `{value: ...}` form or a raw scalar/list:
+#     source:
+#       kind: "postgres_s3"           # raw — shorthand
+#       kind: {value: "postgres_s3"}  # full form — same effect
+# ============================================================================
+
+
+# ---- Which provider / agent is running -------------------------------------
+provider:
+  kind:
+    value: "claude"          # "claude" | "chatgpt"
+    required: true
+
+
+# ---- Agent identity (written to DB + used in S3 prefix) --------------------
+agent:
+  model_name:
+    value: "claude_web"      # goes into task_attempts.agent_model_name
+    required: true
+  agent_folder:
+    value: "claude_web"      # path segment in S3 prefix
+    required: true
+  agent_model_type:
+    value: "gui"             # OPEN: confirm convention used elsewhere in DB
+    required: false
+  prompt_version:
+    value: 8                 # matches DEFAULT_MODELS_PROMPT_VERSION["claude_web"]
+    required: false
+
+
+# ---- Where task files land on disk -----------------------------------------
+paths:
+  scratch_dir:
+    value: "scratch/gui-agents"   # downloaded starting_files land here
+    required: true
+  output_dir:
+    value: "outputs"              # local sink writes solutions here
+    required: false
+  venv_path:
+    value: ""                     # override if the runner shells out
+    required: false
+
+
+# ---- Task source (where tasks come from) -----------------------------------
+source:
+  kind:
+    value: "yaml"            # "yaml" | "postgres_s3"
+    required: true
+
+  # Used when kind == "yaml". Either a single file with a `tasks:` list, or a
+  # folder whose *.yaml files are each loaded (one task per file is typical).
+  yaml_path:
+    value: "infra/configs/task_configs"
+    required: false
+
+  # Used when kind == "postgres_s3"
+  filters:
+    task_ids:
+      value: []              # [] = no filter
+      required: false
+    task_sources:
+      value: []              # e.g. ["modeloff"]
+      required: false
+    skip_deprecated:
+      value: true
+      required: false
+    skip_already_attempted:
+      value: true             # skip tasks that already have a non-failed
+                              # attempt from this agent at this prompt_version
+      required: false
+
+
+# ---- Attempt sink (where results go) ---------------------------------------
+sink:
+  kind:
+    value: "local"           # "local" | "postgres_s3"
+    required: true
+
+  # Used when kind == "local"
+  output_dir:
+    value: "outputs"
+    required: false
+
+
+# ---- Database (Phase 1+) ---------------------------------------------------
+# Either set `url.value` directly in configs.yaml, or leave it empty and set
+# `url_env` to the name of an env var that holds the connection string
+# (existing convention: BIZBENCHJUDGE_KEYS_DATABASE_URL).
+database:
+  url:
+    value: ""
+    required: false
+  url_env:
+    value: "BIZBENCHJUDGE_KEYS_DATABASE_URL"
+    required: false
+
+
+# ---- AWS / S3 (Phase 2+) ---------------------------------------------------
+# Credentials follow the same direct-or-env pattern as `database.url`:
+#   * set `access_key_id.value` + `secret_access_key.value` in configs.yaml, OR
+#   * leave them empty and set the `_env` keys to env vars that hold them.
+# If both are empty, boto3's default credential chain is used (~/.aws/
+# credentials, IAM role, etc.).
+aws:
+  region:
+    value: "us-east-1"
+    required: false
+  access_key_id:
+    value: ""
+    required: false
+  access_key_id_env:
+    value: "AWS_ACCESS_KEY_ID"
+    required: false
+  secret_access_key:
+    value: ""
+    required: false
+  secret_access_key_env:
+    value: "AWS_SECRET_ACCESS_KEY"
+    required: false
+  session_token:
+    value: ""
+    required: false
+  session_token_env:
+    value: "AWS_SESSION_TOKEN"
+    required: false
+  s3_bucket:
+    value: "biz-bench"
+    required: false
+  s3_prefix:
+    value: "BizbenchV1/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
+    required: false
+
+
+# ---- Poll loop (Phase 4+) --------------------------------------------------
+poll:
+  interval_seconds:
+    value: 60
+    required: false
+  max_idle_seconds:
+    value: 3600              # runner exits after this long with no work
+    required: false
+
+
+# ============================================================================
+# Engine inputs (everything from here down is assembled into the dict passed
+# to the engine subprocess, once per task, by infra/run.py).
+#
+# `build_engine_config(cfg, spec)` does:
+#   1. Start with the full nested cfg dict (project-wide).
+#   2. Deep-merge per-task overrides on top (layer 3).
+#   3. Select the active provider block (claude_web / chatgpt_web) and
+#      assemble: {agent_type, prompts, prompt_version, local_files_base,
+#                 task_name, task_id, upload_files, solution_name,
+#                 <provider>_web: {...}}.
+#
+# Rule: no placeholder defaults. Every default here is either a real working
+# value or `null` where null has an unambiguous meaning in the agent code.
+# The runner's preflight will exit(2) before touching the browser if anything
+# ends up empty/placeholder for the active provider.
+# ============================================================================
+
+
+# ---- Shared (both providers) -----------------------------------------------
+# Prompts sent sequentially to the AI. Claude-friendly default; for ChatGPT
+# override with a single combined prompt in configs.yaml or per-task.
+prompts:
+  value:
+    - "Analyze the attached files. Summarize the key data and questions to answer."
+    # - "Build an Excel solution on a new sheet. Use formulas (no hardcoded values) and organize the workbook clearly."
+    # - "Create a summary sheet with your final answers and conclusions. Then download the workbook."
+  required: true
+
+prompt_version:
+  value: 8                     # engine config's prompt_version (top-level)
+  required: false
+
+# Empty = let the engine resolve paths from CWD. Set to the directory
+# your per-task upload_files are relative to.
+local_files_base:
+  value: ""
+  required: false
+
+
+# ---- Claude provider block (passed as engine_config["claude_web"]) ---------
+claude_web:
+  # null = use the default Claude.ai chat (no project scope). Paste a real
+  # project_id (from https://claude.ai/project/{id}) to pin runs to a project.
+  project_id:
+    value: null
+    required: false
+  # null crashes the agent at model-selector time — DO NOT leave null.
+  model:
+    value: "sonnet_4_6"        # opus_4_6 | sonnet_4_6 | haiku_4_5
+    required: false
+  max_sec_per_task:
+    value: 7200                # 2h
+    required: false
+  check_interval_seconds:
+    value: 2
+    required: false
+  max_wait_per_prompt_seconds:
+    value: 7200
+    required: false
+
+  retry:
+    max_agent_attempts:
+      value: 3
+      required: false
+    max_total_attempts:
+      value: 10
+      required: false
+    max_sec_per_task:
+      value: 7200
+      required: false
+    max_sec_per_attempt:
+      value: 7200
+      required: false
+    sleep_between_retries:
+      value: 5
+      required: false
+
+  output:
+    base_dir:
+      value: "."
+      required: false
+    folder_prefix:
+      value: "claudeGUI"
+      required: false
+
+  browser:
+    type:
+      value: "chrome"
+      required: false
+    headless:
+      value: false
+      required: false
+    timeout:
+      value: 30000
+      required: false
+    cdp_port:
+      value: 9222
+      required: false
+
+  logging:
+    level:
+      value: "INFO"
+      required: false
+    save_to_file:
+      value: true
+      required: false
+    log_directory:
+      value: "claude_web_logs"
+      required: false
+
+  runtime:
+    no_hold:
+      value: true
+      required: false
+
+
+# ---- ChatGPT provider block (passed as engine_config["chatgpt_web"]) -------
+chatgpt_web:
+  # REQUIRED for chatgpt provider — copy from
+  # https://chatgpt.com/g/g-p-{project_id}-{slug}/project. Preflight exits
+  # if these are null/empty when provider.kind == "chatgpt".
+  project_id:
+    value: null
+    required: false
+  project_slug:
+    value: null
+    required: false
+  # null is valid (uses the current session default).
+  model:
+    value: null                # instant | thinking | pro | null
+    required: false
+  agent_mode:
+    value: true
+    required: false
+  max_sec_per_task:
+    value: 5400                # 90 min
+    required: false
+  check_interval_seconds:
+    value: 3
+    required: false
+  max_wait_per_prompt_seconds:
+    value: 5400
+    required: false
+
+  # Where the downloaded .xlsx artifact is saved (relative to CWD).
+  download_artifacts:
+    value: true
+    required: false
+  artifact_download_dir:
+    value: "./artifacts"
+    required: false
+
+  retry:
+    max_agent_attempts:
+      value: 3
+      required: false
+    max_total_attempts:
+      value: 10
+      required: false
+    max_sec_per_attempt:
+      value: 5400
+      required: false
+    sleep_between_retries:
+      value: 5
+      required: false
+
+  output:
+    folder_prefix:
+      value: "chatgptGUI"
+      required: false
+
+  browser:
+    type:
+      value: "chrome"
+      required: false
+    headless:
+      value: false
+      required: false
+    timeout:
+      value: 30000
+      required: false
+    cdp_port:
+      value: 9222
+      required: false
+
+  session:
+    agent_name:
+      value: "chatgpt_web"
+      required: false
+
+  logging:
+    level:
+      value: "INFO"
+      required: false
+    save_to_file:
+      value: true
+      required: false
+    log_directory:
+      value: "chatgpt_web_logs"
+      required: false
+
+  runtime:
+    no_hold:
+      value: true
+      required: false

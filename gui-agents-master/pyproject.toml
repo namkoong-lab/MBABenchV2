@@ -18,6 +18,9 @@ dependencies = [
     # HTTP and web requests
     "httpx>=0.24.0",
     "requests>=2.31.0",
+    # Bizbench task_io backends (postgres_s3 source/sink)
+    "boto3>=1.34.0",
+    "psycopg2-binary>=2.9.0",
     # Development and testing
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
