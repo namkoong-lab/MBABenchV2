@@ -23,6 +23,7 @@ from typing import Any, Iterator
 from urllib.parse import urlparse
 
 import boto3
+import botocore.exceptions
 import psycopg2
 import psycopg2.extras
 from psycopg2 import sql
@@ -82,8 +83,9 @@ class PostgresS3TaskSource:
         self.task_ids = list(task_ids or [])
 
         self._conn: psycopg2.extensions.connection | None = None
-        # Any unset kwarg drops out so boto3 falls back to its default
-        # credential chain (~/.aws/credentials, IAM role, etc.).
+        # Any unset kwarg drops out — the Bizbench subclass enforces that
+        # creds are explicitly provided, so there is no silent fallback
+        # to boto3's default credential chain in the normal path.
         client_kwargs: dict[str, Any] = {}
         if aws_region:
             client_kwargs["region_name"] = aws_region
@@ -94,6 +96,36 @@ class PostgresS3TaskSource:
         if aws_session_token:
             client_kwargs["aws_session_token"] = aws_session_token
         self._s3 = boto3.client("s3", **client_kwargs)
+        self._sts = boto3.client("sts", **client_kwargs)
+
+        self._preflight_aws()
+
+    # --- preflight ---------------------------------------------------------
+
+    def _preflight_aws(self) -> None:
+        """Verify AWS creds work before any task download. Logs the caller
+        identity so operators can confirm which AWS account they're running
+        against. The source doesn't know which bucket a task will pull
+        from (task rows carry `s3://.../` URIs), so we can't HEAD-check a
+        bucket here — just validate the credentials themselves.
+
+        Raises ValueError with an actionable message on failure — the
+        runner catches ValueError at build_source() and exits cleanly."""
+        try:
+            ident = self._sts.get_caller_identity()
+        except (
+            botocore.exceptions.ClientError,
+            botocore.exceptions.BotoCoreError,
+        ) as e:
+            raise ValueError(
+                f"AWS preflight failed: sts.get_caller_identity() errored "
+                f"({type(e).__name__}: {e}). Check aws.access_key_id / "
+                f"aws.secret_access_key in configs.yaml."
+            ) from e
+        logger.info(
+            f"AWS identity: account={ident.get('Account')} "
+            f"arn={ident.get('Arn')}"
+        )
 
     # --- extension points --------------------------------------------------
 
@@ -271,6 +303,22 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
                 "fill it in (or export the env var named in database.url_env) "
                 "and re-run."
             )
+        if not (aws_access_key_id and aws_secret_access_key):
+            if self._offer_aws_creds_scaffolding():
+                raise ValueError(
+                    "aws credentials were scaffolded as null in "
+                    "configs.yaml — fill them in (or export the env vars "
+                    "named in aws.access_key_id_env / "
+                    "aws.secret_access_key_env) and re-run."
+                )
+            raise ValueError(
+                "BizbenchPostgresS3TaskSource: aws.access_key_id and "
+                "aws.secret_access_key are required. Set them in "
+                "configs.yaml, or export the env vars named by "
+                "aws.access_key_id_env / aws.secret_access_key_env. The "
+                "boto3 default credential chain (~/.aws/credentials, IAM "
+                "role, etc.) is intentionally NOT consulted."
+            )
         super().__init__(
             db_url=db_url,
             scratch_dir=scratch_dir,
@@ -305,6 +353,32 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
                 "BizbenchPostgresS3TaskSource needs a DB connection, but "
                 "database.url is empty and the env var named in "
                 "database.url_env is not set"
+            ),
+        )
+
+    @staticmethod
+    def _offer_aws_creds_scaffolding() -> bool:
+        """Prompt to scaffold aws.access_key_id / aws.secret_access_key in
+        configs.yaml when neither direct values nor the env vars named by
+        aws.*_env yielded credentials.
+
+        We intentionally do NOT fall back to boto3's default credential
+        chain: credentials must come from configs.yaml or the explicitly
+        named env vars. Returns True iff entries were scaffolded and the
+        caller should abort."""
+        try:
+            from infra.configs import ensure_overrides_present
+        except ImportError:
+            return False
+        return ensure_overrides_present(
+            ["aws.access_key_id", "aws.secret_access_key"],
+            context=(
+                "BizbenchPostgresS3TaskSource needs AWS credentials, "
+                "but aws.access_key_id / aws.secret_access_key are empty "
+                "and the env vars named in aws.access_key_id_env / "
+                "aws.secret_access_key_env are not set. The boto3 default "
+                "credential chain (~/.aws/credentials, IAM role, etc.) "
+                "is intentionally NOT consulted"
             ),
         )
 

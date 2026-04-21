@@ -19,6 +19,7 @@
 
 source:
   kind: postgres_s3
+  schema: bizbench        # picks BizbenchPostgresS3TaskSource
   filters:
     # Pick one (or both): filter by explicit task_ids, or by task_source.
     task_ids: [1]

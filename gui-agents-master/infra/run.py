@@ -383,8 +383,15 @@ def main() -> int:
         logger.error(f"Engine not found: {engine_script}")
         return 2
 
-    source = build_source(cfg)
-    sink = build_sink(cfg)
+    try:
+        source = build_source(cfg)
+        sink = build_sink(cfg)
+    except ValueError as e:
+        # Build failures here are user-facing: empty required fields
+        # (database.url, aws.*), unknown source/sink kinds, etc.
+        # Swallow the traceback and log the message the class raised.
+        logger.error(f"Source/sink build failed:\n{e}")
+        return 2
 
     succeeded = failed = 0
     try:
@@ -472,7 +479,10 @@ def main() -> int:
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
                 duration_seconds=round((finished - started).total_seconds(), 2),
-                extra={"return_code": rc},
+                extra={
+                    "return_code": rc,
+                    "task_metadata": dict(spec.metadata or {}),
+                },
             )
             sink.publish(result)
 

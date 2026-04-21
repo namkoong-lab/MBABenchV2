@@ -1,6 +1,6 @@
 # AWS + DB-backed runtime for gui-agents-master
 
-**Status:** Phase 0a + 0b + 0c shipped; Phase 1+ still planning.
+**Status:** Phase 0a + 0b + 0c + 1 shipped; Phase 2 in progress.
 **Last updated:** 2026-04-21
 
 ## Goals
@@ -147,6 +147,7 @@ Example — an overlay-shaped run-config that pulls Bizbench tasks from Postgres
 # infra/configs/run_configs/bizbench_run_examples/modeloff_chatgpt.yaml
 source:
   kind: postgres_s3
+  schema: bizbench          # picks BizbenchPostgresS3TaskSource
   filters:
     task_sources: ["modeloff"]
     skip_already_attempted: true
@@ -296,30 +297,39 @@ Two reference sources ship out of the box:
 ### `PostgresS3TaskSource`
 
 Responsibilities:
+
 1. **Select** tasks from `tasks` with filters: `deprecated = false`, optional `task_source IN (...)`, optional explicit `id IN (...)`, optional "not yet attempted by this agent" join against `task_attempts`.
 2. **Download** each row's `task_starting_files` (list of `s3://...` URIs) to `$SCRATCH/gui/task_id={id}/starting_files/{basename}` using the existing `parse_s3_uri` / `boto3` helpers.
 3. **Yield** a `TaskSpec` with `upload_files` set to the downloaded paths and `metadata` carrying `task_source`, `old_id`, etc., for the sink to reference later.
 
+Construction-time contract (both source and sink):
+
+- **Strict AWS credentials.** `aws.access_key_id` + `aws.secret_access_key` must resolve from `configs.yaml` or from the env vars named by `aws.*_env`. The boto3 default credential chain (`~/.aws/credentials`, IAM role, etc.) is **not** consulted. Missing values → scaffolding prompt (mirrors the `database.url` pattern via `ensure_overrides_present`) and a `ValueError` swallowed cleanly by `run.py`.
+- **Preflight on boto3 client build.** The source calls `sts.get_caller_identity()` and logs `account=… arn=…` so operators see which AWS identity is live before any task download. Bad/expired credentials fail here with an actionable `ValueError`, not mid-run.
+
 Config (YAML):
 ```yaml
 source:
-  kind: postgres_s3
-  db_url_env: BIZBENCHJUDGE_KEYS_DATABASE_URL
-  scratch_dir_env: BIZBENCHJUDGE_PATHS_SCRATCH_PATH
-  agent_model_name: claude_web        # so we can skip already-attempted tasks
-  filter:
+  kind: postgres_s3         # backend category
+  schema: bizbench          # schema wiring (required when kind=postgres_s3)
+  filters:
     task_ids: [1, 2, 3]               # or omit
     task_sources: [modeloff]          # or omit
     skip_already_attempted: true
     skip_deprecated: true
+# DB url, scratch dir, agent identity, and AWS creds are read from the
+# shared database.* / paths.* / agent.* / aws.* blocks.
 ```
+
+The `(kind, schema)` pair is dispatched in [task_io/registry.py](../task_io/registry.py): `kind` picks the backend category (`yaml`, `postgres_s3`, …) and `schema` picks the concrete subclass wiring within that backend. `schema` is required when a kind supports multiple wirings (today only `postgres_s3` → `bizbench`) and rejected when a kind has a single implementation (`yaml`, `local`). Unknown values on either axis raise `ValueError` from `_validate_kind_schema` with the set of accepted alternatives.
 
 Trial / idempotency behavior mirrors `AutoBatchRunner._task_has_recent_attempts` in cli-agents: skip a task if there's already a non-failed, non-deprecated attempt from the same `agent_model_name` at the current `prompt_version` within a configurable window.
 
 ### `PostgresS3AttemptSink`
 
 Responsibilities:
-1. **Upload** `result.solution_file` to `s3://biz-bench/BizbenchV1/attempts/{agent_folder}/task_source={src}/task_id={id}/attempt_{timestamp}/{basename}`.
+
+1. **Upload** `result.solution_file` to `s3://biz-bench/BizbenchV1/attempts/{agent_folder}/task_source={src}/task_id={id}/{timestamp}_{basename}`.
 2. **Upload** the per-task JSON log (same one [completion_logger.py](../claude_web_agent/completion_logger.py) already writes) alongside.
 3. **Insert** a row into `task_attempts`:
 
@@ -328,31 +338,35 @@ Responsibilities:
      task_id, agent_model_name, agent_model_type,
      attempt_files, prompt_files,
      start_time, end_time, time_taken_min, cost,
-     prompt_version, agent_failed, deprecated
+     prompt_version, agent_failed, agent_failed_reason, deprecated
    ) VALUES (...)
    ```
 
    with `attempt_files = ARRAY['s3://biz-bench/.../solution.xlsx', 's3://biz-bench/.../completion_log.json']`.
 
-Config (YAML):
+In addition to the strict-credentials contract and STS identity log described above for the source, the sink also calls `s3.head_bucket(aws.s3_bucket)` at construction — a single HEAD request that validates both credential validity and bucket access in one shot, before the engine spends up to 45 min on a task that can't be persisted. Missing bucket / `AccessDenied` / bad region → `ValueError` with an actionable message.
+
+Resolved conventions (from prior open questions):
+
+- `agent_model_type` is hardcoded to `"gui"`.
+- `cost` is always `NULL` (web GUI runs are subscription-based; distinct from the CLI runner's `0.0`).
+- Failed / timeout runs still insert a row with `agent_failed=true` and `agent_failed_reason` populated from `result.status` or `result.extra`.
+- Per-task metadata from the source (`task_source`, `db_task_id`, …) flows to the sink via `result.extra["task_metadata"]`, threaded in `infra/run.py` when the runner constructs the `AttemptResult`.
+
+Config lives in the shared `agent:` / `aws:` / `database:` blocks — the `sink:` YAML only needs `kind` + `schema`. Everything else is read from the existing default/overlay blocks, so a task-source and attempt-sink that both target Postgres + S3 share the same DB url, AWS credentials, bucket, and `agent.*` identity:
+
 ```yaml
 sink:
   kind: postgres_s3
-  db_url_env: BIZBENCHJUDGE_KEYS_DATABASE_URL
-  s3_bucket: biz-bench
-  s3_prefix: BizbenchV1/attempts
-  agent_folder: claude_web            # becomes part of S3 prefix
-  agent_model_name: claude_web        # written to DB
-  agent_model_type: gui               # OPEN QUESTION — confirm existing value
-  prompt_version: 8                   # matches current DEFAULT_MODELS_PROMPT_VERSION
+  schema: bizbench
+# bucket / prefix / agent identity / prompt_version are all pulled from
+# aws.* + agent.* in configs.default.yaml + configs.yaml.
 ```
 
-### Open questions before implementing Part 2
+### Open questions still outstanding
 
-- **`agent_model_type` values** — what does the existing DB use for GUI attempts? (CLI uses something like `openpyxl`; need to grep or ask.)
-- **Cost tracking** — do we want to record anything for GUI runs (subscription-based, not per-call)? Probably leave `cost = 0` or `NULL`.
-- **Failed runs** — do we still insert a row with `agent_failed = true`? Existing convention suggests yes, so judges can see the failure.
-- **Concurrency** — if we later parallelize, need `SELECT ... FOR UPDATE SKIP LOCKED` on the task-claiming query.
+- **Concurrency** — if we later parallelize, need `SELECT ... FOR UPDATE SKIP LOCKED` on the task-claiming query. Defer until Phase 5.
+- **EC2 credentials story** — Part 3 below still sketches an IAM instance profile, but the current strict-credentials contract explicitly blocks boto3's default chain. Before Phase 3 we need to decide: relax the contract for EC2 (flag / env opt-in), or have the systemd unit materialize STS temp credentials into the `aws.*_env`-named env vars before launching the runner.
 
 ---
 
@@ -405,7 +419,10 @@ Each iteration: ask the source for the next eligible task → run it → publish
 ### Config & secrets
 
 - `BIZBENCHJUDGE_KEYS_DATABASE_URL` stored in SSM Parameter Store (SecureString) or AWS Secrets Manager. Pulled into the systemd unit's `Environment=` at start.
-- `AWS_REGION`, IAM instance profile with `s3:GetObject` / `s3:PutObject` on `biz-bench` + `s3:ListBucket`.
+- AWS credentials for the runner must be surfaced as env vars named by `aws.access_key_id_env` / `aws.secret_access_key_env` (e.g. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) **before** the service starts, because the code deliberately does not use boto3's default credential chain. Two viable paths:
+  - Store long-lived IAM user keys in SSM/Secrets Manager, inject via systemd `Environment=` at service start.
+  - Keep an IAM instance profile on the box, run a systemd pre-start hook that calls `aws sts assume-role` (or reads the instance-metadata creds) and exports them into the unit's environment before `ExecStart`. Revisit before Phase 3 — see open questions above.
+- Required IAM permissions on whichever principal: `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` on `biz-bench`. `sts:GetCallerIdentity` is always allowed.
 - No AWS keys in the repo.
 
 ### Observability
@@ -423,8 +440,8 @@ Each iteration: ask the source for the next eligible task → run it → publish
 | **0a** | `task_io/` scaffold + `TaskSpec`/`AttemptResult` + `YamlTaskSource` + `LocalAttemptSink` + `infra/run.py` | Existing YAML tasks run through the new seam | ✅ shipped |
 | **0b** | Config consolidation: everything under `infra/configs/`, legacy `tasks_configs/` decoupled from `infra/run.py`, `task_configs/` folder for per-task YAMLs, permissive task-level merge | Running `python -m infra.run` reads zero files outside `infra/configs/`; a task YAML's top-level keys deep-merge onto global cfg for that task | ✅ shipped (superseded by 0c) |
 | **0c** | `--run-config PATH` CLI flag + `infra/configs/run_configs/` layout. Replaces `--yaml-path`. **Dropped the per-task override layer (layer 4)** — merge model collapses to 3 layers. Task-shaped run-configs split reserved keys (→ YamlTaskSource) from non-reserved keys (→ layer 3 overlay); overlay-shaped files are layer 3 as-is | `--run-config local_run_examples/sample_task.yaml` runs the local sample end-to-end; `--run-config bizbench_run_examples/sample_bizbench.yaml` drives `postgres_s3` | ✅ shipped |
-| **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real Bizbench task end-to-end locally, pulling from Neon+S3, writing solution to local disk | planning |
-| **2** | `PostgresS3AttemptSink` | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | planning |
+| **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real Bizbench task end-to-end locally, pulling from Neon+S3, writing solution to local disk | ✅ shipped |
+| **2** | `PostgresS3AttemptSink`. `agent_model_type` is always `"gui"`; `cost` is always `NULL` (GUI runs are subscription-based); failed/timeout runs still insert a row with `agent_failed=true` + `agent_failed_reason`. Per-task metadata from the source flows to the sink via `result.extra["task_metadata"]`. Strict AWS-credentials contract (no boto3 default chain) + construction-time preflight: `sts.get_caller_identity()` on both source/sink + `s3.head_bucket` on sink. `build_source`/`build_sink` ValueErrors are caught cleanly in `infra/run.py`. | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | in progress |
 | **3** | AWS EC2 + systemd + first manual login | One successful unattended task run on EC2 | planning |
 | **4** | Poll loop + idempotency (skip-already-attempted) | Can leave it running overnight against the real backlog | planning |
 | **5** (optional) | Second EC2 for ChatGPT, or parallelism via row-level locking | Two providers running concurrently | planning |

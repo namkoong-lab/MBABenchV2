@@ -66,6 +66,13 @@ source:
     value: "yaml"            # "yaml" | "postgres_s3"
     required: true
 
+  # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
+  # Currently the only value is "bizbench" (BizbenchPostgresS3TaskSource).
+  # Must be null/omitted for kinds that don't use it (e.g. "yaml").
+  schema:
+    value: null              # null | "bizbench"
+    required: false
+
   # Used when kind == "yaml". Either a single file with a `tasks:` list, or a
   # folder whose *.yaml files are each loaded (one task per file is typical).
   yaml_path:
@@ -94,6 +101,13 @@ sink:
   kind:
     value: "local"           # "local" | "postgres_s3"
     required: true
+
+  # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
+  # Currently the only value is "bizbench" (BizbenchPostgresS3AttemptSink).
+  # Must be null/omitted for kinds that don't use it (e.g. "local").
+  schema:
+    value: null              # null | "bizbench"
+    required: false
 
   # Used when kind == "local"
   output_dir:

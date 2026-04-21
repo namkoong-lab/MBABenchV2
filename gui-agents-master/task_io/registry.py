@@ -54,12 +54,75 @@ def _resolve_from_value_or_env(
     return None
 
 
+# Valid (kind, schema) combinations. `None` schema means the kind doesn't
+# use the schema slot (an explicit schema will raise). Kinds that need a
+# schema enumerate every accepted value — listing them here lets the error
+# messages on typos point at real alternatives rather than a dump of
+# unrelated backends.
+_VALID_SOURCE_SCHEMAS: dict[str, set[str | None]] = {
+    "yaml": {None},
+    "postgres_s3": {"bizbench"},
+}
+_VALID_SINK_SCHEMAS: dict[str, set[str | None]] = {
+    "local": {None},
+    "postgres_s3": {"bizbench"},
+}
+
+
+def _validate_kind_schema(
+    kind_name: str,  # "source.kind" / "sink.kind"
+    kind: str,
+    schema: str | None,
+    valid: dict[str, set[str | None]],
+) -> None:
+    """Enforce that (kind, schema) is a recognized combination.
+
+    Three failure modes, each with an actionable message:
+    1. Unknown kind entirely → list the kinds we know about.
+    2. Kind doesn't take a schema but one was set → name the slot.
+    3. Kind requires a schema but the given one is unknown/missing →
+       list the schemas this kind accepts.
+    """
+    if kind not in valid:
+        raise ValueError(
+            f"Unknown {kind_name}: {kind!r}. "
+            f"Available: {sorted(valid.keys())}"
+        )
+    accepted = valid[kind]
+    if accepted == {None}:
+        if schema not in (None, ""):
+            slot = kind_name.replace(".kind", ".schema")
+            raise ValueError(
+                f"{slot} is not applicable when {kind_name}={kind!r}; "
+                f"got schema={schema!r}. Omit it or set to null."
+            )
+        return
+    if schema in (None, ""):
+        slot = kind_name.replace(".kind", ".schema")
+        non_none = sorted(s for s in accepted if s is not None)
+        raise ValueError(
+            f"{slot} is required when {kind_name}={kind!r}. "
+            f"Available: {non_none}"
+        )
+    if schema not in accepted:
+        slot = kind_name.replace(".kind", ".schema")
+        non_none = sorted(s for s in accepted if s is not None)
+        raise ValueError(
+            f"Unknown {slot} {schema!r} for {kind_name}={kind!r}. "
+            f"Available: {non_none}"
+        )
+
+
 def build_source(cfg: SimpleNamespace) -> TaskSource:
     kind = cfg.source.kind
+    schema = getattr(cfg.source, "schema", None)
+    _validate_kind_schema("source.kind", kind, schema, _VALID_SOURCE_SCHEMAS)
+
     if kind == "yaml":
         from .sources.yaml_source import YamlTaskSource
         return YamlTaskSource(yaml_path=_resolve(cfg.source.yaml_path))
-    if kind == "postgres_s3":
+
+    if kind == "postgres_s3" and schema == "bizbench":
         from .sources.postgres_s3 import BizbenchPostgresS3TaskSource
 
         db_url = _resolve_db_url(getattr(cfg, "database", None))
@@ -92,16 +155,54 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
             aws_secret_access_key=secret_key,
             aws_session_token=session_token,
         )
-    raise ValueError(f"Unknown source.kind: {kind!r}")
+
+    # _validate_kind_schema already covered every rejection path; reaching
+    # here means the dispatch table is out of sync with the if-ladder.
+    raise AssertionError(
+        f"Unhandled (source.kind, source.schema) = ({kind!r}, {schema!r})"
+    )
 
 
 def build_sink(cfg: SimpleNamespace) -> AttemptSink:
     kind = cfg.sink.kind
+    schema = getattr(cfg.sink, "schema", None)
+    _validate_kind_schema("sink.kind", kind, schema, _VALID_SINK_SCHEMAS)
+
     if kind == "local":
         from .sinks.local_sink import LocalAttemptSink
         return LocalAttemptSink(output_dir=_resolve(cfg.sink.output_dir))
-    if kind == "postgres_s3":
-        raise NotImplementedError(
-            "sink kind 'postgres_s3' is a Phase 2+ deliverable; see infra/plan.md"
+
+    if kind == "postgres_s3" and schema == "bizbench":
+        from .sinks.postgres_s3 import BizbenchPostgresS3AttemptSink
+
+        db_url = _resolve_db_url(getattr(cfg, "database", None))
+        aws_cfg = getattr(cfg, "aws", None)
+        region = getattr(aws_cfg, "region", None) if aws_cfg is not None else None
+        access_key = _resolve_from_value_or_env(
+            aws_cfg, "access_key_id", "access_key_id_env"
         )
-    raise ValueError(f"Unknown sink.kind: {kind!r}")
+        secret_key = _resolve_from_value_or_env(
+            aws_cfg, "secret_access_key", "secret_access_key_env"
+        )
+        session_token = _resolve_from_value_or_env(
+            aws_cfg, "session_token", "session_token_env"
+        )
+        s3_bucket = getattr(aws_cfg, "s3_bucket", None) or "biz-bench"
+        s3_prefix = getattr(aws_cfg, "s3_prefix", None) or "BizbenchV1/attempts"
+        return BizbenchPostgresS3AttemptSink(
+            db_url=db_url,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+            agent_folder=cfg.agent.agent_folder,
+            agent_model_name=cfg.agent.model_name,
+            agent_model_type=getattr(cfg.agent, "agent_model_type", None) or "gui",
+            prompt_version=cfg.agent.prompt_version,
+            aws_region=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            aws_session_token=session_token,
+        )
+
+    raise AssertionError(
+        f"Unhandled (sink.kind, sink.schema) = ({kind!r}, {schema!r})"
+    )
