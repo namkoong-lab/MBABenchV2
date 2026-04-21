@@ -133,7 +133,10 @@ class PostgresS3AttemptSink:
         return f"{self.s3_prefix}/task_id={result.task_id}/{timestamp}"
 
     def _attempt_values(
-        self, result: AttemptResult, attempt_file_uris: list[str]
+        self,
+        result: AttemptResult,
+        attempt_file_uris: list[str],
+        prompt_file_uris: list[str],
     ) -> dict[str, Any]:
         """Map an AttemptResult to column-value pairs. Keys must cover every
         column in `self.attempt_schema.columns`. Subclasses must override."""
@@ -146,7 +149,7 @@ class PostgresS3AttemptSink:
             self._conn = psycopg2.connect(self.db_url)
         return self._conn
 
-    def _files_to_upload(self, result: AttemptResult) -> list[Path]:
+    def _attempt_files_to_upload(self, result: AttemptResult) -> list[Path]:
         out: list[Path] = []
         for p in (result.solution_file, result.log_file):
             if p is None:
@@ -158,13 +161,22 @@ class PostgresS3AttemptSink:
             out.append(p)
         return out
 
+    def _prompt_files_to_upload(self, result: AttemptResult) -> list[Path]:
+        out: list[Path] = []
+        for p in result.prompt_files or []:
+            p = Path(p)
+            if not p.exists():
+                logger.warning(f"Sink: skipping missing prompt file {p}")
+                continue
+            out.append(p)
+        return out
+
     def _upload_files(
-        self, result: AttemptResult, timestamp: str
+        self, local_files: list[Path], base_key: str
     ) -> list[str]:
-        base = self._s3_base_key(result, timestamp)
         uris: list[str] = []
-        for local in self._files_to_upload(result):
-            key = f"{base}_{local.name}"
+        for local in local_files:
+            key = f"{base_key}_{local.name}"
             logger.info(f"S3 upload {local} -> s3://{self.s3_bucket}/{key}")
             self._s3.upload_file(str(local), self.s3_bucket, key)
             uris.append(f"s3://{self.s3_bucket}/{key}")
@@ -202,12 +214,19 @@ class PostgresS3AttemptSink:
 
     def publish(self, result: AttemptResult) -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        uris = self._upload_files(result, timestamp)
-        values = self._attempt_values(result, uris)
+        base = self._s3_base_key(result, timestamp)
+        attempt_uris = self._upload_files(
+            self._attempt_files_to_upload(result), base
+        )
+        prompt_uris = self._upload_files(
+            self._prompt_files_to_upload(result), base
+        )
+        values = self._attempt_values(result, attempt_uris, prompt_uris)
         self._insert_row(values)
         logger.info(
             f"Sink: recorded attempt for task_id={result.task_id} "
-            f"status={result.status} files_uploaded={len(uris)}"
+            f"status={result.status} attempt_files={len(attempt_uris)} "
+            f"prompt_files={len(prompt_uris)}"
         )
 
     def close(self) -> None:
@@ -365,7 +384,10 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
         )
 
     def _attempt_values(
-        self, result: AttemptResult, attempt_file_uris: list[str]
+        self,
+        result: AttemptResult,
+        attempt_file_uris: list[str],
+        prompt_file_uris: list[str],
     ) -> dict[str, Any]:
         meta = self._task_metadata(result)
         db_task_id = meta.get("db_task_id")
@@ -400,7 +422,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
             "agent_model_name": self.agent_model_name,
             "agent_model_type": self.agent_model_type,
             "attempt_files": attempt_file_uris,
-            "prompt_files": [],
+            "prompt_files": prompt_file_uris,
             "start_time": start_dt,
             "end_time": end_dt,
             "time_taken_min": time_taken_min,

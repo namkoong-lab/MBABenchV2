@@ -34,6 +34,7 @@ class AttemptResult:
     started_at: str                 # ISO-8601
     finished_at: str
     duration_seconds: float
+    prompt_files: list[Path] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 

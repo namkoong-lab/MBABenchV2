@@ -203,6 +203,28 @@ def find_completion_json(
     return matches[0][1]
 
 
+def _write_prompts_file(
+    run_dir: Path, task_name: str, engine_config: dict, started: datetime
+) -> Path | None:
+    """Materialize the per-task prompt payload so the sink can upload it.
+
+    Returns None if the engine has no prompts to log — the sink treats a
+    missing path as "no prompt_files to record" rather than a failure."""
+    prompts = engine_config.get("prompts") or []
+    if not prompts:
+        return None
+    run_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in task_name)
+    ts = started.strftime("%Y%m%d_%H%M%S")
+    path = run_dir / f"prompts_{safe_name}_{ts}.json"
+    payload = {
+        "prompts": prompts,
+        "prompt_version": engine_config.get("prompt_version"),
+    }
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
 def find_solution_file(
     run_dir: Path, task_name: str, solution_name: str | None, after: datetime
 ) -> Path | None:
@@ -453,6 +475,9 @@ def main() -> int:
             log_dir = _resolve_log_dir(engine_config, provider)
             run_dir = _resolve_run_dir(engine_config, provider)
             started = datetime.now()
+            prompts_file = _write_prompts_file(
+                run_dir, spec.task_name, engine_config, started
+            )
 
             rc = run_engine(engine_config, engine_script, args.timeout)
             finished = datetime.now()
@@ -479,6 +504,7 @@ def main() -> int:
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
                 duration_seconds=round((finished - started).total_seconds(), 2),
+                prompt_files=[prompts_file] if prompts_file else [],
                 extra={
                     "return_code": rc,
                     "task_metadata": dict(spec.metadata or {}),
