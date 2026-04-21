@@ -251,26 +251,36 @@ class ChatGPTWebAgent(WebAgent):
 
     async def ensure_model_selected(self) -> bool:
         """
-        Select a ChatGPT model via the Intelligence panel.
+        Select a ChatGPT model via the top-left model switcher dropdown.
 
         Reads ``chatgpt_web.model`` from config. If not set (null/None),
-        skips selection and uses the current default.
+        skips selection and uses the current default. The config value is
+        lowercased before lookup, so ``"Pro"`` / ``"PRO"`` also work.
 
         Supported values: ``instant``, ``thinking``, ``pro``.
 
-        The Intelligence panel is opened by clicking the model selector
-        button at the top of the chat. Model items are matched by
-        case-insensitive substring.
+        Selection flow:
+          1. Click the "ChatGPT" button (``data-testid=
+             "model-switcher-dropdown-button"``) to open the dropdown.
+          2. Scan dropdown rows (``role="menuitemradio"``; ``menuitem`` /
+             ``option`` kept as fallbacks in case ChatGPT's DOM changes).
+          3. Click the first visible row whose lowercased, stripped label
+             STARTS WITH the keyword. Prefix match (not substring) because
+             each row's text is a concatenated label+description like
+             ``"ProResearch-grade intelligence"`` — a substring match on
+             ``"pro"`` could hit descriptions in other rows.
 
         Returns:
-            True if the desired model is selected (or none was specified).
+            True if the desired model is selected, if none was specified,
+            or if the row/selector couldn't be located (soft-fail: we log
+            and fall back to the current default rather than abort).
         """
         target_model = self.agent_config.get("model")
         if not target_model:
             logger.info("No ChatGPT model specified in config — using current default")
             return True
 
-        keyword = self.MODEL_KEYWORDS.get(target_model)
+        keyword = self.MODEL_KEYWORDS.get(target_model.lower())
         if not keyword:
             logger.warning(
                 "Unknown ChatGPT model '%s'. Valid options: %s. Using current default.",
@@ -296,14 +306,14 @@ class ChatGPTWebAgent(WebAgent):
             await model_btn.click()
             await asyncio.sleep(1)
 
-            # Scan menu items for one whose text contains our keyword
+            # Rows use role="menuitemradio"; keep menuitem/option as fallbacks.
             menu_items = await self.page.query_selector_all(
-                'div[role="menuitem"], [role="option"]'
+                '[role="menuitemradio"], [role="menuitem"], [role="option"]'
             )
             target_item = None
             for item in menu_items:
-                text = (await item.text_content() or "").lower()
-                if keyword in text and await item.is_visible():
+                text = (await item.text_content() or "").strip().lower()
+                if text.startswith(keyword) and await item.is_visible():
                     target_item = item
                     break
 
