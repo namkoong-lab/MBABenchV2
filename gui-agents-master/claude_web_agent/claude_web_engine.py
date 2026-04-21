@@ -157,6 +157,35 @@ def mark_json_deprecated(
         logger.warning(f"Failed to mark JSON deprecated: {e}")
 
 
+async def _close_stale_pages(pages, keep=None, timeout_s: float = 5.0) -> None:
+    """Close every page in `pages` except `keep`, bounding each close().
+
+    Pages with a hung renderer or a beforeunload dialog can make
+    ``page.close()`` block forever. We cap each close at ``timeout_s`` and
+    move on — the page object becomes orphaned but Chrome usually reaps it
+    on its own, and the run can proceed.
+    """
+    for stale in list(pages):
+        if stale is keep:
+            continue
+        try:
+            await asyncio.wait_for(
+                stale.close(run_before_unload=False), timeout=timeout_s
+            )
+        except asyncio.TimeoutError:
+            url = ""
+            try:
+                url = stale.url
+            except Exception:
+                pass
+            logger.warning(
+                f"Stale page close timed out after {timeout_s}s; skipping "
+                f"(url={url!r})"
+            )
+        except Exception:
+            pass
+
+
 async def _cleanup_browser(browser_mgr, context, browser, page):
     """Best-effort browser cleanup.
 
@@ -424,18 +453,9 @@ async def run_automation(config: dict) -> bool:
                 if browser_mgr.is_cdp_mode():
                     page = await context.new_page()
                     logger.info("Created new browser page (CDP mode)")
-                    for stale in context.pages:
-                        if stale != page:
-                            try:
-                                await stale.close()
-                            except Exception:
-                                pass
+                    await _close_stale_pages(context.pages, keep=page)
                 else:
-                    for stale in context.pages:
-                        try:
-                            await stale.close()
-                        except Exception:
-                            pass
+                    await _close_stale_pages(context.pages)
                     page = await context.new_page()
                     logger.info("Created new browser page")
 
