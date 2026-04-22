@@ -212,6 +212,16 @@ class WebBrowserManager:
         sock.close()
 
         if not cdp_running:
+            # On EC2 workers, Chrome is owned by gui-agents-chrome.service so
+            # cookies survive task-unit cgroup teardown. Never self-launch —
+            # that would put Chrome back into the task's cgroup and defeat
+            # the whole point. Fail loudly instead so systemd can restart
+            # chrome.service on its own policy.
+            if os.environ.get("GUI_AGENTS_CHROME_MANAGED") == "1":
+                raise RuntimeError(
+                    f"Chrome not reachable on CDP port {self.cdp_port}. "
+                    "Managed mode: check `systemctl status gui-agents-chrome.service`."
+                )
             if self.cdp_port != CDP_PORT:
                 raise RuntimeError(
                     f"Chrome not running on port {self.cdp_port}. "
@@ -247,7 +257,17 @@ class WebBrowserManager:
             logger.info(f"Connected to Chrome via CDP ({cdp_url})")
         except Exception as e:
             error_msg = str(e).lower()
-            if "setdownloadbehavior" in error_msg or "context management" in error_msg:
+            stale = "setdownloadbehavior" in error_msg or "context management" in error_msg
+            if stale and os.environ.get("GUI_AGENTS_CHROME_MANAGED") == "1":
+                # Managed mode owns Chrome's lifecycle — don't kill/relaunch
+                # ourselves. Let systemd's restart policy handle it.
+                logger.error(
+                    f"CDP handshake rejected (stale Chrome): {e}. "
+                    "Managed mode: not self-restarting; "
+                    "try `systemctl restart gui-agents-chrome.service`."
+                )
+                raise
+            if stale:
                 logger.warning(
                     f"CDP handshake rejected (stale Chrome): {e}. "
                     "Killing Chrome and retrying..."

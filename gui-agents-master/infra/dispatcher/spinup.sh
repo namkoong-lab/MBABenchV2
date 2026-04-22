@@ -104,6 +104,30 @@ if [[ "$PROVIDER" != "claude" && "$PROVIDER" != "chatgpt" ]]; then
   exit 2
 fi
 
+# Resolve the agent identity the box will publish to state.json + DB.
+# Runs the real load_configs + resolver against the template so any missing
+# behavior fields (e.g. no chatgpt_web block, unknown model/agent_mode
+# combo) fail here instead of after we've launched an EC2 instance.
+AGENT_IDENTITY="$(PYTHONPATH="$REPO_ROOT" python3 - "$CONFIG_TEMPLATE" <<'PY'
+import sys
+from pathlib import Path
+from infra.configs import load_configs, resolve_agent_identity
+cfg = load_configs(override_path=Path(sys.argv[1]))
+identity = resolve_agent_identity(cfg)
+print(f"{identity.model_name}\t{identity.agent_folder}\t{identity.agent_model_type}")
+PY
+)"
+if [[ -z "$AGENT_IDENTITY" ]]; then
+  echo "failed to resolve agent identity from $CONFIG_TEMPLATE" >&2
+  echo "(re-run the python block above without 2>/dev/null suppression to see the error)" >&2
+  exit 2
+fi
+IFS=$'\t' read -r AGENT_MODEL_NAME AGENT_FOLDER AGENT_MODEL_TYPE <<< "$AGENT_IDENTITY"
+echo "resolved agent identity:"
+echo "  model_name:       $AGENT_MODEL_NAME   (→ task_attempts.agent_model_name)"
+echo "  agent_folder:     $AGENT_FOLDER       (→ S3 prefix segment)"
+echo "  agent_model_type: $AGENT_MODEL_TYPE   (→ task_attempts.agent_model_type)"
+
 # Collect operator credentials from the laptop's infra/configs/configs.yaml
 # up front. Fail fast rather than halfway through launching a box we can't
 # actually configure. Same file the operator already curates for local runs;
@@ -265,6 +289,7 @@ push_setup() {
   echo "── install queue CLI + systemd units ──"
   ssh_run "$host" "sudo install -m 0755 /opt/gui-agents-master/infra/worker/systemd/gui-agents-queue /usr/local/bin/gui-agents-queue"
   ssh_run "$host" "sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/xvfb.service /etc/systemd/system/xvfb.service"
+  ssh_run "$host" "sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/gui-agents-chrome.service /etc/systemd/system/gui-agents-chrome.service"
   ssh_run "$host" "sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/gui-agents-worker.service /etc/systemd/system/gui-agents-worker.service"
   ssh_run "$host" "sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/gui-agents-auth-probe.service /etc/systemd/system/gui-agents-auth-probe.service"
   ssh_run "$host" "sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/gui-agents-auth-probe.timer /etc/systemd/system/gui-agents-auth-probe.timer"
@@ -287,19 +312,26 @@ push_setup() {
   echo "── $action gui-agents-worker.service ──"
   ssh_run "$host" "sudo systemctl daemon-reload"
   ssh_run "$host" "sudo systemctl enable --now xvfb.service"
+  # Chrome lives in its own service so cookies survive worker/task
+  # cgroup teardowns. On re-runs, restart so Chrome picks up any new
+  # provider/profile_dir from the freshly-pushed configs.yaml.
   if [[ "$action" == "restart" ]]; then
+    ssh_run "$host" "sudo systemctl restart gui-agents-chrome.service"
     ssh_run "$host" "sudo systemctl restart gui-agents-worker.service"
   else
+    ssh_run "$host" "sudo systemctl enable --now gui-agents-chrome.service"
     ssh_run "$host" "sudo systemctl enable --now gui-agents-worker.service"
   fi
   # Auth-probe timer: enable on first spinup; on re-runs, daemon-reload
   # above already picked up any unit-file changes.
   ssh_run "$host" "sudo systemctl enable --now gui-agents-auth-probe.timer"
-  if ! ssh_run "$host" "sudo systemctl is-active --quiet gui-agents-worker.service"; then
-    echo "gui-agents-worker.service is not active after $action" >&2
-    ssh_run "$host" "sudo systemctl status --no-pager gui-agents-worker.service" >&2 || true
-    exit 1
-  fi
+  for svc in gui-agents-chrome.service gui-agents-worker.service; do
+    if ! ssh_run "$host" "sudo systemctl is-active --quiet $svc"; then
+      echo "$svc is not active after $action" >&2
+      ssh_run "$host" "sudo systemctl status --no-pager $svc" >&2 || true
+      exit 1
+    fi
+  done
 }
 
 # ─── re-run path: alias already registered ──────────────────────────────────

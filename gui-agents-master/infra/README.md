@@ -50,15 +50,15 @@ The script:
 - Tags it `Project=gui-agents`, `alias=<name>`, `provider=<claude|chatgpt>` — `teardown.sh` finds it by these.
 - Attaches cloud-init that installs Python, git, Xvfb, Google Chrome, x11vnc, tmux while you wait (~2 min). Readiness marker: `/var/lib/gui-agents/.bootstrap-done`.
 - **Auto-appends the box to [dispatcher/boxes.yaml](dispatcher/boxes.yaml)**, so `dispatch status` sees it immediately.
-- rsyncs the local repo to `/opt/gui-agents-master`, `pip install`s requirements, installs `gui-agents-queue` + `gui-agents-worker.service`, synthesizes `/etc/gui-agents/secrets.env` from your laptop's configs.yaml, copies the template into place, and `enable --now`s the worker. No manual SSH step needed — the box is ready when the script prints its summary.
+- rsyncs the local repo to `/opt/gui-agents-master`, `pip install`s requirements, installs `gui-agents-queue` + `xvfb.service` + `gui-agents-chrome.service` + `gui-agents-worker.service` (+ auth-probe unit/timer), synthesizes `/etc/gui-agents/secrets.env` from your laptop's configs.yaml, copies the template into place, and `enable --now`s Chrome and then the worker. No manual SSH step needed — the box is ready when the script prints its summary.
 
-**Re-run semantics.** Calling `spinup.sh --alias <existing>` again re-rsyncs the repo, re-pushes secrets + configs, and restarts the worker. Refuses unless the worker is **strictly idle** (no current task, empty queue) — inspect with `dispatch show <alias>` first. Useful for picking up local code changes without tearing the box down. For config-only changes on a running box, prefer `dispatch config push` (lighter-weight; see below).
+**Re-run semantics.** Calling `spinup.sh --alias <existing>` again re-rsyncs the repo, re-pushes secrets + configs, and restarts both Chrome and the worker. Refuses unless the worker is **strictly idle** (no current task, empty queue) — inspect with `dispatch show <alias>` first. Useful for picking up local code changes without tearing the box down. For config-only changes on a running box, prefer `dispatch config push` (lighter-weight; see below).
 
 The box-side install steps are fully documented in [worker/systemd/SETUP.md](worker/systemd/SETUP.md) — that's now a fallback/diagnosis reference; you shouldn't need to run those commands by hand.
 
 ### 3. Log in to Claude.ai / ChatGPT.com (per box, first time only)
 
-The engine drives a real browser session — cookies must exist in Chrome's `--user-data-dir`. Do this once per box:
+The engine drives a real browser session — cookies must exist in Chrome's `--user-data-dir`. Chrome runs as `gui-agents-chrome.service` (long-lived, separate from the worker); task code only connects over CDP, it never self-launches Chrome on a box. Do the login once per box:
 
 ```bash
 # on your laptop — open an SSH tunnel for VNC
@@ -71,7 +71,7 @@ x11vnc -display :99 -localhost -nopw -rfbport 5901 &
 # claude.ai / chatgpt.com in the Chrome window you see, then exit.
 ```
 
-Cookies persist under `/var/lib/gui-agents/chrome-claude` (or `chrome-chatgpt`). Repeat every few weeks when sessions expire.
+Cookies persist under `/var/lib/gui-agents/chrome-claude` (or `chrome-chatgpt`) — the path is picked by `gui-agents-chrome.service` from the box's `provider.kind` at start. Because Chrome lives in its own cgroup, neither a `systemctl restart gui-agents-worker` nor normal task-unit teardown can SIGKILL Chrome mid-cookie-write, so logins survive re-runs of `spinup.sh`. Sessions still expire on their own every few weeks — redo the VNC login when they do.
 
 A systemd timer (`gui-agents-auth-probe.timer`) runs every 5 minutes and fills a `login` column in `dispatch status` — `ok`, `STALE` (re-login needed), `old` (last success is > 30 min old), or `?` (no result yet). To trigger a probe on demand: `sudo systemctl start gui-agents-auth-probe.service` on the box.
 
@@ -134,11 +134,13 @@ Three files accumulate locally and are in [.gitignore](../.gitignore):
 
 ## Worker — what runs on each box
 
-`gui-agents-worker.service` is a long-running Linux service. Its loop:
+Two long-running systemd services cooperate on each box:
 
-1. Every 5s, check `state.json` for a queued task.
-2. If idle and the queue is non-empty: pop the head, launch `python -m infra.run --task-id <id>` inside a transient `systemd-run --unit=gui-agents-task-<id>` unit.
-3. When that unit exits, mark the task `success` / `failed` in `state.json`; the sink has already written the final row to the DB.
+- `gui-agents-chrome.service` — persistent Chrome, started before the worker, with its `--user-data-dir` + `--remote-debugging-port` resolved from the box's `configs.yaml` at launch. Chrome lives in its own cgroup, so it survives worker restarts and task-unit teardowns and gets SIGTERM (not SIGKILL) on any planned stop — cookies flush cleanly. Task code (`claude_web_agent.browser_manager`) sees `GUI_AGENTS_CHROME_MANAGED=1` in its environment and only CDP-connects; it never self-launches Chrome on a box.
+- `gui-agents-worker.service` — the task loop. Every 5s:
+  1. Check `state.json` for a queued task.
+  2. If idle and the queue is non-empty: pop the head, launch `python -m infra.run --task-id <id>` inside a transient `systemd-run --unit=gui-agents-task-<id>` unit (which also gets `GUI_AGENTS_CHROME_MANAGED=1`).
+  3. When that unit exits, mark the task `success` / `failed` in `state.json`; the sink has already written the final row to the DB.
 
 Tasks run **only** when something enqueues them — either `dispatch assign` from the laptop or a manual `gui-agents-queue add` on the box.
 
@@ -146,11 +148,17 @@ Tasks run **only** when something enqueues them — either `dispatch assign` fro
 
 ```bash
 sudo systemctl status gui-agents-worker         # is it up?
-sudo journalctl -u gui-agents-worker -f         # live logs
-sudo systemctl restart gui-agents-worker        # reload config
+sudo systemctl status gui-agents-chrome         # Chrome up and holding cookies?
+sudo journalctl -u gui-agents-worker -f         # live worker logs
+sudo journalctl -u gui-agents-chrome -f         # live Chrome stderr
+sudo systemctl restart gui-agents-worker        # reload code/config (leaves Chrome alone)
+sudo systemctl restart gui-agents-chrome        # only after a configs.yaml change that
+                                                #  alters provider / profile_dir / cdp_port
 gui-agents-queue show                           # what's queued / running
 gui-agents-queue add <task_id> "<task_name>"    # manual enqueue (dispatch uses this too)
 ```
+
+Restart the worker freely — Chrome is in a separate cgroup and keeps running. Only restart `gui-agents-chrome` when the config actually changes Chrome's launch args; otherwise you're needlessly nudging the session.
 
 ---
 
@@ -237,5 +245,7 @@ python -m infra.dispatcher.dispatch clear claude-1         # stop accepting new 
 | Assigned a task, nothing starts | Worker service is dead. | `ssh <host> sudo systemctl status gui-agents-worker`. Restart if needed. |
 | `dispatch assign` finds 0 eligible tasks | `skip_already_attempted` filtering everything. | Query the DB directly, or drop the filter in the laptop's run-config. |
 | Task keeps failing | Check the S3-uploaded completion log attached to the failed `task_attempts` row. | Follow the error; usually Claude/ChatGPT session expired (re-VNC to re-login). |
-| Worker running but stuck on one task | Chrome hung or network issue. | `dispatch cancel <alias> <task_id>` then investigate logs. |
+| Worker running but stuck on one task | Chrome hung or network issue. | `dispatch cancel <alias> <task_id>` then investigate logs. If Chrome itself is wedged: ssh in and `sudo systemctl restart gui-agents-chrome`. |
+| Task fails immediately with "Chrome not reachable on CDP port …" | `gui-agents-chrome.service` died or never came up. | ssh in: `sudo systemctl status gui-agents-chrome` and check its journal. Restart it; the worker will retry on the next queued task. |
+| Login stale right after `spinup.sh` re-run | Only happens if `gui-agents-chrome.service` wasn't yet installed (pre-refactor box). | Re-run `spinup.sh` once so the unit lands, then VNC-login one more time. Subsequent re-runs preserve the session. |
 | Config push rejected | New `configs.yaml` doesn't parse as YAML. | `config pull` the current one, diff against your edit. |

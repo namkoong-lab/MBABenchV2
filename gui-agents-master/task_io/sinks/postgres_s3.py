@@ -287,11 +287,17 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
     ):
         if not agent_folder:
             raise ValueError(
-                "BizbenchPostgresS3AttemptSink: agent.agent_folder is required."
+                "BizbenchPostgresS3AttemptSink: agent_folder is required. "
+                "This is derived from resolve_agent_identity(cfg) — "
+                "an empty value means the resolver returned an invalid "
+                "AgentIdentity (check infra/configs/agent_identity.py)."
             )
         if not agent_model_name:
             raise ValueError(
-                "BizbenchPostgresS3AttemptSink: agent.model_name is required."
+                "BizbenchPostgresS3AttemptSink: agent_model_name is required. "
+                "This is derived from resolve_agent_identity(cfg) — "
+                "an empty value means the resolver returned an invalid "
+                "AgentIdentity (check infra/configs/agent_identity.py)."
             )
         if not db_url and self._offer_db_url_scaffolding():
             raise ValueError(

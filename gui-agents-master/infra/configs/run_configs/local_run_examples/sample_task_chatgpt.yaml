@@ -21,9 +21,8 @@ solution_name: "Sample_Task_ChatGPT: Bread and Butter Analysis"
 provider:
   kind: "chatgpt"
 
-agent:
-  model_name: "chatgpt_web"
-  agent_folder: "chatgpt_web"
+# agent_model_name / agent_folder are derived from the chatgpt_web block
+# (plus provider.kind) via infra/configs/agent_identity.py — no yaml field.
 
 # ChatGPT agent mode works best with ONE combined prompt rather than a
 # sequence. Replace the global Claude-style list for this task only.

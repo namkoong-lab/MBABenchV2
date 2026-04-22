@@ -3,6 +3,19 @@
 All commands run from the repo root as `python -m infra.dispatcher.dispatch <...>`.
 `<alias>` refers to a box alias defined in [boxes.yaml](boxes.yaml).
 
+## Spin up / tear down
+
+```bash
+# Launch (or re-provision) a box from a config template
+bash infra/dispatcher/spinup.sh --alias chatgpt-pro-1 --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+
+# Terminate one box by alias
+bash infra/dispatcher/teardown.sh --alias chatgpt-pro-1
+
+# Terminate every gui-agents box in the region
+bash infra/dispatcher/teardown.sh --all
+```
+
 ## Inspect boxes
 
 ```bash

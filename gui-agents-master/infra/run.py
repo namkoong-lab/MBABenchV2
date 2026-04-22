@@ -43,6 +43,7 @@ from infra.configs import (  # noqa: E402
     ConfigError,
     ensure_overrides_present,
     load_configs,
+    resolve_agent_identity,
 )
 from task_io import AttemptResult, TaskSpec, build_sink, build_source  # noqa: E402
 
@@ -441,6 +442,13 @@ def main() -> int:
         logger.error(f"Source/sink build failed:\n{e}")
         return 2
 
+    identity = resolve_agent_identity(cfg)
+    logger.info(
+        f"agent identity: model_name={identity.model_name!r} "
+        f"agent_folder={identity.agent_folder!r} "
+        f"agent_model_type={identity.agent_model_type!r}"
+    )
+
     succeeded = failed = 0
     try:
         specs = list(source.iter_tasks())
@@ -520,7 +528,7 @@ def main() -> int:
             result = AttemptResult(
                 task_id=spec.task_id,
                 task_name=spec.task_name,
-                agent_model_name=cfg.agent.model_name,
+                agent_model_name=identity.model_name,
                 prompt_version=cfg.agent.prompt_version,
                 status=status,
                 solution_file=find_solution_file(

@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+from infra.configs import resolve_agent_identity
+
 from .base import AttemptSink, TaskSource
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -139,10 +141,11 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
         session_token = _resolve_from_value_or_env(
             aws_cfg, "session_token", "session_token_env"
         )
+        identity = resolve_agent_identity(cfg)
         return BizbenchPostgresS3TaskSource(
             db_url=db_url,
             scratch_dir=scratch_dir,
-            agent_model_name=cfg.agent.model_name,
+            agent_model_name=identity.model_name,
             prompt_version=cfg.agent.prompt_version,
             task_ids=list(getattr(filters, "task_ids", []) or []),
             task_sources=list(getattr(filters, "task_sources", []) or []),
@@ -189,13 +192,14 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
         )
         s3_bucket = getattr(aws_cfg, "s3_bucket", None) or "biz-bench"
         s3_prefix = getattr(aws_cfg, "s3_prefix", None) or "BizbenchV1/attempts"
+        identity = resolve_agent_identity(cfg)
         return BizbenchPostgresS3AttemptSink(
             db_url=db_url,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
-            agent_folder=cfg.agent.agent_folder,
-            agent_model_name=cfg.agent.model_name,
-            agent_model_type=getattr(cfg.agent, "agent_model_type", None) or "gui",
+            agent_folder=identity.agent_folder,
+            agent_model_name=identity.model_name,
+            agent_model_type=identity.agent_model_type,
             prompt_version=cfg.agent.prompt_version,
             aws_region=region,
             aws_access_key_id=access_key,

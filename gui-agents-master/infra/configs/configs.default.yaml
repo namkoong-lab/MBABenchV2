@@ -31,17 +31,14 @@ provider:
     required: true
 
 
-# ---- Agent identity (written to DB + used in S3 prefix) --------------------
+# ---- Agent identity --------------------------------------------------------
+# `model_name`, `agent_folder`, and `agent_model_type` used to live here as
+# free-form yaml. They drifted from the actual behavior (e.g. chatgpt_web
+# running in agent_mode but labelled "chatgpt_web"), so they were moved to
+# infra/configs/agent_identity.py and are now derived from the provider
+# block below. `prompt_version` is still operator-controlled because it's
+# independent of any behavior field.
 agent:
-  model_name:
-    value: "claude_web"      # goes into task_attempts.agent_model_name
-    required: true
-  agent_folder:
-    value: "claude_web"      # path segment in S3 prefix
-    required: true
-  agent_model_type:
-    value: "gui"             # OPEN: confirm convention used elsewhere in DB
-    required: false
   prompt_version:
     value: 8                 # matches DEFAULT_MODELS_PROMPT_VERSION["claude_web"]
     required: false

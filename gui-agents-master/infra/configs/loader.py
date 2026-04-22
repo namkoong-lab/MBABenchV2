@@ -14,10 +14,10 @@ After merge:
 
 Typical usage:
 
-    from infra.configs import load_configs
+    from infra.configs import load_configs, resolve_agent_identity
     cfg = load_configs()
-    print(cfg.source.kind)           # "yaml"
-    print(cfg.agent.model_name)      # "claude_web"
+    print(cfg.source.kind)                  # "yaml"
+    print(resolve_agent_identity(cfg))      # AgentIdentity(model_name=..., ...)
 """
 
 from __future__ import annotations

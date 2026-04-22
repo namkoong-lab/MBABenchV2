@@ -1,6 +1,6 @@
 # AWS + DB-backed runtime for gui-agents-master
 
-**Status:** Phase 0a + 0b + 0c + 1 + 2 + 3c shipped; Phase 3a/3b live-validation + Phase 4 next.
+**Status:** Phase 0a + 0b + 0c + 1 + 2 + 3c shipped; Phase 3a/3b live-validation + Phase 4 next. Chrome moved into its own systemd service so cookies survive worker/task cgroup teardowns.
 **Last updated:** 2026-04-21
 
 ## Goals
@@ -385,16 +385,23 @@ sink:
 **Inside the VM:**
 ```
 systemd
-  └─ xvfb.service              : Xvfb :99 -screen 0 1920x1080x24
-  └─ chrome-claude.service     : google-chrome --remote-debugging-port=9222
-                                 --user-data-dir=/var/lib/gui-agents/chrome-claude
-                                 (DISPLAY=:99)
-  └─ chrome-chatgpt.service    : same, port 9333, different user-data-dir
-  └─ gui-agents-worker.service : pops tasks from state.json, runs each via
-                                 `systemd-run --unit=gui-agents-task-<id> --wait
-                                  python -m infra.run --task-id <id>`
-                                 (see Part 4 for the queue and worker loop)
+  └─ xvfb.service                 : Xvfb :99 -screen 0 1920x1080x24
+  └─ gui-agents-chrome.service    : exec google-chrome --remote-debugging-port=<port>
+                                    --user-data-dir=<profile_dir>  (DISPLAY=:99)
+                                    Port + profile resolved at start from the
+                                    box's configs.yaml (one provider per box).
+                                    KillSignal=SIGTERM so the cookie SQLite
+                                    gets flushed before SIGKILL.
+  └─ gui-agents-worker.service    : pops tasks from state.json, runs each via
+                                    `systemd-run --unit=gui-agents-task-<id> --wait
+                                     python -m infra.run --task-id <id>`
+                                    Sets GUI_AGENTS_CHROME_MANAGED=1 (propagated
+                                    into each task unit), so task code only
+                                    CDP-connects — it never self-launches Chrome.
+                                    (see Part 4 for the queue and worker loop)
 ```
+
+**Why Chrome is its own service.** Earlier prototypes let the task launch Chrome inline (still the laptop-dev path, gated behind `GUI_AGENTS_CHROME_MANAGED`). On a box that meant Chrome landed inside the task unit's cgroup — when the transient unit was collected at task end, systemd SIGKILL'd every process in the cgroup, Chrome included. Chrome under SIGKILL doesn't flush its `Cookies` SQLite or any in-flight refresh-token rotation, which showed up as spurious logouts after each task or after a `systemctl restart gui-agents-worker` (e.g. on spinup re-run). Giving Chrome its own service puts it in its own cgroup, independent of both the worker and every task unit. `KillSignal=SIGTERM` plus the default 90s timeout lets cookies reach disk on any planned restart. A single service (not one-per-provider) is enough because each box has exactly one `provider.kind`.
 
 **First-time login flow:**
 1. SSH with `-L 5901:localhost:5901` tunnel.
@@ -416,7 +423,7 @@ The EC2 lifecycle is driven by four bash scripts the operator runs from the lapt
 | Script | What it does |
 |---|---|
 | [aws_bootstrap.sh](dispatcher/aws_bootstrap.sh) | One-shot prerequisites. Verifies `aws sts get-caller-identity`, detects your public IP, creates the `bizbench-gui-agents` key pair (saves `~/.ssh/bizbench-gui-agents.pem`) and `bizbench-gui-agents-sg` security group, authorizes TCP 22 from your IP. Idempotent (detects existing AWS-side resources). Writes `dispatcher/.aws_defaults` so other scripts inherit the values. |
-| [spinup.sh](dispatcher/spinup.sh) | Launches one tagged `t3.medium` Ubuntu 22.04 box AND installs the worker end-to-end. Cloud-init `apt install`s Python, git, rsync, Xvfb, Google Chrome, x11vnc, tmux (readiness marker: `/var/lib/gui-agents/.bootstrap-done`). Once SSH is up, the script rsyncs the local repo to `/opt/gui-agents-master` (as `sudo rsync` via `--rsync-path`), `pip install`s requirements, drops `gui-agents-queue` + `gui-agents-worker.service`, synthesizes `/etc/gui-agents/secrets.env` from the laptop's `infra/configs/configs.yaml` (DB url + AWS creds), copies the `--config-template <path>` YAML into `/opt/gui-agents-master/infra/configs/configs.yaml`, and `enable --now`s the worker. Provider comes from `provider.kind` in the template. **Auto-appends** the instance to `dispatcher/boxes.yaml` before the SSH phase, so a mid-run failure is recoverable via a re-run. Re-running against an existing alias re-rsyncs + restarts the worker (strictly idle only: no current task, empty queue). Sources `.aws_defaults` for defaults; precedence is CLI flag > env var > saved defaults > hardcoded. Per-box config templates live under [dispatcher/config_templates/](dispatcher/config_templates/). |
+| [spinup.sh](dispatcher/spinup.sh) | Launches one tagged `t3.medium` Ubuntu 22.04 box AND installs the worker end-to-end. Cloud-init `apt install`s Python, git, rsync, Xvfb, Google Chrome, x11vnc, tmux (readiness marker: `/var/lib/gui-agents/.bootstrap-done`). Once SSH is up, the script rsyncs the local repo to `/opt/gui-agents-master` (as `sudo rsync` via `--rsync-path`), `pip install`s requirements, drops `gui-agents-queue` + `xvfb.service` + `gui-agents-chrome.service` + `gui-agents-worker.service` + the auth-probe unit/timer, synthesizes `/etc/gui-agents/secrets.env` from the laptop's `infra/configs/configs.yaml` (DB url + AWS creds), copies the `--config-template <path>` YAML into `/opt/gui-agents-master/infra/configs/configs.yaml`, and `enable --now`s both Chrome and the worker (Chrome first so the worker starts against a reachable CDP port). Provider comes from `provider.kind` in the template. **Auto-appends** the instance to `dispatcher/boxes.yaml` before the SSH phase, so a mid-run failure is recoverable via a re-run. Re-running against an existing alias re-rsyncs + restarts both Chrome and the worker (strictly idle only: no current task, empty queue); Chrome restart picks up any provider/profile changes in the freshly-pushed `configs.yaml`. Sources `.aws_defaults` for defaults; precedence is CLI flag > env var > saved defaults > hardcoded. Per-box config templates live under [dispatcher/config_templates/](dispatcher/config_templates/). |
 | [teardown.sh](dispatcher/teardown.sh) | Terminates one box (`--alias X`) or all (`--all`). Finds instances by `Project=gui-agents` tag, confirms, waits for `terminated`. Security group, key pair, local `.pem`, and `boxes.yaml` are left untouched — stale entries just show as `UNREACHABLE` until the user cleans them up. |
 | [_reset_dispatcher_status.sh](dispatcher/_reset_dispatcher_status.sh) | Nuclear reset for testing the setup flow end-to-end. Terminates every `Project=gui-agents` instance, deletes the key pair + SG in AWS, deletes local `.pem`, `.aws_defaults`, and `boxes.yaml`. Underscore prefix is a convention — destructive enough that it shouldn't tab-complete alongside the non-destructive scripts. |
 

@@ -475,12 +475,13 @@ def cmd_login(args: argparse.Namespace) -> int:
     """Open a VNC tunnel to a box so the operator can log in to
     claude.ai / chatgpt.com.
 
-    Xvfb runs on :99 persistently but the worker only spawns Chrome
-    during a task — when idle the display is blank. So this command
-    also launches Chrome on :99 against the worker's --user-data-dir
-    (read from the box's configs.yaml), then tears it down on exit.
-    Cookies persist under that profile dir, so the worker picks up the
-    refreshed session on its next task.
+    Drives the worker's existing Chrome (managed by
+    gui-agents-chrome.service) via its configured CDP port — so cookies
+    land in the same profile the auth probe reads, and the login window
+    the operator sees IS the browser the probe targets. After the VNC
+    session ends, fires the auth-probe oneshot so `dispatch status`
+    reflects the new login state immediately instead of waiting for
+    the 5-minute timer.
     """
     box = find_by_alias(args.alias)
     state = _fetch_state(box)
@@ -509,53 +510,83 @@ def cmd_login(args: argparse.Namespace) -> int:
 set -u
 cd /opt/gui-agents-master
 EVAL_OUT=$(PYTHONPATH=. python3 -c '
-import os
 from infra.configs import load_configs
 c = load_configs()
 prov = c.provider.kind
 block = c.claude_web if prov == "claude" else c.chatgpt_web
-pd = os.path.expanduser(block.browser.profile_dir)
-candidates = ["/usr/bin/google-chrome-canary", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome-unstable"]
-chrome = next((p for p in candidates if os.path.exists(p)), "")
+port = int(block.browser.cdp_port)
 url = "https://chatgpt.com/" if prov == "chatgpt" else "https://claude.ai/"
 print(f"PROVIDER={{prov}}")
-print(f"PROFILE_DIR={{pd}}")
-print(f"CHROME_BIN={{chrome}}")
+print(f"CDP_PORT={{port}}")
 print(f"LOGIN_URL={{url}}")
 ') || {{ echo "ERROR: failed to read box config" >&2; exit 1; }}
 eval "$EVAL_OUT"
-if [ -z "${{CHROME_BIN:-}}" ]; then echo "ERROR: chrome not found on box" >&2; exit 1; fi
-echo "INFO: provider=$PROVIDER profile=$PROFILE_DIR chrome=$CHROME_BIN" >&2
+export PROVIDER CDP_PORT LOGIN_URL
+echo "INFO: provider=$PROVIDER cdp_port=$CDP_PORT" >&2
 
 if ! sudo -n true 2>/dev/null; then
-  echo "ERROR: passwordless sudo required (worker runs as root, profile dir is root-owned)" >&2
+  echo "ERROR: passwordless sudo required (worker Chrome runs as root)" >&2
   exit 1
 fi
 
-sudo -n pkill -x chrome >/dev/null 2>&1 || true
-sudo -n pkill -x google-chrome >/dev/null 2>&1 || true
-pkill -x x11vnc >/dev/null 2>&1 || true
-sleep 0.3
+# Ensure the worker's Chrome is up. Idempotent — no-op if already active.
+sudo -n systemctl start gui-agents-chrome.service || {{
+  echo "ERROR: could not start gui-agents-chrome.service; check journalctl -u gui-agents-chrome.service" >&2
+  exit 1
+}}
 
-sudo -n mkdir -p "$PROFILE_DIR"
-sudo -n env DISPLAY=:99 "$CHROME_BIN" \\
-  --user-data-dir="$PROFILE_DIR" \\
-  --no-first-run --no-default-browser-check --no-sandbox \\
-  --remote-debugging-port=9222 \\
-  "$LOGIN_URL" >/dev/null 2>&1 &
-CHROME_PID=$!
-sleep 1
-if ! sudo -n pgrep -x chrome >/dev/null 2>&1 && ! sudo -n pgrep -x google-chrome >/dev/null 2>&1; then
-  echo "ERROR: chrome failed to start on :99 (check journalctl or run chrome manually)" >&2
+# Wait up to 20s for the CDP port to bind.
+for _ in $(seq 1 40); do
+  if (echo >/dev/tcp/127.0.0.1/$CDP_PORT) 2>/dev/null; then break; fi
+  sleep 0.5
+done
+if ! (echo >/dev/tcp/127.0.0.1/$CDP_PORT) 2>/dev/null; then
+  echo "ERROR: worker Chrome CDP port $CDP_PORT not reachable. Check \\`systemctl status gui-agents-chrome.service\\`." >&2
   exit 1
 fi
+
+# Open the login URL as a new page inside the worker's Chrome via CDP.
+# browser.close() here just disconnects the CDP client — the page stays
+# open in Chrome for the operator to interact with over VNC.
+python3 - <<'PY' || {{ echo "ERROR: failed to open login page over CDP" >&2; exit 1; }}
+import os, sys, time
+from playwright.sync_api import sync_playwright
+cdp_port = int(os.environ["CDP_PORT"])
+login_url = os.environ["LOGIN_URL"]
+last_err = None
+for _ in range(20):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{{cdp_port}}")
+            ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = ctx.new_page()
+            try:
+                page.goto(login_url, wait_until="domcontentloaded", timeout=15000)
+            except Exception as e:
+                print(f"WARN: goto failed: {{e}}", file=sys.stderr)
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            browser.close()
+        last_err = None
+        break
+    except Exception as e:
+        last_err = e
+        time.sleep(0.5)
+if last_err is not None:
+    print(f"ERROR: CDP connect failed: {{last_err}}", file=sys.stderr)
+    sys.exit(1)
+PY
 
 cleanup() {{
   pkill -x x11vnc >/dev/null 2>&1 || true
 }}
 trap cleanup EXIT INT TERM HUP
 
-x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -forever -quiet
+pkill -x x11vnc >/dev/null 2>&1 || true
+sleep 0.2
+x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -forever -shared -quiet
 """
     ssh_args = [
         "ssh", "-t",
@@ -565,7 +596,8 @@ x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -foreve
         remote_cmd,
     ]
     logger.info(
-        f"{box.alias}: x11vnc starting on :99, forwarded to localhost:{local_port}"
+        f"{box.alias}: opening login page in the worker's Chrome via CDP, "
+        f"x11vnc on :99 forwarded to localhost:{local_port}"
     )
     logger.info(
         f"connect a VNC viewer to vnc://localhost:{local_port} — "
@@ -574,18 +606,58 @@ x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -foreve
     )
     logger.info(f"VNC password (one-shot): {vnc_pw}")
     if sys.platform == "darwin" and not args.no_open:
-        # Small delay so x11vnc has a chance to bind before Screen Sharing
-        # connects. Running as a thread so we don't block the ssh call.
+        # Playwright's cold start on the box (~15–25s) means x11vnc doesn't
+        # bind for a while after ssh connects. SSH -L's local port accepts
+        # connections immediately so a plain socket-connect check isn't
+        # enough — we probe for the RFB greeting, which only shows up once
+        # x11vnc is actually listening end-to-end.
+        import socket
         import threading
 
         def _open_viewer() -> None:
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(
+                        ("localhost", local_port), timeout=2
+                    ) as s:
+                        s.settimeout(3)
+                        if s.recv(4) == b"RFB ":
+                            break
+                except OSError:
+                    pass
+                time.sleep(1)
+            else:
+                logger.warning(
+                    f"VNC not ready on localhost:{local_port} after 90s; "
+                    f"run `open vnc://localhost:{local_port}` manually."
+                )
+                return
+            # Give x11vnc a beat to finish closing the probe session before
+            # Screen Sharing's new connection lands — otherwise the viewer
+            # can race x11vnc's accept loop and hit "connection failed".
             time.sleep(2)
+            logger.info(f"VNC ready; opening Screen Sharing at vnc://localhost:{local_port}")
             subprocess.run(
                 ["open", f"vnc://localhost:{local_port}"], check=False
             )
 
         threading.Thread(target=_open_viewer, daemon=True).start()
-    return subprocess.call(ssh_args)
+    rc = subprocess.call(ssh_args)
+
+    # Kick a fresh probe so `dispatch status` reflects the new login
+    # state immediately. systemctl start on a oneshot blocks until the
+    # unit finishes, so when this returns auth.json is up to date.
+    logger.info(f"{box.alias}: running auth probe to refresh status …")
+    probe = _ssh_exec(
+        box, "sudo -n systemctl start gui-agents-auth-probe.service", timeout=60
+    )
+    if probe.returncode != 0:
+        logger.warning(
+            f"{box.alias}: auth-probe kick returned {probe.returncode}: "
+            f"{(probe.stderr or probe.stdout).strip()}"
+        )
+    return rc
 
 
 def cmd_config_pull(args: argparse.Namespace) -> int:

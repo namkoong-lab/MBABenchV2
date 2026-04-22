@@ -13,9 +13,11 @@
 provider:
   kind: "chatgpt"
 
-agent:
-  model_name: "chatgpt_web"
-  agent_folder: "chatgpt_web"
+# agent.model_name / agent.agent_folder are derived from the chatgpt_web
+# block below via infra/configs/agent_identity.py, so this template just
+# declares behavior. With (model=pro, agent_mode=false) the identity
+# resolves to "chatgpt_pro"; flipping agent_mode → true yields
+# "chatgpt_pro_agent". See agent_identity.py for the full table.
 
 chatgpt_web:
   model: "pro"

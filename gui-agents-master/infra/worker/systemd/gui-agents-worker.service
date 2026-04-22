@@ -1,7 +1,7 @@
 [Unit]
 Description=gui-agents worker loop (pops tasks from state.json)
-After=network-online.target xvfb.service
-Wants=network-online.target
+After=network-online.target xvfb.service gui-agents-chrome.service
+Wants=network-online.target gui-agents-chrome.service
 Requires=xvfb.service
 
 [Service]
@@ -11,6 +11,8 @@ WorkingDirectory=/opt/gui-agents-master
 Environment=PYTHONPATH=/opt/gui-agents-master
 Environment=GUI_AGENTS_STATE_DIR=/var/lib/gui-agents
 Environment=DISPLAY=:99
+# Chrome is owned by gui-agents-chrome.service; tasks must only CDP-connect.
+Environment=GUI_AGENTS_CHROME_MANAGED=1
 # DB url and AWS creds belong here (either hardcoded or EnvironmentFile=).
 # Example:
 #   EnvironmentFile=/etc/gui-agents/secrets.env

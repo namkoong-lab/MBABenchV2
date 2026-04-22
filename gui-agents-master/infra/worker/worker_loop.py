@@ -27,7 +27,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from infra.configs import load_configs  # noqa: E402
+from infra.configs import load_configs, resolve_agent_identity  # noqa: E402
 from infra.worker import state as S  # noqa: E402
 from infra.worker.auth_probe import read_auth  # noqa: E402
 
@@ -78,11 +78,17 @@ def _publish_worker_info() -> None:
 
     provider = getattr(cfg.provider, "kind", "") or ""
     agent = getattr(cfg, "agent", None)
+    try:
+        identity = resolve_agent_identity(cfg)
+        agent_model_name = identity.model_name
+    except Exception as e:
+        logger.error(f"resolve_agent_identity failed; agent_model_name will be empty: {e}")
+        agent_model_name = ""
     info = S.WorkerInfo(
         worker_id=_worker_id(),
         hostname=socket.gethostname(),
         provider=provider,
-        agent_model_name=getattr(agent, "model_name", "") or "" if agent else "",
+        agent_model_name=agent_model_name,
         prompt_version=getattr(agent, "prompt_version", None) if agent else None,
     )
     S.set_worker_info(info)
@@ -147,6 +153,9 @@ def _run_task_unit(task_id: str, unit: str) -> int:
             "--collect",
             f"--working-directory={_REPO_ROOT}",
             "--property=EnvironmentFile=/etc/gui-agents/secrets.env",
+            # Chrome is owned by gui-agents-chrome.service — tasks must not
+            # spawn their own. Propagate the flag into the transient unit.
+            "--property=Environment=GUI_AGENTS_CHROME_MANAGED=1",
             "--pipe",
         ] + run_cmd
         logger.info(f"launch: {' '.join(cmd)}")
