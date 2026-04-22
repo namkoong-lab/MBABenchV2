@@ -63,7 +63,9 @@ class SSHResult:
     stderr: str
 
 
-def _ssh_exec(box: Box, remote_cmd: str, stdin: str | None = None, timeout: int = SSH_TIMEOUT_SEC) -> SSHResult:
+def _ssh_exec(
+    box: Box, remote_cmd: str, stdin: str | None = None, timeout: int = SSH_TIMEOUT_SEC
+) -> SSHResult:
     proc = subprocess.run(
         _ssh_cmd(box, remote_cmd),
         input=stdin,
@@ -130,11 +132,11 @@ def _truncate(s: str, width: int) -> str:
 
 def _fmt_auth(auth: dict | None) -> str:
     """Render the auth-probe column. Values:
-      <email>       — last probe succeeded and is fresh (shows user identity)
-      ok            — succeeded but no email available (e.g. claude)
-      STALE         — last probe failed (any reason) — needs re-login
-      old <email>   — succeeded but last probe was too long ago
-      ?             — no probe result on this box
+    <email>       — last probe succeeded and is fresh (shows user identity)
+    ok            — succeeded but no email available (e.g. claude)
+    STALE         — last probe failed (any reason) — needs re-login
+    old <email>   — succeeded but last probe was too long ago
+    ?             — no probe result on this box
     """
     if not auth:
         return "?"
@@ -284,7 +286,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             while True:
                 states = _fetch_all_states(boxes)
                 print("\033[2J\033[H", end="")  # clear screen
-                print(f"dispatch status — {datetime.now().isoformat(timespec='seconds')}\n")
+                print(
+                    f"dispatch status — {datetime.now().isoformat(timespec='seconds')}\n"
+                )
                 _print_status_table(boxes, states)
                 time.sleep(5)
         except KeyboardInterrupt:
@@ -362,7 +366,9 @@ def cmd_assign(args: argparse.Namespace) -> int:
     # readable label; fall back to empty name on missing row.
     if args.tasks:
         task_ids = [t.strip() for t in args.tasks.split(",") if t.strip()]
-        tasks = [{"id": tid, "task_name": None, "task_source": None} for tid in task_ids]
+        tasks = [
+            {"id": tid, "task_name": None, "task_source": None} for tid in task_ids
+        ]
         assignments: list[tuple[Box, dict]] = []
         if args.box:
             for t in tasks:
@@ -407,7 +413,9 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
     print(f"\nAssigning {len(assignments)} task(s):")
     for box, task in assignments:
-        print(f"  -> {box.alias:<12} task={task.get('id')} name={task.get('task_name') or ''}")
+        print(
+            f"  -> {box.alias:<12} task={task.get('id')} name={task.get('task_name') or ''}"
+        )
     if not args.yes:
         try:
             resp = input("\nProceed? [y/N]: ").strip().lower()
@@ -478,7 +486,9 @@ def cmd_logs(args: argparse.Namespace) -> int:
     # +G opens the pager at the bottom so the most recent lines are visible first.
     remote = "SYSTEMD_LESS='FRXMK +G' " + " ".join(parts)
     # interactive streaming — don't capture.
-    return subprocess.call(["ssh", "-t", *box.ssh_base_args(), box.ssh_target(), remote])
+    return subprocess.call(
+        ["ssh", "-t", *box.ssh_base_args(), box.ssh_target(), remote]
+    )
 
 
 def cmd_login(args: argparse.Namespace) -> int:
@@ -512,6 +522,7 @@ def cmd_login(args: argparse.Namespace) -> int:
     # mint a fresh random password per session. The tunnel is already
     # SSH-protected and -localhost binds x11vnc to 127.0.0.1 on the box.
     import secrets
+
     vnc_pw = secrets.token_urlsafe(9)[:8]
     # BatchMode=yes (from ssh_base_args) silences password prompts but is
     # also fine here since we require key auth. -t forces a pty so x11vnc
@@ -599,8 +610,10 @@ sleep 0.2
 x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -forever -shared -quiet
 """
     ssh_args = [
-        "ssh", "-t",
-        "-L", f"{local_port}:localhost:{remote_port}",
+        "ssh",
+        "-t",
+        "-L",
+        f"{local_port}:localhost:{remote_port}",
         *box.ssh_base_args(),
         box.ssh_target(),
         remote_cmd,
@@ -647,10 +660,10 @@ x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -foreve
             # Screen Sharing's new connection lands — otherwise the viewer
             # can race x11vnc's accept loop and hit "connection failed".
             time.sleep(2)
-            logger.info(f"VNC ready; opening Screen Sharing at vnc://localhost:{local_port}")
-            subprocess.run(
-                ["open", f"vnc://localhost:{local_port}"], check=False
+            logger.info(
+                f"VNC ready; opening Screen Sharing at vnc://localhost:{local_port}"
             )
+            subprocess.run(["open", f"vnc://localhost:{local_port}"], check=False)
 
         threading.Thread(target=_open_viewer, daemon=True).start()
     rc = subprocess.call(ssh_args)
@@ -761,7 +774,8 @@ def main(argv: list[str] | None = None) -> int:
     lg.add_argument("--follow", "-f", action="store_true")
 
     lo = sub.add_parser(
-        "login", help="open a VNC tunnel to a box for first-time / expired browser login"
+        "login",
+        help="open a VNC tunnel to a box for first-time / expired browser login",
     )
     lo.add_argument("alias")
     lo.add_argument("--local-port", type=int, default=5901)

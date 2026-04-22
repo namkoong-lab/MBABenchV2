@@ -151,7 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     cp = sub.add_parser("config", help="box-local configs.yaml helpers")
     csub = cp.add_subparsers(dest="config_cmd", required=True)
     csub.add_parser("show", help="print the worker config summary")
-    csub.add_parser("push", help="read YAML on stdin, replace configs.yaml, restart worker")
+    csub.add_parser(
+        "push", help="read YAML on stdin, replace configs.yaml, restart worker"
+    )
 
     args = p.parse_args(argv)
 

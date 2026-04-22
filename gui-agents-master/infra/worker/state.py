@@ -88,7 +88,13 @@ class WorkerState:
         worker_d = d.get("worker") or {}
         current_d = d.get("current")
         return cls(
-            worker=WorkerInfo(**{k: v for k, v in worker_d.items() if k in WorkerInfo.__dataclass_fields__}),
+            worker=WorkerInfo(
+                **{
+                    k: v
+                    for k, v in worker_d.items()
+                    if k in WorkerInfo.__dataclass_fields__
+                }
+            ),
             current=CurrentTask(**current_d) if current_d else None,
             queue=[QueuedTask(**q) for q in (d.get("queue") or [])],
             completed=[CompletedTask(**c) for c in (d.get("completed") or [])],
@@ -101,7 +107,9 @@ class WorkerState:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
 
 
 def _ensure_dir() -> None:
@@ -174,7 +182,9 @@ def enqueue(task_id: str, task_name: str | None) -> bool:
             return False
         if any(q.task_id == task_id for q in s.queue):
             return False
-        s.queue.append(QueuedTask(task_id=task_id, task_name=task_name, assigned_at=_now()))
+        s.queue.append(
+            QueuedTask(task_id=task_id, task_name=task_name, assigned_at=_now())
+        )
         return True
 
 

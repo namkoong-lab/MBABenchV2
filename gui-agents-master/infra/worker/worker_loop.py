@@ -82,7 +82,9 @@ def _publish_worker_info() -> None:
         identity = resolve_agent_identity(cfg)
         agent_model_name = identity.model_name
     except Exception as e:
-        logger.error(f"resolve_agent_identity failed; agent_model_name will be empty: {e}")
+        logger.error(
+            f"resolve_agent_identity failed; agent_model_name will be empty: {e}"
+        )
         agent_model_name = ""
     info = S.WorkerInfo(
         worker_id=_worker_id(),

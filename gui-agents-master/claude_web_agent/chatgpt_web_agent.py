@@ -11,7 +11,6 @@ Uses Playwright to:
 
 import asyncio
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -241,8 +240,6 @@ class ChatGPTWebAgent(WebAgent):
                 pass
             return False
 
-    # Maps config model names to keywords for matching ChatGPT's Intelligence panel.
-    # UI shows: "Instant 5.3", "Thinking 5.4", "Pro 5.4"
     MODEL_KEYWORDS = {
         "instant": "instant",
         "thinking": "thinking",
@@ -415,15 +412,36 @@ class ChatGPTWebAgent(WebAgent):
                     plus_btn = self.page.locator(self.SELECTORS["plus_menu_button"])
                     if await plus_btn.count() > 0:
                         await plus_btn.click(timeout=5000)
-                        await self.page.wait_for_timeout(1000)
 
-                        add_files = self.page.locator(
-                            self.SELECTORS["add_files_menuitem"]
-                        )
+                        # Wait for the Radix menu to actually open instead of
+                        # a blind 1s timeout. data-state="open" on the role=menu
+                        # root is ChatGPT's open signal; catches silent click
+                        # failures.
                         try:
-                            await add_files.wait_for(state="attached", timeout=5000)
-                            await self.page.wait_for_timeout(500)
+                            await self.page.wait_for_selector(
+                                '[role="menu"][data-state="open"]', timeout=3000
+                            )
+                        except Exception:
+                            logger.debug("+ menu did not show [data-state=open]")
 
+                        # Anchor on role+name (ARIA accessible name), with
+                        # historical labels as fallbacks. Current ChatGPT UI
+                        # ships "Add photos & files"; older builds shipped
+                        # "Add files and more" / "Add files".
+                        add_files = None
+                        for name in (
+                            "Add photos & files",
+                            "Add files and more",
+                            "Add files",
+                        ):
+                            cand = self.page.get_by_role("menuitem", name=name)
+                            if await cand.count() > 0:
+                                add_files = cand.first
+                                break
+
+                        try:
+                            if add_files is None:
+                                raise RuntimeError("add_files menuitem not found")
                             async with self.page.expect_file_chooser(
                                 timeout=10000
                             ) as fc_info:
@@ -441,13 +459,17 @@ class ChatGPTWebAgent(WebAgent):
                 except Exception:
                     logger.info("+ menu approach failed, trying fallback")
 
-                # Approach 2: "Add files and more" button (visible when agent mode is active)
+                # Approach 2: composer-level "Add files" button (legacy path
+                # visible in some agent-mode states). Anchor via aria-label
+                # where possible; text fallbacks are last-resort.
                 if not uploaded:
                     try:
                         add_files_btn = self.page.locator(
+                            'button[aria-label="Add files and more"], '
+                            'button[aria-label="Add photos & files"], '
+                            'button[aria-label*="file" i], '
                             'button:has-text("Add files and more"), '
-                            'button:has-text("Add files"), '
-                            'button[aria-label*="file"]'
+                            'button:has-text("Add files")'
                         )
                         if await add_files_btn.count() > 0:
                             async with self.page.expect_file_chooser(
@@ -500,8 +522,7 @@ class ChatGPTWebAgent(WebAgent):
             await self.page.wait_for_timeout(300)
 
             # Clear any leftover text
-            select_all = "Meta+a" if sys.platform == "darwin" else "Control+a"
-            await self.page.keyboard.press(select_all)
+            await self.page.keyboard.press("Meta+a")
             await self.page.keyboard.press("Backspace")
             await self.page.wait_for_timeout(200)
 
@@ -510,11 +531,10 @@ class ChatGPTWebAgent(WebAgent):
                 await editor.first.fill(prompt)
             except Exception:
                 logger.info("fill() failed, falling back to clipboard paste")
-                paste = "Meta+v" if sys.platform == "darwin" else "Control+v"
                 await self.page.evaluate(
                     "(text) => navigator.clipboard.writeText(text)", prompt
                 )
-                await self.page.keyboard.press(paste)
+                await self.page.keyboard.press("Meta+v")
                 await self.page.wait_for_timeout(500)
             await self.page.wait_for_timeout(1000)
 
@@ -703,6 +723,7 @@ class ChatGPTWebAgent(WebAgent):
         required_stable = 5  # 5 consecutive checks × check_interval (15s at 3s)
         last_response_text = ""
         last_article_count = baseline_article_count
+
         while (asyncio.get_event_loop().time() - start_time) < self.max_wait_per_prompt:
             if self.shutdown_event and self.shutdown_event.is_set():
                 return None
@@ -1184,26 +1205,14 @@ class ChatGPTWebAgent(WebAgent):
         for i, prompt in enumerate(prompts, 1):
             logger.info(f"Processing prompt {i}/{len(prompts)}")
 
-            if self.completion_logger:
-                self.completion_logger.start_prompt(prompt)
-
             if not await self.submit_prompt(prompt, i):
                 logger.error(f"Failed to submit prompt {i}")
-                if self.completion_logger:
-                    self.completion_logger.end_prompt(success=False)
                 return False
 
             response = await self.wait_for_response(i)
             if response is None:
                 logger.error(f"No response for prompt {i}")
-                if self.completion_logger:
-                    self.completion_logger.end_prompt(success=False)
                 return False
-
-            if self.completion_logger:
-                self.completion_logger.end_prompt(
-                    success=True, response_length=len(response)
-                )
 
             self.messages.append(
                 ConversationMessage(

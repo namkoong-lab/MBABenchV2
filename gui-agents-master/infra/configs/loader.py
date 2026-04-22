@@ -99,6 +99,7 @@ def load_configs(
 
 # --- internals --------------------------------------------------------------
 
+
 def _read_yaml(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -110,9 +111,7 @@ def _is_leaf(node: Any) -> bool:
     return isinstance(node, dict) and "value" in node and "required" in node
 
 
-def _deep_merge_dicts(
-    base: dict[str, Any], top: dict[str, Any]
-) -> dict[str, Any]:
+def _deep_merge_dicts(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
     """Deep-merge `top` onto `base` (top wins). Non-dict values replace."""
     if not top:
         return dict(base)
@@ -214,6 +213,7 @@ def _to_namespace(d: dict[str, Any]) -> SimpleNamespace:
 
 # --- scaffolding ------------------------------------------------------------
 
+
 def ensure_overrides_present(
     required: list[str | tuple[str, ...]] | dict[str, Any],
     *,
@@ -251,10 +251,14 @@ def ensure_overrides_present(
     for p in missing:
         print(f"  - {'.'.join(p)}")
     try:
-        answer = input(
-            f"\nAdd these as null entries to {override_path.name} so you can "
-            f"fill them in? [y/N]: "
-        ).strip().lower()
+        answer = (
+            input(
+                f"\nAdd these as null entries to {override_path.name} so you can "
+                f"fill them in? [y/N]: "
+            )
+            .strip()
+            .lower()
+        )
     except EOFError:
         # Non-interactive — skip silently rather than edit a file unprompted.
         return False
@@ -286,9 +290,7 @@ def _normalize_required(
                     f"strings; got {item!r}"
                 )
         return out
-    raise TypeError(
-        f"required must be a list or dict; got {type(spec).__name__}"
-    )
+    raise TypeError(f"required must be a list or dict; got {type(spec).__name__}")
 
 
 def _walk_dict_paths(node: dict[str, Any], path: tuple[str, ...]):
@@ -311,9 +313,7 @@ def _is_override_set(path: tuple[str, ...], override_path: Path) -> bool:
     return True
 
 
-def _write_null_overrides(
-    paths: list[tuple[str, ...]], override_path: Path
-) -> None:
+def _write_null_overrides(paths: list[tuple[str, ...]], override_path: Path) -> None:
     """Add explicit null entries at the given nested key paths to
     configs.yaml. The leading comment block of the file is preserved;
     everything past it is rewritten from the parsed structure, so any

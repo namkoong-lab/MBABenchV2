@@ -92,6 +92,7 @@ class ClaudeWebAgent(WebAgent):
         # Web search checkbox in the dropdown menu
         "web_search_checkbox": 'div[role="menuitemcheckbox"]:has-text("Web search")',
         # Download button in artifact card
+        # Multiple selectors for fallback, matching working run_wsp_task_with_file.py
         "download_button": 'button:has-text("Download")',
         "download_button_aria": '[aria-label="Download"]',
         "download_button_text": 'button:text("Download")',
@@ -162,18 +163,18 @@ class ClaudeWebAgent(WebAgent):
 
             # Configure model + extended thinking
             target_model = self.agent_config.get("model", "opus")
-            # Map config keys like "opus_4_6" to keyword "opus"
-            target_keyword = self.MODEL_KEYWORDS.get(target_model, target_model)
             enable_et = self.agent_config.get("enable_extended_thinking", True)
             if not await self.ensure_model_config(
-                model=target_keyword, extended_thinking=enable_et
+                model=target_model, extended_thinking=enable_et
             ):
                 logger.error("Failed to configure model - aborting")
                 return False
 
             # Set Web Search per config (default: disabled)
             enable_web_search = self.agent_config.get("enable_web_search", False)
-            await self.ensure_web_search_set(enabled=enable_web_search)
+            if not await self.ensure_web_search_set(enabled=enable_web_search):
+                logger.error("Failed to configure Web Search - aborting")
+                return False
 
             return True
 
@@ -181,39 +182,30 @@ class ClaudeWebAgent(WebAgent):
             logger.error(f"Failed to navigate to Claude.ai: {e}")
             return False
 
-    # Maps config model names to keyword used for substring matching in the UI.
-    MODEL_KEYWORDS = {
-        "opus_4_6": "opus",
-        "opus": "opus",
-        "sonnet_4_6": "sonnet",
-        "sonnet": "sonnet",
-        "haiku_4_5": "haiku",
-        "haiku": "haiku",
-    }
-
-    # Model button: exact testid, with text-based fallbacks for the case
+    # Model button: exact testid, with two text-based fallbacks for the case
     # where Anthropic renames/drops the testid. :has-text is case-insensitive.
     MODEL_BUTTON_SELECTORS = (
         'button[data-testid="model-selector-dropdown"]',
         'button[aria-haspopup="menu"]:has-text("Opus")',
         'button[aria-haspopup="menu"]:has-text("Sonnet")',
-        'button[aria-haspopup="menu"]:has-text("Haiku")',
         'button[aria-haspopup="menu"]:has-text("Adaptive")',
     )
 
-    # Adaptive thinking (formerly Extended thinking / Think longer).
-    # Structural fallback lives in _find_extended_thinking_item.
-    ET_MENUITEM_SELECTORS = (
-        '[role="menuitem"]:has-text("Adaptive thinking")',
-        '[role="menuitemradio"]:has-text("Adaptive thinking")',
-        '[role="menuitem"]:has-text("Extended thinking")',
-        '[role="menuitemradio"]:has-text("Extended thinking")',
-        '[role="menuitem"]:has-text("Think longer")',
-        '[role="menuitemradio"]:has-text("Think longer")',
+    # Adaptive thinking (formerly "Extended thinking" / "Think longer").
+    # Claude.ai exposes this as a native HTML
+    # ``<input role="switch" aria-label="Adaptive thinking" type="checkbox">``
+    # inside the model dropdown. We look the switch up by ARIA role+name —
+    # stable across visual refactors — and keep historical labels as
+    # fallbacks because Anthropic has renamed this control before.
+    AT_SWITCH_NAMES = (
+        "Adaptive thinking",
+        "Extended thinking",
+        "Think longer",
     )
 
-    # Interactive toggle inside the menuitem — click targets. Ordered
-    # specific-to-general so we click the real control, not a wrapper div.
+    # Structural fallback: if the switch's role+name lookup doesn't
+    # resolve (e.g. the control changes shape), probe for a toggle
+    # element inside any menuitem whose visible text mentions "think".
     ET_SWITCH_SELECTORS = (
         'input[role="switch"]',
         'input[type="checkbox"]',
@@ -248,6 +240,7 @@ class ClaudeWebAgent(WebAgent):
                     logger.warning(f"Dropdown click attempt {attempt} failed: {e}")
                     continue
             await asyncio.sleep(0.8)
+            # Did the menu actually render?
             menu = await self.page.query_selector(
                 '[role="menu"]:visible, [role="listbox"]:visible'
             )
@@ -264,16 +257,46 @@ class ClaudeWebAgent(WebAgent):
         except Exception:
             pass
 
-    async def _find_extended_thinking_item(self):
-        for sel in self.ET_MENUITEM_SELECTORS:
+    async def _find_thinking_switch(self):
+        """Return the Adaptive-thinking switch Locator, or None.
+
+        The dropdown must be open. Looks up the switch via ARIA
+        ``role="switch"`` + accessible name, trying historical names
+        in order (current label first). This is the primary path.
+        """
+        for name in self.AT_SWITCH_NAMES:
             try:
-                item = await self.page.query_selector(sel)
-                if item and await item.is_visible():
-                    return item
+                locator = self.page.get_by_role("switch", name=name)
+                if (await locator.count()) > 0:
+                    first = locator.first
+                    if await first.is_visible():
+                        return first
             except Exception:
                 continue
-        # Last-resort structural search: a menuitem whose text mentions
-        # "think" and which contains some form of toggle control.
+        return None
+
+    async def _find_extended_thinking_item(self):
+        """Return the menuitem container wrapping the thinking switch.
+
+        Preferred path: walk up from the switch located via
+        ``_find_thinking_switch``. Falls back to a text-based
+        structural scan (menuitem whose visible text mentions "think"
+        and which contains a toggle) only if the switch lookup fails.
+        """
+        # Primary: walk up from the switch to its enclosing menuitem.
+        sw = await self._find_thinking_switch()
+        if sw:
+            try:
+                item_handle = await sw.evaluate_handle(
+                    'el => el.closest(\'[role="menuitem"], [role="menuitemradio"]\')'
+                )
+                el = item_handle.as_element() if item_handle else None
+                if el and await el.is_visible():
+                    return el
+            except Exception:
+                pass
+
+        # Last-resort structural search.
         try:
             items = await self.page.query_selector_all(
                 '[role="menuitem"], [role="menuitemradio"]'
@@ -297,11 +320,27 @@ class ClaudeWebAgent(WebAgent):
         return None
 
     async def _read_extended_thinking_switch(self) -> Optional[bool]:
-        """Read the Extended thinking switch state. Dropdown must be open.
+        """Read the Adaptive-thinking switch state. Dropdown must be open.
 
-        Tries ``is_checked()``, then ``aria-checked``, then ``data-state``
-        (Radix convention). Returns True/False, or None if no switch found.
+        Primary path reads the switch located by ARIA role+name via
+        ``is_checked()``. Falls back to locating the menuitem and
+        probing its descendants for ``is_checked`` / ``aria-checked`` /
+        ``data-state`` only if the direct switch lookup doesn't resolve.
         """
+        sw = await self._find_thinking_switch()
+        if sw:
+            try:
+                return await sw.is_checked()
+            except Exception:
+                pass
+            try:
+                aria = await sw.get_attribute("aria-checked")
+                if aria in ("true", "false"):
+                    return aria == "true"
+            except Exception:
+                pass
+
+        # Fallback: item-level descent (legacy path).
         item = await self._find_extended_thinking_item()
         if not item:
             return None
@@ -389,31 +428,45 @@ class ClaudeWebAgent(WebAgent):
                 await self._close_model_dropdown()
                 return True
 
-            item = await self._find_extended_thinking_item()
-            if not item:
-                await self._close_model_dropdown()
-                return False
-
-            # Prefer clicking a real switch/checkbox; fall back to the menuitem.
+            # Prefer clicking the switch directly (ARIA role+name anchored).
+            # Fall back to a menuitem-level click only if the switch lookup
+            # fails or the click itself is intercepted.
             clicked = False
-            for sel in self.ET_SWITCH_SELECTORS:
+            sw = await self._find_thinking_switch()
+            if sw:
                 try:
-                    el = await item.query_selector(sel)
-                    if el and await el.is_visible():
-                        try:
-                            await el.click(force=True)
-                        except Exception:
-                            await el.click()
-                        clicked = True
-                        break
-                except Exception:
-                    continue
-            if not clicked:
-                try:
-                    await item.click()
+                    await sw.click()
                     clicked = True
-                except Exception as e:
-                    logger.error(f"Failed to click ET menuitem: {e}")
+                except Exception:
+                    try:
+                        await sw.click(force=True)
+                        clicked = True
+                    except Exception as e:
+                        logger.debug(f"Switch click failed, will try item: {e}")
+
+            if not clicked:
+                item = await self._find_extended_thinking_item()
+                if not item:
+                    await self._close_model_dropdown()
+                    return False
+                for sel in self.ET_SWITCH_SELECTORS:
+                    try:
+                        el = await item.query_selector(sel)
+                        if el and await el.is_visible():
+                            try:
+                                await el.click(force=True)
+                            except Exception:
+                                await el.click()
+                            clicked = True
+                            break
+                    except Exception:
+                        continue
+                if not clicked:
+                    try:
+                        await item.click()
+                        clicked = True
+                    except Exception as e:
+                        logger.error(f"Failed to click ET menuitem: {e}")
             await asyncio.sleep(0.5)
 
             final = await self._read_extended_thinking_switch()
@@ -441,8 +494,8 @@ class ClaudeWebAgent(WebAgent):
         "Extended" in the button text).
 
         Args:
-            model: Target model keyword — ``"opus"``, ``"sonnet"``, or
-                   ``"haiku"``. Matched case-insensitively.
+            model: Target model keyword — ``"opus"`` or ``"sonnet"``.
+                   Matched case-insensitively against dropdown item text.
             extended_thinking: Whether extended thinking should be on.
 
         Returns:
@@ -462,6 +515,7 @@ class ClaudeWebAgent(WebAgent):
             btn_text = (await model_btn.text_content() or "").lower()
             current_model_ok = model_lower in btn_text
 
+            # Model selection (if needed) — only driver of the model
             if not current_model_ok:
                 if not await self._open_model_dropdown():
                     return False
@@ -512,6 +566,7 @@ class ClaudeWebAgent(WebAgent):
                     await self._close_model_dropdown()
                     return False
 
+                # Re-check model from button label
                 model_btn = await self._get_model_button()
                 btn_text = (
                     (await model_btn.text_content() or "").lower() if model_btn else ""
@@ -522,6 +577,7 @@ class ClaudeWebAgent(WebAgent):
                 logger.error(f"Model not set after selection attempt: got {btn_text!r}")
                 return False
 
+            # Delegate Extended thinking to the dedicated helper
             if not await self.ensure_extended_thinking(enabled=extended_thinking):
                 return False
 
@@ -557,7 +613,6 @@ class ClaudeWebAgent(WebAgent):
                 )
                 if await menu_btn.is_visible(timeout=3000):
                     await menu_btn.click()
-                    await asyncio.sleep(0.5)
                 else:
                     logger.warning("Toggle menu button not visible")
                     return False
@@ -569,12 +624,21 @@ class ClaudeWebAgent(WebAgent):
                 )
                 if menu_btn and await menu_btn.is_visible():
                     await menu_btn.click()
-                    await asyncio.sleep(0.5)
                 else:
                     logger.warning("Toggle menu button not found")
                     return False
 
+            # Wait for the menu to open. [role=menu][data-open] is the
+            # Base UI open signal; catches silent click failures.
+            try:
+                await self.page.wait_for_selector(
+                    '[role="menu"][data-open]', timeout=3000
+                )
+            except Exception:
+                logger.debug("Toggle menu did not show [data-open] in time")
+
             # Now find the Web Search checkbox
+            toggled = False
             try:
                 web_search = self.page.get_by_role(
                     "menuitemcheckbox", name="Web search"
@@ -592,31 +656,88 @@ class ClaudeWebAgent(WebAgent):
                     # Click to toggle
                     await web_search.click()
                     await asyncio.sleep(0.3)
-                    logger.info(f"Web Search {desired} successfully")
-                    return True
+                    toggled = True
             except Exception as e:
                 logger.debug(f"Role-based Web Search selector failed: {e}")
 
-            # Fallback to CSS selector
-            web_search = await self.page.query_selector(
-                self.SELECTORS["web_search_checkbox"]
-            )
-            if web_search and await web_search.is_visible():
-                is_checked = await web_search.get_attribute("aria-checked") == "true"
+            if not toggled:
+                # Fallback to CSS selector
+                web_search = await self.page.query_selector(
+                    self.SELECTORS["web_search_checkbox"]
+                )
+                if web_search and await web_search.is_visible():
+                    is_checked = (
+                        await web_search.get_attribute("aria-checked") == "true"
+                    )
 
-                if is_checked == enabled:
-                    logger.info(f"Web Search is already {desired}")
-                    await self.page.keyboard.press("Escape")
-                    return True
+                    if is_checked == enabled:
+                        logger.info(f"Web Search is already {desired}")
+                        await self.page.keyboard.press("Escape")
+                        return True
 
-                await web_search.click()
-                await asyncio.sleep(0.3)
-                logger.info(f"Web Search {desired} successfully")
-                return True
+                    await web_search.click()
+                    await asyncio.sleep(0.3)
+                    toggled = True
 
-            logger.warning("Web Search checkbox not found")
+            if not toggled:
+                logger.error("Web Search checkbox not found")
+                await self.page.keyboard.press("Escape")
+                return False
+
+            # Final verification: re-open the menu and re-read aria-checked
             await self.page.keyboard.press("Escape")
-            return False
+            await asyncio.sleep(0.3)
+            try:
+                menu_btn = self.page.get_by_role(
+                    "button", name="Add files, connectors, and more"
+                )
+                if await menu_btn.is_visible(timeout=3000):
+                    await menu_btn.click()
+                else:
+                    menu_btn_fallback = await self.page.query_selector(
+                        self.SELECTORS["toggle_menu_button"]
+                    )
+                    if menu_btn_fallback and await menu_btn_fallback.is_visible():
+                        await menu_btn_fallback.click()
+                    else:
+                        logger.error(
+                            "Could not re-open toggle menu to verify Web Search"
+                        )
+                        return False
+                try:
+                    await self.page.wait_for_selector(
+                        '[role="menu"][data-open]', timeout=3000
+                    )
+                except Exception:
+                    logger.debug("Toggle menu did not show [data-open] during verify")
+
+                verify_el = self.page.get_by_role("menuitemcheckbox", name="Web search")
+                if await verify_el.is_visible(timeout=2000):
+                    actual = await verify_el.get_attribute("aria-checked") == "true"
+                else:
+                    verify_el = await self.page.query_selector(
+                        self.SELECTORS["web_search_checkbox"]
+                    )
+                    if not verify_el:
+                        logger.error("Web Search checkbox missing during verification")
+                        await self.page.keyboard.press("Escape")
+                        return False
+                    actual = await verify_el.get_attribute("aria-checked") == "true"
+            finally:
+                try:
+                    await self.page.keyboard.press("Escape")
+                except Exception:
+                    pass
+
+            if actual != enabled:
+                logger.error(
+                    f"Web Search mismatch — wanted {desired}, "
+                    f"observed={'enabled' if actual else 'disabled'}"
+                )
+                return False
+
+            logger.info(f"Web Search {desired} successfully (verified)")
+            return True
 
         except Exception as e:
             logger.error(f"Error setting Web Search: {e}")
@@ -629,10 +750,9 @@ class ClaudeWebAgent(WebAgent):
     async def ensure_features_enabled(self) -> bool:
         """Configure model, extended thinking, and web search per config."""
         target_model = self.agent_config.get("model", "opus")
-        target_keyword = self.MODEL_KEYWORDS.get(target_model, target_model)
         enable_et = self.agent_config.get("enable_extended_thinking", True)
         model_ok = await self.ensure_model_config(
-            model=target_keyword, extended_thinking=enable_et
+            model=target_model, extended_thinking=enable_et
         )
         enable_ws = self.agent_config.get("enable_web_search", False)
         ws_ok = await self.ensure_web_search_set(enabled=enable_ws)
@@ -789,13 +909,23 @@ class ClaudeWebAgent(WebAgent):
                 logger.error("Could not find attach button (+)")
                 return False
 
-            # Click "+" to open the submenu
+            # Click "+" and wait for the menu to actually open.
+            # [role=menu][data-open] is the Base UI open signal; catches
+            # silent click failures that previously manifested as
+            # "could not find Add files or photos".
             await attach_btn.click()
-            await asyncio.sleep(0.5)
+            try:
+                await self.page.wait_for_selector(
+                    '[role="menu"][data-open]', timeout=3000
+                )
+            except Exception:
+                logger.debug("Attach menu did not show [data-open] in time")
 
-            # Find "Add files or photos" in the submenu and click it
-            # while expecting the file chooser to open
-            add_files_item = self.page.get_by_text("Add files or photos")
+            # Find "Add files or photos" via ARIA role+name (stable across
+            # localization / text-content renames), not plain text.
+            add_files_item = self.page.get_by_role(
+                "menuitem", name="Add files or photos"
+            )
             try:
                 async with self.page.expect_file_chooser(timeout=5000) as fc:
                     await add_files_item.click(timeout=3000)
@@ -810,12 +940,14 @@ class ClaudeWebAgent(WebAgent):
                     await attach_btn.click()
                     await asyncio.sleep(0.5)
                     async with self.page.expect_file_chooser(timeout=5000) as fc:
+                        # Try clicking the first menu item with a paperclip icon
                         menu_item = await self.page.query_selector(
                             'div[role="menuitem"]:has-text("file")'
                         )
                         if menu_item:
                             await menu_item.click()
                         else:
+                            # Last resort: just click the attach button itself
                             await attach_btn.click()
                     chooser = await fc.value
                     await chooser.set_files(file_paths)
@@ -826,7 +958,6 @@ class ClaudeWebAgent(WebAgent):
 
             # Wait for uploads to complete
             await asyncio.sleep(2 + len(file_paths))
-            logger.info(f"Uploaded {len(file_paths)} file(s)")
             return True
 
         except Exception as e:
@@ -1174,6 +1305,7 @@ class ClaudeWebAgent(WebAgent):
             # Wait a moment for any UI animations to settle
             await asyncio.sleep(1)
 
+            # Use query_selector like the working run_wsp_task_with_file.py
             # Try multiple selectors in order of preference
             download_selectors = [
                 self.SELECTORS["download_button"],  # button:has-text("Download")

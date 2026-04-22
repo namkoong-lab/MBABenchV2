@@ -42,6 +42,7 @@ class AttemptSchema:
     that must be wrapped in psycopg2.extras.Json so list/dict values are
     serialized to the JSON/JSONB column type rather than pg arrays.
     """
+
     table: str
     columns: tuple[str, ...]
     json_columns: frozenset[str] = frozenset()
@@ -109,8 +110,7 @@ class PostgresS3AttemptSink:
                 f"aws.secret_access_key in configs.yaml."
             ) from e
         logger.info(
-            f"AWS identity: account={ident.get('Account')} "
-            f"arn={ident.get('Arn')}"
+            f"AWS identity: account={ident.get('Account')} " f"arn={ident.get('Arn')}"
         )
         try:
             self._s3.head_bucket(Bucket=self.s3_bucket)
@@ -171,9 +171,7 @@ class PostgresS3AttemptSink:
             out.append(p)
         return out
 
-    def _upload_files(
-        self, local_files: list[Path], base_key: str
-    ) -> list[str]:
+    def _upload_files(self, local_files: list[Path], base_key: str) -> list[str]:
         uris: list[str] = []
         for local in local_files:
             key = f"{base_key}_{local.name}"
@@ -186,9 +184,7 @@ class PostgresS3AttemptSink:
         schema = self.attempt_schema
         missing = [c for c in schema.columns if c not in values]
         if missing:
-            raise ValueError(
-                f"_attempt_values missing required columns: {missing}"
-            )
+            raise ValueError(f"_attempt_values missing required columns: {missing}")
         ident = sql.Identifier
         stmt = sql.SQL("INSERT INTO {tbl} ({cols}) VALUES ({ph})").format(
             tbl=ident(schema.table),
@@ -196,9 +192,11 @@ class PostgresS3AttemptSink:
             ph=sql.SQL(", ").join(sql.Placeholder() for _ in schema.columns),
         )
         params = [
-            psycopg2.extras.Json(values[c])
-            if c in schema.json_columns and values[c] is not None
-            else values[c]
+            (
+                psycopg2.extras.Json(values[c])
+                if c in schema.json_columns and values[c] is not None
+                else values[c]
+            )
             for c in schema.columns
         ]
         conn = self._connect()
@@ -215,12 +213,8 @@ class PostgresS3AttemptSink:
     def publish(self, result: AttemptResult) -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base = self._s3_base_key(result, timestamp)
-        attempt_uris = self._upload_files(
-            self._attempt_files_to_upload(result), base
-        )
-        prompt_uris = self._upload_files(
-            self._prompt_files_to_upload(result), base
-        )
+        attempt_uris = self._upload_files(self._attempt_files_to_upload(result), base)
+        prompt_uris = self._upload_files(self._prompt_files_to_upload(result), base)
         values = self._attempt_values(result, attempt_uris, prompt_uris)
         self._insert_row(values)
         logger.info(
@@ -418,9 +412,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
         if agent_failed:
             extra = result.extra or {}
             agent_failed_reason = (
-                extra.get("error")
-                or extra.get("failure_reason")
-                or result.status
+                extra.get("error") or extra.get("failure_reason") or result.status
             )
 
         return {

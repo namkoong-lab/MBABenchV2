@@ -52,6 +52,7 @@ class TaskSchema:
     Columns referenced only in WHERE clauses (subclass `_extra_where()`)
     don't need to be listed here — WHERE can reference any table column.
     """
+
     table: str
     id_col: str
     name_col: str
@@ -123,8 +124,7 @@ class PostgresS3TaskSource:
                 f"aws.secret_access_key in configs.yaml."
             ) from e
         logger.info(
-            f"AWS identity: account={ident.get('Account')} "
-            f"arn={ident.get('Arn')}"
+            f"AWS identity: account={ident.get('Account')} " f"arn={ident.get('Arn')}"
         )
 
     # --- extension points --------------------------------------------------
@@ -390,20 +390,24 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
         out: list[tuple[sql.Composable, list]] = []
 
         if self.skip_deprecated:
-            out.append((
-                sql.SQL("(t.{col} IS NULL OR t.{col} = FALSE)").format(
-                    col=ident(BIZBENCH_TASKS_DEPRECATED_COL)
-                ),
-                [],
-            ))
+            out.append(
+                (
+                    sql.SQL("(t.{col} IS NULL OR t.{col} = FALSE)").format(
+                        col=ident(BIZBENCH_TASKS_DEPRECATED_COL)
+                    ),
+                    [],
+                )
+            )
 
         if self.task_sources:
-            out.append((
-                sql.SQL("t.{col} = ANY(%s)").format(
-                    col=ident(BIZBENCH_TASKS_SOURCE_COL)
-                ),
-                [self.task_sources],
-            ))
+            out.append(
+                (
+                    sql.SQL("t.{col} = ANY(%s)").format(
+                        col=ident(BIZBENCH_TASKS_SOURCE_COL)
+                    ),
+                    [self.task_sources],
+                )
+            )
 
         if self.skip_already_attempted:
             clauses: list[sql.Composable] = [
@@ -414,7 +418,9 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
                 sql.SQL("a.{c} = %s").format(c=ident(BIZBENCH_ATTEMPTS_AGENT_COL)),
                 sql.SQL("a.{c} = %s").format(c=ident(BIZBENCH_ATTEMPTS_PV_COL)),
                 sql.SQL("a.{c} = FALSE").format(c=ident(BIZBENCH_ATTEMPTS_FAILED_COL)),
-                sql.SQL("a.{c} = FALSE").format(c=ident(BIZBENCH_ATTEMPTS_DEPRECATED_COL)),
+                sql.SQL("a.{c} = FALSE").format(
+                    c=ident(BIZBENCH_ATTEMPTS_DEPRECATED_COL)
+                ),
             ]
             clause = sql.SQL("NOT EXISTS (SELECT 1 FROM {tbl} a WHERE {cs})").format(
                 tbl=ident(BIZBENCH_ATTEMPTS_TABLE),

@@ -109,7 +109,9 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
     if spec.solution_name:
         engine_config["solution_name"] = spec.solution_name
 
-    task_source = spec.metadata.get("task_source") if isinstance(spec.metadata, dict) else None
+    task_source = (
+        spec.metadata.get("task_source") if isinstance(spec.metadata, dict) else None
+    )
     if task_source:
         engine_config["task_source"] = task_source
 
@@ -180,9 +182,7 @@ def preflight_check(engine_config: dict, provider: str) -> list[str]:
     return errors
 
 
-def find_completion_json(
-    log_dir: Path, task_name: str, after: datetime
-) -> Path | None:
+def find_completion_json(log_dir: Path, task_name: str, after: datetime) -> Path | None:
     if not log_dir.exists():
         return None
     matches: list[tuple[float, Path]] = []
@@ -245,9 +245,7 @@ def find_solution_file(
     return matches[0][1]
 
 
-def run_engine(
-    engine_config: dict, engine_script: Path, timeout: int | None
-) -> int:
+def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) -> int:
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".yaml",
@@ -257,7 +255,13 @@ def run_engine(
         yaml.safe_dump(engine_config, f, default_flow_style=False)
         tmp_path = Path(f.name)
     try:
-        cmd = [sys.executable, str(engine_script), "--config", str(tmp_path), "--no-hold"]
+        cmd = [
+            sys.executable,
+            str(engine_script),
+            "--config",
+            str(tmp_path),
+            "--no-hold",
+        ]
         logger.info(f"Engine: {' '.join(cmd)}")
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
@@ -311,8 +315,6 @@ PROVIDER_REQUIRED_KEYS: dict[str, list[tuple[str, ...]]] = {
         ("chatgpt_web", "project_slug"),
     ],
 }
-
-
 
 
 def _confirm_tasks(specs: list[TaskSpec]) -> bool:
@@ -383,9 +385,7 @@ def main() -> int:
                 f"{run_config_path}"
             )
             return 2
-        run_config_is_task_yaml = bool(
-            _RUN_CONFIG_TASK_KEYS & set(run_config_data)
-        )
+        run_config_is_task_yaml = bool(_RUN_CONFIG_TASK_KEYS & set(run_config_data))
 
     try:
         if run_config_is_task_yaml:
@@ -459,9 +459,7 @@ def main() -> int:
             logger.warning("No tasks to run.")
             return 0
 
-        required = [
-            ".".join(p) for p in PROVIDER_REQUIRED_KEYS.get(provider, [])
-        ]
+        required = [".".join(p) for p in PROVIDER_REQUIRED_KEYS.get(provider, [])]
         if ensure_overrides_present(
             required, context=f"Preflight for provider {provider!r}"
         ):

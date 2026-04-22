@@ -39,10 +39,14 @@ class Box:
 
     def ssh_base_args(self) -> list[str]:
         args = [
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ConnectTimeout=10",
-            "-o", "BatchMode=yes",
-            "-p", str(self.ssh_port),
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "BatchMode=yes",
+            "-p",
+            str(self.ssh_port),
         ]
         if self.ssh_key:
             args += ["-i", os.path.expanduser(self.ssh_key)]

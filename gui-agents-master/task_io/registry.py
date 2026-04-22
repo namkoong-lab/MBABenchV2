@@ -87,8 +87,7 @@ def _validate_kind_schema(
     """
     if kind not in valid:
         raise ValueError(
-            f"Unknown {kind_name}: {kind!r}. "
-            f"Available: {sorted(valid.keys())}"
+            f"Unknown {kind_name}: {kind!r}. " f"Available: {sorted(valid.keys())}"
         )
     accepted = valid[kind]
     if accepted == {None}:
@@ -103,8 +102,7 @@ def _validate_kind_schema(
         slot = kind_name.replace(".kind", ".schema")
         non_none = sorted(s for s in accepted if s is not None)
         raise ValueError(
-            f"{slot} is required when {kind_name}={kind!r}. "
-            f"Available: {non_none}"
+            f"{slot} is required when {kind_name}={kind!r}. " f"Available: {non_none}"
         )
     if schema not in accepted:
         slot = kind_name.replace(".kind", ".schema")
@@ -122,6 +120,7 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
 
     if kind == "yaml":
         from .sources.yaml_source import YamlTaskSource
+
         return YamlTaskSource(yaml_path=_resolve(cfg.source.yaml_path))
 
     if kind == "postgres_s3" and schema == "bizbench":
@@ -173,6 +172,7 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
 
     if kind == "local":
         from .sinks.local_sink import LocalAttemptSink
+
         return LocalAttemptSink(output_dir=_resolve(cfg.sink.output_dir))
 
     if kind == "postgres_s3" and schema == "bizbench":
@@ -207,6 +207,4 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
             aws_session_token=session_token,
         )
 
-    raise AssertionError(
-        f"Unhandled (sink.kind, sink.schema) = ({kind!r}, {schema!r})"
-    )
+    raise AssertionError(f"Unhandled (sink.kind, sink.schema) = ({kind!r}, {schema!r})")

@@ -58,7 +58,9 @@ PROBE_REQUEST_TIMEOUT_MS = 15_000
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
 
 
 def _write(payload: dict) -> None:
@@ -176,24 +178,28 @@ def main() -> int:
     provider = getattr(getattr(cfg, "provider", None), "kind", None)
     if provider not in SUPPORTED_PROVIDERS:
         logger.error(f"unknown or unsupported provider: {provider!r}")
-        _write({
-            "provider": str(provider) if provider else None,
-            "ok": False,
-            "checked_at": _now_iso(),
-            "reason": "unsupported_provider",
-        })
+        _write(
+            {
+                "provider": str(provider) if provider else None,
+                "ok": False,
+                "checked_at": _now_iso(),
+                "reason": "unsupported_provider",
+            }
+        )
         return 2
 
     try:
         cdp_port = _resolve_cdp_port(cfg, provider)
     except Exception as e:
         logger.error(f"could not resolve CDP port: {e}")
-        _write({
-            "provider": provider,
-            "ok": False,
-            "checked_at": _now_iso(),
-            "reason": f"cdp_port_missing:{type(e).__name__}",
-        })
+        _write(
+            {
+                "provider": provider,
+                "ok": False,
+                "checked_at": _now_iso(),
+                "reason": f"cdp_port_missing:{type(e).__name__}",
+            }
+        )
         return 2
 
     try:
@@ -202,12 +208,14 @@ def main() -> int:
         # Connection refused, Chrome not running, etc. Distinct from
         # "logged out" — the operator may want to see the class of error.
         logger.error(f"probe error: {e}")
-        _write({
-            "provider": provider,
-            "ok": False,
-            "checked_at": _now_iso(),
-            "reason": f"probe_error:{type(e).__name__}",
-        })
+        _write(
+            {
+                "provider": provider,
+                "ok": False,
+                "checked_at": _now_iso(),
+                "reason": f"probe_error:{type(e).__name__}",
+            }
+        )
         return 1
 
     logger.info(

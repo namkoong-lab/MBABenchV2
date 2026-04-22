@@ -257,7 +257,9 @@ class WebBrowserManager:
             logger.info(f"Connected to Chrome via CDP ({cdp_url})")
         except Exception as e:
             error_msg = str(e).lower()
-            stale = "setdownloadbehavior" in error_msg or "context management" in error_msg
+            stale = (
+                "setdownloadbehavior" in error_msg or "context management" in error_msg
+            )
             if stale and os.environ.get("GUI_AGENTS_CHROME_MANAGED") == "1":
                 # Managed mode owns Chrome's lifecycle — don't kill/relaunch
                 # ourselves. Let systemd's restart policy handle it.
