@@ -322,9 +322,14 @@ push_setup() {
     ssh_run "$host" "sudo systemctl enable --now gui-agents-chrome.service"
     ssh_run "$host" "sudo systemctl enable --now gui-agents-worker.service"
   fi
-  # Auth-probe timer: enable on first spinup; on re-runs, daemon-reload
-  # above already picked up any unit-file changes.
-  ssh_run "$host" "sudo systemctl enable --now gui-agents-auth-probe.timer"
+  # Auth-probe timer: enable on first spinup; on re-runs, restart so any
+  # interval / unit-file changes in the freshly-pushed .timer take effect
+  # (daemon-reload alone doesn't reschedule an already-active timer).
+  if [[ "$action" == "restart" ]]; then
+    ssh_run "$host" "sudo systemctl restart gui-agents-auth-probe.timer"
+  else
+    ssh_run "$host" "sudo systemctl enable --now gui-agents-auth-probe.timer"
+  fi
   for svc in gui-agents-chrome.service gui-agents-worker.service; do
     if ! ssh_run "$host" "sudo systemctl is-active --quiet $svc"; then
       echo "$svc is not active after $action" >&2

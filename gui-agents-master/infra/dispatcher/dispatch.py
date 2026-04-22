@@ -120,15 +120,21 @@ def _fmt_duration(start_iso: str | None) -> str:
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 
-_AUTH_STALE_AFTER_SEC = 30 * 60  # checked_at older than this → "?"
+_AUTH_STALE_AFTER_SEC = 30 * 60  # checked_at older than this → "old …"
+_AUTH_COL_WIDTH = 26
+
+
+def _truncate(s: str, width: int) -> str:
+    return s if len(s) <= width else s[: width - 1] + "…"
 
 
 def _fmt_auth(auth: dict | None) -> str:
     """Render the auth-probe column. Values:
-      ok       — last probe succeeded and is fresh
-      STALE    — last probe failed (any reason) — needs re-login
-      old      — last probe succeeded but was too long ago
-      ?        — no probe result on this box
+      <email>       — last probe succeeded and is fresh (shows user identity)
+      ok            — succeeded but no email available (e.g. claude)
+      STALE         — last probe failed (any reason) — needs re-login
+      old <email>   — succeeded but last probe was too long ago
+      ?             — no probe result on this box
     """
     if not auth:
         return "?"
@@ -141,9 +147,13 @@ def _fmt_auth(auth: dict | None) -> str:
         pass
     if not auth.get("ok"):
         return "STALE"
-    if age_s is not None and age_s > _AUTH_STALE_AFTER_SEC:
-        return "old"
-    return "ok"
+    email = auth.get("email") or ""
+    stale = age_s is not None and age_s > _AUTH_STALE_AFTER_SEC
+    if email:
+        label = f"old {email}" if stale else email
+    else:
+        label = "old" if stale else "ok"
+    return _truncate(label, _AUTH_COL_WIDTH)
 
 
 def _fmt_row(alias: str, state: dict | None) -> str:
@@ -168,14 +178,14 @@ def _fmt_row(alias: str, state: dict | None) -> str:
     login_s = _fmt_auth(auth)
     return (
         f"  {alias:<12} {wid:<20} {agent:<14} {pv_s:<5} "
-        f"{login_s:<6} {cur_s:<24} +{len(queue):<3} {last_s}"
+        f"{login_s:<{_AUTH_COL_WIDTH}} {cur_s:<24} +{len(queue):<3} {last_s}"
     )
 
 
 def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> None:
     header = (
         f"  {'alias':<12} {'worker_id':<20} {'agent':<14} {'pv':<5} "
-        f"{'login':<6} {'current':<24} {'q':<4} last"
+        f"{'login':<{_AUTH_COL_WIDTH}} {'current':<24} {'q':<4} last"
     )
     print(header)
     print("  " + "-" * (len(header) - 2))
