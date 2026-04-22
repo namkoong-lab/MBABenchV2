@@ -191,7 +191,7 @@ scp_to() {
 
 wait_for_ssh() {
   local host="$1" tries=60
-  echo "Waiting for SSH on $host…"
+  echo "Waiting for SSH on ${host}…"
   while (( tries-- > 0 )); do
     if ssh_run "$host" "true" >/dev/null 2>&1; then return 0; fi
     sleep 5
