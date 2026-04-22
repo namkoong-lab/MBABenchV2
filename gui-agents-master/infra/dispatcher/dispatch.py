@@ -40,6 +40,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 from infra.configs import load_configs  # noqa: E402
 from infra.dispatcher.boxes import Box, find_by_alias, load_boxes  # noqa: E402
+from infra.dispatcher.diagnostics import (  # noqa: E402
+    ConnectivityVerdict,
+    diagnose_connectivity,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("dispatch")
@@ -281,6 +285,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     if not boxes:
         logger.error("no boxes in registry")
         return 2
+    if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
+        logger.error(
+            "skipping SSH fan-out (IP blocked). "
+            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+        )
+        return 2
     if args.follow:
         try:
             while True:
@@ -301,6 +311,12 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     box = find_by_alias(args.alias)
+    if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
+        logger.error(
+            f"skipping SSH to {box.alias} (IP blocked). "
+            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+        )
+        return 2
     state = _fetch_state(box)
     if state is None:
         logger.error(f"{box.alias} UNREACHABLE")
@@ -356,6 +372,12 @@ def cmd_assign(args: argparse.Namespace) -> int:
     if args.box:
         boxes = [find_by_alias(args.box)]
 
+    if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
+        logger.error(
+            "skipping assign (IP blocked — boxes are unreachable). "
+            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+        )
+        return 2
     states = _fetch_all_states(boxes)
     reachable = [b for b in boxes if states.get(b.alias) is not None]
     if not reachable:

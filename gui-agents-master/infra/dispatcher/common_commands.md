@@ -3,6 +3,11 @@
 All commands run from the repo root as `python -m infra.dispatcher.dispatch <...>`.
 `<alias>` refers to a box alias defined in [boxes.yaml](boxes.yaml).
 
+`status` / `show` / `assign` check whether your current public IP is in the
+dispatcher security group before fanning out over SSH. If it isn't, they print
+a warning pointing at `aws_bootstrap.sh` — re-run that script (or set
+`DISPATCH_NO_DIAGNOSE=1` to suppress the check).
+
 ## Spin up / tear down
 
 ```bash
