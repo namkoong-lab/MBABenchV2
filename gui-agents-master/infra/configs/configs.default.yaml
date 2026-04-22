@@ -273,6 +273,12 @@ claude_web:
     cdp_port:
       value: 9222
       required: false
+    # Chrome --user-data-dir. Laptop default is the laptop-writable path;
+    # EC2 templates override this to /var/lib/gui-agents/chrome-claude
+    # so cookies match the VNC-login step in infra/README.md.
+    profile_dir:
+      value: "~/.chrome-canary-claude-web"
+      required: false
 
   logging:
     level:
@@ -358,6 +364,12 @@ chatgpt_web:
       required: false
     cdp_port:
       value: 9222
+      required: false
+    # Chrome --user-data-dir. Laptop default is the laptop-writable path;
+    # EC2 templates override this to /var/lib/gui-agents/chrome-chatgpt
+    # so cookies match the VNC-login step in infra/README.md.
+    profile_dir:
+      value: "~/.chrome-canary-claude-web"
       required: false
 
   session:

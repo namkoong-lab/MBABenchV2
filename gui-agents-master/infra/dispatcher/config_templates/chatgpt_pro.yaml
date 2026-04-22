@@ -1,0 +1,46 @@
+# Spin-up config template: ChatGPT provider, "pro" model.
+#
+# Pass to spinup.sh via:
+#   ./infra/dispatcher/spinup.sh \
+#       --alias chatgpt-pro-1 --provider chatgpt \
+#       --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+#
+# Deep-merges on top of infra/configs/configs.default.yaml; every key here
+# is an override. DB URL and AWS creds intentionally absent — spinup.sh
+# synthesizes /etc/gui-agents/secrets.env from the operator's env, and the
+# worker reads those via the EnvironmentFile in gui-agents-worker.service.
+
+provider:
+  kind: "chatgpt"
+
+agent:
+  model_name: "chatgpt_web"
+  agent_folder: "chatgpt_web"
+
+chatgpt_web:
+  model: "pro"
+  agent_mode: false  # control whether to use agentic mode
+  # Paste from https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
+  # Required — preflight exits if either is null/empty under provider=chatgpt.
+  project_id: "6958bb36c8e88191a6df89918a683e0d"
+  project_slug: "agentic-excel-tests"
+  browser:
+    # Matches the path the README's VNC-login step writes cookies into.
+    profile_dir: "/var/lib/gui-agents/chrome-chatgpt"
+
+# Production boxes pull from the Bizbench Postgres DB and write attempts to S3.
+source:
+  kind: "postgres_s3"
+  schema: "bizbench"
+  filters:
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: "postgres_s3"
+  schema: "bizbench"
+
+# ChatGPT agent mode works best with one combined prompt rather than the
+# multi-step Claude-style sequence in configs.default.yaml.
+prompts:
+  - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."

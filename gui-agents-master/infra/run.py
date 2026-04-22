@@ -352,6 +352,17 @@ def main() -> int:
         action="store_true",
         help="Skip the interactive 'proceed?' confirmation.",
     )
+    parser.add_argument(
+        "--task-id",
+        type=int,
+        default=None,
+        help=(
+            "Run exactly one task (by DB id). Pins source.filters.task_ids "
+            "to this value and disables skip_already_attempted so the run "
+            "proceeds even if an earlier attempt exists. Used by the "
+            "worker loop to execute one queued task per invocation."
+        ),
+    )
     args = parser.parse_args()
 
     run_config_path: Path | None = None
@@ -397,6 +408,21 @@ def main() -> int:
     if run_config_is_task_yaml:
         cfg.source.kind = "yaml"
         cfg.source.yaml_path = str(run_config_path)
+
+    if args.task_id is not None:
+        if cfg.source.kind != "postgres_s3":
+            logger.error(
+                f"--task-id requires source.kind=postgres_s3 (current: "
+                f"{cfg.source.kind!r}). Use a run-config with "
+                f"source.kind=postgres_s3 or drop --task-id."
+            )
+            return 2
+        filters = getattr(cfg.source, "filters", None)
+        if filters is None:
+            filters = SimpleNamespace()
+            cfg.source.filters = filters
+        filters.task_ids = [args.task_id]
+        filters.skip_already_attempted = False
 
     provider = cfg.provider.kind
 

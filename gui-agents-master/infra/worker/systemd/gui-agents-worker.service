@@ -1,0 +1,26 @@
+[Unit]
+Description=gui-agents worker loop (pops tasks from state.json)
+After=network-online.target xvfb.service
+Wants=network-online.target
+Requires=xvfb.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gui-agents-master
+Environment=PYTHONPATH=/opt/gui-agents-master
+Environment=GUI_AGENTS_STATE_DIR=/var/lib/gui-agents
+Environment=DISPLAY=:99
+# DB url and AWS creds belong here (either hardcoded or EnvironmentFile=).
+# Example:
+#   EnvironmentFile=/etc/gui-agents/secrets.env
+#     # which contains:
+#     #   BIZBENCHJUDGE_KEYS_DATABASE_URL=postgres://...
+#     #   AWS_ACCESS_KEY_ID=...
+#     #   AWS_SECRET_ACCESS_KEY=...
+ExecStart=/usr/bin/python3 -m infra.worker.worker_loop
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

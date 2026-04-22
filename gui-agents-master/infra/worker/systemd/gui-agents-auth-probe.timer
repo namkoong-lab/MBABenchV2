@@ -1,0 +1,12 @@
+[Unit]
+Description=Run gui-agents-auth-probe every 5 minutes
+
+[Timer]
+# First tick 2 min after boot so Chrome has time to come up.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Unit=gui-agents-auth-probe.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Xvfb virtual framebuffer on :99 (for Chrome + x11vnc)
+After=network.target
+Before=gui-agents-worker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

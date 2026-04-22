@@ -109,6 +109,7 @@ def launch_chrome_cdp(
         f"--user-data-dir={effective_profile}",
         "--no-first-run",
         "--no-default-browser-check",
+        "--no-sandbox",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",

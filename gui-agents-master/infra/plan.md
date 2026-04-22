@@ -1,6 +1,6 @@
 # AWS + DB-backed runtime for gui-agents-master
 
-**Status:** Phase 0a + 0b + 0c + 1 shipped; Phase 2 in progress.
+**Status:** Phase 0a + 0b + 0c + 1 + 2 + 3c shipped; Phase 3a/3b live-validation + Phase 4 next.
 **Last updated:** 2026-04-21
 
 ## Goals
@@ -365,8 +365,8 @@ sink:
 
 ### Open questions still outstanding
 
-- **Concurrency** — if we later parallelize, need `SELECT ... FOR UPDATE SKIP LOCKED` on the task-claiming query. Defer until Phase 5.
-- **EC2 credentials story** — Part 3 below still sketches an IAM instance profile, but the current strict-credentials contract explicitly blocks boto3's default chain. Before Phase 3 we need to decide: relax the contract for EC2 (flag / env opt-in), or have the systemd unit materialize STS temp credentials into the `aws.*_env`-named env vars before launching the runner.
+- **Concurrency** — if we later parallelize writes to `task_attempts` from multiple boxes, need `SELECT ... FOR UPDATE SKIP LOCKED` on the task-claiming query. Not a blocker for the pull-less dispatch model (each box only runs tasks its queue names, which the laptop arbitrates client-side), but revisit if we ever let boxes self-claim. Defer to Phase 5.
+- **Credential rotation** — resolved for now with long-lived IAM user keys (see Part 3). If/when rotation is required, upgrade to instance-profile + STS pre-start hook. Tracked, not blocking.
 
 ---
 
@@ -376,10 +376,11 @@ sink:
 
 **Why not Fargate first:** each task is 5–45 min, Claude/ChatGPT web sessions expire if re-authenticated from a fresh fingerprint, and the value of horizontal scaling is low until the queue is deep. One persistent VM with a stable login is the path of least resistance.
 
-**Instance shape:**
-- `t3.large` (2 vCPU, 8 GiB) minimum; `t3.xlarge` if running both Claude + ChatGPT Chromes concurrently.
-- Ubuntu 22.04 LTS, 30 GiB gp3.
+**Instance shape (defaults in [spinup.sh](dispatcher/spinup.sh)):**
+- `t3.medium` (2 vCPU, 4 GiB) default for a single-provider box; upgrade to `t3.large`+ if you see OOM kills under Chrome load.
+- Ubuntu 22.04 LTS, 30 GiB gp3 (AMI resolved via SSM parameter, so it's always the current stable image).
 - Security group: SSH (22) from your IP only. No inbound for Chrome CDP — it stays localhost.
+- Tags: `Project=gui-agents`, `alias=<name>`, `provider=<claude|chatgpt>`, `Name=gui-agents-<alias>`. `teardown.sh` finds boxes by these.
 
 **Inside the VM:**
 ```
@@ -389,7 +390,10 @@ systemd
                                  --user-data-dir=/var/lib/gui-agents/chrome-claude
                                  (DISPLAY=:99)
   └─ chrome-chatgpt.service    : same, port 9333, different user-data-dir
-  └─ gui-agents.service        : the batch runner in --poll mode
+  └─ gui-agents-worker.service : pops tasks from state.json, runs each via
+                                 `systemd-run --unit=gui-agents-task-<id> --wait
+                                  python -m infra.run --task-id <id>`
+                                 (see Part 4 for the queue and worker loop)
 ```
 
 **First-time login flow:**
@@ -403,33 +407,243 @@ Repeat every few weeks when sessions expire. (Or later: script cookie injection 
 
 ### How the runner is driven
 
-Instead of `--tasks file.yaml` the runner runs in a **poll loop**:
+See **Part 4 — Multi-box dispatch** below. In short: the box runs `gui-agents-worker.service`, which pops one task at a time from a local queue file (`/var/lib/gui-agents/state.json`) and executes it by launching `python -m infra.run --task-id <id>` inside a transient `systemd-run --unit=gui-agents-task-<id>` unit. The laptop pushes tasks into that queue over SSH via `gui-agents-queue add`. The box never polls the DB for work.
 
-```bash
-gui-agents poll \
-  --source postgres_s3 --source-config /etc/gui-agents/source.yaml \
-  --sink   postgres_s3 --sink-config   /etc/gui-agents/sink.yaml \
-  --provider claude \
-  --poll-interval 60 \
-  --max-idle 3600
-```
+### Lifecycle scripts (all under [dispatcher/](dispatcher/))
 
-Each iteration: ask the source for the next eligible task → run it → publish → loop. If `iter_tasks()` is empty for `max-idle` seconds, exit (systemd restarts — cheap way to recycle Chrome state).
+The EC2 lifecycle is driven by four bash scripts the operator runs from the laptop. None of them talk to the worker or dispatcher runtime — they only manipulate AWS and three gitignored local state files.
+
+| Script | What it does |
+|---|---|
+| [aws_bootstrap.sh](dispatcher/aws_bootstrap.sh) | One-shot prerequisites. Verifies `aws sts get-caller-identity`, detects your public IP, creates the `bizbench-gui-agents` key pair (saves `~/.ssh/bizbench-gui-agents.pem`) and `bizbench-gui-agents-sg` security group, authorizes TCP 22 from your IP. Idempotent (detects existing AWS-side resources). Writes `dispatcher/.aws_defaults` so other scripts inherit the values. |
+| [spinup.sh](dispatcher/spinup.sh) | Launches one tagged `t3.medium` Ubuntu 22.04 box AND installs the worker end-to-end. Cloud-init `apt install`s Python, git, rsync, Xvfb, Google Chrome, x11vnc, tmux (readiness marker: `/var/lib/gui-agents/.bootstrap-done`). Once SSH is up, the script rsyncs the local repo to `/opt/gui-agents-master` (as `sudo rsync` via `--rsync-path`), `pip install`s requirements, drops `gui-agents-queue` + `gui-agents-worker.service`, synthesizes `/etc/gui-agents/secrets.env` from the laptop's `infra/configs/configs.yaml` (DB url + AWS creds), copies the `--config-template <path>` YAML into `/opt/gui-agents-master/infra/configs/configs.yaml`, and `enable --now`s the worker. Provider comes from `provider.kind` in the template. **Auto-appends** the instance to `dispatcher/boxes.yaml` before the SSH phase, so a mid-run failure is recoverable via a re-run. Re-running against an existing alias re-rsyncs + restarts the worker (strictly idle only: no current task, empty queue). Sources `.aws_defaults` for defaults; precedence is CLI flag > env var > saved defaults > hardcoded. Per-box config templates live under [dispatcher/config_templates/](dispatcher/config_templates/). |
+| [teardown.sh](dispatcher/teardown.sh) | Terminates one box (`--alias X`) or all (`--all`). Finds instances by `Project=gui-agents` tag, confirms, waits for `terminated`. Security group, key pair, local `.pem`, and `boxes.yaml` are left untouched — stale entries just show as `UNREACHABLE` until the user cleans them up. |
+| [_reset_dispatcher_status.sh](dispatcher/_reset_dispatcher_status.sh) | Nuclear reset for testing the setup flow end-to-end. Terminates every `Project=gui-agents` instance, deletes the key pair + SG in AWS, deletes local `.pem`, `.aws_defaults`, and `boxes.yaml`. Underscore prefix is a convention — destructive enough that it shouldn't tab-complete alongside the non-destructive scripts. |
+
+Compatibility note: all four scripts are POSIX-flavored bash that works under macOS's default `/bin/bash` 3.2 — no `${var,,}` (lowercase expansion), no `mapfile` (bash-4+), no `readarray`.
 
 ### Config & secrets
 
-- `BIZBENCHJUDGE_KEYS_DATABASE_URL` stored in SSM Parameter Store (SecureString) or AWS Secrets Manager. Pulled into the systemd unit's `Environment=` at start.
-- AWS credentials for the runner must be surfaced as env vars named by `aws.access_key_id_env` / `aws.secret_access_key_env` (e.g. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) **before** the service starts, because the code deliberately does not use boto3's default credential chain. Two viable paths:
-  - Store long-lived IAM user keys in SSM/Secrets Manager, inject via systemd `Environment=` at service start.
-  - Keep an IAM instance profile on the box, run a systemd pre-start hook that calls `aws sts assume-role` (or reads the instance-metadata creds) and exports them into the unit's environment before `ExecStart`. Revisit before Phase 3 — see open questions above.
-- Required IAM permissions on whichever principal: `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` on `biz-bench`. `sts:GetCallerIdentity` is always allowed.
-- No AWS keys in the repo.
+- **Secrets file** at `/etc/gui-agents/secrets.env` (mode 0600) is the single source of truth on the box. Populated once per box during setup, loaded by the worker systemd unit via `EnvironmentFile=`:
+  ```
+  BIZBENCHJUDGE_KEYS_DATABASE_URL=postgres://…
+  AWS_ACCESS_KEY_ID=…
+  AWS_SECRET_ACCESS_KEY=…
+  ```
+  These env var names match what `database.url_env` and `aws.*_env` in `configs.yaml` resolve to, so the strict-credentials contract (boto3 default chain NOT consulted) is satisfied without code changes.
+- **Resolved (was an open question):** credentials delivery on EC2 uses long-lived IAM user keys injected via systemd `EnvironmentFile=`. The "IAM instance profile + STS pre-start hook" alternative is deferred to Phase 5+ — it buys rotation but adds install complexity, and we aren't rotating yet.
+- **IAM policy on the user** (not the box): `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` on the `biz-bench` bucket; `sts:GetCallerIdentity` is always allowed.
+- **No AWS keys in the repo.** `.aws_defaults` holds *names* (key name, SG id) but not secrets.
+
+### Local state files
+
+Three gitignored files accumulate locally over time:
+
+| File | Writer | Purpose |
+|---|---|---|
+| `infra/configs/configs.yaml` | hand-edited (first time), then `dispatch config push` | Project-wide knobs: DB url, AWS creds, agent identity. The single overrides layer on top of `configs.default.yaml`. |
+| `infra/dispatcher/.aws_defaults` | `aws_bootstrap.sh` | Shell-sourceable file with `GUI_AGENTS_{REGION,KEY_NAME,SG_NAME,SG_ID}`. Sourced by `spinup.sh`, `teardown.sh`, `_reset_dispatcher_status.sh` so those scripts don't re-prompt. |
+| `infra/dispatcher/boxes.yaml` | `spinup.sh` (auto-append) | The box registry `dispatch.py` reads to know which boxes exist. |
+
+All three are in [.gitignore](../.gitignore); `_reset_dispatcher_status.sh` is the one command that wipes them together.
 
 ### Observability
 
 - systemd journal → CloudWatch Logs agent.
 - Per-task JSON log is already written by `completion_logger.py`; sink uploads it to S3 next to the solution.
 - CloudWatch alarm on: "no successful attempts in 2h" (detects session expiry).
+
+---
+
+## Part 4 — Multi-box dispatch
+
+### Architecture
+
+The laptop is a **transient dispatcher**: it connects over SSH to read box state and push task assignments, then disconnects. Boxes keep working autonomously on whatever is in their local queue. The **DB is not a message bus** — operational state (who is running what, who is free, what their settings are) lives on the boxes and is read only over SSH. The DB continues to hold the final `task_attempts` row that the sink writes when a task finishes.
+
+```
+     laptop                                box 1 (EC2)
+  ┌───────────────┐    ssh (transient)   ┌──────────────────────────────┐
+  │ dispatch.py   │────────────────────▶│ gui-agents-queue  (ssh entry) │
+  │  status       │◀───── state.json ───│   ├─ reads/mutates state.json │
+  │  assign       │                     │   └─ restarts worker on cfg   │
+  │  config push  │                     │ gui-agents-worker.service     │
+  │  logs / cancel│                     │   └─ pops queue → systemd-run │
+  └───────────────┘                     │        (per-task unit)        │
+                                        └──────────────────────────────┘
+                                        box 2, box N … same layout
+```
+
+### Directory layout
+
+```
+gui-agents-master/infra/
+├── worker/                      # runs on each EC2 box
+│   ├── __init__.py
+│   ├── state.py                 # state.json read/write under flock
+│   ├── queue_cli.py             # `gui-agents-queue` entry point (ssh target)
+│   └── worker_loop.py           # `gui-agents-worker.service` main loop
+└── dispatcher/                  # runs on the laptop
+    ├── __init__.py
+    ├── boxes.py                 # infra/dispatcher/boxes.yaml reader
+    └── dispatch.py              # the one CLI: status / assign / cancel / config / logs
+```
+
+### state.json
+
+Path: `/var/lib/gui-agents/state.json` (box-local). Written/read only on the box, always under `fcntl.flock` on the file itself. Never touched by the laptop directly — the laptop goes through `gui-agents-queue` over SSH.
+
+```json
+{
+  "worker": {
+    "worker_id": "i-0abc123",
+    "hostname": "box-1",
+    "provider": "claude",
+    "agent_model_name": "claude_web",
+    "prompt_version": 7,
+    "cfg_loaded_at": "2026-04-21T14:00:00Z"
+  },
+  "current": {
+    "task_id": "142",
+    "task_name": "XYZ_Analysis",
+    "started_at": "2026-04-21T14:03:11Z",
+    "unit": "gui-agents-task-142",
+    "pid": 8421
+  },
+  "queue": [
+    {"task_id": "143", "task_name": "ABC_Report", "assigned_at": "2026-04-21T14:00:00Z"}
+  ],
+  "completed": [
+    {"task_id": "141", "task_name": "Prior_Task", "started_at": "...", "finished_at": "...", "status": "success", "unit": "gui-agents-task-141"}
+  ]
+}
+```
+
+- `worker.*` is the box's config summary. Populated by `worker_loop.py` on startup from the merged `cfg` (default + `configs.yaml`). Refreshed after a `systemctl restart gui-agents-worker.service` (e.g. after a config change).
+- `current` is `null` when the box is idle. `queue` is empty when nothing is pending.
+- `completed` is unbounded — kept as an on-box audit log.
+
+### Box-side: `gui-agents-queue` CLI
+
+Thin wrapper over `state.py`. Both the worker loop and laptop-driven SSH calls go through it, so every mutation is serialized under the same flock.
+
+```
+gui-agents-queue show                           # prints state.json (pretty)
+gui-agents-queue add <task_id> [<task_name>]    # enqueue (idempotent: dup is no-op)
+gui-agents-queue remove <task_id>               # drop a queued task
+gui-agents-queue clear                          # drop the entire pending queue
+                                                # (current task keeps running)
+gui-agents-queue config show                    # emit just worker.* (fast read
+                                                # for dispatch sizing)
+gui-agents-queue config push                    # read configs.yaml from stdin,
+                                                # write it atomically, restart
+                                                # gui-agents-worker.service
+```
+
+`config push` is the only supported way to change a box's settings remotely. The dispatcher *never* edits the box's `configs.yaml` in place — it uploads the full replacement and triggers a restart.
+
+### Box-side: `gui-agents-worker.service`
+
+Long-running systemd unit. Pseudocode:
+
+```python
+while True:
+    # 1. refresh state.worker.* if the cfg changed (file mtime + reload).
+    # 2. reconcile stale current: if state.current is set but
+    #    `systemctl is-active gui-agents-task-<id>` returns inactive,
+    #    mark failed (reason='worker crashed'), move to completed.
+    # 3. if idle and queue non-empty:
+    #        pop head → set current (under flock, atomic)
+    #        systemd-run --unit=gui-agents-task-<id> --wait \
+    #            python -m infra.run --task-id <id>
+    #        on unit exit: read exit code → map to status →
+    #            move current to completed (under flock).
+    # 4. sleep 5s, loop.
+```
+
+Each task runs inside its own transient unit so `systemctl stop gui-agents-task-<id>` cancels just that task without disturbing the worker loop.
+
+### Laptop-side: `dispatch.py`
+
+All commands fan out over SSH using the box registry (`infra/dispatcher/boxes.yaml`, gitignored). No new infra — no dispatcher daemon, no queue service, no heartbeat.
+
+```
+dispatch status [--follow]
+  # ssh each box → `gui-agents-queue show` (config-only, fast path)
+  # prints one row per box:
+  #   alias | worker_id | agent_model (pv) | current+elapsed | q_len | last
+  #   claude-1 | i-0abc | claude_web (v7)  | task=142 (06:12) | +3   | 138 ok (12m)
+  #   chatgpt-1| i-0def | chatgpt_web (v7) | idle             | +0   | 139 ok (2h)
+
+dispatch show <alias>
+  # full state.json for one box.
+
+dispatch assign --n 20 [--agent <model_name>] [--task-source <src>]
+  # 1. ssh each box → collect (worker_id, agent_model, prompt_version, load).
+  # 2. group boxes by (agent_model, prompt_version); apply --agent filter if given.
+  # 3. for each group, query DB for up to N un-attempted tasks at that
+  #    (agent_model, prompt_version), filtered by --task-source.
+  # 4. distribute least-loaded-first; ssh box → `gui-agents-queue add <id> <name>`.
+
+dispatch assign --tasks 42,43 [--box <alias>]
+  # explicit task IDs. If --box omitted, auto-distribute across all boxes.
+
+dispatch cancel <alias> <task_id>
+  # if task is current on that box: ssh → `systemctl stop gui-agents-task-<id>`.
+  # if task is queued:              ssh → `gui-agents-queue remove <id>`.
+
+dispatch clear <alias>
+  # ssh → `gui-agents-queue clear` (queue dropped; current task still finishes).
+
+dispatch logs <alias> [--task <id>] [-f]
+  # ssh → `journalctl -u gui-agents-task-<id>` (or the worker unit).
+
+dispatch config pull <alias>
+  # ssh → reads the box's configs.yaml to a local file (for editing/diff).
+
+dispatch config push <alias> <localfile>
+  # ssh → pipes localfile into `gui-agents-queue config push`.
+  # Box replaces configs.yaml atomically and restarts gui-agents-worker.service.
+
+dispatch config diff <aliasA> <aliasB>
+  # pulls both; shows unified diff. Handy for detecting drift.
+```
+
+### `infra/dispatcher/boxes.yaml`
+
+Laptop-local registry (gitignored). `spinup.sh` auto-appends on launch; `teardown.sh` doesn't prune (stale entries are harmless — they just show as UNREACHABLE).
+
+```yaml
+boxes:
+  - alias: claude-1
+    instance_id: i-0abc123
+    ssh_host: ec2-xxx.compute.amazonaws.com
+    ssh_user: ubuntu
+    ssh_key: ~/.ssh/bizbench-gui-agents.pem
+  - alias: chatgpt-1
+    instance_id: i-0def456
+    ssh_host: ec2-yyy.compute.amazonaws.com
+    ssh_user: ubuntu
+    ssh_key: ~/.ssh/bizbench-gui-agents.pem
+```
+
+`dispatch` commands that take `<alias>` resolve against this file. Unknown alias → hard error.
+
+### Concurrency, safety, failure modes
+
+- **state.json mutations** are always under `fcntl.flock` (shared helper in `worker/state.py`). Both the worker loop and SSH-driven CLI calls go through the same code path, so the lock covers every writer.
+- **Idempotent enqueue**: `gui-agents-queue add <id>` is a no-op if the task is already in `queue` or is `current`. Safe to retry after a dropped SSH.
+- **Stale current**: on every worker-loop tick, cross-check `state.current.unit` against `systemctl is-active`. If the unit is inactive but `current` is set, mark the task failed (`reason='worker crashed'`) and move to `completed`. Next iteration picks up the queue normally.
+- **Config-change race**: `gui-agents-queue config push` replaces `configs.yaml` and restarts the worker. If a task is currently running when the restart fires, the transient task unit keeps running (it's independent of the worker service); the worker comes back up with new cfg and resumes popping from the queue.
+- **Unreachable box**: `dispatch status` prints `UNREACHABLE` for that row; other boxes are unaffected. No central state to corrupt.
+
+### What stays out of the DB
+
+- Worker health / liveness — SSH reachability is the health signal.
+- Current task per box, queue contents, completed history — all on the box, read via SSH.
+- Box settings — in the box's `configs.yaml`, surfaced via `gui-agents-queue config show`.
+
+DB still stores only the final `task_attempts` row per finished task, written by the sink exactly as in Phase 2.
 
 ---
 
@@ -441,10 +655,12 @@ Each iteration: ask the source for the next eligible task → run it → publish
 | **0b** | Config consolidation: everything under `infra/configs/`, legacy `tasks_configs/` decoupled from `infra/run.py`, `task_configs/` folder for per-task YAMLs, permissive task-level merge | Running `python -m infra.run` reads zero files outside `infra/configs/`; a task YAML's top-level keys deep-merge onto global cfg for that task | ✅ shipped (superseded by 0c) |
 | **0c** | `--run-config PATH` CLI flag + `infra/configs/run_configs/` layout. Replaces `--yaml-path`. **Dropped the per-task override layer (layer 4)** — merge model collapses to 3 layers. Task-shaped run-configs split reserved keys (→ YamlTaskSource) from non-reserved keys (→ layer 3 overlay); overlay-shaped files are layer 3 as-is | `--run-config local_run_examples/sample_task.yaml` runs the local sample end-to-end; `--run-config bizbench_run_examples/sample_bizbench.yaml` drives `postgres_s3` | ✅ shipped |
 | **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real Bizbench task end-to-end locally, pulling from Neon+S3, writing solution to local disk | ✅ shipped |
-| **2** | `PostgresS3AttemptSink`. `agent_model_type` is always `"gui"`; `cost` is always `NULL` (GUI runs are subscription-based); failed/timeout runs still insert a row with `agent_failed=true` + `agent_failed_reason`. Per-task metadata from the source flows to the sink via `result.extra["task_metadata"]`. Strict AWS-credentials contract (no boto3 default chain) + construction-time preflight: `sts.get_caller_identity()` on both source/sink + `s3.head_bucket` on sink. `build_source`/`build_sink` ValueErrors are caught cleanly in `infra/run.py`. | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | in progress |
-| **3** | AWS EC2 + systemd + first manual login | One successful unattended task run on EC2 | planning |
-| **4** | Poll loop + idempotency (skip-already-attempted) | Can leave it running overnight against the real backlog | planning |
-| **5** (optional) | Second EC2 for ChatGPT, or parallelism via row-level locking | Two providers running concurrently | planning |
+| **2** | `PostgresS3AttemptSink`. `agent_model_type` is always `"gui"`; `cost` is always `NULL` (GUI runs are subscription-based); failed/timeout runs still insert a row with `agent_failed=true` + `agent_failed_reason`. Per-task metadata from the source flows to the sink via `result.extra["task_metadata"]`. Strict AWS-credentials contract (no boto3 default chain) + construction-time preflight: `sts.get_caller_identity()` on both source/sink + `s3.head_bucket` on sink. `build_source`/`build_sink` ValueErrors are caught cleanly in `infra/run.py`. | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | ✅ shipped |
+| **3a** | Worker-side: `infra/worker/` (state.py + queue_cli.py + worker_loop.py) + `--task-id` flag on `infra/run.py`. state.json is source of truth on the box; `gui-agents-queue` CLI is the only mutation path. | Manually SSH into a laptop-local "box", run `gui-agents-queue add <id>`, worker_loop pops and executes, result lands in DB | code shipped, end-to-end validation pending |
+| **3b** | Dispatcher-side: `infra/dispatcher/` (boxes.py + dispatch.py) + `infra/dispatcher/boxes.yaml`. Commands: `status`, `show`, `assign`, `cancel`, `clear`, `logs`, `config pull/push/diff`. | `dispatch status` and `dispatch assign --n N` work end-to-end against at least one box | code shipped, end-to-end validation pending |
+| **3c** | AWS lifecycle scripts: `aws_bootstrap.sh` (key + SG + `.aws_defaults`), `spinup.sh` (t3.medium + cloud-init + SSH-phase rsync/pip/unit-install/secrets-synth/`enable --now` — all the steps formerly in `SETUP.md` — plus re-run-against-existing-alias with strict idle gate), `teardown.sh` (by tag), `_reset_dispatcher_status.sh` (nuclear reset). `SETUP.md` kept as manual-fallback / diagnosis reference. `dispatcher/config_templates/` holds per-box configs.yaml overlays consumed by `--config-template`. VNC login flow for claude.ai/chatgpt.com. | One successful unattended task run on EC2 dispatched end-to-end from the laptop | ✅ end-to-end validated (chatgpt-pro-1 re-spinup: worker active, idle, reachable via `dispatch status`) |
+| **4** | Second EC2 for ChatGPT; exercise multi-box distribution, per-box config divergence | Two providers running concurrently, dispatched from one `dispatch assign` call | planning |
+| **5** (optional) | `dispatch` gains `boxes.yaml` auto-discovery via AWS tags, and a `--follow` status dashboard. Credential-rotation upgrade (instance-profile + STS pre-start hook). Row-level locking if we ever let boxes self-claim. | Zero hand-maintained box registry; live status pane; rotatable creds | planning |
 
 Each phase is shippable on its own; stop whenever the value runs out.
 

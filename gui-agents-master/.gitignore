@@ -6,6 +6,8 @@
 **/credentials*
 **/secrets*
 infra/configs/configs.yaml
+infra/dispatcher/.aws_defaults
+infra/dispatcher/boxes.yaml
 
 # Browser session data
 browser_session_*/
