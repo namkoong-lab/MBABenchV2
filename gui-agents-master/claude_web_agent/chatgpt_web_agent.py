@@ -894,42 +894,59 @@ class ChatGPTWebAgent(WebAgent):
                 f"Searching for artifacts in articles after baseline={baseline}"
             )
 
-            artifact_info = await self.page.evaluate(
+            scan_result = await self.page.evaluate(
                 """(baseline) => {
-                // Find ChatGPT response containers (try current DOM, then legacy)
-                let responseElements = Array.from(
-                    document.querySelectorAll("[data-message-author-role='assistant']")
-                );
-                if (responseElements.length === 0) {
-                    // Legacy: <article> with <h6> ChatGPT said
-                    responseElements = Array.from(document.querySelectorAll('article'))
-                        .filter(a => {
-                            const h6 = a.querySelector('h6');
-                            return h6 && h6.textContent.includes('ChatGPT said:');
-                        });
-                }
-                // Only search elements that appeared AFTER the baseline
-                const newArticles = responseElements.slice(baseline);
-                const artifacts = [];
-
                 // File card keywords: ChatGPT may show "Spreadsheet", the actual
                 // filename with .xlsx extension, or other file type labels.
                 const FILE_KEYWORDS = ['.xlsx', '.xls', 'Spreadsheet', 'Excel'];
 
-                for (const article of newArticles) {
-                    // Strategy 1: Find text nodes matching file keywords
+                // Roots to skip in document-wide fallback (composer, nav, etc.)
+                const SKIP_TAGS = new Set(['CODE', 'PRE', 'NAV', 'HEADER', 'FORM',
+                                           'TEXTAREA', 'INPUT', 'SCRIPT', 'STYLE']);
+
+                function ancestorChain(el) {
+                    const parts = [];
+                    let cur = el;
+                    while (cur && cur !== document.body && parts.length < 8) {
+                        let label = cur.tagName;
+                        const role = cur.getAttribute && cur.getAttribute('data-message-author-role');
+                        if (role) label += '[role=' + role + ']';
+                        else if (cur.className && typeof cur.className === 'string') {
+                            const firstCls = cur.className.trim().split(/\\s+/)[0];
+                            if (firstCls) label += '.' + firstCls.substring(0, 24);
+                        }
+                        parts.push(label);
+                        cur = cur.parentElement;
+                    }
+                    return parts.join(' < ');
+                }
+
+                function scanRoot(root, artifactsOut, seenCards) {
                     const walker = document.createTreeWalker(
-                        article,
+                        root,
                         NodeFilter.SHOW_TEXT,
                         { acceptNode: (node) => {
                             const text = node.textContent.trim();
                             if (!text) return NodeFilter.FILTER_REJECT;
                             const isFile = FILE_KEYWORDS.some(kw => text.includes(kw));
                             if (!isFile) return NodeFilter.FILTER_REJECT;
-                            // Reject if inside a code block
+                            // Reject if inside a skipped ancestor, OR inside a
+                            // user message (user-uploaded file cards have the
+                            // same shape as assistant output cards, so only the
+                            // author-role ancestor distinguishes them).
                             let el = node.parentElement;
-                            while (el && el !== article) {
-                                if (el.tagName === 'CODE' || el.tagName === 'PRE') return NodeFilter.FILTER_REJECT;
+                            while (el && el !== root) {
+                                if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
+                                const role = el.getAttribute &&
+                                    el.getAttribute('data-message-author-role');
+                                if (role === 'user') return NodeFilter.FILTER_REJECT;
+                                // Belt-and-suspenders: user-message wrapper has
+                                // items-end rtl:items-start on the outer flex div.
+                                if (el.className && typeof el.className === 'string' &&
+                                    el.className.includes('items-end') &&
+                                    el.className.includes('rtl:items-start')) {
+                                    return NodeFilter.FILTER_REJECT;
+                                }
                                 el = el.parentElement;
                             }
                             return NodeFilter.FILTER_ACCEPT;
@@ -937,52 +954,156 @@ class ChatGPTWebAgent(WebAgent):
                     );
 
                     let node;
-                    const seenCards = new Set();
                     while (node = walker.nextNode()) {
                         const filename = node.textContent.trim();
-                        // Navigate up to find the container with icon-only buttons
                         let container = node.parentElement;
                         for (let depth = 0; depth < 8 && container; depth++) {
                             const buttons = container.querySelectorAll('button');
-                            // Artifact cards have icon-only buttons (SVG icons)
-                            // Agent mode: 2-3 buttons. Extended pro: 1 button.
+                            // Artifact cards have icon-only buttons (SVG icons).
                             const iconButtons = Array.from(buttons).filter(b => {
                                 const hasIcon = b.querySelector('img') || b.querySelector('svg');
                                 const isSmall = b.textContent.trim().length === 0 ||
                                                 b.textContent.trim().length < 5;
                                 return hasIcon && isSmall;
                             });
-                            // Also detect file cards by their container class (rounded-2xl)
                             const isFileCard = container.className &&
                                 container.className.includes('rounded-2xl') &&
                                 container.className.includes('my-4');
                             if (iconButtons.length >= 1 || isFileCard) {
-                                // Deduplicate: avoid marking the same card twice
-                                const cardKey = container.outerHTML.substring(0, 100);
-                                if (seenCards.has(cardKey)) break;
-                                seenCards.add(cardKey);
-                                // Prefer rounded-full button for download, fallback to first icon button
-                                const downloadBtn = iconButtons.find(b =>
-                                    b.className.includes('rounded-full')
-                                ) || iconButtons[0];
-                                const id = 'artifact-dl-' + artifacts.length;
-                                downloadBtn.setAttribute('data-artifact-download', id);
-                                // Use actual filename if it has extension, else generic
+                                // Dedup by button-set: if any of these icon
+                                // buttons was already tagged by a previous
+                                // text-node match, skip — it's the same card
+                                // reached via a different walker path.
+                                if (iconButtons.some(b => b.hasAttribute('data-artifact-btn'))) {
+                                    break;
+                                }
+                                const cardIdx = artifactsOut.length;
+                                // Tag EVERY icon button — we don't know which
+                                // one is download (icons are sprite-hashed and
+                                // classes don't disambiguate in pro mode), so
+                                // Python will try each in turn.
+                                const buttonMetas = iconButtons.map((b, i) => {
+                                    const id = 'art-' + cardIdx + '-btn-' + i;
+                                    b.setAttribute('data-artifact-btn', id);
+                                    const useEl = b.querySelector('use');
+                                    const rect = b.getBoundingClientRect();
+                                    return {
+                                        id: id,
+                                        ariaLabel: b.getAttribute('aria-label') || '',
+                                        title: b.getAttribute('title') || '',
+                                        spriteHref: useEl ? (useEl.getAttribute('href') ||
+                                                             useEl.getAttribute('xlink:href') || '') : '',
+                                        classes: b.className || '',
+                                        rectX: Math.round(rect.x),
+                                        rectY: Math.round(rect.y),
+                                        rectW: Math.round(rect.width),
+                                        rectH: Math.round(rect.height),
+                                        isRoundedFull: b.className.includes('rounded-full'),
+                                        innerHtml: b.innerHTML.substring(0, 300),
+                                    };
+                                });
                                 const displayName = filename.includes('.xls')
                                     ? filename : 'ai_attempt.xlsx';
-                                artifacts.push({ filename: displayName, downloadId: id });
+                                artifactsOut.push({
+                                    filename: displayName,
+                                    buttons: buttonMetas,
+                                    containerHtml: container.outerHTML.substring(0, 1500),
+                                    foundVia: root === document.body ? 'document' : 'article',
+                                });
                                 break;
                             }
                             container = container.parentElement;
                         }
                     }
                 }
-                return artifacts;
+
+                // Find ChatGPT response containers (try current DOM, then legacy)
+                let responseElements = Array.from(
+                    document.querySelectorAll("[data-message-author-role='assistant']")
+                );
+                if (responseElements.length === 0) {
+                    responseElements = Array.from(document.querySelectorAll('article'))
+                        .filter(a => {
+                            const h6 = a.querySelector('h6');
+                            return h6 && h6.textContent.includes('ChatGPT said:');
+                        });
+                }
+                const totalAssistant = responseElements.length;
+                const newArticles = responseElements.slice(baseline);
+                const artifacts = [];
+                const seenCards = new Set();
+
+                // Pass 1: scan assistant articles after the baseline.
+                for (const article of newArticles) {
+                    scanRoot(article, artifacts, seenCards);
+                }
+
+                // Pass 2 (fallback): if nothing found, scan entire document body.
+                // Pro mode / canvas sometimes renders file cards outside the
+                // assistant article (e.g. side panel, attachment tray).
+                let fallbackUsed = false;
+                if (artifacts.length === 0) {
+                    fallbackUsed = true;
+                    scanRoot(document.body, artifacts, seenCards);
+                }
+
+                // Diagnostics: where do file-keyword text nodes live on the page?
+                const sightings = [];
+                const diagWalker = document.createTreeWalker(
+                    document.body,
+                    NodeFilter.SHOW_TEXT,
+                    { acceptNode: (node) => {
+                        const text = node.textContent.trim();
+                        if (!text) return NodeFilter.FILTER_REJECT;
+                        return FILE_KEYWORDS.some(kw => text.includes(kw))
+                            ? NodeFilter.FILTER_ACCEPT
+                            : NodeFilter.FILTER_REJECT;
+                    }}
+                );
+                let dn;
+                while ((dn = diagWalker.nextNode()) && sightings.length < 10) {
+                    sightings.push({
+                        text: dn.textContent.trim().substring(0, 120),
+                        ancestors: ancestorChain(dn.parentElement),
+                    });
+                }
+
+                return {
+                    artifacts,
+                    diagnostics: {
+                        totalAssistantArticles: totalAssistant,
+                        baselineSkipped: baseline,
+                        newArticlesScanned: newArticles.length,
+                        fallbackUsed,
+                        fileKeywordSightings: sightings,
+                    },
+                };
             }""",
                 baseline,
             )
 
-            logger.info(f"Found {len(artifact_info)} artifact preview card(s)")
+            artifact_info = scan_result["artifacts"]
+            diag = scan_result["diagnostics"]
+            logger.info(
+                f"Found {len(artifact_info)} artifact preview card(s) "
+                f"(fallback={diag['fallbackUsed']}, "
+                f"assistant_articles={diag['totalAssistantArticles']}, "
+                f"new_scanned={diag['newArticlesScanned']})"
+            )
+            if not artifact_info:
+                sightings = diag["fileKeywordSightings"]
+                if sightings:
+                    logger.warning(
+                        f"No cards matched, but {len(sightings)} file-keyword "
+                        f"text node(s) exist on page. Ancestor chains:"
+                    )
+                    for s in sightings:
+                        logger.warning(f"  '{s['text']}' in {s['ancestors']}")
+                else:
+                    logger.warning(
+                        "No file-keyword text nodes found anywhere on page — "
+                        "response may not have produced a file yet."
+                    )
 
             # Set up CDP download behavior so Chrome saves files to our
             # directory.  page.expect_download() does NOT work on CDP
@@ -1006,64 +1127,152 @@ class ChatGPTWebAgent(WebAgent):
                     f"CDP download setup failed ({e}), using Playwright fallback"
                 )
 
+            # Per-button click budget. Each card may have N icon buttons and
+            # we try them in order; the REAL download button is the first one
+            # that causes a new file to appear within this window.
+            per_button_wait_sec = 6
+
             for info in artifact_info:
                 filename = info["filename"]
-                dl_id = info["downloadId"]
-                logger.info(f"Downloading artifact: {filename}")
+                card_html = info.get("containerHtml", "")
+                buttons = info.get("buttons", [])
+                found_via = info.get("foundVia", "?")
+                logger.info(
+                    f"Artifact card for {filename} (via {found_via}) has "
+                    f"{len(buttons)} icon button(s):"
+                )
+                for b in buttons:
+                    logger.info(
+                        f"  - {b['id']} rounded_full={b['isRoundedFull']} "
+                        f"aria={b['ariaLabel']!r} title={b['title']!r} "
+                        f"sprite={b['spriteHref']!r} "
+                        f"rect=({b['rectX']},{b['rectY']},{b['rectW']}x{b['rectH']})"
+                    )
 
-                try:
-                    dl_btn = self.page.locator(f'[data-artifact-download="{dl_id}"]')
-                    if await dl_btn.count() == 0:
-                        logger.warning(f"Download button not found for {filename}")
+                if not buttons:
+                    logger.warning(
+                        f"No icon buttons for {filename}. Card DOM: {card_html}"
+                    )
+                    continue
+
+                # Ordering priority:
+                #   0. Button whose SVG sprite href matches a known download
+                #      icon fragment. Sprite IDs are stable *within* a ChatGPT
+                #      build but rotate on redeploys, so we maintain a list of
+                #      known hints. Update DOWNLOAD_SPRITE_HINTS when a new
+                #      build rolls out and the log shows a different sprite.
+                #   1. rounded-full icon buttons (broad fallback — download is
+                #      almost always styled as a round icon button).
+                #   2. anything else.
+                DOWNLOAD_SPRITE_HINTS = ["#1a3695"]
+
+                def button_rank(b):
+                    sprite = b.get("spriteHref", "") or ""
+                    if any(hint in sprite for hint in DOWNLOAD_SPRITE_HINTS):
+                        return 0
+                    if b.get("isRoundedFull"):
+                        return 1
+                    return 2
+
+                ordered = sorted(buttons, key=button_rank)
+
+                saved_path: Optional[Path] = None
+                tried_button_ids = []
+                for btn_meta in ordered:
+                    btn_id = btn_meta["id"]
+                    tried_button_ids.append(btn_id)
+                    btn = self.page.locator(f'[data-artifact-btn="{btn_id}"]')
+                    if await btn.count() == 0:
+                        logger.info(f"  {btn_id}: locator missing, skipping")
                         continue
 
-                    if use_cdp_download:
-                        # CDP: click and poll directory for new files
-                        files_before = set(download_path.iterdir())
-                        await dl_btn.click()
+                    try:
+                        await btn.scroll_into_view_if_needed(timeout=3000)
+                    except Exception:
+                        pass
 
-                        deadline = asyncio.get_event_loop().time() + timeout / 1000
-                        save_path = None
+                    if use_cdp_download:
+                        files_before = set(download_path.iterdir())
+                        try:
+                            await btn.click(force=True, timeout=5000)
+                        except Exception as click_err:
+                            logger.info(
+                                f"  {btn_id}: click(force=True) failed "
+                                f"({click_err}); dispatching DOM click"
+                            )
+                            try:
+                                await btn.dispatch_event("click")
+                            except Exception as de:
+                                logger.info(f"  {btn_id}: dispatch_event failed ({de})")
+                                continue
+
+                        # Wait per-button for a new completed file.
+                        deadline = (
+                            asyncio.get_event_loop().time() + per_button_wait_sec
+                        )
+                        new_file = None
                         while asyncio.get_event_loop().time() < deadline:
-                            current_files = set(download_path.iterdir())
-                            new_files = current_files - files_before
-                            # Ignore Chrome partial-download temp files
+                            new_files = set(download_path.iterdir()) - files_before
                             complete = [
-                                f
-                                for f in new_files
+                                f for f in new_files
                                 if not f.name.endswith(".crdownload")
                             ]
                             if complete:
-                                save_path = complete[0]
+                                new_file = complete[0]
                                 break
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(0.3)
 
-                        if save_path:
-                            # CDP downloads may use UUID filenames; rename
-                            # to the original filename from the file card.
+                        if new_file:
                             target = download_path / filename
-                            if save_path.name != filename:
-                                save_path.rename(target)
-                                save_path = target
-                            logger.info(f"Downloaded: {save_path}")
-                            downloaded.append(str(save_path))
+                            if new_file.name != filename:
+                                new_file.rename(target)
+                                new_file = target
+                            logger.info(
+                                f"  {btn_id}: triggered download -> {new_file}"
+                            )
+                            saved_path = new_file
+                            break
                         else:
-                            logger.warning(f"Download timeout for {filename}")
+                            logger.info(
+                                f"  {btn_id}: no file within {per_button_wait_sec}s"
+                            )
+                            # Clicking a non-download button (preview, expand)
+                            # may open a canvas/modal that occludes the
+                            # remaining buttons. Dismiss before the next try.
+                            try:
+                                await self.page.keyboard.press("Escape")
+                                await asyncio.sleep(0.3)
+                            except Exception:
+                                pass
                     else:
-                        # Playwright fallback (non-CDP connections)
-                        async with self.page.expect_download(
-                            timeout=timeout
-                        ) as dl_info:
-                            await dl_btn.click()
-                        download = await dl_info.value
-                        save_path = download_path / download.suggested_filename
-                        await download.save_as(str(save_path))
-                        logger.info(f"Downloaded: {save_path}")
-                        downloaded.append(str(save_path))
+                        # Playwright download event path (non-CDP connections)
+                        try:
+                            async with self.page.expect_download(
+                                timeout=per_button_wait_sec * 1000
+                            ) as dl_info:
+                                try:
+                                    await btn.click(force=True, timeout=5000)
+                                except Exception:
+                                    await btn.dispatch_event("click")
+                            download = await dl_info.value
+                            target = download_path / filename
+                            await download.save_as(str(target))
+                            logger.info(
+                                f"  {btn_id}: triggered download -> {target}"
+                            )
+                            saved_path = target
+                            break
+                        except Exception as e:
+                            logger.info(f"  {btn_id}: no download event ({e})")
+                            continue
 
-                except Exception as e:
-                    logger.warning(f"Failed to download {filename}: {e}")
-                    continue
+                if saved_path:
+                    downloaded.append(str(saved_path))
+                else:
+                    logger.warning(
+                        f"None of {tried_button_ids} produced a download for "
+                        f"{filename}. Full card DOM: {card_html}"
+                    )
 
             if downloaded:
                 return downloaded
