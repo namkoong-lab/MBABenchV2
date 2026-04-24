@@ -158,7 +158,7 @@ class CompletionLogger:
     def start_prompt(self, prompt_text: str):
         """Begin tracking a prompt within the current task."""
         self.current_prompt = {
-            "prompt_text": prompt_text[:500],  # Truncate for logging
+            "prompt_text": prompt_text,
             "start_time": datetime.now().isoformat(),
             "end_time": None,
             "success": None,
