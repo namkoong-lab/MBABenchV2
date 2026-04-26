@@ -9,10 +9,12 @@ Commands:
     dispatch show <alias>
     dispatch assign --n N [--agent X] [--task-source Y]
     dispatch assign --tasks 42,43,44 [--box <alias>]
+    dispatch backlog [--agent X] [--task-source Y]
     dispatch cancel <alias> <task_id>
     dispatch clear <alias>
     dispatch logs <alias> [--task <id>] [-f]
     dispatch login <alias> [--local-port N] [--no-open]
+    dispatch probe [<alias> | --all]
     dispatch config pull <alias>
     dispatch config push <alias> <localfile>
     dispatch config diff <aliasA> <aliasB>
@@ -134,13 +136,61 @@ def _truncate(s: str, width: int) -> str:
     return s if len(s) <= width else s[: width - 1] + "…"
 
 
-def _fmt_auth(auth: dict | None) -> str:
+def _is_auth_old(auth: dict | None, busy: bool = False) -> bool:
+    """True when the last probe succeeded but is older than _AUTH_STALE_AFTER_SEC.
+
+    Mirrors the "old" branch in _fmt_auth. STALE (failed probe) and "?"
+    (no probe) are NOT considered old — those need `dispatch login`, not
+    just a re-probe.
+
+    `busy=True` suppresses the "old" signal: when the worker has a
+    current task, the auth-probe oneshot short-circuits (auth_probe.py
+    skips while a task is running to avoid racing with the agent over
+    the shared Chrome). Staleness during that window is expected and
+    un-actionable, so we don't flag it.
+    """
+    if busy:
+        return False
+    if not auth or not auth.get("ok"):
+        return False
+    checked_at = auth.get("checked_at") or ""
+    try:
+        when = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    age_s = (datetime.now(timezone.utc) - when).total_seconds()
+    return age_s > _AUTH_STALE_AFTER_SEC
+
+
+def _kick_probe(box: Box) -> tuple[bool, str]:
+    """Fire the gui-agents-auth-probe oneshot on a box.
+
+    systemctl start on a oneshot blocks until the unit finishes, so when
+    this returns the box's auth.json is up to date.
+    """
+    try:
+        r = _ssh_exec(
+            box, "sudo -n systemctl start gui-agents-auth-probe.service", timeout=60
+        )
+    except subprocess.TimeoutExpired:
+        return False, "ssh timed out"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip() or f"rc={r.returncode}"
+    return True, "ok"
+
+
+def _fmt_auth(auth: dict | None, busy: bool = False) -> str:
     """Render the auth-probe column. Values:
     <email>       — last probe succeeded and is fresh (shows user identity)
     ok            — succeeded but no email available (e.g. claude)
     STALE         — last probe failed (any reason) — needs re-login
     old <email>   — succeeded but last probe was too long ago
     ?             — no probe result on this box
+
+    `busy=True` suppresses the "old" prefix: the probe oneshot skips
+    while the worker has a current task (it would race with the agent
+    over the shared Chrome), so staleness is expected and un-actionable
+    during that window. We keep the last known identity visible.
     """
     if not auth:
         return "?"
@@ -154,7 +204,7 @@ def _fmt_auth(auth: dict | None) -> str:
     if not auth.get("ok"):
         return "STALE"
     email = auth.get("email") or ""
-    stale = age_s is not None and age_s > _AUTH_STALE_AFTER_SEC
+    stale = (age_s is not None and age_s > _AUTH_STALE_AFTER_SEC) and not busy
     if email:
         label = f"old {email}" if stale else email
     else:
@@ -181,7 +231,7 @@ def _fmt_row(alias: str, state: dict | None) -> str:
         cur_s = "idle"
     last = completed[-1] if completed else None
     last_s = f"{last.get('task_id')} {last.get('status')}" if last else "-"
-    login_s = _fmt_auth(auth)
+    login_s = _fmt_auth(auth, busy=bool(current))
     return (
         f"  {alias:<12} {wid:<20} {agent:<14} {pv_s:<5} "
         f"{login_s:<{_AUTH_COL_WIDTH}} {cur_s:<24} +{len(queue):<3} {last_s}"
@@ -228,11 +278,18 @@ def _list_eligible_tasks(
     prompt_version: int | str | None,
     task_sources: list[str] | None,
     limit: int,
+    exclude_ids: list[int] | None = None,
     skip_deprecated: bool = True,
     skip_already_attempted: bool = True,
 ) -> list[dict]:
     """Query the Bizbench `tasks` table for eligible rows. Mirrors the
-    filters used by BizbenchPostgresS3TaskSource, minus file download."""
+    filters used by BizbenchPostgresS3TaskSource, minus file download.
+
+    `exclude_ids` subtracts task ids already in-flight (current + queued)
+    across the cohort — those aren't in `task_attempts` yet, so the
+    anti-join doesn't catch them and we'd otherwise re-pick them. Same
+    pattern as `_count_eligible_tasks`, so `backlog` and `assign` agree
+    on what 'unassigned' means."""
     import psycopg2
     from psycopg2 import sql
     import psycopg2.extras
@@ -257,6 +314,9 @@ def _list_eligible_tasks(
         )
         params["agent_model_name"] = agent_model_name
         params["prompt_version"] = prompt_version
+    if exclude_ids:
+        where.append("NOT (t.id = ANY(%(exclude_ids)s))")
+        params["exclude_ids"] = list(exclude_ids)
 
     q = sql.SQL(
         "SELECT t.id, t.task_name, t.task_source "
@@ -273,6 +333,120 @@ def _list_eligible_tasks(
             return list(cur.fetchall())
     finally:
         conn.close()
+
+
+def _count_eligible_tasks(
+    *,
+    agent_model_name: str,
+    prompt_version: int | str | None,
+    task_sources: list[str] | None,
+    exclude_ids: list[int] | None = None,
+    skip_deprecated: bool = True,
+    skip_already_attempted: bool = True,
+) -> int:
+    """COUNT(*) variant of `_list_eligible_tasks`. `exclude_ids` subtracts
+    task ids already in-flight (current + queued) across the cohort — those
+    are not yet in `task_attempts`, so the anti-join doesn't catch them."""
+    import psycopg2
+    from psycopg2 import sql
+
+    where = ["TRUE"]
+    params: dict = {}
+    if skip_deprecated:
+        where.append("t.deprecated = FALSE")
+    if task_sources:
+        where.append("t.task_source = ANY(%(task_sources)s)")
+        params["task_sources"] = list(task_sources)
+    if skip_already_attempted:
+        where.append(
+            "NOT EXISTS ("
+            "  SELECT 1 FROM task_attempts ta"
+            "  WHERE ta.task_id = t.id"
+            "    AND ta.agent_model_name = %(agent_model_name)s"
+            "    AND ta.prompt_version   = %(prompt_version)s"
+            "    AND ta.agent_failed     = FALSE"
+            "    AND ta.deprecated       = FALSE"
+            ")"
+        )
+        params["agent_model_name"] = agent_model_name
+        params["prompt_version"] = prompt_version
+    if exclude_ids:
+        where.append("NOT (t.id = ANY(%(exclude_ids)s))")
+        params["exclude_ids"] = list(exclude_ids)
+
+    q = sql.SQL("SELECT COUNT(*) FROM tasks t WHERE {where}").format(
+        where=sql.SQL(" AND ").join(sql.SQL(w) for w in where)
+    )
+
+    conn = psycopg2.connect(_get_db_url())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(q, params)
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+    finally:
+        conn.close()
+
+
+def _fetch_tasks_by_ids(task_ids: list[str]) -> dict[str, dict]:
+    """Look up rows in the `tasks` table by id. Returns {str(id): row}.
+    Missing ids (including non-int strings) are simply absent from the
+    result — the caller falls back to a blank label."""
+    import psycopg2
+    import psycopg2.extras
+
+    int_ids: list[int] = []
+    for tid in task_ids:
+        try:
+            int_ids.append(int(tid))
+        except (TypeError, ValueError):
+            continue
+    if not int_ids:
+        return {}
+    conn = psycopg2.connect(_get_db_url())
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, task_name, task_source FROM tasks WHERE id = ANY(%s)",
+                (int_ids,),
+            )
+            return {str(r["id"]): dict(r) for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def _in_flight_ids_from_states(
+    boxes: list[Box], states: dict[str, dict | None]
+) -> set[int]:
+    """Union of `current.task_id` + queued `task_id`s across the given
+    boxes, coerced to int. Silently drops non-int ids."""
+    out: set[int] = set()
+    for b in boxes:
+        st = states.get(b.alias)
+        if st is None:
+            continue
+        current = st.get("current") or {}
+        candidates: list = [current.get("task_id")]
+        for q in st.get("queue") or []:
+            candidates.append(q.get("task_id"))
+        for tid in candidates:
+            if tid is None:
+                continue
+            try:
+                out.add(int(tid))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _parse_prompt_version(pv: str) -> int | str | None:
+    """Decode the stringified prompt_version used as a cohort key."""
+    if pv == "None":
+        return None
+    try:
+        return int(pv)
+    except ValueError:
+        return pv
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +480,41 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         states = _fetch_all_states(boxes)
         _print_status_table(boxes, states)
+        _prompt_probe_old(boxes, states)
     return 0
+
+
+def _prompt_probe_old(boxes: list[Box], states: dict[str, dict | None]) -> None:
+    """After printing the status table, offer to re-probe any boxes whose
+    login column showed 'old'. Skipped when stdin isn't a TTY so piped
+    invocations (scripts, `watch`, etc.) don't stall on input."""
+    old = [
+        b for b in boxes
+        if _is_auth_old(
+            (states.get(b.alias) or {}).get("auth"),
+            busy=bool((states.get(b.alias) or {}).get("current")),
+        )
+    ]
+    if not old:
+        return
+    if not sys.stdin.isatty():
+        return
+    aliases = ", ".join(b.alias for b in old)
+    try:
+        resp = input(
+            f"\n{len(old)} box(es) show an 'old' login ({aliases}). "
+            f"Kick a fresh auth probe on them now? [y/N]: "
+        ).strip().lower()
+    except EOFError:
+        return
+    if resp not in {"y", "yes"}:
+        return
+    for b in old:
+        ok, msg = _kick_probe(b)
+        if ok:
+            logger.info(f"{b.alias}: probe fired")
+        else:
+            logger.warning(f"{b.alias}: probe kick failed: {msg}")
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -384,19 +592,55 @@ def cmd_assign(args: argparse.Namespace) -> int:
         logger.error("no reachable boxes")
         return 2
 
+    # Populated on the --n path; empty on --tasks. After the SSH loop we
+    # print "remaining after this batch: N" per touched cohort.
+    touched_cohorts: dict[tuple[str, int | str | None], dict] = {}
+    _box_cohort: dict[str, tuple[str, int | str | None]] = {}
+    assign_task_sources: list[str] | None = (
+        [args.task_source] if args.task_source else None
+    )
+
     # Explicit task IDs — resolve names by DB lookup so the box gets a
     # readable label; fall back to empty name on missing row.
     if args.tasks:
         task_ids = [t.strip() for t in args.tasks.split(",") if t.strip()]
+        try:
+            details = _fetch_tasks_by_ids(task_ids)
+        except Exception as e:
+            logger.warning(f"task name lookup failed; proceeding without names: {e}")
+            details = {}
         tasks = [
-            {"id": tid, "task_name": None, "task_source": None} for tid in task_ids
+            {
+                "id": tid,
+                "task_name": (details.get(tid) or {}).get("task_name"),
+                "task_source": (details.get(tid) or {}).get("task_source"),
+            }
+            for tid in task_ids
         ]
+        # --agent filters the candidate box pool. The --n path does this via
+        # _group_boxes_by_agent; on the --tasks path we just intersect
+        # reachable against the requested agent.
+        candidates = reachable
+        if args.agent:
+            candidates = [
+                b
+                for b in reachable
+                if ((states.get(b.alias) or {}).get("worker") or {}).get(
+                    "agent_model_name"
+                )
+                == args.agent
+            ]
+            if not candidates:
+                logger.error(
+                    f"no reachable boxes match --agent={args.agent}"
+                )
+                return 2
         assignments: list[tuple[Box, dict]] = []
         if args.box:
             for t in tasks:
-                assignments.append((reachable[0], t))
+                assignments.append((candidates[0], t))
         else:
-            assignments = _distribute_least_loaded(tasks, reachable, states)
+            assignments = _distribute_least_loaded(tasks, candidates, states)
     else:
         if args.n is None:
             logger.error("must pass either --tasks or --n")
@@ -409,25 +653,34 @@ def cmd_assign(args: argparse.Namespace) -> int:
             return 2
         assignments = []
         for (agent, pv), group_boxes in groups.items():
-            pv_val: int | str | None
-            if pv == "None":
-                pv_val = None
-            else:
-                try:
-                    pv_val = int(pv)
-                except ValueError:
-                    pv_val = pv
+            pv_val = _parse_prompt_version(pv)
+            in_flight = _in_flight_ids_from_states(group_boxes, states)
             tasks = _list_eligible_tasks(
                 agent_model_name=agent,
                 prompt_version=pv_val,
-                task_sources=([args.task_source] if args.task_source else None),
+                task_sources=assign_task_sources,
                 limit=args.n,
+                exclude_ids=sorted(in_flight) if in_flight else None,
             )
             logger.info(
                 f"group agent={agent} pv={pv}: {len(tasks)} eligible task(s), "
-                f"{len(group_boxes)} box(es)"
+                f"{len(group_boxes)} box(es), "
+                f"{len(in_flight)} already in-flight (excluded)"
             )
-            assignments += _distribute_least_loaded(tasks, group_boxes, states)
+            cohort_assignments = _distribute_least_loaded(tasks, group_boxes, states)
+            assignments += cohort_assignments
+            touched_cohorts[(agent, pv_val)] = {
+                "pre_in_flight": in_flight,
+                "added": set(),  # populated below as SSH adds succeed
+            }
+    # Reverse lookup from "box alias" → cohort key, so we can record
+    # successful adds against the right cohort in the SSH loop below.
+    _box_cohort: dict[str, tuple[str, int | str | None]] = {}
+    if not args.tasks:
+        for cohort_key, _grp in groups.items():
+            agent, pv = cohort_key
+            for gb in _grp:
+                _box_cohort[gb.alias] = (agent, _parse_prompt_version(pv))
 
     if not assignments:
         logger.info("nothing to assign")
@@ -448,6 +701,7 @@ def cmd_assign(args: argparse.Namespace) -> int:
             return 0
 
     failures = 0
+    noops = 0
     for box, task in assignments:
         tid = str(task.get("id"))
         name = (task.get("task_name") or "").replace("'", "")
@@ -456,9 +710,139 @@ def cmd_assign(args: argparse.Namespace) -> int:
         if r.returncode != 0:
             failures += 1
             logger.error(f"{box.alias} add {tid} failed: {r.stderr.strip()}")
-        else:
-            logger.info(f"{box.alias} add {tid} ok")
+            continue
+        # `gui-agents-queue add` exits 0 with a stderr note when the task
+        # is already queued/running on the box. Surface it instead of
+        # falsely reporting "add ok" — and don't count it as an add.
+        stderr = (r.stderr or "").strip()
+        if "already queued or running" in stderr:
+            noops += 1
+            logger.warning(f"{box.alias} add {tid} no-op: {stderr}")
+            continue
+        logger.info(f"{box.alias} add {tid} ok")
+        cohort_key = _box_cohort.get(box.alias)
+        if cohort_key is not None:
+            try:
+                touched_cohorts[cohort_key]["added"].add(int(tid))
+            except (KeyError, TypeError, ValueError):
+                pass
+    if noops:
+        logger.warning(
+            f"{noops} assignment(s) were no-ops (task already queued/running). "
+            f"This usually means the dispatcher's view of in-flight state was "
+            f"stale; re-run `dispatch status` and try again."
+        )
+
+    # Post-batch summary: one extra COUNT per touched cohort so operators
+    # can see "did I drain the queue?" without a second command.
+    if touched_cohorts:
+        print()
+        for (agent, pv_val), info in touched_cohorts.items():
+            exclude = info["pre_in_flight"] | info["added"]
+            try:
+                remaining = _count_eligible_tasks(
+                    agent_model_name=agent,
+                    prompt_version=pv_val,
+                    task_sources=assign_task_sources,
+                    exclude_ids=sorted(exclude) or None,
+                )
+            except Exception as e:
+                logger.warning(f"backlog count failed for agent={agent} pv={pv_val}: {e}")
+                continue
+            pv_s = f"v{pv_val}" if pv_val is not None else "-"
+            print(
+                f"  remaining after this batch: agent={agent} pv={pv_s} "
+                f"-> {remaining} eligible"
+            )
     return 1 if failures else 0
+
+
+def cmd_backlog(args: argparse.Namespace) -> int:
+    """Per-cohort COUNT of eligible tasks. For each cohort of reachable
+    boxes sharing (agent_model_name, prompt_version), prints:
+
+      in_flight  — tasks already queued/running across the cohort
+      unassigned — tasks matching the assign filters, minus in_flight
+      remaining  — in_flight + unassigned (total work left for this cohort)
+      total      — all DB rows in cohort scope (non-deprecated, task_source
+                   filter), including ones already successfully attempted
+
+    `unassigned` / `remaining` reuse the same eligibility filters as `assign`;
+    `total` drops the `skip_already_attempted` anti-join so it reflects the
+    full universe of tasks the cohort could ever see.
+    """
+    boxes = load_boxes()
+    if not boxes:
+        logger.error("no boxes in registry")
+        return 2
+    if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
+        logger.error(
+            "skipping backlog (IP blocked — boxes are unreachable). "
+            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+        )
+        return 2
+    states = _fetch_all_states(boxes)
+    reachable = [b for b in boxes if states.get(b.alias) is not None]
+    unreachable = [b.alias for b in boxes if states.get(b.alias) is None]
+    if not reachable:
+        logger.error("no reachable boxes")
+        return 2
+
+    groups = _group_boxes_by_agent(reachable, states)
+    if args.agent:
+        groups = {k: v for k, v in groups.items() if k[0] == args.agent}
+    if not groups:
+        logger.error("no reachable boxes match the agent filter")
+        return 2
+
+    task_sources = [args.task_source] if args.task_source else None
+
+    header = (
+        f"  {'agent':<20} {'pv':<6} {'boxes':<6} "
+        f"{'in_flight':<10} {'unassigned':<11} {'remaining':<10} total"
+    )
+    print()
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+    any_err = False
+    for (agent, pv), group_boxes in sorted(groups.items()):
+        pv_val = _parse_prompt_version(pv)
+        in_flight_ids = _in_flight_ids_from_states(group_boxes, states)
+        try:
+            unassigned = _count_eligible_tasks(
+                agent_model_name=agent,
+                prompt_version=pv_val,
+                task_sources=task_sources,
+                exclude_ids=sorted(in_flight_ids) or None,
+            )
+            total = _count_eligible_tasks(
+                agent_model_name=agent,
+                prompt_version=pv_val,
+                task_sources=task_sources,
+                skip_already_attempted=False,
+            )
+        except Exception as e:
+            logger.error(f"count failed for agent={agent} pv={pv}: {e}")
+            any_err = True
+            continue
+        in_flight = len(in_flight_ids)
+        remaining = in_flight + unassigned
+        pv_s = f"v{pv}" if pv != "None" else "-"
+        print(
+            f"  {agent:<20} {pv_s:<6} {len(group_boxes):<6} "
+            f"{in_flight:<10} {unassigned:<11} {remaining:<10} {total}"
+        )
+
+    print()
+    print(
+        "  note: snapshot — workers may finish tasks between state fetch and COUNT."
+    )
+    if unreachable:
+        print(
+            f"  note: {len(unreachable)} unreachable box(es) skipped; their "
+            f"queued tasks may inflate 'unassigned': {', '.join(unreachable)}"
+        )
+    return 1 if any_err else 0
 
 
 def cmd_cancel(args: argparse.Namespace) -> int:
@@ -705,6 +1089,40 @@ x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -foreve
     return rc
 
 
+def cmd_probe(args: argparse.Namespace) -> int:
+    """Kick the auth-probe oneshot on one box or every registered box.
+
+    A cheaper alternative to `dispatch login` when a box's login column
+    shows 'old' — the cookie is still good, it just hasn't been re-verified
+    recently. STALE entries (probe failed) still need `dispatch login`.
+    """
+    if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
+        logger.error(
+            "skipping SSH fan-out (IP blocked). "
+            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+        )
+        return 2
+    if args.all:
+        boxes = load_boxes()
+        if not boxes:
+            logger.error("no boxes in registry")
+            return 2
+    else:
+        if not args.alias:
+            logger.error("specify an <alias> or pass --all")
+            return 2
+        boxes = [find_by_alias(args.alias)]
+    failures = 0
+    for box in boxes:
+        ok, msg = _kick_probe(box)
+        if ok:
+            logger.info(f"{box.alias}: probe fired")
+        else:
+            logger.warning(f"{box.alias}: probe kick failed: {msg}")
+            failures += 1
+    return 0 if failures == 0 else 1
+
+
 def cmd_config_pull(args: argparse.Namespace) -> int:
     box = find_by_alias(args.alias)
     r = _ssh_exec(box, "cat /var/lib/gui-agents/configs.yaml")
@@ -783,6 +1201,13 @@ def main(argv: list[str] | None = None) -> int:
     asg.add_argument("--box", help="pin to a single box alias")
     asg.add_argument("-y", "--yes", action="store_true")
 
+    bl = sub.add_parser(
+        "backlog",
+        help="per-cohort COUNT of eligible tasks (in_flight + unassigned + total)",
+    )
+    bl.add_argument("--agent", help="filter to boxes with this agent_model_name")
+    bl.add_argument("--task-source", help="filter tasks by task_source")
+
     c = sub.add_parser("cancel", help="cancel a queued or running task on a box")
     c.add_argument("alias")
     c.add_argument("task_id")
@@ -807,6 +1232,13 @@ def main(argv: list[str] | None = None) -> int:
         help="don't auto-open the macOS VNC viewer",
     )
 
+    pr = sub.add_parser(
+        "probe",
+        help="kick the auth-probe oneshot to refresh a box's login status",
+    )
+    pr.add_argument("alias", nargs="?")
+    pr.add_argument("--all", action="store_true", help="probe every registered box")
+
     cp = sub.add_parser("config", help="read/write box-local configs.yaml")
     csub = cp.add_subparsers(dest="config_cmd", required=True)
     cpl = csub.add_parser("pull")
@@ -826,6 +1258,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_show(args)
     if args.cmd == "assign":
         return cmd_assign(args)
+    if args.cmd == "backlog":
+        return cmd_backlog(args)
     if args.cmd == "cancel":
         return cmd_cancel(args)
     if args.cmd == "clear":
@@ -834,6 +1268,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_logs(args)
     if args.cmd == "login":
         return cmd_login(args)
+    if args.cmd == "probe":
+        return cmd_probe(args)
     if args.cmd == "config":
         if args.config_cmd == "pull":
             return cmd_config_pull(args)

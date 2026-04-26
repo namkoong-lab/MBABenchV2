@@ -54,6 +54,33 @@ python -m infra.dispatcher.dispatch assign --n 5 --box <alias>
 python -m infra.dispatcher.dispatch assign --n 5 -y
 ```
 
+After a successful `assign`, a per-cohort `remaining after this batch: …`
+line prints how many eligible tasks are still un-queued — same number
+`backlog` would have shown for the same cohort.
+
+## Backlog
+
+Per-cohort count of eligible tasks. For each reachable cohort
+`(agent_model_name, prompt_version)`, prints:
+
+- `in_flight` — tasks already in a box's `current` or `queue` across the cohort
+- `unassigned` — DB-eligible tasks, minus `in_flight` (what `assign` would pull)
+- `remaining` — `in_flight + unassigned` (total work left for this cohort)
+- `total` — all DB rows in cohort scope (non-deprecated, matching `--task-source`),
+  including ones already successfully attempted — the full universe
+
+`unassigned` and `remaining` use the same filters as `assign`, so they
+match what `assign --n ∞` would pull.
+
+```bash
+# Backlog across every reachable cohort
+python -m infra.dispatcher.dispatch backlog
+
+# Narrow to one cohort
+python -m infra.dispatcher.dispatch backlog --agent <agent_model_name>
+python -m infra.dispatcher.dispatch backlog --task-source <source>
+```
+
 ## Cancel / clear
 
 ```bash
@@ -101,6 +128,42 @@ python -m infra.dispatcher.dispatch login <alias> --no-open
 
 In the VNC session: log in through the already-running Chrome window, then
 Ctrl-C the dispatcher terminal to tear down the tunnel.
+
+## Auth probe
+
+The worker periodically probes claude.ai / chatgpt.com to verify the
+browser session is still live. Results show up in the `login` column of
+`dispatch status`:
+
+- `<email>` — last probe succeeded and is fresh
+- `old <email>` — last probe succeeded but is >30 min old (cookie is
+  likely still good, just hasn't been re-verified)
+- `STALE` — last probe failed — needs `dispatch login`
+- `?` — no probe result yet
+
+The `old` prefix is suppressed while the box has a running task: the
+probe oneshot deliberately short-circuits during worker activity (it
+would race with the agent over the shared Chrome), so staleness during
+that window is expected and un-actionable. The column just shows
+`<email>` until the task ends and the next probe runs.
+
+`dispatch probe` kicks the auth-probe oneshot on demand, so `status`
+reflects the current login immediately instead of waiting for the next
+timer fire. Only useful for `old` entries — `STALE` means the session
+is actually broken and needs a re-login via VNC.
+
+```bash
+# Refresh one box's login status
+python -m infra.dispatcher.dispatch probe <alias>
+
+# Refresh every registered box
+python -m infra.dispatcher.dispatch probe --all
+```
+
+`dispatch status` will also detect `old` entries after printing the
+table and prompt you to probe them in one keystroke — press `y` to
+kick probes on all of them, anything else to skip. The prompt is
+suppressed when stdin isn't a TTY (piped output, `watch`, scripts).
 
 ## Config (box-local configs.yaml)
 

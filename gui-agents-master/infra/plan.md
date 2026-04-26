@@ -1,7 +1,7 @@
 # AWS + DB-backed runtime for gui-agents-master
 
-**Status:** Phase 0a + 0b + 0c + 1 + 2 + 3c shipped; Phase 3a/3b live-validation + Phase 4 next. Chrome moved into its own systemd service so cookies survive worker/task cgroup teardowns.
-**Last updated:** 2026-04-21
+**Status:** Phase 0a + 0b + 0c + 1 + 2 + 3c shipped; Phase 3d code landed (pending live validation); Phase 4 next. Chrome moved into its own systemd service so cookies survive worker/task cgroup teardowns.
+**Last updated:** 2026-04-23
 
 ## Goals
 
@@ -576,11 +576,14 @@ All commands fan out over SSH using the box registry (`infra/dispatcher/boxes.ya
 
 ```
 dispatch status [--follow]
-  # ssh each box → `gui-agents-queue show` (config-only, fast path)
+  # ssh each box → `gui-agents-queue show` (fast path). --follow redraws every 5s.
   # prints one row per box:
-  #   alias | worker_id | agent_model (pv) | current+elapsed | q_len | last
-  #   claude-1 | i-0abc | claude_web (v7)  | task=142 (06:12) | +3   | 138 ok (12m)
-  #   chatgpt-1| i-0def | chatgpt_web (v7) | idle             | +0   | 139 ok (2h)
+  #   alias | worker_id | agent_model (pv) | login | current+elapsed | q_len | last
+  #   claude-1 | i-0abc | claude_web (v7)  | user@x.com | task=142 (06:12) | +3 | 138 ok
+  #   chatgpt-1| i-0def | chatgpt_web (v7) | STALE      | idle             | +0 | 139 ok
+  # login column is populated by the auth-probe timer on each box; values:
+  # <email> (fresh ok), ok (no email available), STALE (last probe failed),
+  # old <email> (succeeded but stale >30min), ? (no probe result yet).
 
 dispatch show <alias>
   # full state.json for one box.
@@ -595,6 +598,15 @@ dispatch assign --n 20 [--agent <model_name>] [--task-source <src>]
 dispatch assign --tasks 42,43 [--box <alias>]
   # explicit task IDs. If --box omitted, auto-distribute across all boxes.
 
+dispatch backlog [--agent <model_name>] [--task-source <src>]
+  # ssh each box → collect (worker_id, agent_model, prompt_version, current, queue).
+  # group by (agent_model, prompt_version); per cohort, runs two COUNT(*)s:
+  #   - unassigned: eligible tasks excluding task_ids currently in-flight
+  #   - total:      all cohort-scope tasks (drops skip_already_attempted)
+  # prints: agent  pv   boxes  in_flight  unassigned  remaining  total
+  #         claude v7   4      12         138         150        300
+  # (remaining = in_flight + unassigned)
+
 dispatch cancel <alias> <task_id>
   # if task is current on that box: ssh → `systemctl stop gui-agents-task-<id>`.
   # if task is queued:              ssh → `gui-agents-queue remove <id>`.
@@ -604,6 +616,19 @@ dispatch clear <alias>
 
 dispatch logs <alias> [--task <id>] [-f]
   # ssh → `journalctl -u gui-agents-task-<id>` (or the worker unit).
+
+dispatch login <alias> [--local-port N] [--no-open]
+  # opens a VNC tunnel to the box so the operator can log in to claude.ai /
+  # chatgpt.com inside the worker's managed Chrome.
+  # 1. fetches state.json; refuses if the box has a current task (login
+  #    would collide with the worker's Chrome session).
+  # 2. ssh → ensures gui-agents-chrome.service is up, opens the provider's
+  #    login URL as a new page over CDP (so cookies land in the profile
+  #    the auth-probe reads), then starts x11vnc on :99 bound to localhost.
+  # 3. forwards the VNC port to the laptop with a one-shot random password
+  #    (Screen Sharing refuses passwordless VNC even on localhost).
+  # 4. on exit, fires gui-agents-auth-probe.service so `dispatch status`
+  #    reflects the new login state immediately.
 
 dispatch config pull <alias>
   # ssh → reads the box's configs.yaml to a local file (for editing/diff).
@@ -636,6 +661,35 @@ boxes:
 
 `dispatch` commands that take `<alias>` resolve against this file. Unknown alias → hard error.
 
+### Backlog visibility (`dispatch backlog`)
+
+Answers *"for each cohort of reachable boxes, how much work is still eligible?"* Reuses the same cohort-grouping and eligibility filters as `dispatch assign` so the numbers align with what a subsequent `assign` would pull.
+
+**Per-cohort output — four counts, because they answer different operator questions:**
+
+- `in_flight` — union of `current` + queued `task_id`s across the cohort's boxes, read from the live `state.json` responses the dispatcher already fetches during status/assign. These are already assigned but not yet attempted, so they're absent from `task_attempts` and would otherwise inflate the DB-side count.
+- `unassigned` — rows matching the existing filters in `_list_eligible_tasks` (`deprecated=false`; optional `task_source`; anti-join excluding non-failed, non-deprecated attempts at this `(agent_model_name, prompt_version)`), **minus** the `in_flight` set. This is what `assign --n ∞` would pull.
+- `remaining = in_flight + unassigned` — full remaining work for the cohort.
+- `total` — all DB rows in cohort scope (non-deprecated, matching `--task-source`), including ones already successfully attempted. Same WHERE as `unassigned` but with `skip_already_attempted=False` and no `exclude_ids`. Answers "how big is this cohort at all?" separately from "how much is left to do?".
+
+**Implementation sketch:**
+
+1. New helper `_count_eligible_tasks(agent_model_name, prompt_version, task_sources, exclude_ids, skip_already_attempted=True)` in `dispatch.py`, next to `_list_eligible_tasks`. Same WHERE clauses plus `AND NOT (t.id = ANY(%(exclude_ids)s))`. `SELECT COUNT(*)` — no row materialization. Called twice per cohort: once with `exclude_ids=in_flight_ids` for `unassigned`, once with `skip_already_attempted=False` and no `exclude_ids` for `total`.
+2. New `cmd_backlog(args)` — `load_boxes()` → `_fetch_all_states()` → `_group_boxes_by_agent()` (all existing helpers, same reachability/cohort logic as `cmd_assign`). Per cohort, build `in_flight_ids` from state (via `_in_flight_ids_from_states` helper) and run the two counts. Print one row per cohort plus a skipped-alias line for unreachable boxes.
+3. Argparse: `bl = sub.add_parser("backlog", ...)` with `--agent` and `--task-source`; dispatch arm in `main()`.
+4. (Optional piggyback) After a successful `cmd_assign`, tracks each touched cohort and per-box successful adds; runs `_count_eligible_tasks` once per touched cohort (excluding pre-existing in-flight + freshly added ids) and prints `"remaining after this batch: agent=X pv=vN -> N eligible"`. Answers the "did I drain the queue?" question that operators ask right after assigning.
+
+**Deliberate non-goals:**
+
+- **Not a column in `dispatch status`.** Status refreshes every 5s in `--follow`; a DB round-trip per cohort per refresh is too expensive. Backlog stays a separate, explicitly-invoked command.
+- **No `--list` in v1.** `COUNT(*)` covers the operator question. Listing task IDs can be added later if someone needs it.
+- **No separate bucket for "only-failed-attempts" tasks.** Those are already counted eligible by the existing anti-join (`ta.agent_failed = FALSE`); surfacing them in the UI would re-explain the SQL.
+
+**Caveats printed alongside the output:**
+
+- Snapshot semantics — workers may finish tasks between the state fetch and the COUNT.
+- Unreachable boxes contribute nothing to `in_flight`, so their queued tasks could inflate `unassigned`. The skipped-alias list is printed so operators can interpret the number.
+
 ### Concurrency, safety, failure modes
 
 - **state.json mutations** are always under `fcntl.flock` (shared helper in `worker/state.py`). Both the worker loop and SSH-driven CLI calls go through the same code path, so the lock covers every writer.
@@ -643,6 +697,7 @@ boxes:
 - **Stale current**: on every worker-loop tick, cross-check `state.current.unit` against `systemctl is-active`. If the unit is inactive but `current` is set, mark the task failed (`reason='worker crashed'`) and move to `completed`. Next iteration picks up the queue normally.
 - **Config-change race**: `gui-agents-queue config push` replaces `configs.yaml` and restarts the worker. If a task is currently running when the restart fires, the transient task unit keeps running (it's independent of the worker service); the worker comes back up with new cfg and resumes popping from the queue.
 - **Unreachable box**: `dispatch status` prints `UNREACHABLE` for that row; other boxes are unaffected. No central state to corrupt.
+- **IP-block preflight**: `status`, `show`, and `assign` call `diagnose_connectivity()` (`infra/dispatcher/diagnostics.py`) before the SSH fan-out. If the laptop's current public IP isn't the one authorized in the security group (e.g. moved networks, VPN flap), the dispatcher fails fast with an actionable message instead of hanging on 15s SSH timeouts × N boxes. Bypass for one invocation with `DISPATCH_NO_DIAGNOSE=1`.
 
 ### What stays out of the DB
 
@@ -663,11 +718,12 @@ DB still stores only the final `task_attempts` row per finished task, written by
 | **0c** | `--run-config PATH` CLI flag + `infra/configs/run_configs/` layout. Replaces `--yaml-path`. **Dropped the per-task override layer (layer 4)** — merge model collapses to 3 layers. Task-shaped run-configs split reserved keys (→ YamlTaskSource) from non-reserved keys (→ layer 3 overlay); overlay-shaped files are layer 3 as-is | `--run-config local_run_examples/sample_task.yaml` runs the local sample end-to-end; `--run-config bizbench_run_examples/sample_bizbench.yaml` drives `postgres_s3` | ✅ shipped |
 | **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real Bizbench task end-to-end locally, pulling from Neon+S3, writing solution to local disk | ✅ shipped |
 | **2** | `PostgresS3AttemptSink`. `agent_model_type` is always `"gui"`; `cost` is always `NULL` (GUI runs are subscription-based); failed/timeout runs still insert a row with `agent_failed=true` + `agent_failed_reason`. Per-task metadata from the source flows to the sink via `result.extra["task_metadata"]`. Strict AWS-credentials contract (no boto3 default chain) + construction-time preflight: `sts.get_caller_identity()` on both source/sink + `s3.head_bucket` on sink. `build_source`/`build_sink` ValueErrors are caught cleanly in `infra/run.py`. | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | ✅ shipped |
-| **3a** | Worker-side: `infra/worker/` (state.py + queue_cli.py + worker_loop.py) + `--task-id` flag on `infra/run.py`. state.json is source of truth on the box; `gui-agents-queue` CLI is the only mutation path. | Manually SSH into a laptop-local "box", run `gui-agents-queue add <id>`, worker_loop pops and executes, result lands in DB | code shipped, end-to-end validation pending |
-| **3b** | Dispatcher-side: `infra/dispatcher/` (boxes.py + dispatch.py) + `infra/dispatcher/boxes.yaml`. Commands: `status`, `show`, `assign`, `cancel`, `clear`, `logs`, `config pull/push/diff`. | `dispatch status` and `dispatch assign --n N` work end-to-end against at least one box | code shipped, end-to-end validation pending |
+| **3a** | Worker-side: `infra/worker/` (state.py + queue_cli.py + worker_loop.py) + `--task-id` flag on `infra/run.py`. state.json is source of truth on the box; `gui-agents-queue` CLI is the only mutation path. | Manually SSH into a laptop-local "box", run `gui-agents-queue add <id>`, worker_loop pops and executes, result lands in DB | ✅ shipped (validated transitively via Phase 3c spinup) |
+| **3b** | Dispatcher-side: `infra/dispatcher/` (boxes.py + dispatch.py) + `infra/dispatcher/boxes.yaml`. Commands: `status` (with `--follow` redraw), `show`, `assign`, `cancel`, `clear`, `logs`, `login` (VNC + CDP login flow), `config pull/push/diff`. Connectivity preflight (`diagnostics.py`) short-circuits SSH fan-out on IP-block. | `dispatch status` and `dispatch assign --n N` work end-to-end against at least one box | ✅ shipped (validated transitively via Phase 3c spinup) |
 | **3c** | AWS lifecycle scripts: `aws_bootstrap.sh` (key + SG + `.aws_defaults`), `spinup.sh` (t3.medium + cloud-init + SSH-phase rsync/pip/unit-install/secrets-synth/`enable --now` — all the steps formerly in `SETUP.md` — plus re-run-against-existing-alias with strict idle gate), `teardown.sh` (by tag), `_reset_dispatcher_status.sh` (nuclear reset). `SETUP.md` kept as manual-fallback / diagnosis reference. `dispatcher/config_templates/` holds per-box configs.yaml overlays consumed by `--config-template`. VNC login flow for claude.ai/chatgpt.com. | One successful unattended task run on EC2 dispatched end-to-end from the laptop | ✅ end-to-end validated (chatgpt-pro-1 re-spinup: worker active, idle, reachable via `dispatch status`) |
+| **3d** | `dispatch backlog` command: per-cohort COUNT of eligible tasks (`in_flight` + `unassigned` + `remaining` + `total`), using the same `_group_boxes_by_agent` + eligibility filters as `assign`. `remaining = in_flight + unassigned` (work left); `total` drops `skip_already_attempted` for full cohort size. New `_count_eligible_tasks` helper with `exclude_ids` to subtract in-flight queue items. Optional post-`assign` "remaining after this batch: N" summary per cohort. | `dispatch backlog` returns an accurate count that matches what `assign --n ∞` would pull; fleet operators can size batches without guessing | ✅ code shipped (pending live validation) |
 | **4** | Second EC2 for ChatGPT; exercise multi-box distribution, per-box config divergence | Two providers running concurrently, dispatched from one `dispatch assign` call | planning |
-| **5** (optional) | `dispatch` gains `boxes.yaml` auto-discovery via AWS tags, and a `--follow` status dashboard. Credential-rotation upgrade (instance-profile + STS pre-start hook). Row-level locking if we ever let boxes self-claim. | Zero hand-maintained box registry; live status pane; rotatable creds | planning |
+| **5** (optional) | `dispatch` gains `boxes.yaml` auto-discovery via AWS tags. Credential-rotation upgrade (instance-profile + STS pre-start hook). Row-level locking if we ever let boxes self-claim. (Note: `--follow` status dashboard already shipped in Phase 3b.) | Zero hand-maintained box registry; rotatable creds | planning |
 
 Each phase is shippable on its own; stop whenever the value runs out.
 
