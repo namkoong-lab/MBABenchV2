@@ -93,6 +93,13 @@ def create_run_directory(
     return run_dir
 
 
+def _sanitize_name(name: str) -> str:
+    # Keep in sync with find_solution_file in infra/run.py — the finder
+    # must apply the same rule to re-locate the renamed file on disk.
+    s = name.replace("/", "-").replace(" ", "_")
+    return re.sub(r"[^a-zA-Z0-9._-]", "", s)
+
+
 def rename_solution_file(
     file_path: str | Path,
     task_name: str,
@@ -113,12 +120,10 @@ def rename_solution_file(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if solution_name:
-        safe_name = solution_name.replace("/", "-").replace(" ", "_")
-        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "", safe_name)
+        safe_name = _sanitize_name(solution_name)
         new_name = f"{timestamp}_{safe_name}_{agent_name}{file_path.suffix}"
     else:
-        safe_task = task_name.replace("/", "-").replace(" ", "_")
-        safe_task = re.sub(r"[^a-zA-Z0-9._-]", "", safe_task)
+        safe_task = _sanitize_name(task_name)
         new_name = (
             f"{timestamp}_{safe_task}_Solution_{agent_name}_Model{file_path.suffix}"
         )

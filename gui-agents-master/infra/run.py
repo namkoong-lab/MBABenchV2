@@ -46,6 +46,7 @@ from infra.configs import (  # noqa: E402
     resolve_agent_identity,
 )
 from task_io import AttemptResult, TaskSpec, build_sink, build_source  # noqa: E402
+from claude_web_agent.claude_web_engine import _sanitize_name  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -232,7 +233,9 @@ def find_solution_file(
     solutions = run_dir / "solutions"
     if not solutions.exists():
         return None
-    needle = (solution_name or task_name).lower()
+    # Must match rename_solution_file's sanitizer; otherwise task names with
+    # stripped chars (e.g. '&') fail to match the on-disk filename.
+    needle = _sanitize_name(solution_name or task_name).lower()
     matches: list[tuple[float, Path]] = []
     for p in solutions.glob("*.xlsx"):
         if p.stat().st_mtime < after.timestamp():
