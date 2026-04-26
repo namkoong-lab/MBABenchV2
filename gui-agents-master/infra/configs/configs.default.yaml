@@ -313,13 +313,13 @@ chatgpt_web:
     value: true
     required: false
   max_sec_per_task:
-    value: 5400                # 90 min
+    value: 7200                # 2h
     required: false
   check_interval_seconds:
     value: 3
     required: false
   max_wait_per_prompt_seconds:
-    value: 5400
+    value: 7200                # 2h
     required: false
 
   # Where the downloaded .xlsx artifact is saved (relative to CWD).
