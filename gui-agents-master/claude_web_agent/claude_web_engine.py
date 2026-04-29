@@ -632,18 +632,11 @@ async def run_automation(config: dict) -> bool:
                     continue
 
                 # Prompt succeeded — download artifacts
-                # Continue loop only for agent mode (extended pro finishes in one shot)
                 CONTINUE_PROMPT = (
                     "Continue. Please complete all remaining steps and provide "
                     "the finished Excel file for download when done."
                 )
-                # For ChatGPT extended pro (agent_mode=false), no continues needed —
-                # it finishes in one shot. Agent mode and Claude still use continues.
-                is_chatgpt_extended = (
-                    provider_key == "chatgpt_web"
-                    and not agent_config.get("agent_mode", True)
-                )
-                MAX_CONTINUE_ATTEMPTS = 0 if is_chatgpt_extended else 5
+                MAX_CONTINUE_ATTEMPTS = 5
 
                 downloaded_files = []
                 excel_files = []

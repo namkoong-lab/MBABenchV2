@@ -957,6 +957,16 @@ class ChatGPTWebAgent(WebAgent):
                     while (node = walker.nextNode()) {
                         const filename = node.textContent.trim();
                         let container = node.parentElement;
+                        // Aria-labels of the per-message action toolbar that sits
+                        // under every assistant reply. These look like icon-only
+                        // buttons and otherwise satisfy the artifact-card heuristic,
+                        // so we exclude them explicitly — clicking them switches
+                        // model, opens Share, downvotes the response, etc.
+                        const MSG_ACTION_ARIAS = new Set([
+                            'Copy response', 'Copy', 'Good response', 'Bad response',
+                            'Share', 'Switch model', 'More actions', 'Edit',
+                            'Read aloud', 'Try again', 'Regenerate'
+                        ]);
                         for (let depth = 0; depth < 8 && container; depth++) {
                             const buttons = container.querySelectorAll('button');
                             // Artifact cards have icon-only buttons (SVG icons).
@@ -964,6 +974,8 @@ class ChatGPTWebAgent(WebAgent):
                                 const hasIcon = b.querySelector('img') || b.querySelector('svg');
                                 const isSmall = b.textContent.trim().length === 0 ||
                                                 b.textContent.trim().length < 5;
+                                const aria = (b.getAttribute('aria-label') || '').trim();
+                                if (MSG_ACTION_ARIAS.has(aria)) return false;
                                 return hasIcon && isSmall;
                             });
                             const isFileCard = container.className &&
