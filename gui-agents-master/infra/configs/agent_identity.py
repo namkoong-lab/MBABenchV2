@@ -52,7 +52,7 @@ _CHATGPT_NON_AGENT_IDENTITIES: dict[tuple, AgentIdentity] = {
     (None,): AgentIdentity("chatgpt_web", "chatgpt_web"),
     ("instant",): AgentIdentity("chatgpt_instant", "chatgpt_instant"),
     ("thinking",): AgentIdentity("chatgpt_thinking", "chatgpt_thinking"),
-    ("pro",): AgentIdentity("chatgpt_pro", "chatgpt_pro"),
+    ("pro",): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
 }
 
 
