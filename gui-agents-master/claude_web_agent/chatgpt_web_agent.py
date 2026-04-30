@@ -40,9 +40,6 @@ class ChatGPTWebAgent(WebAgent):
         "add_files_menuitem": '[role="menuitem"]:has-text("Add photos & files")',
         # Feature toggles
         # Agent mode: + menu → hover "More" → click "Agent mode" (menuitemradio)
-        # Extended Pro: composer pill button
-        "extended_pro_button": 'button:has-text("Extended Pro")',
-        "extended_pro_active": 'button:has-text("Extended Pro, click to remove")',
         # State detection
         "login_button": 'button:has-text("Log in")',
         "thinking_active": 'button:has-text("Pro thinking")',
@@ -50,8 +47,8 @@ class ChatGPTWebAgent(WebAgent):
         # Response
         "chatgpt_said": 'heading:has-text("ChatGPT said:")',
         "user_said": 'heading:has-text("You said:")',
-        # Model
-        "model_selector": 'button:has-text("Model selector")',
+        # Model — pill in the composer toolbar that opens the dropdown
+        "model_selector": 'button.__composer-pill[aria-haspopup="menu"]',
     }
 
     def __init__(self, page, config: dict, shutdown_event=None, completion_logger=None):
@@ -202,130 +199,79 @@ class ChatGPTWebAgent(WebAgent):
         except Exception:
             return False
 
-    async def _select_model(self, model_testid: str, model_name: str) -> bool:
-        """Select a model from the top-left model switcher dropdown.
-
-        Args:
-            model_testid: The data-testid of the model menu item
-                          (e.g. 'model-switcher-gpt-5-4-pro').
-            model_name: Human-readable name for logging (e.g. 'Pro').
-        """
-        try:
-            # Open model selector dropdown
-            switcher = self.page.locator(
-                '[data-testid="model-switcher-dropdown-button"]'
-            )
-            await switcher.click(timeout=5000)
-            await asyncio.sleep(1)
-
-            # Click the target model
-            target = self.page.locator(f'[data-testid="{model_testid}"]')
-            if await target.count() == 0:
-                logger.warning(f"Model option {model_testid} not found in dropdown")
-                await self.page.keyboard.press("Escape")
-                return False
-
-            await target.click(timeout=5000)
-            await asyncio.sleep(1)
-
-            # Note: ChatGPT button text is always "ChatGPT" regardless of
-            # model selection, so a successful click is treated as confirmation.
-            logger.info(f"Model switched to {model_name} (clicked {model_testid})")
-            return True
-        except Exception as e:
-            logger.warning(f"Model selection failed for {model_name}: {e}")
-            try:
-                await self.page.keyboard.press("Escape")
-            except Exception:
-                pass
-            return False
-
-    MODEL_KEYWORDS = {
-        "instant": "instant",
-        "thinking": "thinking",
-        "pro": "pro",
+    MODEL_TESTIDS = {
+        "instant": "model-switcher-gpt-5-3",
+        "thinking": "model-switcher-gpt-5-5-thinking",
+        "pro": "model-switcher-gpt-5-5-pro",
     }
 
     async def ensure_model_selected(self) -> bool:
         """
-        Select a ChatGPT model via the top-left model switcher dropdown.
+        Select a ChatGPT model via the composer-pill model switcher.
 
-        Reads ``chatgpt_web.model`` from config. If not set (null/None),
-        skips selection and uses the current default. The config value is
-        lowercased before lookup, so ``"Pro"`` / ``"PRO"`` also work.
+        Reads ``chatgpt_web.model`` from config. If not set, skips selection
+        and uses the current default. Lookup is case-insensitive.
 
-        Supported values: ``instant``, ``thinking``, ``pro``.
+        Supported values: ``instant``, ``thinking``, ``pro``. ``pro`` selects
+        Pro with its current effort setting (default Extended) — no separate
+        "Extended Pro" toggle exists in the new UI.
 
         Selection flow:
-          1. Click the "ChatGPT" button (``data-testid=
-             "model-switcher-dropdown-button"``) to open the dropdown.
-          2. Scan dropdown rows (``role="menuitemradio"``; ``menuitem`` /
-             ``option`` kept as fallbacks in case ChatGPT's DOM changes).
-          3. Click the first visible row whose lowercased, stripped label
-             STARTS WITH the keyword. Prefix match (not substring) because
-             each row's text is a concatenated label+description like
-             ``"ProResearch-grade intelligence"`` — a substring match on
-             ``"pro"`` could hit descriptions in other rows.
-
-        Returns:
-            True if the desired model is selected, if none was specified,
-            or if the row/selector couldn't be located (soft-fail: we log
-            and fall back to the current default rather than abort).
+          1. Click the composer pill (``button.__composer-pill[aria-haspopup="menu"]``)
+             whose visible text is the current model name.
+          2. Click the row matching the configured model's ``data-testid``
+             (e.g. ``model-switcher-gpt-5-5-pro``).
         """
         target_model = self.agent_config.get("model")
         if not target_model:
             logger.info("No ChatGPT model specified in config — using current default")
             return True
 
-        keyword = self.MODEL_KEYWORDS.get(target_model.lower())
-        if not keyword:
+        testid = self.MODEL_TESTIDS.get(target_model.lower())
+        if not testid:
             logger.warning(
                 "Unknown ChatGPT model '%s'. Valid options: %s. Using current default.",
                 target_model,
-                ", ".join(self.MODEL_KEYWORDS.keys()),
+                ", ".join(self.MODEL_TESTIDS.keys()),
             )
             return True
 
         try:
-            logger.info("Selecting ChatGPT model: %s", target_model)
+            logger.info("Selecting ChatGPT model: %s (%s)", target_model, testid)
 
-            # The model selector button at the top of the chat
-            model_btn = await self.page.query_selector(
-                'button[data-testid="model-switcher-dropdown-button"]'
+            pill_handle = await self.page.evaluate_handle(
+                """() => {
+                    const pills = Array.from(document.querySelectorAll(
+                        'button.__composer-pill[aria-haspopup="menu"]'
+                    ));
+                    const re = /^(instant|thinking|pro|gpt|chatgpt|auto)\\b/i;
+                    return pills.find(b => re.test((b.textContent || '').trim()))
+                        || pills[0]
+                        || null;
+                }"""
             )
-            if not model_btn or not await model_btn.is_visible():
+            pill = pill_handle.as_element() if pill_handle else None
+            if pill is None:
                 logger.warning(
-                    "ChatGPT model selector not found — skipping model selection"
+                    "ChatGPT model-switcher pill not found — skipping model selection"
                 )
                 return True
 
-            # Open the dropdown menu
-            await model_btn.click()
+            await pill.click()
             await asyncio.sleep(1)
 
-            # Rows use role="menuitemradio"; keep menuitem/option as fallbacks.
-            menu_items = await self.page.query_selector_all(
-                '[role="menuitemradio"], [role="menuitem"], [role="option"]'
-            )
-            target_item = None
-            for item in menu_items:
-                text = (await item.text_content() or "").strip().lower()
-                if text.startswith(keyword) and await item.is_visible():
-                    target_item = item
-                    break
-
-            if not target_item:
+            target = await self.page.query_selector(f'[data-testid="{testid}"]')
+            if target is None:
                 logger.warning(
-                    "Model '%s' not found in dropdown — using current default",
-                    keyword,
+                    "Model row '%s' not found in dropdown — using current default",
+                    testid,
                 )
                 await self.page.keyboard.press("Escape")
                 return True
 
-            await target_item.click()
+            await target.click()
             await asyncio.sleep(0.5)
-            logger.info("ChatGPT model '%s' selected successfully", keyword)
-
+            logger.info("ChatGPT model '%s' selected successfully", target_model)
             return True
 
         except Exception as e:
@@ -373,21 +319,20 @@ class ChatGPTWebAgent(WebAgent):
         """Enable Agent mode or Pro model as configured, and select model.
 
         When ``agent_mode`` is True: + menu > More > Agent mode toggle.
-        When ``agent_mode`` is False: top-left model switcher > Pro.
+        When ``agent_mode`` is False: rely on ``chatgpt_web.model`` (set
+        ``pro`` for Extended Pro) — no separate toggle exists.
 
-        If ``model`` is set in config, also selects the specified model
-        via the Intelligence panel before enabling agent mode.
+        If ``model`` is set in config, ``ensure_model_selected`` picks it
+        via the composer model pill before agent mode is enabled.
         """
         await asyncio.sleep(2)
 
-        # Select model first (if configured)
         await self.ensure_model_selected()
 
         if self.agent_mode:
             return await self._enable_agent_mode()
         else:
-            # Default is already extended pro — no toggle needed
-            logger.info("Extended Pro mode (default) — no toggle needed")
+            logger.info("Non-agent mode — model selection done via ensure_model_selected")
             return True
 
     async def upload_files(self, file_paths: list[str]) -> bool:
