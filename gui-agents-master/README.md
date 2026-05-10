@@ -1,77 +1,76 @@
 # Web Agent Automation
 
-Automated pipeline for running AI agents on Excel tasks through browser GUIs. Supports **Claude.ai** and **ChatGPT** (Agent mode and Extended Pro mode) as providers.
+Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT (Agent mode and Extended Pro). The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads any Excel artifacts the model produces.
+
+> **Looking at the BizbenchV1 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
+
+---
+
+## How this compares to `excel-agents-master`
+
+The sibling repo, [`excel-agents-master/`](../excel-agents-master/), runs AI agents *inside Excel Online add-ins* via OneDrive. Same kind of benchmark output, very different runtime.
+
+|  | This repo (`gui-agents-master`) | Sibling (`excel-agents-master`) |
+|---|---|---|
+| **Where the AI runs** | Web chat UI (claude.ai, chatgpt.com) | Excel Online add-in panel |
+| **Required account** | Claude.ai login or ChatGPT Plus/Pro subscription | Microsoft 365 + OneDrive |
+| **Browsers** | Regular Chrome | Chrome Canary + Firefox (TabAI) |
+| **Cloud orchestration** | Full EC2 dispatcher in `infra/` for multi-box scaling | None — runs only on your local machine |
+
+→ See [`../AGENTS.md`](../AGENTS.md) for the full feature matrix and the "which suite should I pick?" guide.
+
+---
+
+## Two ways to run
+
+There are two runners in this repo. **External users should always use the local runner**; the EC2 dispatcher is for the internal BizbenchV1 team.
+
+| Runner | Audience | Tasks come from | Where it executes |
+|---|---|---|---|
+| **`claude_web_batch_runner.py`** | **Default — everyone** | Local YAML files (`tasks_configs/examples/*.yaml`) | One Chrome browser on your laptop |
+| **`infra/run.py` + `infra/dispatcher/`** | **BizbenchV1 internal team only** | Internal Postgres + S3 | Many EC2 boxes, orchestrated from a `dispatch` CLI |
+
+If you're outside the BizbenchV1 team and want to scale across multiple boxes, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `bizbench` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below for what you'd need to provision yourself. Not turnkey.
+
+---
 
 ## Prerequisites
 
 - **Python 3.10+** (3.12 recommended)
 - **[uv](https://docs.astral.sh/uv/)** package manager
-- **Google Chrome** installed (regular Chrome recommended; Chrome Canary v148+ has a CDP compatibility issue with Playwright)
-- **Playwright Chromium browser** — installed via `playwright install chromium` (see Setup below)
-- **Logged-in browser session** for the target provider (claude.ai or chatgpt.com)
-- **Claude.ai account** (for Claude runs) or **ChatGPT Plus/Pro subscription** (for ChatGPT runs)
+- **Regular Google Chrome** (Chrome Canary v148+ has a CDP compatibility issue with Playwright — stick with the stable channel)
+- **Playwright Chromium browser** binaries (installed below via `playwright install chromium`)
+- **Web GUI login** to your provider — this system uses your existing Claude.ai or ChatGPT browser session, **not** API keys. There's nothing to configure with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+- For ChatGPT runs: a paid **ChatGPT Plus or Pro subscription** is required (Agent mode and Extended Pro are paid features).
 
-> **Note:** This system automates AI agents through their web GUIs — no OneDrive plugins or Excel add-ins are required. Task files (PDFs, Excel workbooks) are uploaded directly into the chat.
+---
 
-## Architecture
-
-This system follows a composable six-layer pipeline. Green components are user-configurable; blue components are stable framework internals.
-
-![Architecture Diagram](docs/architecture_diagram.png)
-
-**Layers:**
-
-| Layer | Role | Key files |
-|-------|------|-----------|
-| **Input** | Task definitions, prompt templates, agent parameters | `tasks_configs/template_*.yaml`, `tasks_configs/examples/*.yaml` |
-| **Orchestration** | Batch retry logic, subprocess isolation | `claude_web_batch_runner.py` |
-| **Engine** | Single-task pipeline (setup → navigate → AI → download) | `claude_web_agent/claude_web_engine.py` |
-| **Navigation** | Browser navigates to claude.ai or chatgpt.com | Engine config |
-| **AI Interaction** | Claude, ChatGPT, or your custom agent | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
-| **Output** | Downloaded Excel files, validation, JSON logs | `claude_web_agent/file_validator.py`, `completion_logger.py` |
-
-### Adapting for Your Research
-
-1. **Edit prompt templates** — `tasks_configs/template_claude_web.yaml` (or `template_chatgpt_web.yaml`) contains the prompt sequence sent to the AI. Replace with your own instructions.
-2. **Define your task list** — Create a YAML in `tasks_configs/examples/` listing your tasks and files.
-3. **Choose your model** — Set `model:` in the template (e.g., `opus_4_6`, `sonnet_4_6`, `haiku`).
-4. **Customize validation** — Edit validation checks in `file_validator.py` to match your expected output schema.
-5. **Add a new agent** — Extend `WebAgent` base class with provider-specific selectors.
-
-> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture guide.
-
-## Setup
-
-### 1. Install dependencies
+## Install
 
 ```bash
-git clone <repo-url> && cd gui-system
+git clone <repo-url>
+cd gui-agents-master
 uv sync
-```
-
-### 2. Install Playwright browsers
-
-Playwright requires browser binaries to be installed separately:
-
-```bash
-# Install Chromium (required)
 .venv/bin/python -m playwright install chromium
-
-# On Linux, you may also need system dependencies:
-.venv/bin/python -m playwright install-deps chromium
+# On Linux only: .venv/bin/python -m playwright install-deps chromium
 ```
 
-### 3. Launch Chrome with CDP
+---
 
-The automation connects to a real Chrome browser via the Chrome DevTools Protocol (CDP). You must launch Chrome with remote debugging enabled.
+## Quickstart — local (default)
+
+This is the path everyone should start with. You launch a Chrome browser, log into your provider once, and the runner sends tasks through that browser one at a time.
+
+### 1. Launch Chrome with CDP
+
+The automation connects to a real Chrome browser via the Chrome DevTools Protocol. Launch Chrome with remote debugging enabled, on port 9222 with a dedicated profile directory.
 
 **macOS:**
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --user-data-dir=~/.chrome-web-agent \
-  --no-first-run \
-  --no-default-browser-check \
+  --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \
@@ -83,8 +82,7 @@ The automation connects to a real Chrome browser via the Chrome DevTools Protoco
 google-chrome \
   --remote-debugging-port=9222 \
   --user-data-dir=~/.chrome-web-agent \
-  --no-first-run \
-  --no-default-browser-check \
+  --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \
@@ -96,107 +94,129 @@ google-chrome \
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" `
   --remote-debugging-port=9222 `
   --user-data-dir="$env:USERPROFILE\.chrome-web-agent" `
-  --no-first-run `
-  --no-default-browser-check `
+  --no-first-run --no-default-browser-check `
   --disable-background-timer-throttling `
   --disable-backgrounding-occluded-windows `
   --disable-renderer-backgrounding `
   --remote-allow-origins=*
 ```
 
-> **Note on `--user-data-dir`**: This creates an isolated Chrome profile. Your login session persists across runs as long as you use the same directory. Each parallel browser needs its own profile directory.
+The `--user-data-dir` flag creates an isolated Chrome profile. Your login session persists across runs as long as you launch Chrome with the same directory — typically a few weeks until cookies expire. Each parallel browser instance needs its own profile dir (and its own port).
 
-### 4. Log into the provider
+### 2. Log into the provider
 
-In the Chrome window that opens:
+In the Chrome window that just opened:
 
-- **For Claude runs**: Navigate to https://claude.ai and log in
-- **For ChatGPT runs**: Navigate to https://chatgpt.com and log in (requires Plus or Pro subscription)
+- **For Claude runs**: navigate to https://claude.ai and log in.
+- **For ChatGPT runs**: navigate to https://chatgpt.com and log in (Plus or Pro account).
 
-Leave the browser open. The automation connects to it.
+Leave the browser open. The runner connects to it.
 
-### 5. Configure the project ID (per provider)
+### 3. Configure the project ID (per provider)
 
-Both providers identify a "project" or "workspace" you want each task to start
-in. You set this once per template config — the automation uses the project to
-keep all task conversations together and (for ChatGPT) to inherit project-level
-settings like the default model.
+Both providers identify a "project" or "workspace" you want each task to start in. Set this once per template config — the automation uses it to keep all task conversations together and (for ChatGPT) to inherit project-level settings like the default model.
 
 **For Claude.ai:**
 
-1. Go to https://claude.ai/projects and either pick an existing project or
-   create a new one (any name works).
-2. Open the project. The URL looks like:
-   `https://claude.ai/project/{project_id}` — copy the `{project_id}`.
-3. Paste it into `tasks_configs/template_claude_web.yaml` under
-   `claude_web.project_id`. Leave `null` if you want the automation to use
-   your default Claude.ai chat instead.
+1. Go to https://claude.ai/projects and either pick an existing project or create a new one (any name works).
+2. Open the project. The URL looks like `https://claude.ai/project/{project_id}` — copy `{project_id}`.
+3. Paste it into `tasks_configs/template_claude_web.yaml` under `claude_web.project_id`. Leave `null` to use your default Claude.ai chat instead.
 
 **For ChatGPT:**
 
-1. Go to https://chatgpt.com and click **"Projects"** in the left sidebar.
+1. Go to https://chatgpt.com and click **Projects** in the left sidebar.
 2. Create a new project (e.g. `excel-tasks`).
-3. Open the project. The URL looks like:
-   `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` — copy both the
-   hex `{project_id}` (after `g-p-`) and the URL `{slug}`.
-4. Paste them into `tasks_configs/template_chatgpt_web.yaml` under
-   `chatgpt_web.project_id` and `chatgpt_web.project_slug`.
+3. Open the project. The URL looks like `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` — copy both the hex `{project_id}` (after `g-p-`) and the URL `{slug}`.
+4. Paste them into `tasks_configs/template_chatgpt_web.yaml` under `chatgpt_web.project_id` and `chatgpt_web.project_slug`.
 
-**ChatGPT — Extended Pro mode:** in the project settings, set the default
-model to "Extended Pro" (or "Pro"). Every new chat in the project will then
-use Extended Pro without any further toggle.
+**ChatGPT Extended Pro:** in the project settings, set the default model to "Extended Pro" (or "Pro"). Every new chat in the project will then use Extended Pro without further toggling.
 
-**ChatGPT — Agent mode:** the automation enables agent mode automatically
-via the `+` menu before sending the first prompt. No project-level setting
-needed.
+**ChatGPT Agent mode:** the runner enables Agent mode automatically via the `+` menu before sending the first prompt. No project-level setting needed.
 
-## Task Configuration
+### 4. Write a task list
 
-Configuration is split into two files:
-
-| File | Purpose | You edit per... |
-|------|---------|-----------------|
-| **Tasks YAML** (`tasks_configs/examples/`) | Which files to upload, what to name output | Each task / project |
-| **Template YAML** (`tasks_configs/`) | Which agent, what prompts, retry/timeout settings | Each agent type |
-
-### Task List Format
+Copy `tasks_configs/examples/sample_tasks.yaml` and edit:
 
 ```yaml
 task_source: "my_tasks"
 
 tasks:
   - task_name: "My_Analysis"
-
-    # LOCAL — Files on your machine to upload into the AI chat.
-    # Paths are relative to local_files_base (in template) or CWD.
     upload_files:
       - "tasks/My_Analysis/problem_statement.pdf"
       - "tasks/My_Analysis/data.xlsx"
-
-    # OUTPUT — Base name for the solution file (optional).
-    # Omit to default to "{task_name}_Solution_{agent}_Model".
-    solution_name: "My_Analysis_Solution"
+    solution_name: "My_Analysis_Solution"   # optional
 ```
 
-> **Note:** `files_to_upload` is accepted as an alias for `upload_files`.
+`upload_files` paths are relative to `local_files_base` from the template (or CWD if unset). `files_to_upload` is accepted as an alias.
 
-### Template Config
+### 5. Run
 
-Templates live in `tasks_configs/`. The `prompts` list is what gets sent to the AI — **replace these with your own instructions** for your use case.
+```bash
+# Claude (default provider)
+.venv/bin/python claude_web_batch_runner.py \
+  --tasks tasks_configs/examples/sample_tasks.yaml
+
+# ChatGPT — Agent mode (uses Code Interpreter to build Excel)
+.venv/bin/python claude_web_batch_runner.py \
+  --tasks tasks_configs/examples/sample_tasks.yaml \
+  --provider chatgpt
+
+# ChatGPT — Extended Pro (extended thinking, no Code Interpreter)
+.venv/bin/python claude_web_batch_runner.py \
+  --tasks tasks_configs/examples/sample_tasks.yaml \
+  --template tasks_configs/template_chatgpt_web.yaml \
+  --provider chatgpt
+
+# Dry-run — preview tasks without executing
+.venv/bin/python claude_web_batch_runner.py \
+  --tasks tasks_configs/examples/sample_tasks.yaml \
+  --dry-run
+```
+
+---
+
+## Quickstart — cloud / EC2 dispatcher
+
+> **For the BizbenchV1 internal team.** The `infra/` directory contains a dispatcher + worker stack for orchestrating Chrome on EC2 boxes against our private Postgres + S3. See [`infra/README.md`](infra/README.md) for the operator guide. **External users:** the same code can drive your own AWS / Postgres / S3 setup, but you'll need to provision them yourself — see [BYO infrastructure](#byo-infrastructure-external-users) below.
+
+The dispatcher CLI lives at `infra/dispatcher/dispatch.py`. The most-used commands:
+
+```bash
+python -m infra.dispatcher.dispatch status                # who's doing what
+python -m infra.dispatcher.dispatch assign --n 20         # pull 20 tasks from DB, distribute
+python -m infra.dispatcher.dispatch logs <alias> --task 42 -f   # tail a task's journal
+python -m infra.dispatcher.dispatch login <alias>         # re-login when session expires
+```
+
+Per-box bring-up (spin up an EC2 instance, install the worker, register it in `dispatcher/boxes.yaml`):
+
+```bash
+./infra/dispatcher/spinup.sh --alias chatgpt-pro-1 \
+  --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+```
+
+See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md) for the full CLI reference and [`infra/plan.md`](infra/plan.md) for the architecture and config-layering details.
+
+### BYO infrastructure (external users)
+
+To run the dispatcher against your own infrastructure rather than ours, you'd need: an AWS account with EC2 permissions, a Postgres database (we use Neon), and an S3 bucket. The dispatcher and worker code is reusable, but the schema for the `tasks` and `task_attempts` tables, the S3 layout (`s3://<bucket>/<task_path>` with attempts under per-agent folders), and the bootstrap scripts assume the BizbenchV1 conventions. We don't ship a schema migration for external use — the local quickstart is the supported turnkey path for outside use.
+
+---
+
+## Configuration reference
+
+### Tasks YAML format
 
 ```yaml
-# tasks_configs/template_claude_web.yaml
-template:
-  agent_type: "claude_web"      # or "chatgpt_web"
+task_source: "my_tasks"
 
-  # Base directory for resolving relative paths in upload_files.
-  # If omitted, resolved from current working directory.
-  # local_files_base: "project_data/"
-
-  prompts:
-    - "Analyze the attached files. Summarize the key data and questions."
-    - "Build an Excel solution on a new sheet."
-    - "Create a summary sheet with your conclusions. Download the workbook."
+tasks:
+  - task_name: "My_Analysis"
+    upload_files:                         # files_to_upload is an accepted alias
+      - "tasks/My_Analysis/problem_statement.pdf"
+      - "tasks/My_Analysis/data.xlsx"
+    solution_name: "My_Analysis_Solution" # optional; default is {task_name}_Solution_{agent}_Model
 ```
 
 ### Recommended directory layout
@@ -211,170 +231,40 @@ my_tasks/
 │   └── starting_model.xlsx
 ```
 
-## Running Tasks
+### Template config
 
-### Claude (default provider)
-
-```bash
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml
-```
-
-### ChatGPT -- Agent mode
-
-Agent mode uses ChatGPT's Code Interpreter to build Excel models. The automation enables it automatically.
-
-```bash
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --provider chatgpt
-```
-
-### ChatGPT -- Extended Pro mode (no agent)
-
-Extended Pro uses ChatGPT's extended thinking without Code Interpreter. Set this as the default model in your ChatGPT project settings.
-
-```bash
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --template tasks_configs/template_chatgpt_web.yaml \
-  --provider chatgpt
-```
-
-### Batch runner options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--tasks FILE` | required | Path to task list YAML |
-| `--template FILE` | auto | Template config (auto-selects by provider if omitted) |
-| `--provider` | `claude` | `claude` or `chatgpt` |
-| `--start N` | 0 | Start from task index N |
-| `--end N` | all | Stop at task index N (exclusive) |
-| `--stop-on-failure` | off | Abort on first failure |
-| `--dry-run` | off | Preview tasks without executing |
-| `--timeout` | none | Default timeout per task in seconds |
-
-### Task list YAML format
+Templates live in `tasks_configs/`. The `prompts` list is what gets sent to the AI — replace with your own instructions:
 
 ```yaml
-task_source: "my_tasks"
-
-tasks:
-  - "Task-Name-1"
-  - "Task-Name-2"
-  - "Task-Name-3"
-```
-
-Each task entry specifies a task name. Task files (PDFs, Excel starting files) should be listed in the task config or template under `files_to_upload`.
-
-## Model Selection
-
-Both providers support configurable model selection. If omitted or set to `null`, the automation uses whatever model is currently active in your session.
-
-### Claude
-
-```yaml
-claude_web:
-  model: opus_4_6  # Options: opus_4_6, sonnet_4_6, haiku_4_5
-```
-
-| Config value | Claude.ai model |
-|---|---|
-| `opus_4_6` | Opus 4.6 |
-| `sonnet_4_6` | Sonnet 4.6 |
-| `haiku_4_5` | Haiku 4.5 |
-| `null` / omitted | Uses current session default |
-
-### ChatGPT
-
-```yaml
-chatgpt_web:
-  model: thinking  # Options: instant, thinking, pro
-```
-
-| Config value | ChatGPT model |
-|---|---|
-| `instant` | Instant 5.3 (everyday chats) |
-| `thinking` | Thinking 5.4 (complex questions) |
-| `pro` | Pro 5.4 (research-grade) |
-| `null` / omitted | Uses current session default |
-
-Model selection happens via the provider's UI dropdown before enabling other features (Extended Thinking, Agent mode). If the specified model is not available, the automation falls back to the current default.
-
-## Running Claude + ChatGPT in Parallel
-
-You can run both providers simultaneously using two Chrome instances on different ports.
-
-### Step 1: Launch two Chrome instances
-
-```bash
-# Browser A -- port 9222 (Claude)
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir=~/.chrome-web-agent-claude \
-  --no-first-run --no-default-browser-check \
-  --disable-background-timer-throttling \
-  --disable-backgrounding-occluded-windows \
-  --disable-renderer-backgrounding \
-  '--remote-allow-origins=*' &
-
-# Browser B -- port 9333 (ChatGPT)
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9333 \
-  --user-data-dir=~/.chrome-web-agent-chatgpt \
-  --no-first-run --no-default-browser-check \
-  --disable-background-timer-throttling \
-  --disable-backgrounding-occluded-windows \
-  --disable-renderer-backgrounding \
-  '--remote-allow-origins=*' &
-```
-
-### Step 2: Log into each provider in its browser
-
-### Step 3: Run both in parallel
-
-```bash
-# Claude (port 9222)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml &
-
-# ChatGPT (port 9333)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --template tasks_configs/template_chatgpt_web.yaml \
-  --provider chatgpt &
-
-wait  # Wait for both to finish
-```
-
-## Template Configuration
-
-Templates control agent behavior, timeouts, and retry logic. Key settings:
-
-```yaml
+# tasks_configs/template_claude_web.yaml
 template:
-  agent_type: "claude_web"      # claude_web | chatgpt_web
+  agent_type: "claude_web"               # or "chatgpt_web"
+
+  # Base directory for resolving relative paths in upload_files.
+  # local_files_base: "project_data/"
 
   prompts:
-    - "Your full prompt text here..."
+    - "Analyze the attached files. Summarize the key data and questions."
+    - "Build an Excel solution on a new sheet."
+    - "Create a summary sheet with your conclusions. Download the workbook."
 
-  download_artifacts: true       # Download Excel files from chat
+  download_artifacts: true               # Download Excel files from chat
 
-  claude_web:                    # Provider-specific section
-    model: opus_4_6              # opus_4_6, sonnet_4_6, haiku_4_5, or null
+  claude_web:
+    model: opus_4_6                      # opus_4_6 | sonnet_4_6 | haiku_4_5 | null
     project_id: "your-project-id-here"
 
-    max_sec_per_task: 7200       # 120 min total timeout
+    max_sec_per_task: 7200               # 120 min total timeout
 
     browser:
       type: "chrome"
       headless: false
       timeout: 30000
-      cdp_port: 9222             # Change per browser instance
+      cdp_port: 9222                     # Match the Chrome --remote-debugging-port
 
     retry:
-      max_agent_attempts: 3      # Retries for agent-phase failures
-      max_total_attempts: 10     # Total retries including pipeline failures
+      max_agent_attempts: 3              # Retries for agent-phase failures
+      max_total_attempts: 10             # Hard cap including pipeline failures
       max_sec_per_attempt: 7200
       sleep_between_retries: 5
 
@@ -387,17 +277,41 @@ template:
       log_directory: "claude_web_logs"
 ```
 
-### How "Continue" works
+### Model selection
 
-When the model finishes responding but no Excel file is found, the engine can automatically send a "Continue" message asking the model to complete the task and provide the Excel file.
+Both providers support configurable model selection via the provider's UI dropdown. If omitted or `null`, the runner uses whatever model is currently active in your session.
 
-- **ChatGPT Agent mode**: Up to 5 continues.
-- **ChatGPT Extended Pro**: No continues. Extended Pro finishes end-to-end in one response.
-- **Claude**: Up to 5 continues.
+**Claude:**
 
-## Provider Comparison
+| Config value | Claude.ai model |
+|---|---|
+| `opus_4_6` | Opus 4.6 |
+| `sonnet_4_6` | Sonnet 4.6 |
+| `haiku_4_5` | Haiku 4.5 |
+| `null` / omitted | Current session default |
 
-| | Claude | ChatGPT Agent Mode | ChatGPT Extended Pro |
+**ChatGPT:**
+
+| Config value | ChatGPT model |
+|---|---|
+| `instant` | Instant 5.3 (everyday chats) |
+| `thinking` | Thinking 5.4 (complex questions) |
+| `pro` | Pro 5.4 (research-grade) |
+| `null` / omitted | Current session default |
+
+If the specified model is not available in your account, the runner falls back to the current default.
+
+### "Continue" auto-retry
+
+If the model finishes responding but no Excel file appears, the engine can automatically send a "Continue" message asking the model to complete the task and provide the Excel file.
+
+- **ChatGPT Agent mode**: up to 5 continues.
+- **ChatGPT Extended Pro**: no continues — Extended Pro finishes end-to-end in one response.
+- **Claude**: up to 5 continues.
+
+### Provider comparison
+
+|  | Claude | ChatGPT Agent Mode | ChatGPT Extended Pro |
 |---|---|---|---|
 | Flag | `--provider claude` (default) | `--provider chatgpt` | `--provider chatgpt` |
 | Template setting | `agent_type: claude_web` | `agent_mode: true` | `agent_mode: false` |
@@ -407,7 +321,72 @@ When the model finishes responding but no Excel file is found, the engine can au
 | Log directory | `claude_web_logs/` | `chatgpt_web_logs/` | `chatgpt_web_logs/` |
 | Output prefix | `claudeGUI` | `chatgptGUI_agent` | `chatgptGUI_extended` |
 
-## Output Structure
+---
+
+## CLI options (`claude_web_batch_runner.py`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tasks FILE` | required | Path to task list YAML |
+| `--template FILE` | auto | Template config (auto-selects by provider if omitted) |
+| `--provider` | `claude` | `claude` or `chatgpt` |
+| `--start N` | 0 | Start from task index N |
+| `--end N` | all | Stop at task index N (exclusive) |
+| `--stop-on-failure` | off | Abort on first failure |
+| `--dry-run` | off | Preview tasks without executing |
+| `--timeout` | none | Default timeout per task in seconds |
+
+---
+
+## Running Claude + ChatGPT in parallel
+
+You can run both providers simultaneously using two Chrome instances on different ports.
+
+### Launch two Chrome instances
+
+```bash
+# Browser A — port 9222 (Claude)
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --user-data-dir=~/.chrome-web-agent-claude \
+  --no-first-run --no-default-browser-check \
+  --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding \
+  '--remote-allow-origins=*' &
+
+# Browser B — port 9333 (ChatGPT)
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9333 \
+  --user-data-dir=~/.chrome-web-agent-chatgpt \
+  --no-first-run --no-default-browser-check \
+  --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows \
+  --disable-renderer-backgrounding \
+  '--remote-allow-origins=*' &
+```
+
+Log into each provider in its own browser, then run both runners in parallel:
+
+```bash
+# Claude (port 9222)
+.venv/bin/python claude_web_batch_runner.py \
+  --tasks tasks_configs/examples/sample_tasks.yaml &
+
+# ChatGPT (port 9333)
+.venv/bin/python claude_web_batch_runner.py \
+  --tasks tasks_configs/examples/sample_tasks.yaml \
+  --template tasks_configs/template_chatgpt_web.yaml \
+  --provider chatgpt &
+
+wait
+```
+
+> The batch runner does **not** auto-launch Chrome on non-default ports (anything other than 9222). Start Chrome yourself on ports like 9333, 9334, etc., and set `cdp_port` to match in the template.
+
+---
+
+## Output structure
 
 Each run creates a date-prefixed output folder:
 
@@ -419,77 +398,83 @@ Each run creates a date-prefixed output folder:
 chatgpt_web_logs/   # Detailed per-task log files
 ```
 
-## Project Structure
+---
+
+## Troubleshooting
+
+**Browser session expired.** Re-launch Chrome with the same `--user-data-dir` and log in again. Sessions typically last weeks but can expire after long idle periods.
+
+**Chrome won't start / "port not open".** Make sure no other Chrome instance is using the same `--user-data-dir`:
+```bash
+lsof -i :9222 -sTCP:LISTEN          # what's on the port
+ps aux | grep remote-debugging-port  # all debugging Chrome instances
+```
+
+**`Chrome not reachable on CDP port 9222` immediately after launching Chrome.** This is almost always a setup-vs-runtime mismatch — the launch flags and the runner's expectations have drifted. Check that:
+- The Chrome you launched uses `--remote-debugging-port=9222` (or whatever is in `template.<provider>.browser.cdp_port`).
+- The `--user-data-dir` matches what you used for login (sessions are scoped per profile dir).
+- The Chrome binary is regular Chrome, not Canary v148+ (which has a CDP incompatibility — see next entry).
+- For parallel runs, the runner's `cdp_port` matches the actual port the Chrome instance is on.
+
+**`Protocol error (Browser.setDownloadBehavior): Browser context management is not supported`.** Chrome Canary v148+ incompatibility — switch to regular Chrome.
+
+**`Agent mode menu not found` (ChatGPT).** ChatGPT's UI changes frequently. The runner activates Agent mode by clicking the `+` menu (`[data-testid="composer-plus-btn"]`) and selecting "Agent mode". If selectors break, update `claude_web_agent/chatgpt_web_agent.py`.
+
+**`0 artifact preview cards found` (ChatGPT).** The model responded with text only and didn't produce an Excel file. Usually means Agent mode didn't engage or the prompt didn't trigger file creation. Check the conversation in the browser.
+
+**`You don't have access to this project` (ChatGPT).** The `project_id` in the template doesn't match the ChatGPT account logged into that browser. Each ChatGPT account has its own project IDs — update the template with the correct ID from your account's project URL.
+
+**Playwright not installed.** If you see `playwright._impl._errors.Error: Executable doesn't exist`:
+```bash
+.venv/bin/python -m playwright install chromium
+# Linux: also .venv/bin/python -m playwright install-deps chromium
+```
+
+---
+
+## Architecture
+
+The system follows a composable six-layer pipeline. Green components are user-configurable; blue components are stable framework internals.
+
+![Architecture Diagram](docs/architecture_diagram.png)
+
+| Layer | Role | Key files |
+|---|---|---|
+| **Input** | Task definitions, prompt templates, agent parameters | `tasks_configs/template_*.yaml`, `tasks_configs/examples/*.yaml` |
+| **Orchestration** | Batch retry logic, subprocess isolation | `claude_web_batch_runner.py` |
+| **Engine** | Single-task pipeline (setup → navigate → AI → download) | `claude_web_agent/claude_web_engine.py` |
+| **Navigation** | Browser navigates to claude.ai or chatgpt.com | Engine config |
+| **AI Interaction** | Claude, ChatGPT, or your custom agent | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
+| **Output** | Downloaded Excel files, validation, JSON logs | `claude_web_agent/file_validator.py`, `completion_logger.py` |
+
+> See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full architecture guide and instructions on adding your own provider.
+
+---
+
+## Project structure
 
 ```
-gui-system/
-├── claude_web_batch_runner.py        # Main batch runner (both providers)
+gui-agents-master/
+├── claude_web_batch_runner.py        # Local batch runner (default — both providers)
+├── infra/                            # EC2 dispatcher + worker (BizbenchV1 internal team)
+│   ├── README.md                     # Operator guide
+│   ├── run.py                        # DB-driven per-task runner
+│   ├── dispatcher/                   # Laptop-side dispatch CLI
+│   └── worker/                       # Box-side worker loop + systemd units
 ├── claude_web_agent/
 │   ├── claude_web_agent.py           # Claude.ai provider
 │   ├── chatgpt_web_agent.py          # ChatGPT provider
 │   ├── claude_web_engine.py          # Shared per-task engine
 │   ├── browser_manager.py            # Chrome CDP connection
-│   ├── completion_logger.py          # JSON crash-safe logging
+│   ├── completion_logger.py          # Crash-safe JSON logging
 │   ├── file_validator.py             # Excel file validation
 │   ├── task_status.py                # Status enums
 │   └── web_agent.py                  # Abstract base class
 ├── tasks_configs/
-│   ├── template_claude_web.yaml      # Claude base template
-│   ├── template_chatgpt_web.yaml     # ChatGPT base template
-│   └── examples/
-│       └── sample_tasks.yaml         # Example task list
-├── pyproject.toml                    # Python dependencies
-└── requirements.txt                  # Pip dependencies
-```
-
-## Troubleshooting
-
-### Chrome won't start / "port not open"
-
-Make sure no other Chrome instance is using the same `--user-data-dir`:
-
-```bash
-# Check what's on the port
-lsof -i :9222 -sTCP:LISTEN
-
-# Or check all debugging Chrome instances
-ps aux | grep remote-debugging-port
-```
-
-### "Protocol error (Browser.setDownloadBehavior): Browser context management is not supported"
-
-This happens with Chrome Canary v148+. Use **regular Chrome** instead of Chrome Canary.
-
-### "Agent mode menu not found"
-
-ChatGPT's UI changes frequently. The agent activates agent mode by clicking the `+` menu (`[data-testid="composer-plus-btn"]`) and selecting "Agent mode". If selectors break, update `chatgpt_web_agent.py`.
-
-### "0 artifact preview cards found"
-
-ChatGPT responded with text only and didn't produce an Excel file. This usually means agent mode didn't engage or the prompt didn't trigger file creation. Check the conversation in the browser.
-
-### "You don't have access to this project"
-
-The `project_id` in the template doesn't match the ChatGPT account logged into that browser. Each ChatGPT account has its own project IDs. Update the template with the correct ID from your account's project URL.
-
-### Browser session expired
-
-Re-launch Chrome and log in again. The `--user-data-dir` flag ensures sessions persist, but they can still expire after extended periods.
-
-### CDP connection error on non-default port
-
-The batch runner will NOT auto-launch Chrome on non-default ports (anything other than 9222). You must start Chrome yourself on ports like 9333, 9334, etc.
-
-### Playwright not installed
-
-If you see `playwright._impl._errors.Error: Executable doesn't exist`, run:
-
-```bash
-.venv/bin/python -m playwright install chromium
-```
-
-On Linux, also install system dependencies:
-
-```bash
-.venv/bin/python -m playwright install-deps chromium
+│   ├── template_claude_web.yaml
+│   ├── template_chatgpt_web.yaml
+│   └── examples/sample_tasks.yaml
+├── docs/                             # Architecture diagram + ARCHITECTURE.md
+├── pyproject.toml
+└── requirements.txt
 ```
