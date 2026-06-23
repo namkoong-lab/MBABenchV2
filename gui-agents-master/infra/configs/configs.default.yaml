@@ -40,7 +40,7 @@ provider:
 # independent of any behavior field.
 agent:
   prompt_version:
-    value: 8                 # matches DEFAULT_MODELS_PROMPT_VERSION["claude_web"]
+    value: 9                 # rubric-v9 prompt set; matches DEFAULT_MODELS_PROMPT_VERSION
     required: false
 
 
@@ -201,7 +201,7 @@ prompts:
   required: true
 
 prompt_version:
-  value: 8                     # engine config's prompt_version (top-level)
+  value: 9                     # engine config's prompt_version (top-level); rubric v9
   required: false
 
 # Empty = let the engine resolve paths from CWD. Set to the directory

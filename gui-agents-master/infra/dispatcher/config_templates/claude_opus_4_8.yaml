@@ -1,37 +1,32 @@
-# Spin-up config template: ChatGPT provider, agent mode.
+# Spin-up config template: Claude provider, Opus 4.8 (Extended Thinking on).
 #
 # Pass to spinup.sh via:
 #   ./infra/dispatcher/spinup.sh \
-#       --alias chatgpt-agent-1 \
-#       --config-template infra/dispatcher/config_templates/chatgpt_agent.yaml
+#       --alias claude-opus48-1 --provider claude \
+#       --config-template infra/dispatcher/config_templates/claude_opus_4_8.yaml
 #
-# Deep-merges on top of infra/configs/configs.default.yaml; every key here
-# is an override. DB URL and AWS creds intentionally absent — spinup.sh
-# synthesizes /etc/gui-agents/secrets.env from the operator's env, and the
-# worker reads those via the EnvironmentFile in gui-agents-worker.service.
+# Deep-merges on top of infra/configs/configs.default.yaml; every key here is an
+# override. DB URL and AWS creds intentionally absent - spinup.sh synthesizes
+# /etc/gui-agents/secrets.env from the operator's env, read by the worker via
+# the EnvironmentFile in gui-agents-worker.service.
+#
+# Identity resolves to claude_opus_4_8 (see infra/configs/agent_identity.py).
 
 provider:
-  kind: "chatgpt"
+  kind: "claude"
 
 agent:
   prompt_version:
     value: 9
 
-# With agent_mode=true, ChatGPT Agent is its own routed backend — the
-# `model` value below is cosmetic and does NOT affect identity resolution.
-# See infra/configs/agent_identity.py: this collapses to "chatgpt_agent"
-# regardless of chatgpt_web.model.
-
-chatgpt_web:
-  model: "pro"
-  agent_mode: true
-  # Paste from https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
-  # Required — preflight exits if either is null/empty under provider=chatgpt.
-  project_id: "6958bb36c8e88191a6df89918a683e0d"
-  project_slug: "agentic-excel-tests"
+claude_web:
+  model: "opus_4_8"
+  # project_id must exist in the claude.ai account this box logs into (VNC step).
+  # Paste from https://claude.ai/project/{project_id}. null = default chat.
+  project_id: "019ef001-4c2c-76da-8c87-c94067ba216b"
   browser:
-    # Matches the path the README's VNC-login step writes cookies into.
-    profile_dir: "/var/lib/gui-agents/chrome-chatgpt"
+    # Matches the path the README's VNC-login step writes the Chrome profile to.
+    profile_dir: "/var/lib/gui-agents/chrome-claude"
 
 # Production boxes pull from the Bizbench Postgres DB and write attempts to S3.
 source:
@@ -45,9 +40,7 @@ sink:
   kind: "postgres_s3"
   schema: "bizbench"
 
-# Prompts are the SAME 3-step sequence as claude_opus_4_8.yaml (Analyze ->
-# Build+rubric -> QA). Both providers get identical instructions, prompts,
-# and rubric so model results are directly comparable.
+# Claude runs the multi-step sequence (Analyze -> Build+rubric -> QA).
 
 prompts:
   - |
