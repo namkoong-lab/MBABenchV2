@@ -343,6 +343,29 @@ class ClaudeWebAgent(WebAgent):
         # Fallback: item-level descent (legacy path).
         item = await self._find_extended_thinking_item()
         if not item:
+            # Effort-based UI fallback: Claude.ai >= 2025-06 replaced the
+            # Extended-thinking toggle with an "Effort" submenu item.
+            # "Effort: High" is equivalent to extended thinking enabled.
+            try:
+                items = await self.page.query_selector_all(
+                    '[role="menuitem"], [role="menuitemradio"]'
+                )
+                for menu_item in items:
+                    try:
+                        if not await menu_item.is_visible():
+                            continue
+                        text = ((await menu_item.text_content()) or "").lower()
+                        if "effort" in text:
+                            result = "high" in text
+                            logger.debug(
+                                f"Effort-based ET detection: text={text.strip()!r} "
+                                f"→ ET={'on' if result else 'off'}"
+                            )
+                            return result
+                    except Exception:
+                        continue
+            except Exception:
+                pass
             return None
         for sel in self.ET_SWITCH_SELECTORS:
             try:
@@ -424,7 +447,7 @@ class ClaudeWebAgent(WebAgent):
                 return False
 
             if current == enabled:
-                logger.info(f"Extended thinking already {'on' if enabled else 'off'}")
+                logger.debug(f"Extended thinking already {'on' if enabled else 'off'}")
                 await self._close_model_dropdown()
                 return True
 
@@ -503,6 +526,10 @@ class ClaudeWebAgent(WebAgent):
         """
         try:
             model_lower = model.lower()
+            # UI dropdown text uses spaces/dots (e.g. "Claude Opus 4.8") while
+            # config identifiers use underscores (e.g. "opus_4_8"). Use only the
+            # base name for substring matching so both formats work.
+            model_selector = model_lower.split("_")[0]
             logger.info(
                 f"Configuring model={model_lower}, "
                 f"extended_thinking={extended_thinking}..."
@@ -513,7 +540,7 @@ class ClaudeWebAgent(WebAgent):
                 return False
 
             btn_text = (await model_btn.text_content() or "").lower()
-            current_model_ok = model_lower in btn_text
+            current_model_ok = model_selector in btn_text
 
             # Model selection (if needed) — only driver of the model
             if not current_model_ok:
@@ -527,7 +554,7 @@ class ClaudeWebAgent(WebAgent):
                 for item in items:
                     try:
                         text = (await item.text_content() or "").lower()
-                        if model_lower in text and await item.is_visible():
+                        if model_selector in text and await item.is_visible():
                             await item.click()
                             logger.info(f"Selected model: {text.strip()}")
                             clicked_model = True
@@ -549,7 +576,7 @@ class ClaudeWebAgent(WebAgent):
                         for item in sub_items:
                             try:
                                 text = (await item.text_content() or "").lower()
-                                if model_lower in text and await item.is_visible():
+                                if model_selector in text and await item.is_visible():
                                     await item.click()
                                     logger.info(
                                         f"Selected model from submenu: "
@@ -571,7 +598,7 @@ class ClaudeWebAgent(WebAgent):
                 btn_text = (
                     (await model_btn.text_content() or "").lower() if model_btn else ""
                 )
-                current_model_ok = model_lower in btn_text
+                current_model_ok = model_selector in btn_text
 
             if not current_model_ok:
                 logger.error(f"Model not set after selection attempt: got {btn_text!r}")
