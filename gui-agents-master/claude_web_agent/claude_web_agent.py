@@ -604,13 +604,25 @@ class ClaudeWebAgent(WebAgent):
                 logger.error(f"Model not set after selection attempt: got {btn_text!r}")
                 return False
 
-            # Delegate Extended thinking to the dedicated helper
-            if not await self.ensure_extended_thinking(enabled=extended_thinking):
-                return False
+            # Delegate Extended thinking to the dedicated helper. Treat an ET
+            # configuration failure as NON-FATAL: the model is already
+            # correctly selected (verified above) and ET is a secondary
+            # preference. Claude.ai periodically relabels/relocates the ET
+            # switch (e.g. "Extended / Always uses deep reasoning", which the
+            # "think"-based detection misses), and a detection miss must not
+            # abort an otherwise-valid run.
+            et_ok = await self.ensure_extended_thinking(enabled=extended_thinking)
+            if not et_ok:
+                logger.warning(
+                    f"Could not configure extended_thinking={extended_thinking} "
+                    f"for model {model_lower} (the model IS selected); continuing. "
+                    f"If ET matters for this run, the dropdown switch detection "
+                    f"may need updating for the current Claude.ai UI."
+                )
 
             logger.info(
                 f"Model configured: model={model_lower}, "
-                f"extended_thinking={extended_thinking}"
+                f"extended_thinking={'on' if et_ok else 'unconfirmed'}"
             )
             return True
 
