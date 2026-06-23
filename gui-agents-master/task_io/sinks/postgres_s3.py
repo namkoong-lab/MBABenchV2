@@ -34,6 +34,19 @@ from ..base import AttemptResult
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_s3_segment(name: str) -> str:
+    """Make a task name safe as a single S3 key segment.
+
+    Keeps alphanumerics, dash, underscore, and dot; replaces everything else
+    (spaces, slashes, etc.) with "_" so a task name can't fork the key path
+    into unintended sub-prefixes. Mirrors the local-filename sanitizer in
+    infra/run.py.
+    """
+    if not name:
+        return ""
+    return "".join(c if (c.isalnum() or c in "-_.") else "_" for c in name)
+
+
 @dataclass(frozen=True)
 class AttemptSchema:
     """Describes the attempts table this sink writes to.
@@ -255,13 +268,15 @@ BIZBENCH_ATTEMPT_SCHEMA = AttemptSchema(
 class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
     """Bizbench-wired sink.
 
-    S3 layout (mirrors cli-agents-master/auto_batch_runner.py):
-        {s3_prefix}/{agent_folder}/task_source={src}/task_id={id}/{ts}_{name}
+    S3 layout (organized by task name for readable paths):
+        {s3_prefix}/{agent_folder}/{task_name}/{ts}_{name}
+    e.g. BizbenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_solution.xlsx
 
-    The source (`BizbenchPostgresS3TaskSource`) populates
-    `spec.metadata["task_source"]` and `spec.metadata["db_task_id"]`; the
-    runner threads those through as `result.extra["task_metadata"]` so
-    they land here.
+    task_name is sanitized (_sanitize_s3_segment) so it stays a single key
+    segment; the {ts} prefix on each file keeps re-runs from overwriting
+    earlier attempts. task_source / db_task_id still flow through
+    `result.extra["task_metadata"]` (populated by the source) and are
+    written to the task_attempts row, just no longer encoded in the S3 path.
     """
 
     def __init__(
@@ -377,11 +392,14 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
         return meta if isinstance(meta, dict) else {}
 
     def _s3_base_key(self, result: AttemptResult, timestamp: str) -> str:
-        task_source = self._task_metadata(result).get("task_source") or "unknown"
-        return (
-            f"{self.s3_prefix}/{self.agent_folder}"
-            f"/task_source={task_source}/task_id={result.task_id}/{timestamp}"
-        )
+        # Organize attempts by task name for readable paths:
+        #   {s3_prefix}/{agent_folder}/{task_name}/{timestamp}_{filename}
+        # (the {timestamp}_{filename} suffix is appended by _upload_files).
+        # task_name is sanitized so it can't fork the key path; the timestamp
+        # in the object name keeps re-runs from overwriting earlier attempts.
+        # Fall back to task_id={id} if a task somehow has no name.
+        safe_task = _sanitize_s3_segment(result.task_name) or f"task_id={result.task_id}"
+        return f"{self.s3_prefix}/{self.agent_folder}/{safe_task}/{timestamp}"
 
     def _attempt_values(
         self,
