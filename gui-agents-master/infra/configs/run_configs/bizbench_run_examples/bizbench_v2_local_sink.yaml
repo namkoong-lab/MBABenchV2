@@ -1,0 +1,26 @@
+# BizbenchV2 run config — postgres_s3 source, local sink.
+#
+# Use this for initial validation: pulls tasks from Neon V2 + S3 but writes
+# output only to local disk (no task_attempts table needed).
+#
+# Run (dry-run first, then real):
+#   cd gui-agents-master
+#   python -m infra.run --task-id 1 --dry-run \
+#     --run-config infra/configs/run_configs/bizbench_run_examples/bizbench_v2_local_sink.yaml
+#
+#   python -m infra.run --task-id 1 -y \
+#     --run-config infra/configs/run_configs/bizbench_run_examples/bizbench_v2_local_sink.yaml
+
+source:
+  kind: postgres_s3
+  schema: bizbench
+  filters:
+    skip_deprecated: true
+    skip_already_attempted: false   # disabled so --task-id reruns are safe
+
+sink:
+  kind: local
+  output_dir: "outputs/v2_local"
+
+provider:
+  kind: "claude"
