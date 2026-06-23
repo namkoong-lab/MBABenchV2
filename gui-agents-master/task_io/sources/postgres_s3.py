@@ -254,7 +254,7 @@ BIZBENCH_TASK_SCHEMA = TaskSchema(
     id_col="id",
     name_col="task_name",
     files_col="task_starting_files",
-    extra_cols=("task_source", "old_id"),
+    extra_cols=("task_source",),
 )
 
 BIZBENCH_ATTEMPTS_TABLE = "task_attempts"

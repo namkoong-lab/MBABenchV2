@@ -157,7 +157,7 @@ aws:
     value: "biz-bench"
     required: false
   s3_prefix:
-    value: "BizbenchV1/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
+    value: "BizbenchV2/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
     required: false
 
 
@@ -220,7 +220,7 @@ claude_web:
     required: false
   # null crashes the agent at model-selector time — DO NOT leave null.
   model:
-    value: "sonnet_4_6"        # opus_4_6 | sonnet_4_6 | haiku_4_5
+    value: "opus_4_8"          # opus_4_8 | sonnet_4_6 | haiku_4_5
     required: false
   max_sec_per_task:
     value: 7200                # 2h
@@ -270,11 +270,11 @@ claude_web:
     cdp_port:
       value: 9222
       required: false
-    # Chrome --user-data-dir. Laptop default is the laptop-writable path;
-    # EC2 templates override this to /var/lib/gui-agents/chrome-claude
-    # so cookies match the VNC-login step in infra/README.md.
+    # Chrome --user-data-dir. Must match the --user-data-dir flag used when
+    # launching Chrome manually (see README quickstart). EC2 templates override
+    # this to /var/lib/gui-agents/chrome-claude for the VNC-login step.
     profile_dir:
-      value: "~/.chrome-canary-claude-web"
+      value: "~/.chrome-web-agent"
       required: false
 
   logging:
@@ -307,10 +307,10 @@ chatgpt_web:
     required: false
   # null is valid (uses the current session default).
   model:
-    value: null                # instant | thinking | pro | null
+    value: "pro"               # instant | thinking | pro | null
     required: false
   agent_mode:
-    value: true
+    value: false               # false = Extended Pro (no Code Interpreter); true = ChatGPT Agent
     required: false
   max_sec_per_task:
     value: 7200                # 2h
@@ -362,11 +362,11 @@ chatgpt_web:
     cdp_port:
       value: 9222
       required: false
-    # Chrome --user-data-dir. Laptop default is the laptop-writable path;
-    # EC2 templates override this to /var/lib/gui-agents/chrome-chatgpt
-    # so cookies match the VNC-login step in infra/README.md.
+    # Chrome --user-data-dir. Must match the --user-data-dir flag used when
+    # launching Chrome manually (see README quickstart). EC2 templates override
+    # this to /var/lib/gui-agents/chrome-chatgpt for the VNC-login step.
     profile_dir:
-      value: "~/.chrome-canary-claude-web"
+      value: "~/.chrome-web-agent"
       required: false
 
   session:

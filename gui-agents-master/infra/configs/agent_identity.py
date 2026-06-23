@@ -35,6 +35,7 @@ class UnknownAgentCombination(ValueError):
 _CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("sonnet_4_6",): AgentIdentity("claude_web", "claude_web"),
     ("opus_4_6",): AgentIdentity("claude_opus_4_6", "claude_opus_4_6"),
+    ("opus_4_8",): AgentIdentity("claude_opus_4_8", "claude_opus_4_8"),
     ("haiku_4_5",): AgentIdentity("claude_haiku_4_5", "claude_haiku_4_5"),
 }
 
