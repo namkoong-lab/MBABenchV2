@@ -1,5 +1,0 @@
-boto3
-psycopg2-binary
-pandas
-openpyxl
-google-genai

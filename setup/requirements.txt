@@ -1,0 +1,14 @@
+# Runtime dependencies for the BizbenchV2 scripts.
+#
+# Install:   uv pip install -r setup/requirements.txt   (or plain: pip install -r ...)
+# Re-pin:    uv pip freeze > setup/requirements.txt
+#
+# The editable install (`pip install -e .`, which exposes the `config` module)
+# is run separately by setup/setup.sh, so this stays a clean dependency list
+# that round-trips through `uv pip freeze`.
+boto3
+psycopg2-binary
+pandas
+openpyxl
+google-genai
+pyyaml>=6.0

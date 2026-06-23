@@ -1,0 +1,43 @@
+# config_default.yaml — committed defaults for the BizbenchV2 scripts.
+#
+# This is the canonical, version-controlled config. On first run a local,
+# gitignored `config.yaml` is created next to this file from these defaults;
+# edit that file for machine-specific overrides.
+#
+# Secrets are NOT stored here. They are pulled from the environment at load
+# time via ${env:VAR} so they never get committed — set them in your shell
+# (DATABASE_URL and GEMINI_API_KEY; see the ${env:...} references below).
+
+# Neon Postgres connection for the BizbenchV2 database.
+database:
+  url: "${env:DATABASE_URL}"
+
+# S3 storage for task files.
+aws:
+  s3_bucket: "biz-bench"
+  # Tasks are stored under this prefix in the bucket.
+  s3_prefix: "BizbenchV2/tasks"
+
+# Gemini settings for the time-estimation script.
+gemini:
+  api_key: "${env:GEMINI_API_KEY}"
+  model: "gemini-3.5-flash"
+  # Seconds to sleep between API calls to stay within the per-minute quota.
+  sleep_between_calls: 7
+  # Number of times to retry a single task after a 429 rate-limit response.
+  max_retries: 3
+  # The expert baseline the estimate is measured against. Stating the
+  # reference (an expert, not a novice) keeps estimates comparable across tasks.
+  persona: >-
+    You are an expert financial modeler with over a decade of experience
+    building valuation, three-statement, FP&A, and transaction models in Excel.
+    You estimate how long a competent expert modeler -- not a novice -- would
+    take to complete a modeling task from its starting file, accounting for
+    reading and understanding the brief, building the structure and formulas
+    (using proper formulas rather than hardcoded values), and checking the work.
+    Your estimates are realistic and well-calibrated, given in minutes.
+
+# Defaults shared by the ingestion and estimation scripts.
+tasks:
+  # Default task_source to process (override with --task-source).
+  default_source: "jp"
