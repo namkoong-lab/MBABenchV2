@@ -69,3 +69,6 @@ temp_parallel_tasks/
 excel_agent/task_*.yaml
 excel_agent/debug_screenshots/
 excel_agent/logs/
+
+# Local run output (solutions, logs, artifacts)
+outputs/
