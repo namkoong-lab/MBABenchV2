@@ -199,79 +199,118 @@ class ChatGPTWebAgent(WebAgent):
         except Exception:
             return False
 
-    MODEL_TESTIDS = {
-        "instant": "model-switcher-gpt-5-3",
-        "thinking": "model-switcher-gpt-5-5-thinking",
-        "pro": "model-switcher-gpt-5-5-pro",
+    # ChatGPT's model switcher is now an "Intelligence" picker. The rows carry
+    # no stable data-testids — they are identified only by visible label text.
+    # Map config values (and common aliases) to the exact on-screen labels.
+    # Intelligence levels are role="menuitemradio"; "GPT-5.5" is role="menuitem".
+    MODEL_LABELS = {
+        "instant": "Instant",
+        "medium": "Medium",
+        "high": "High",
+        "extra high": "Extra High",
+        "extra_high": "Extra High",
+        "extrahigh": "Extra High",
+        "pro": "Pro Extended",
+        "pro extended": "Pro Extended",
+        "pro_extended": "Pro Extended",
+        "gpt-5.5": "GPT-5.5",
+        "gpt5.5": "GPT-5.5",
+        "5.5": "GPT-5.5",
     }
 
     async def ensure_model_selected(self) -> bool:
         """
-        Select a ChatGPT model via the composer-pill model switcher.
+        Select a ChatGPT model via the composer-pill "Intelligence" picker.
 
         Reads ``chatgpt_web.model`` from config. If not set, skips selection
-        and uses the current default. Lookup is case-insensitive.
+        and uses the current default. Lookup is case-insensitive and accepts
+        either an alias key or the exact visible label.
 
-        Supported values: ``instant``, ``thinking``, ``pro``. ``pro`` selects
-        Pro with its current effort setting (default Extended) — no separate
-        "Extended Pro" toggle exists in the new UI.
+        Supported values (config key -> label): ``instant`` -> Instant,
+        ``medium`` -> Medium, ``high`` -> High, ``extra high`` -> Extra High,
+        ``pro`` -> Pro Extended, ``gpt-5.5`` -> GPT-5.5.
 
         Selection flow:
-          1. Click the composer pill (``button.__composer-pill[aria-haspopup="menu"]``)
-             whose visible text is the current model name.
-          2. Click the row matching the configured model's ``data-testid``
-             (e.g. ``model-switcher-gpt-5-5-pro``).
+          1. Click the composer pill
+             (``button.__composer-pill[aria-haspopup="menu"]``), whose visible
+             text is the current model name.
+          2. Click the dropdown row whose visible text matches the target
+             label. Rows have NO data-testid in the current UI, so selection
+             is text-based (``role="menuitemradio"`` / ``role="menuitem"``).
         """
         target_model = self.agent_config.get("model")
         if not target_model:
             logger.info("No ChatGPT model specified in config — using current default")
             return True
 
-        testid = self.MODEL_TESTIDS.get(target_model.lower())
-        if not testid:
+        key = target_model.strip().lower()
+        label = self.MODEL_LABELS.get(key)
+        if label is None:
+            # allow passing the exact visible label directly (e.g. "Extra High")
+            for v in self.MODEL_LABELS.values():
+                if v.lower() == key:
+                    label = v
+                    break
+        if label is None:
             logger.warning(
                 "Unknown ChatGPT model '%s'. Valid options: %s. Using current default.",
                 target_model,
-                ", ".join(self.MODEL_TESTIDS.keys()),
+                ", ".join(sorted(set(self.MODEL_LABELS.values()))),
             )
             return True
 
         try:
-            logger.info("Selecting ChatGPT model: %s (%s)", target_model, testid)
+            logger.info("Selecting ChatGPT model: %s -> '%s'", target_model, label)
 
-            pill_handle = await self.page.evaluate_handle(
-                """() => {
-                    const pills = Array.from(document.querySelectorAll(
-                        'button.__composer-pill[aria-haspopup="menu"]'
-                    ));
-                    const re = /^(instant|thinking|pro|gpt|chatgpt|auto)\\b/i;
-                    return pills.find(b => re.test((b.textContent || '').trim()))
-                        || pills[0]
-                        || null;
-                }"""
-            )
-            pill = pill_handle.as_element() if pill_handle else None
-            if pill is None:
+            pill = self.page.locator(
+                'button.__composer-pill[aria-haspopup="menu"]'
+            ).first
+            if not await pill.count():
                 logger.warning(
                     "ChatGPT model-switcher pill not found — skipping model selection"
                 )
                 return True
 
-            await pill.click()
-            await asyncio.sleep(1)
+            # Pill text is the current model — skip if already selected.
+            current = (await pill.text_content() or "").strip()
+            if current == label:
+                logger.info("ChatGPT model already set to '%s'", label)
+                return True
 
-            target = await self.page.query_selector(f'[data-testid="{testid}"]')
-            if target is None:
+            await pill.scroll_into_view_if_needed()
+            await pill.click()
+            await asyncio.sleep(0.8)
+
+            # Rows are identified only by visible text. Match exactly so that
+            # "High" does not also match "Extra High".
+            selected = False
+            for role in ("menuitemradio", "menuitem"):
+                row = self.page.get_by_role(role, name=label, exact=True)
+                if await row.count():
+                    await row.first.click()
+                    selected = True
+                    break
+
+            if not selected:
+                available = await self.page.eval_on_selector_all(
+                    '[role="menuitemradio"],[role="menuitem"]',
+                    "els => els.map(e => (e.textContent || '').trim()).filter(Boolean)",
+                )
                 logger.warning(
-                    "Model row '%s' not found in dropdown — using current default",
-                    testid,
+                    "Model '%s' not found in dropdown (available: %s) — using current default",
+                    label,
+                    available,
                 )
                 await self.page.keyboard.press("Escape")
                 return True
 
-            await target.click()
             await asyncio.sleep(0.5)
-            logger.info("ChatGPT model '%s' selected successfully", target_model)
+            new_label = (await pill.text_content() or "").strip()
+            logger.info(
+                "ChatGPT model selected: requested='%s', pill now shows='%s'",
+                label,
+                new_label,
+            )
             return True
 
         except Exception as e:

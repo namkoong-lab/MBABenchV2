@@ -157,8 +157,8 @@ def preflight_check(engine_config: dict, provider: str) -> list[str]:
                 "chatgpt_web.project_id is empty. Copy from "
                 "https://chatgpt.com/g/g-p-{id}-{slug}/project."
             )
-        if not section.get("project_slug"):
-            errors.append("chatgpt_web.project_slug is empty.")
+        # project_slug is optional — some ChatGPT project URLs have no slug
+        # (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug} suffix).
 
     # Upload files must exist on disk, resolved the same way the engine will.
     upload_files = engine_config.get("upload_files") or []
@@ -315,7 +315,7 @@ PROVIDER_REQUIRED_KEYS: dict[str, list[tuple[str, ...]]] = {
     "claude": [("claude_web", "model")],
     "chatgpt": [
         ("chatgpt_web", "project_id"),
-        ("chatgpt_web", "project_slug"),
+        # project_slug is optional — omitted when the project URL has no slug
     ],
 }
 
