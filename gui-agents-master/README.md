@@ -2,7 +2,7 @@
 
 Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT (Agent mode and Extended Pro). The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads any Excel artifacts the model produces.
 
-> **Looking at the BizbenchV1 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
+> **Looking at the BizbenchV2 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
 
 ---
 
@@ -23,14 +23,14 @@ The sibling repo, [`excel-agents-master/`](../excel-agents-master/), runs AI age
 
 ## Two ways to run
 
-There are two runners in this repo. **External users should always use the local runner**; the EC2 dispatcher is for the internal BizbenchV1 team.
+There are two runners in this repo. **External users should always use the local runner**; the EC2 dispatcher is for the internal BizbenchV2 team.
 
 | Runner | Audience | Tasks come from | Where it executes |
 |---|---|---|---|
 | **`claude_web_batch_runner.py`** | **Default — everyone** | Local YAML files (`tasks_configs/examples/*.yaml`) | One Chrome browser on your laptop |
-| **`infra/run.py` + `infra/dispatcher/`** | **BizbenchV1 internal team only** | Internal Postgres + S3 | Many EC2 boxes, orchestrated from a `dispatch` CLI |
+| **`infra/run.py` + `infra/dispatcher/`** | **BizbenchV2 internal team only** | Internal Postgres + S3 | Many EC2 boxes, orchestrated from a `dispatch` CLI |
 
-If you're outside the BizbenchV1 team and want to scale across multiple boxes, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `bizbench` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below for what you'd need to provision yourself. Not turnkey.
+If you're outside the BizbenchV2 team and want to scale across multiple boxes, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `bizbench` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below for what you'd need to provision yourself. Not turnkey.
 
 ---
 
@@ -126,10 +126,10 @@ Both providers identify a "project" or "workspace" you want each task to start i
 
 1. Go to https://chatgpt.com and click **Projects** in the left sidebar.
 2. Create a new project (e.g. `excel-tasks`).
-3. Open the project. The URL looks like `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` — copy both the hex `{project_id}` (after `g-p-`) and the URL `{slug}`.
-4. Paste them into `tasks_configs/template_chatgpt_web.yaml` under `chatgpt_web.project_id` and `chatgpt_web.project_slug`.
+3. Open the project. The URL looks like `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` — copy the hex `{project_id}` (the part after `g-p-`). Newer projects have **no `-{slug}` suffix** (the URL is just `.../g-p-{project_id}/project`); that's fine.
+4. Paste the id into `tasks_configs/template_chatgpt_web.yaml` under `chatgpt_web.project_id`. `chatgpt_web.project_slug` is **optional** — set it if your URL has a slug, otherwise leave it `null`.
 
-**ChatGPT Extended Pro:** in the project settings, set the default model to "Extended Pro" (or "Pro"). Every new chat in the project will then use Extended Pro without further toggling.
+**ChatGPT model / effort:** set the configured model via `chatgpt_web.model` (see [Model selection](#model-selection) — e.g. `instant` for fast runs, `pro` for Pro Extended). The runner selects it from the composer's Intelligence picker before the first prompt. As a safety net, also set the project's **default** model in project settings, since that's what a missed selection falls back to.
 
 **ChatGPT Agent mode:** the runner enables Agent mode automatically via the `+` menu before sending the first prompt. No project-level setting needed.
 
@@ -174,11 +174,16 @@ tasks:
   --dry-run
 ```
 
+> **Laptop operators (macOS):** these runs drive a real browser for many minutes per task, and if the Mac sleeps it suspends Chrome and drops Wi-Fi mid-generation — the page closes, the run burns a retry, and the whole prompt sequence restarts. Wrap long runs in `caffeinate` so the machine stays awake:
+> ```bash
+> caffeinate -dimsu .venv/bin/python claude_web_batch_runner.py --tasks ...
+> ```
+
 ---
 
 ## Quickstart — cloud / EC2 dispatcher
 
-> **For the BizbenchV1 internal team.** The `infra/` directory contains a dispatcher + worker stack for orchestrating Chrome on EC2 boxes against our private Postgres + S3. See [`infra/README.md`](infra/README.md) for the operator guide. **External users:** the same code can drive your own AWS / Postgres / S3 setup, but you'll need to provision them yourself — see [BYO infrastructure](#byo-infrastructure-external-users) below.
+> **For the BizbenchV2 internal team.** The `infra/` directory contains a dispatcher + worker stack for orchestrating Chrome on EC2 boxes against our private Postgres + S3. See [`infra/README.md`](infra/README.md) for the operator guide. **External users:** the same code can drive your own AWS / Postgres / S3 setup, but you'll need to provision them yourself — see [BYO infrastructure](#byo-infrastructure-external-users) below.
 
 The dispatcher CLI lives at `infra/dispatcher/dispatch.py`. The most-used commands:
 
@@ -200,7 +205,7 @@ See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md)
 
 ### BYO infrastructure (external users)
 
-To run the dispatcher against your own infrastructure rather than ours, you'd need: an AWS account with EC2 permissions, a Postgres database (we use Neon), and an S3 bucket. The dispatcher and worker code is reusable, but the schema for the `tasks` and `task_attempts` tables, the S3 layout (`s3://<bucket>/<task_path>` with attempts under per-agent folders), and the bootstrap scripts assume the BizbenchV1 conventions. We don't ship a schema migration for external use — the local quickstart is the supported turnkey path for outside use.
+To run the dispatcher against your own infrastructure rather than ours, you'd need: an AWS account with EC2 permissions, a Postgres database (we use Neon), and an S3 bucket. The dispatcher and worker code is reusable, but the schema for the `tasks` and `task_attempts` tables, the S3 layout (`s3://<bucket>/<task_path>` with attempts under per-agent folders), and the bootstrap scripts assume the BizbenchV2 conventions. We don't ship a schema migration for external use — the local quickstart is the supported turnkey path for outside use.
 
 ---
 
@@ -251,7 +256,7 @@ template:
   download_artifacts: true               # Download Excel files from chat
 
   claude_web:
-    model: opus_4_6                      # opus_4_6 | sonnet_4_6 | haiku_4_5 | null
+    model: opus_4_8                      # opus_4_8 | sonnet_4_6 | haiku_4_5 | fable_5 | null
     project_id: "your-project-id-here"
 
     max_sec_per_task: 7200               # 120 min total timeout
@@ -285,21 +290,31 @@ Both providers support configurable model selection via the provider's UI dropdo
 
 | Config value | Claude.ai model |
 |---|---|
-| `opus_4_6` | Opus 4.6 |
+| `opus_4_8` | Opus 4.8 |
 | `sonnet_4_6` | Sonnet 4.6 |
 | `haiku_4_5` | Haiku 4.5 |
+| `fable_5` | Fable 5 |
 | `null` / omitted | Current session default |
+
+Selection matches on the base model name (`opus`, `sonnet`, `haiku`, `fable`) against the Claude.ai dropdown, so the version suffix is for your reference — the runner picks whichever build of that family the UI currently offers.
 
 **ChatGPT:**
 
-| Config value | ChatGPT model |
+ChatGPT's composer now exposes an **"Intelligence" picker** (the pill next to the prompt box) rather than named GPT models. Config values map to the on-screen labels:
+
+| Config value | ChatGPT picker label |
 |---|---|
-| `instant` | Instant 5.3 (everyday chats) |
-| `thinking` | Thinking 5.4 (complex questions) |
-| `pro` | Pro 5.4 (research-grade) |
+| `instant` | Instant (fastest, no reasoning) |
+| `medium` | Medium |
+| `high` | High |
+| `extra high` | Extra High |
+| `pro` | Pro Extended (research-grade, slowest) |
+| `gpt-5.5` | GPT-5.5 (legacy named model) |
 | `null` / omitted | Current session default |
 
-If the specified model is not available in your account, the runner falls back to the current default.
+Selection is **by visible label text**, not a fixed element id — OpenAI ships no stable `data-testid` on these rows, so if they relabel the picker the only thing to update is the `MODEL_LABELS` map in `claude_web_agent/chatgpt_web_agent.py`. If the configured label isn't found in the dropdown, the runner logs the available options and falls back to the current default.
+
+> **Heads-up:** if model selection silently fails, ChatGPT projects fall through to the project's **default** model. Set the project default to something cheap (e.g. Instant) so a missed selection doesn't strand you on Pro Extended, where a single prompt can take 10–50 minutes.
 
 ### "Continue" auto-retry
 
@@ -315,7 +330,7 @@ If the model finishes responding but no Excel file appears, the engine can autom
 |---|---|---|---|
 | Flag | `--provider claude` (default) | `--provider chatgpt` | `--provider chatgpt` |
 | Template setting | `agent_type: claude_web` | `agent_mode: true` | `agent_mode: false` |
-| Model selection | `model: opus_4_6` (configurable) | Set in ChatGPT project | Set in ChatGPT project |
+| Model selection | `model: opus_4_8` (configurable) | `model:` Intelligence picker (+ project default) | `model:` Intelligence picker (+ project default) |
 | How it works | Extended thinking | Code Interpreter builds Excel | Extended thinking builds Excel |
 | Typical task time | 5-15 min | 15-30 min | 15-45 min |
 | Log directory | `claude_web_logs/` | `chatgpt_web_logs/` | `chatgpt_web_logs/` |
@@ -456,7 +471,7 @@ The system follows a composable six-layer pipeline. Green components are user-co
 ```
 gui-agents-master/
 ├── claude_web_batch_runner.py        # Local batch runner (default — both providers)
-├── infra/                            # EC2 dispatcher + worker (BizbenchV1 internal team)
+├── infra/                            # EC2 dispatcher + worker (BizbenchV2 internal team)
 │   ├── README.md                     # Operator guide
 │   ├── run.py                        # DB-driven per-task runner
 │   ├── dispatcher/                   # Laptop-side dispatch CLI
