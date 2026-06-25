@@ -6,7 +6,7 @@
 #   2. rsyncs the local repo → /opt/gui-agents-master on the box
 #   3. pip installs requirements, drops the queue CLI + systemd unit
 #   4. Synthesizes /etc/gui-agents/secrets.env from the operator's env
-#      ($BIZBENCHJUDGE_KEYS_DATABASE_URL + `aws configure get` creds)
+#      ($MBABENCHV2JUDGE_KEYS_DATABASE_URL + `aws configure get` creds)
 #   5. Copies the chosen configs.yaml from --config-template
 #   6. Enables and starts gui-agents-worker.service
 #
@@ -258,7 +258,7 @@ generate_secrets_env() {
   SECRETS_TMP="$(mktemp -t gui-agents-secrets.XXXXXX)"
   chmod 600 "$SECRETS_TMP"
   {
-    echo "BIZBENCHJUDGE_KEYS_DATABASE_URL=$DB_URL"
+    echo "MBABENCHV2JUDGE_KEYS_DATABASE_URL=$DB_URL"
     echo "AWS_ACCESS_KEY_ID=$AWS_AKID"
     echo "AWS_SECRET_ACCESS_KEY=$AWS_SAK"
     # `x && y` would return non-zero when AWS_STK is empty, killing us under

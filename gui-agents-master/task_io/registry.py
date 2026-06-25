@@ -63,11 +63,11 @@ def _resolve_from_value_or_env(
 # unrelated backends.
 _VALID_SOURCE_SCHEMAS: dict[str, set[str | None]] = {
     "yaml": {None},
-    "postgres_s3": {"bizbench"},
+    "postgres_s3": {"mbabenchv2"},
 }
 _VALID_SINK_SCHEMAS: dict[str, set[str | None]] = {
     "local": {None},
-    "postgres_s3": {"bizbench"},
+    "postgres_s3": {"mbabenchv2"},
 }
 
 
@@ -123,8 +123,8 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
 
         return YamlTaskSource(yaml_path=_resolve(cfg.source.yaml_path))
 
-    if kind == "postgres_s3" and schema == "bizbench":
-        from .sources.postgres_s3 import BizbenchPostgresS3TaskSource
+    if kind == "postgres_s3" and schema == "mbabenchv2":
+        from .sources.postgres_s3 import MBABenchV2PostgresS3TaskSource
 
         db_url = _resolve_db_url(getattr(cfg, "database", None))
         scratch_dir = _resolve(cfg.paths.scratch_dir)
@@ -141,7 +141,7 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
             aws_cfg, "session_token", "session_token_env"
         )
         identity = resolve_agent_identity(cfg)
-        return BizbenchPostgresS3TaskSource(
+        return MBABenchV2PostgresS3TaskSource(
             db_url=db_url,
             scratch_dir=scratch_dir,
             agent_model_name=identity.model_name,
@@ -175,8 +175,8 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
 
         return LocalAttemptSink(output_dir=_resolve(cfg.sink.output_dir))
 
-    if kind == "postgres_s3" and schema == "bizbench":
-        from .sinks.postgres_s3 import BizbenchPostgresS3AttemptSink
+    if kind == "postgres_s3" and schema == "mbabenchv2":
+        from .sinks.postgres_s3 import MBABenchV2PostgresS3AttemptSink
 
         db_url = _resolve_db_url(getattr(cfg, "database", None))
         aws_cfg = getattr(cfg, "aws", None)
@@ -191,9 +191,9 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
             aws_cfg, "session_token", "session_token_env"
         )
         s3_bucket = getattr(aws_cfg, "s3_bucket", None) or "biz-bench"
-        s3_prefix = getattr(aws_cfg, "s3_prefix", None) or "BizbenchV1/attempts"
+        s3_prefix = getattr(aws_cfg, "s3_prefix", None) or "MBABenchV2/attempts"
         identity = resolve_agent_identity(cfg)
-        return BizbenchPostgresS3AttemptSink(
+        return MBABenchV2PostgresS3AttemptSink(
             db_url=db_url,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,

@@ -1,8 +1,8 @@
-# Sample run-config (overlay-shaped) that pulls tasks from the Bizbench
+# Sample run-config (overlay-shaped) that pulls tasks from the MBABenchV2
 # Postgres DB and runs them through the ChatGPT agent.
 #
 # Run it with:
-#   python -m infra.run --run-config infra/configs/run_configs/bizbench_run_examples/sample_bizbench.yaml
+#   python -m infra.run --run-config infra/configs/run_configs/mbabenchv2_run_examples/sample_mbabenchv2.yaml
 #
 # This file is *overlay-shaped* (no top-level task fields like task_name or
 # upload_files) — it is deep-merged onto configs.yaml as a 3rd config layer.
@@ -12,14 +12,14 @@
 #
 # Prereqs in configs.yaml:
 #   database:
-#     url: "postgresql://.../BizbenchV1?sslmode=require&channel_binding=require"
+#     url: "postgresql://.../MBABenchV2?sslmode=require&channel_binding=require"
 #   chatgpt_web:
 #     project_id: "..."
 #     project_slug: "..."
 
 source:
   kind: postgres_s3
-  schema: bizbench        # picks BizbenchPostgresS3TaskSource
+  schema: mbabenchv2        # picks MBABenchV2PostgresS3TaskSource
   filters:
     # Pick one (or both): filter by explicit task_ids, or by task_source.
     task_ids: [1]

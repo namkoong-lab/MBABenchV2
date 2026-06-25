@@ -147,7 +147,7 @@ def _run_task_unit(task_id: str, unit: str) -> int:
     if shutil.which("systemd-run") is not None:
         # Transient units get a fresh environment — the worker's own
         # EnvironmentFile is NOT inherited. Load it explicitly so infra.run
-        # sees BIZBENCHJUDGE_KEYS_DATABASE_URL / AWS_* inside the unit.
+        # sees MBABENCHV2JUDGE_KEYS_DATABASE_URL / AWS_* inside the unit.
         cmd = [
             "systemd-run",
             f"--unit={unit}",

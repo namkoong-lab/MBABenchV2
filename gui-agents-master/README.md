@@ -2,7 +2,7 @@
 
 Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT (Agent mode and Extended Pro). The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads any Excel artifacts the model produces.
 
-> **Looking at the BizbenchV2 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
+> **Looking at the MBABenchV2 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
 
 ---
 
@@ -23,14 +23,14 @@ The sibling repo, [`excel-agents-master/`](../excel-agents-master/), runs AI age
 
 ## Two ways to run
 
-There are two runners in this repo. **External users should always use the local runner**; the EC2 dispatcher is for the internal BizbenchV2 team.
+There are two runners in this repo. **External users should always use the local runner**; the EC2 dispatcher is for the internal MBABenchV2 team.
 
 | Runner | Audience | Tasks come from | Where it executes |
 |---|---|---|---|
 | **`claude_web_batch_runner.py`** | **Default — everyone** | Local YAML files (`tasks_configs/examples/*.yaml`) | One Chrome browser on your laptop |
-| **`infra/run.py` + `infra/dispatcher/`** | **BizbenchV2 internal team only** | Internal Postgres + S3 | Many EC2 boxes, orchestrated from a `dispatch` CLI |
+| **`infra/run.py` + `infra/dispatcher/`** | **MBABenchV2 internal team only** | Internal Postgres + S3 | Many EC2 boxes, orchestrated from a `dispatch` CLI |
 
-If you're outside the BizbenchV2 team and want to scale across multiple boxes, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `bizbench` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below for what you'd need to provision yourself. Not turnkey.
+If you're outside the MBABenchV2 team and want to scale across multiple boxes, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `mbabenchv2` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below for what you'd need to provision yourself. Not turnkey.
 
 ---
 
@@ -183,7 +183,7 @@ tasks:
 
 ## Quickstart — cloud / EC2 dispatcher
 
-> **For the BizbenchV2 internal team.** The `infra/` directory contains a dispatcher + worker stack for orchestrating Chrome on EC2 boxes against our private Postgres + S3. See [`infra/README.md`](infra/README.md) for the operator guide. **External users:** the same code can drive your own AWS / Postgres / S3 setup, but you'll need to provision them yourself — see [BYO infrastructure](#byo-infrastructure-external-users) below.
+> **For the MBABenchV2 internal team.** The `infra/` directory contains a dispatcher + worker stack for orchestrating Chrome on EC2 boxes against our private Postgres + S3. See [`infra/README.md`](infra/README.md) for the operator guide. **External users:** the same code can drive your own AWS / Postgres / S3 setup, but you'll need to provision them yourself — see [BYO infrastructure](#byo-infrastructure-external-users) below.
 
 The dispatcher CLI lives at `infra/dispatcher/dispatch.py`. The most-used commands:
 
@@ -205,7 +205,7 @@ See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md)
 
 ### BYO infrastructure (external users)
 
-To run the dispatcher against your own infrastructure rather than ours, you'd need: an AWS account with EC2 permissions, a Postgres database (we use Neon), and an S3 bucket. The dispatcher and worker code is reusable, but the schema for the `tasks` and `task_attempts` tables, the S3 layout (`s3://<bucket>/<task_path>` with attempts under per-agent folders), and the bootstrap scripts assume the BizbenchV2 conventions. We don't ship a schema migration for external use — the local quickstart is the supported turnkey path for outside use.
+To run the dispatcher against your own infrastructure rather than ours, you'd need: an AWS account with EC2 permissions, a Postgres database (we use Neon), and an S3 bucket. The dispatcher and worker code is reusable, but the schema for the `tasks` and `task_attempts` tables, the S3 layout (`s3://<bucket>/<task_path>` with attempts under per-agent folders), and the bootstrap scripts assume the MBABenchV2 conventions. We don't ship a schema migration for external use — the local quickstart is the supported turnkey path for outside use.
 
 ---
 
@@ -471,7 +471,7 @@ The system follows a composable six-layer pipeline. Green components are user-co
 ```
 gui-agents-master/
 ├── claude_web_batch_runner.py        # Local batch runner (default — both providers)
-├── infra/                            # EC2 dispatcher + worker (BizbenchV2 internal team)
+├── infra/                            # EC2 dispatcher + worker (MBABenchV2 internal team)
 │   ├── README.md                     # Operator guide
 │   ├── run.py                        # DB-driven per-task runner
 │   ├── dispatcher/                   # Laptop-side dispatch CLI

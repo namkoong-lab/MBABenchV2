@@ -8,7 +8,7 @@ Symmetric with `task_io/sources/postgres_s3.py`:
       _s3_base_key(result, timestamp) -> str
       _attempt_values(result, uris)   -> dict[col -> value]
 
-* `BizbenchPostgresS3AttemptSink` — Bizbench-wired subclass. Hardcodes
+* `MBABenchV2PostgresS3AttemptSink` — MBABenchV2-wired subclass. Hardcodes
   the `task_attempts` schema and the Hive-style S3 layout used by
   cli-agents' `auto_batch_runner.py`. `cost` is always NULL (GUI runs
   are subscription-based); failed/timeout runs are still inserted with
@@ -242,9 +242,9 @@ class PostgresS3AttemptSink:
         self._conn = None
 
 
-# ----- Bizbench-specific subclass -------------------------------------------
+# ----- MBABenchV2-specific subclass -------------------------------------------
 
-BIZBENCH_ATTEMPT_SCHEMA = AttemptSchema(
+MBABENCHV2_ATTEMPT_SCHEMA = AttemptSchema(
     table="task_attempts",
     columns=(
         "task_id",
@@ -265,12 +265,12 @@ BIZBENCH_ATTEMPT_SCHEMA = AttemptSchema(
 )
 
 
-class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
-    """Bizbench-wired sink.
+class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
+    """MBABenchV2-wired sink.
 
     S3 layout (organized by task name for readable paths):
         {s3_prefix}/{agent_folder}/{task_name}/{ts}_{name}
-    e.g. BizbenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_solution.xlsx
+    e.g. MBABenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_solution.xlsx
 
     task_name is sanitized (_sanitize_s3_segment) so it stays a single key
     segment; the {ts} prefix on each file keeps re-runs from overwriting
@@ -296,14 +296,14 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
     ):
         if not agent_folder:
             raise ValueError(
-                "BizbenchPostgresS3AttemptSink: agent_folder is required. "
+                "MBABenchV2PostgresS3AttemptSink: agent_folder is required. "
                 "This is derived from resolve_agent_identity(cfg) — "
                 "an empty value means the resolver returned an invalid "
                 "AgentIdentity (check infra/configs/agent_identity.py)."
             )
         if not agent_model_name:
             raise ValueError(
-                "BizbenchPostgresS3AttemptSink: agent_model_name is required. "
+                "MBABenchV2PostgresS3AttemptSink: agent_model_name is required. "
                 "This is derived from resolve_agent_identity(cfg) — "
                 "an empty value means the resolver returned an invalid "
                 "AgentIdentity (check infra/configs/agent_identity.py)."
@@ -323,7 +323,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
                     "aws.secret_access_key_env) and re-run."
                 )
             raise ValueError(
-                "BizbenchPostgresS3AttemptSink: aws.access_key_id and "
+                "MBABenchV2PostgresS3AttemptSink: aws.access_key_id and "
                 "aws.secret_access_key are required. Set them in "
                 "configs.yaml, or export the env vars named by "
                 "aws.access_key_id_env / aws.secret_access_key_env. The "
@@ -334,7 +334,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
             db_url=db_url,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
-            attempt_schema=BIZBENCH_ATTEMPT_SCHEMA,
+            attempt_schema=MBABENCHV2_ATTEMPT_SCHEMA,
             aws_region=aws_region,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
@@ -354,7 +354,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
         return ensure_overrides_present(
             ["database.url"],
             context=(
-                "BizbenchPostgresS3AttemptSink needs a DB connection, but "
+                "MBABenchV2PostgresS3AttemptSink needs a DB connection, but "
                 "database.url is empty and the env var named in "
                 "database.url_env is not set"
             ),
@@ -377,7 +377,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
         return ensure_overrides_present(
             ["aws.access_key_id", "aws.secret_access_key"],
             context=(
-                "BizbenchPostgresS3AttemptSink needs AWS credentials, "
+                "MBABenchV2PostgresS3AttemptSink needs AWS credentials, "
                 "but aws.access_key_id / aws.secret_access_key are empty "
                 "and the env vars named in aws.access_key_id_env / "
                 "aws.secret_access_key_env are not set. The boto3 default "
@@ -414,7 +414,7 @@ class BizbenchPostgresS3AttemptSink(PostgresS3AttemptSink):
                 db_task_id = int(result.task_id)
             except (TypeError, ValueError) as e:
                 raise ValueError(
-                    f"BizbenchPostgresS3AttemptSink: task_id must resolve to "
+                    f"MBABenchV2PostgresS3AttemptSink: task_id must resolve to "
                     f"an int, got {result.task_id!r}. Ensure the source "
                     f"populates spec.metadata['db_task_id'] or yields numeric "
                     f"task_ids (this sink writes to task_attempts.task_id "

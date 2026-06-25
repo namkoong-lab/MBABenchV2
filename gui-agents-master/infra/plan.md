@@ -7,7 +7,7 @@
 
 1. Run the existing web-GUI automation (Claude.ai / ChatGPT) on AWS, unattended.
 2. Replace hand-written YAML task lists with a **pluggable task source** so the batch runner can be fed from any backend (local files, Postgres + S3, SQLite, a queue, ...).
-3. Provide a **Bizbench-specific** source/sink implementation that reads `tasks` rows and writes `task_attempts` rows against the existing Neon Postgres DB + `biz-bench` S3 bucket, matching the conventions already used in `cli-agents-master/excel_cli_agent/auto_batch_runner.py` and `judge/operation_scripts/get_tasks.py`.
+3. Provide a **MBABenchV2-specific** source/sink implementation that reads `tasks` rows and writes `task_attempts` rows against the existing Neon Postgres DB + `biz-bench` S3 bucket, matching the conventions already used in `cli-agents-master/excel_cli_agent/auto_batch_runner.py` and `judge/operation_scripts/get_tasks.py`.
 4. Touch the GUI engine as little as possible. The engine already accepts a task-config dict with `upload_files`, `solution_name`, etc. — keep that contract; only swap what produces those dicts and what consumes the resulting solution.
 
 Non-goals: rewriting the engine, changing the prompt templates, or moving off Chrome+CDP.
@@ -40,7 +40,7 @@ Non-goals: rewriting the engine, changing the prompt templates, or moving off Ch
               ▼                    ▼
    ┌────────────────────┐   ┌────────────────────┐
    │ Neon Postgres      │   │ S3 (biz-bench)     │
-   │  - tasks           │   │  - BizbenchV1/...  │
+   │  - tasks           │   │  - MBABenchV2/...  │
    │  - task_attempts   │   │    starting_files  │
    │                    │   │    attempts        │
    └────────────────────┘   └────────────────────┘
@@ -67,10 +67,10 @@ gui-agents-master/
 │   ├── registry.py                     # cfg → build_source / build_sink
 │   ├── sources/
 │   │   ├── yaml_source.py              # reads whatever source.yaml_path points at (typically a file under run_configs/)
-│   │   └── postgres_s3.py              # Bizbench impl (see Part 2)
+│   │   └── postgres_s3.py              # MBABenchV2 impl (see Part 2)
 │   └── sinks/
 │       ├── local_sink.py
-│       └── postgres_s3.py              # Bizbench impl (see Part 2)
+│       └── postgres_s3.py              # MBABenchV2 impl (see Part 2)
 └── infra/                              # orchestration layer
     ├── plan.md                         # this file
     ├── run.py                          # task-io-driven CLI (reads ONLY infra/configs/)
@@ -83,8 +83,8 @@ gui-agents-master/
             ├── local_run_examples/
             │   ├── sample_task.yaml        # task-shaped: handed to YamlTaskSource
             │   └── sample_task_chatgpt.yaml # task-shaped, per-run switch to ChatGPT
-            └── bizbench_run_examples/
-                └── sample_bizbench.yaml     # overlay-shaped: postgres_s3 + filters
+            └── mbabenchv2_run_examples/
+                └── sample_mbabenchv2.yaml     # overlay-shaped: postgres_s3 + filters
 
 # Legacy, decoupled from infra/run.py but still used by claude_web_batch_runner.py:
 tasks_configs/                          # templates + example task lists — DO NOT edit for new runs
@@ -141,13 +141,13 @@ claude_web:
   max_sec_per_task: 10800
 ```
 
-Example — an overlay-shaped run-config that pulls Bizbench tasks from Postgres:
+Example — an overlay-shaped run-config that pulls MBABenchV2 tasks from Postgres:
 
 ```yaml
-# infra/configs/run_configs/bizbench_run_examples/modeloff_chatgpt.yaml
+# infra/configs/run_configs/mbabenchv2_run_examples/modeloff_chatgpt.yaml
 source:
   kind: postgres_s3
-  schema: bizbench          # picks BizbenchPostgresS3TaskSource
+  schema: mbabenchv2          # picks MBABenchV2PostgresS3TaskSource
   filters:
     task_sources: ["modeloff"]
     skip_already_attempted: true
@@ -278,17 +278,17 @@ Two reference sources ship out of the box:
 
 ---
 
-## Part 2 — Bizbench implementation
+## Part 2 — MBABenchV2 implementation
 
 ### Facts to build against (extracted from existing code)
 
 | Thing | Value | Source |
 |---|---|---|
 | DB | Neon Postgres | `judge/project_configs.yaml` |
-| DB URL env var | `BIZBENCHJUDGE_KEYS_DATABASE_URL` | `judge/operation_scripts/get_tasks.py` |
-| Scratch dir env var | `BIZBENCHJUDGE_PATHS_SCRATCH_PATH` | same |
+| DB URL env var | `MBABENCHV2JUDGE_KEYS_DATABASE_URL` | `judge/operation_scripts/get_tasks.py` |
+| Scratch dir env var | `MBABENCHV2JUDGE_PATHS_SCRATCH_PATH` | same |
 | S3 bucket | `biz-bench` | `cli-agents-master/excel_cli_agent/auto_batch_runner.py` |
-| S3 attempts prefix | `BizbenchV1/attempts/{agent_folder}/task_source={src}/task_id={id}` | same |
+| S3 attempts prefix | `MBABenchV2/attempts/{agent_folder}/task_source={src}/task_id={id}` | same |
 | S3 URI format | `s3://bucket/key` | `judge/operation_scripts/get_tasks.py:parse_s3_uri` |
 | `tasks` columns | `id, task_name, task_starting_files, task_solution_files, task_source, deprecated, ...` | `get_tasks.py` |
 | `task_attempts` columns | `id, task_id, agent_model_name, agent_model_type, attempt_files, prompt_files, start_time, end_time, time_taken_min, cost, prompt_version, agent_failed, deprecated` | `get_tasks_and_attempts.py` |
@@ -311,7 +311,7 @@ Config (YAML):
 ```yaml
 source:
   kind: postgres_s3         # backend category
-  schema: bizbench          # schema wiring (required when kind=postgres_s3)
+  schema: mbabenchv2          # schema wiring (required when kind=postgres_s3)
   filters:
     task_ids: [1, 2, 3]               # or omit
     task_sources: [modeloff]          # or omit
@@ -321,7 +321,7 @@ source:
 # shared database.* / paths.* / agent.* / aws.* blocks.
 ```
 
-The `(kind, schema)` pair is dispatched in [task_io/registry.py](../task_io/registry.py): `kind` picks the backend category (`yaml`, `postgres_s3`, …) and `schema` picks the concrete subclass wiring within that backend. `schema` is required when a kind supports multiple wirings (today only `postgres_s3` → `bizbench`) and rejected when a kind has a single implementation (`yaml`, `local`). Unknown values on either axis raise `ValueError` from `_validate_kind_schema` with the set of accepted alternatives.
+The `(kind, schema)` pair is dispatched in [task_io/registry.py](../task_io/registry.py): `kind` picks the backend category (`yaml`, `postgres_s3`, …) and `schema` picks the concrete subclass wiring within that backend. `schema` is required when a kind supports multiple wirings (today only `postgres_s3` → `mbabenchv2`) and rejected when a kind has a single implementation (`yaml`, `local`). Unknown values on either axis raise `ValueError` from `_validate_kind_schema` with the set of accepted alternatives.
 
 Trial / idempotency behavior mirrors `AutoBatchRunner._task_has_recent_attempts` in cli-agents: skip a task if there's already a non-failed, non-deprecated attempt from the same `agent_model_name` at the current `prompt_version` within a configurable window.
 
@@ -329,7 +329,7 @@ Trial / idempotency behavior mirrors `AutoBatchRunner._task_has_recent_attempts`
 
 Responsibilities:
 
-1. **Upload** `result.solution_file` to `s3://biz-bench/BizbenchV1/attempts/{agent_folder}/task_source={src}/task_id={id}/{timestamp}_{basename}`.
+1. **Upload** `result.solution_file` to `s3://biz-bench/MBABenchV2/attempts/{agent_folder}/task_source={src}/task_id={id}/{timestamp}_{basename}`.
 2. **Upload** the per-task JSON log (same one [completion_logger.py](../claude_web_agent/completion_logger.py) already writes) alongside.
 3. **Insert** a row into `task_attempts`:
 
@@ -358,7 +358,7 @@ Config lives in the shared `agent:` / `aws:` / `database:` blocks — the `sink:
 ```yaml
 sink:
   kind: postgres_s3
-  schema: bizbench
+  schema: mbabenchv2
 # bucket / prefix / agent identity / prompt_version are all pulled from
 # aws.* + agent.* in configs.default.yaml + configs.yaml.
 ```
@@ -422,7 +422,7 @@ The EC2 lifecycle is driven by four bash scripts the operator runs from the lapt
 
 | Script | What it does |
 |---|---|
-| [aws_bootstrap.sh](dispatcher/aws_bootstrap.sh) | One-shot prerequisites. Verifies `aws sts get-caller-identity`, detects your public IP, creates the `bizbench-gui-agents` key pair (saves `~/.ssh/bizbench-gui-agents.pem`) and `bizbench-gui-agents-sg` security group, authorizes TCP 22 from your IP. Idempotent (detects existing AWS-side resources). Writes `dispatcher/.aws_defaults` so other scripts inherit the values. |
+| [aws_bootstrap.sh](dispatcher/aws_bootstrap.sh) | One-shot prerequisites. Verifies `aws sts get-caller-identity`, detects your public IP, creates the `mbabenchv2-gui-agents` key pair (saves `~/.ssh/mbabenchv2-gui-agents.pem`) and `mbabenchv2-gui-agents-sg` security group, authorizes TCP 22 from your IP. Idempotent (detects existing AWS-side resources). Writes `dispatcher/.aws_defaults` so other scripts inherit the values. |
 | [spinup.sh](dispatcher/spinup.sh) | Launches one tagged `t3.medium` Ubuntu 22.04 box AND installs the worker end-to-end. Cloud-init `apt install`s Python, git, rsync, Xvfb, Google Chrome, x11vnc, tmux (readiness marker: `/var/lib/gui-agents/.bootstrap-done`). Once SSH is up, the script rsyncs the local repo to `/opt/gui-agents-master` (as `sudo rsync` via `--rsync-path`), `pip install`s requirements, drops `gui-agents-queue` + `xvfb.service` + `gui-agents-chrome.service` + `gui-agents-worker.service` + the auth-probe unit/timer, synthesizes `/etc/gui-agents/secrets.env` from the laptop's `infra/configs/configs.yaml` (DB url + AWS creds), copies the `--config-template <path>` YAML into `/opt/gui-agents-master/infra/configs/configs.yaml`, and `enable --now`s both Chrome and the worker (Chrome first so the worker starts against a reachable CDP port). Provider comes from `provider.kind` in the template. **Auto-appends** the instance to `dispatcher/boxes.yaml` before the SSH phase, so a mid-run failure is recoverable via a re-run. Re-running against an existing alias re-rsyncs + restarts both Chrome and the worker (strictly idle only: no current task, empty queue); Chrome restart picks up any provider/profile changes in the freshly-pushed `configs.yaml`. Sources `.aws_defaults` for defaults; precedence is CLI flag > env var > saved defaults > hardcoded. Per-box config templates live under [dispatcher/config_templates/](dispatcher/config_templates/). |
 | [teardown.sh](dispatcher/teardown.sh) | Terminates one box (`--alias X`) or all (`--all`). Finds instances by `Project=gui-agents` tag, confirms, waits for `terminated`. Security group, key pair, local `.pem`, and `boxes.yaml` are left untouched — stale entries just show as `UNREACHABLE` until the user cleans them up. |
 | [_reset_dispatcher_status.sh](dispatcher/_reset_dispatcher_status.sh) | Nuclear reset for testing the setup flow end-to-end. Terminates every `Project=gui-agents` instance, deletes the key pair + SG in AWS, deletes local `.pem`, `.aws_defaults`, and `boxes.yaml`. Underscore prefix is a convention — destructive enough that it shouldn't tab-complete alongside the non-destructive scripts. |
@@ -433,7 +433,7 @@ Compatibility note: all four scripts are POSIX-flavored bash that works under ma
 
 - **Secrets file** at `/etc/gui-agents/secrets.env` (mode 0600) is the single source of truth on the box. Populated once per box during setup, loaded by the worker systemd unit via `EnvironmentFile=`:
   ```
-  BIZBENCHJUDGE_KEYS_DATABASE_URL=postgres://…
+  MBABENCHV2JUDGE_KEYS_DATABASE_URL=postgres://…
   AWS_ACCESS_KEY_ID=…
   AWS_SECRET_ACCESS_KEY=…
   ```
@@ -651,12 +651,12 @@ boxes:
     instance_id: i-0abc123
     ssh_host: ec2-xxx.compute.amazonaws.com
     ssh_user: ubuntu
-    ssh_key: ~/.ssh/bizbench-gui-agents.pem
+    ssh_key: ~/.ssh/mbabenchv2-gui-agents.pem
   - alias: chatgpt-1
     instance_id: i-0def456
     ssh_host: ec2-yyy.compute.amazonaws.com
     ssh_user: ubuntu
-    ssh_key: ~/.ssh/bizbench-gui-agents.pem
+    ssh_key: ~/.ssh/mbabenchv2-gui-agents.pem
 ```
 
 `dispatch` commands that take `<alias>` resolve against this file. Unknown alias → hard error.
@@ -715,8 +715,8 @@ DB still stores only the final `task_attempts` row per finished task, written by
 |---|---|---|---|
 | **0a** | `task_io/` scaffold + `TaskSpec`/`AttemptResult` + `YamlTaskSource` + `LocalAttemptSink` + `infra/run.py` | Existing YAML tasks run through the new seam | ✅ shipped |
 | **0b** | Config consolidation: everything under `infra/configs/`, legacy `tasks_configs/` decoupled from `infra/run.py`, `task_configs/` folder for per-task YAMLs, permissive task-level merge | Running `python -m infra.run` reads zero files outside `infra/configs/`; a task YAML's top-level keys deep-merge onto global cfg for that task | ✅ shipped (superseded by 0c) |
-| **0c** | `--run-config PATH` CLI flag + `infra/configs/run_configs/` layout. Replaces `--yaml-path`. **Dropped the per-task override layer (layer 4)** — merge model collapses to 3 layers. Task-shaped run-configs split reserved keys (→ YamlTaskSource) from non-reserved keys (→ layer 3 overlay); overlay-shaped files are layer 3 as-is | `--run-config local_run_examples/sample_task.yaml` runs the local sample end-to-end; `--run-config bizbench_run_examples/sample_bizbench.yaml` drives `postgres_s3` | ✅ shipped |
-| **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real Bizbench task end-to-end locally, pulling from Neon+S3, writing solution to local disk | ✅ shipped |
+| **0c** | `--run-config PATH` CLI flag + `infra/configs/run_configs/` layout. Replaces `--yaml-path`. **Dropped the per-task override layer (layer 4)** — merge model collapses to 3 layers. Task-shaped run-configs split reserved keys (→ YamlTaskSource) from non-reserved keys (→ layer 3 overlay); overlay-shaped files are layer 3 as-is | `--run-config local_run_examples/sample_task.yaml` runs the local sample end-to-end; `--run-config mbabenchv2_run_examples/sample_mbabenchv2.yaml` drives `postgres_s3` | ✅ shipped |
+| **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real MBABenchV2 task end-to-end locally, pulling from Neon+S3, writing solution to local disk | ✅ shipped |
 | **2** | `PostgresS3AttemptSink`. `agent_model_type` is always `"gui"`; `cost` is always `NULL` (GUI runs are subscription-based); failed/timeout runs still insert a row with `agent_failed=true` + `agent_failed_reason`. Per-task metadata from the source flows to the sink via `result.extra["task_metadata"]`. Strict AWS-credentials contract (no boto3 default chain) + construction-time preflight: `sts.get_caller_identity()` on both source/sink + `s3.head_bucket` on sink. `build_source`/`build_sink` ValueErrors are caught cleanly in `infra/run.py`. | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | ✅ shipped |
 | **3a** | Worker-side: `infra/worker/` (state.py + queue_cli.py + worker_loop.py) + `--task-id` flag on `infra/run.py`. state.json is source of truth on the box; `gui-agents-queue` CLI is the only mutation path. | Manually SSH into a laptop-local "box", run `gui-agents-queue add <id>`, worker_loop pops and executes, result lands in DB | ✅ shipped (validated transitively via Phase 3c spinup) |
 | **3b** | Dispatcher-side: `infra/dispatcher/` (boxes.py + dispatch.py) + `infra/dispatcher/boxes.yaml`. Commands: `status` (with `--follow` redraw), `show`, `assign`, `cancel`, `clear`, `logs`, `login` (VNC + CDP login flow), `config pull/push/diff`. Connectivity preflight (`diagnostics.py`) short-circuits SSH fan-out on IP-block. | `dispatch status` and `dispatch assign --n N` work end-to-end against at least one box | ✅ shipped (validated transitively via Phase 3c spinup) |

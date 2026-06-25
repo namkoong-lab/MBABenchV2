@@ -1,6 +1,6 @@
 # infra — quick start
 
-> **Audience: BizbenchV1 internal team.** This guide assumes access to our private Postgres database, our `bizbench` S3 bucket, and our internal AWS account. **External users:** the local quickstart in [`../README.md`](../README.md) is the supported turnkey path. The dispatcher code below is reusable against your own AWS / Postgres / S3, but you'd need to provision those yourself — see "BYO infrastructure" in the main README.
+> **Audience: MBABenchV2 internal team.** This guide assumes access to our private Postgres database, our `mbabenchv2` S3 bucket, and our internal AWS account. **External users:** the local quickstart in [`../README.md`](../README.md) is the supported turnkey path. The dispatcher code below is reusable against your own AWS / Postgres / S3, but you'd need to provision those yourself — see "BYO infrastructure" in the main README.
 
 Operator guide for running gui-agents on EC2 boxes from your laptop. Two
 reference docs worth keeping open:
@@ -34,8 +34,8 @@ reference docs worth keeping open:
    ./infra/dispatcher/aws_bootstrap.sh --region us-east-1
    ```
 
-   Creates `bizbench-gui-agents` key (saved to `~/.ssh/bizbench-gui-agents.pem`)
-   and `bizbench-gui-agents-sg` authorized from your current IP. Writes
+   Creates `mbabenchv2-gui-agents` key (saved to `~/.ssh/mbabenchv2-gui-agents.pem`)
+   and `mbabenchv2-gui-agents-sg` authorized from your current IP. Writes
    `dispatcher/.aws_defaults` so later scripts don't re-prompt.
 
 ### Per box

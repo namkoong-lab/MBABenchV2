@@ -28,17 +28,17 @@ claude_web:
     # Matches the path the README's VNC-login step writes the Chrome profile to.
     profile_dir: "/var/lib/gui-agents/chrome-claude"
 
-# Production boxes pull from the Bizbench Postgres DB and write attempts to S3.
+# Production boxes pull from the MBABenchV2 Postgres DB and write attempts to S3.
 source:
   kind: "postgres_s3"
-  schema: "bizbench"
+  schema: "mbabenchv2"
   filters:
     skip_deprecated: true
     skip_already_attempted: true
 
 sink:
   kind: "postgres_s3"
-  schema: "bizbench"
+  schema: "mbabenchv2"
 
 # Claude runs the multi-step sequence (Analyze -> Build+rubric -> QA).
 

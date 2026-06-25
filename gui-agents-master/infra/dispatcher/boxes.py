@@ -7,7 +7,7 @@ Schema:
         instance_id: i-0abc123         # optional; informational
         ssh_host: ec2-xxx.amazonaws.com  # required
         ssh_user: ubuntu               # optional; defaults to 'ubuntu'
-        ssh_key: ~/.ssh/bizbench-gui-agents.pem # optional; ssh default resolution if omitted
+        ssh_key: ~/.ssh/mbabenchv2-gui-agents.pem # optional; ssh default resolution if omitted
         ssh_port: 22                   # optional; defaults to 22
 
 The file is gitignored (like configs.yaml) because entries are account- and

@@ -282,8 +282,8 @@ def _list_eligible_tasks(
     skip_deprecated: bool = True,
     skip_already_attempted: bool = True,
 ) -> list[dict]:
-    """Query the Bizbench `tasks` table for eligible rows. Mirrors the
-    filters used by BizbenchPostgresS3TaskSource, minus file download.
+    """Query the MBABenchV2 `tasks` table for eligible rows. Mirrors the
+    filters used by MBABenchV2PostgresS3TaskSource, minus file download.
 
     `exclude_ids` subtracts task ids already in-flight (current + queued)
     across the cohort — those aren't in `task_attempts` yet, so the

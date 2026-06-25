@@ -33,17 +33,17 @@ chatgpt_web:
     # Matches the path the README's VNC-login step writes cookies into.
     profile_dir: "/var/lib/gui-agents/chrome-chatgpt"
 
-# Production boxes pull from the Bizbench Postgres DB and write attempts to S3.
+# Production boxes pull from the MBABenchV2 Postgres DB and write attempts to S3.
 source:
   kind: "postgres_s3"
-  schema: "bizbench"
+  schema: "mbabenchv2"
   filters:
     skip_deprecated: true
     skip_already_attempted: true
 
 sink:
   kind: "postgres_s3"
-  schema: "bizbench"
+  schema: "mbabenchv2"
 
 # Prompts are the SAME 3-step sequence as claude_opus_4_8.yaml (Analyze ->
 # Build+rubric -> QA). Both providers get identical instructions, prompts,

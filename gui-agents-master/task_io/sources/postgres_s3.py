@@ -9,7 +9,7 @@
       _starting_files_dir()  -> customize scratch layout
       _metadata_for()        -> customize TaskSpec metadata
 
-* `BizbenchPostgresS3TaskSource` — Bizbench-wired subclass. Adds the
+* `MBABenchV2PostgresS3TaskSource` — MBABenchV2-wired subclass. Adds the
   `task_sources` partition filter, the `skip_deprecated` soft-delete
   filter, and the `skip_already_attempted` join against `task_attempts`.
 """
@@ -84,7 +84,7 @@ class PostgresS3TaskSource:
         self.task_ids = list(task_ids or [])
 
         self._conn: psycopg2.extensions.connection | None = None
-        # Any unset kwarg drops out — the Bizbench subclass enforces that
+        # Any unset kwarg drops out — the MBABenchV2 subclass enforces that
         # creds are explicitly provided, so there is no silent fallback
         # to boto3's default credential chain in the normal path.
         client_kwargs: dict[str, Any] = {}
@@ -247,9 +247,9 @@ class PostgresS3TaskSource:
         self._conn = None
 
 
-# ----- Bizbench-specific subclass -------------------------------------------
+# ----- MBABenchV2-specific subclass -------------------------------------------
 
-BIZBENCH_TASK_SCHEMA = TaskSchema(
+MBABENCHV2_TASK_SCHEMA = TaskSchema(
     table="tasks",
     id_col="id",
     name_col="task_name",
@@ -257,18 +257,18 @@ BIZBENCH_TASK_SCHEMA = TaskSchema(
     extra_cols=("task_source",),
 )
 
-BIZBENCH_ATTEMPTS_TABLE = "task_attempts"
-BIZBENCH_ATTEMPTS_TASK_ID_COL = "task_id"
-BIZBENCH_ATTEMPTS_AGENT_COL = "agent_model_name"
-BIZBENCH_ATTEMPTS_PV_COL = "prompt_version"
-BIZBENCH_ATTEMPTS_FAILED_COL = "agent_failed"
-BIZBENCH_ATTEMPTS_DEPRECATED_COL = "deprecated"
-BIZBENCH_TASKS_DEPRECATED_COL = "deprecated"
-BIZBENCH_TASKS_SOURCE_COL = "task_source"
+MBABENCHV2_ATTEMPTS_TABLE = "task_attempts"
+MBABENCHV2_ATTEMPTS_TASK_ID_COL = "task_id"
+MBABENCHV2_ATTEMPTS_AGENT_COL = "agent_model_name"
+MBABENCHV2_ATTEMPTS_PV_COL = "prompt_version"
+MBABENCHV2_ATTEMPTS_FAILED_COL = "agent_failed"
+MBABENCHV2_ATTEMPTS_DEPRECATED_COL = "deprecated"
+MBABENCHV2_TASKS_DEPRECATED_COL = "deprecated"
+MBABENCHV2_TASKS_SOURCE_COL = "task_source"
 
 
-class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
-    """Bizbench-wired source.
+class MBABenchV2PostgresS3TaskSource(PostgresS3TaskSource):
+    """MBABenchV2-wired source.
 
     Adds three filters via `_extra_where()`:
       * `task_sources`           — WHERE `tasks.task_source = ANY(%s)`
@@ -312,7 +312,7 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
                     "aws.secret_access_key_env) and re-run."
                 )
             raise ValueError(
-                "BizbenchPostgresS3TaskSource: aws.access_key_id and "
+                "MBABenchV2PostgresS3TaskSource: aws.access_key_id and "
                 "aws.secret_access_key are required. Set them in "
                 "configs.yaml, or export the env vars named by "
                 "aws.access_key_id_env / aws.secret_access_key_env. The "
@@ -322,7 +322,7 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
         super().__init__(
             db_url=db_url,
             scratch_dir=scratch_dir,
-            task_schema=BIZBENCH_TASK_SCHEMA,
+            task_schema=MBABENCHV2_TASK_SCHEMA,
             task_ids=task_ids,
             aws_region=aws_region,
             aws_access_key_id=aws_access_key_id,
@@ -350,7 +350,7 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
         return ensure_overrides_present(
             ["database.url"],
             context=(
-                "BizbenchPostgresS3TaskSource needs a DB connection, but "
+                "MBABenchV2PostgresS3TaskSource needs a DB connection, but "
                 "database.url is empty and the env var named in "
                 "database.url_env is not set"
             ),
@@ -373,7 +373,7 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
         return ensure_overrides_present(
             ["aws.access_key_id", "aws.secret_access_key"],
             context=(
-                "BizbenchPostgresS3TaskSource needs AWS credentials, "
+                "MBABenchV2PostgresS3TaskSource needs AWS credentials, "
                 "but aws.access_key_id / aws.secret_access_key are empty "
                 "and the env vars named in aws.access_key_id_env / "
                 "aws.secret_access_key_env are not set. The boto3 default "
@@ -393,7 +393,7 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
             out.append(
                 (
                     sql.SQL("(t.{col} IS NULL OR t.{col} = FALSE)").format(
-                        col=ident(BIZBENCH_TASKS_DEPRECATED_COL)
+                        col=ident(MBABENCHV2_TASKS_DEPRECATED_COL)
                     ),
                     [],
                 )
@@ -403,7 +403,7 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
             out.append(
                 (
                     sql.SQL("t.{col} = ANY(%s)").format(
-                        col=ident(BIZBENCH_TASKS_SOURCE_COL)
+                        col=ident(MBABENCHV2_TASKS_SOURCE_COL)
                     ),
                     [self.task_sources],
                 )
@@ -412,18 +412,18 @@ class BizbenchPostgresS3TaskSource(PostgresS3TaskSource):
         if self.skip_already_attempted:
             clauses: list[sql.Composable] = [
                 sql.SQL("a.{c} = t.{tc}").format(
-                    c=ident(BIZBENCH_ATTEMPTS_TASK_ID_COL),
+                    c=ident(MBABENCHV2_ATTEMPTS_TASK_ID_COL),
                     tc=ident(self.task_schema.id_col),
                 ),
-                sql.SQL("a.{c} = %s").format(c=ident(BIZBENCH_ATTEMPTS_AGENT_COL)),
-                sql.SQL("a.{c} = %s").format(c=ident(BIZBENCH_ATTEMPTS_PV_COL)),
-                sql.SQL("a.{c} = FALSE").format(c=ident(BIZBENCH_ATTEMPTS_FAILED_COL)),
+                sql.SQL("a.{c} = %s").format(c=ident(MBABENCHV2_ATTEMPTS_AGENT_COL)),
+                sql.SQL("a.{c} = %s").format(c=ident(MBABENCHV2_ATTEMPTS_PV_COL)),
+                sql.SQL("a.{c} = FALSE").format(c=ident(MBABENCHV2_ATTEMPTS_FAILED_COL)),
                 sql.SQL("a.{c} = FALSE").format(
-                    c=ident(BIZBENCH_ATTEMPTS_DEPRECATED_COL)
+                    c=ident(MBABENCHV2_ATTEMPTS_DEPRECATED_COL)
                 ),
             ]
             clause = sql.SQL("NOT EXISTS (SELECT 1 FROM {tbl} a WHERE {cs})").format(
-                tbl=ident(BIZBENCH_ATTEMPTS_TABLE),
+                tbl=ident(MBABENCHV2_ATTEMPTS_TABLE),
                 cs=sql.SQL(" AND ").join(clauses),
             )
             out.append((clause, [self.agent_model_name, self.prompt_version]))

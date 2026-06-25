@@ -64,10 +64,10 @@ source:
     required: true
 
   # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
-  # Currently the only value is "bizbench" (BizbenchPostgresS3TaskSource).
+  # Currently the only value is "mbabenchv2" (MBABenchV2PostgresS3TaskSource).
   # Must be null/omitted for kinds that don't use it (e.g. "yaml").
   schema:
-    value: null              # null | "bizbench"
+    value: null              # null | "mbabenchv2"
     required: false
 
   # Used when kind == "yaml". Either a single file with a `tasks:` list, or a
@@ -100,10 +100,10 @@ sink:
     required: true
 
   # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
-  # Currently the only value is "bizbench" (BizbenchPostgresS3AttemptSink).
+  # Currently the only value is "mbabenchv2" (MBABenchV2PostgresS3AttemptSink).
   # Must be null/omitted for kinds that don't use it (e.g. "local").
   schema:
-    value: null              # null | "bizbench"
+    value: null              # null | "mbabenchv2"
     required: false
 
   # Used when kind == "local"
@@ -115,13 +115,13 @@ sink:
 # ---- Database (Phase 1+) ---------------------------------------------------
 # Either set `url.value` directly in configs.yaml, or leave it empty and set
 # `url_env` to the name of an env var that holds the connection string
-# (existing convention: BIZBENCHJUDGE_KEYS_DATABASE_URL).
+# (existing convention: MBABENCHV2JUDGE_KEYS_DATABASE_URL).
 database:
   url:
     value: ""
     required: false
   url_env:
-    value: "BIZBENCHJUDGE_KEYS_DATABASE_URL"
+    value: "MBABENCHV2JUDGE_KEYS_DATABASE_URL"
     required: false
 
 
@@ -157,7 +157,7 @@ aws:
     value: "biz-bench"
     required: false
   s3_prefix:
-    value: "BizbenchV2/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
+    value: "MBABenchV2/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
     required: false
 
 

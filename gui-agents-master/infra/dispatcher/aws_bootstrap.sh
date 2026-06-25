@@ -18,16 +18,16 @@
 #   ./aws_bootstrap.sh --key-name myteam --sg-name myteam-sg
 #
 # Flags:
-#   --key-name NAME       default: bizbench-gui-agents
-#   --sg-name NAME        default: bizbench-gui-agents-sg
+#   --key-name NAME       default: mbabenchv2-gui-agents
+#   --sg-name NAME        default: mbabenchv2-gui-agents-sg
 #   --region REGION       default: $AWS_REGION, else $AWS_DEFAULT_REGION, else us-east-1
 #   --prune-ips           remove all existing SSH CIDRs before re-adding
 #                         the current IP (useful if you've added many)
 #   -y, --yes             skip confirmation prompts
 set -euo pipefail
 
-KEY_NAME="bizbench-gui-agents"
-SG_NAME="bizbench-gui-agents-sg"
+KEY_NAME="mbabenchv2-gui-agents"
+SG_NAME="mbabenchv2-gui-agents-sg"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 PRUNE_IPS="false"
 YES="false"

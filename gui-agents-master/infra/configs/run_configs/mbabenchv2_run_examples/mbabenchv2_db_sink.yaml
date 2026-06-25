@@ -1,21 +1,21 @@
-# BizbenchV2 run config — postgres_s3 source, postgres_s3 sink.
+# MBABenchV2 run config — postgres_s3 source, postgres_s3 sink.
 #
 # Use this once task_attempts exists in Neon V2 and the local-sink test passes.
-# Writes attempt files to S3 under BizbenchV2/attempts/ and inserts a row into
+# Writes attempt files to S3 under MBABenchV2/attempts/ and inserts a row into
 # task_attempts for each run. This is the production path for the judge pipeline.
 #
 # Run (single task first):
 #   cd gui-agents-master
 #   python -m infra.run --task-id 1 -y \
-#     --run-config infra/configs/run_configs/bizbench_run_examples/bizbench_v2_db_sink.yaml
+#     --run-config infra/configs/run_configs/mbabenchv2_run_examples/mbabenchv2_db_sink.yaml
 #
 # Run all tasks (after single-task validation):
 #   python -m infra.run -y \
-#     --run-config infra/configs/run_configs/bizbench_run_examples/bizbench_v2_db_sink.yaml
+#     --run-config infra/configs/run_configs/mbabenchv2_run_examples/mbabenchv2_db_sink.yaml
 
 source:
   kind: postgres_s3
-  schema: bizbench
+  schema: mbabenchv2
   filters:
     task_sources: ["jp"]
     skip_deprecated: true
@@ -23,7 +23,7 @@ source:
 
 sink:
   kind: postgres_s3
-  schema: bizbench
+  schema: mbabenchv2
 
 provider:
   kind: "claude"

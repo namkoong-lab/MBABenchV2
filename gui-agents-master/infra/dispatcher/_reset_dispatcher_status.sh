@@ -5,8 +5,8 @@
 # Does, in order:
 #   1. Terminates every EC2 instance tagged Project=gui-agents.
 #   2. Waits for termination so the security group can be freed.
-#   3. Deletes the AWS key pair  (default: bizbench-gui-agents).
-#   4. Deletes the security group (default: bizbench-gui-agents-sg).
+#   3. Deletes the AWS key pair  (default: mbabenchv2-gui-agents).
+#   4. Deletes the security group (default: mbabenchv2-gui-agents-sg).
 #   5. Deletes the local private key file (~/.ssh/<key-name>.pem).
 #   6. Deletes infra/dispatcher/.aws_defaults.
 #   7. Deletes infra/dispatcher/boxes.yaml.
@@ -14,8 +14,8 @@
 # After this, `aws_bootstrap.sh` will CREATE new key/SG from scratch.
 #
 # Flags:
-#   --key-name NAME  default: value from .aws_defaults, else "bizbench-gui-agents"
-#   --sg-name  NAME  default: value from .aws_defaults, else "bizbench-gui-agents-sg"
+#   --key-name NAME  default: value from .aws_defaults, else "mbabenchv2-gui-agents"
+#   --sg-name  NAME  default: value from .aws_defaults, else "mbabenchv2-gui-agents-sg"
 #   --region   NAME  default: $AWS_REGION, else $AWS_DEFAULT_REGION, else us-east-1
 #   -y, --yes        skip the confirmation prompt
 set -euo pipefail
@@ -27,8 +27,8 @@ BOXES_FILE="$DISPATCHER_DIR/boxes.yaml"
 # shellcheck disable=SC1090
 [[ -f "$AWS_DEFAULTS" ]] && source "$AWS_DEFAULTS"
 
-KEY_NAME="${GUI_AGENTS_KEY_NAME:-bizbench-gui-agents}"
-SG_NAME="${GUI_AGENTS_SG_NAME:-bizbench-gui-agents-sg}"
+KEY_NAME="${GUI_AGENTS_KEY_NAME:-mbabenchv2-gui-agents}"
+SG_NAME="${GUI_AGENTS_SG_NAME:-mbabenchv2-gui-agents-sg}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-${GUI_AGENTS_REGION:-us-east-1}}}"
 YES="false"
 
