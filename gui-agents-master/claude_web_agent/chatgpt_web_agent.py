@@ -375,11 +375,14 @@ class ChatGPTWebAgent(WebAgent):
             return True
 
     async def upload_files(self, file_paths: list[str]) -> bool:
-        """Upload files via the + menu > Add photos & files flow.
+        """Upload files to the ChatGPT composer.
 
-        Falls back to the "Add files and more" button (bottom-left of composer)
-        if the + menu approach fails — the button text changes depending on
-        whether agent mode is active.
+        Approach 0: set_input_files on #upload-files directly — the current
+          ChatGPT UI (June 2026+) removed the + dropdown menu and now exposes
+          the file input directly in the DOM with id="upload-files".
+        Approach 1: + menu > named file menuitem — for older UI builds that
+          still had a dropdown with "Add photos & files" / "Add files and more".
+        Approach 2: composer-level button with aria-label fallback.
         """
         try:
             for file_path in file_paths:
@@ -387,65 +390,79 @@ class ChatGPTWebAgent(WebAgent):
 
                 uploaded = False
 
-                # Approach 1: + menu > "Add photos & files"
+                # Approach 0: direct #upload-files input (current UI, June 2026+).
+                # OpenAI removed the + dropdown; #upload-files is now directly in
+                # the DOM and visible (display:block). set_input_files bypasses
+                # the OS file dialog entirely.
                 try:
-                    # Dismiss any stale popup first
-                    await self.page.keyboard.press("Escape")
-                    await self.page.wait_for_timeout(300)
-
-                    plus_btn = self.page.locator(self.SELECTORS["plus_menu_button"])
-                    if await plus_btn.count() > 0:
-                        await plus_btn.click(timeout=5000)
-
-                        # Wait for the Radix menu to actually open instead of
-                        # a blind 1s timeout. data-state="open" on the role=menu
-                        # root is ChatGPT's open signal; catches silent click
-                        # failures.
-                        try:
-                            await self.page.wait_for_selector(
-                                '[role="menu"][data-state="open"]', timeout=3000
-                            )
-                        except Exception:
-                            logger.debug("+ menu did not show [data-state=open]")
-
-                        # Anchor on role+name (ARIA accessible name), with
-                        # historical labels as fallbacks. Current ChatGPT UI
-                        # ships "Add photos & files"; older builds shipped
-                        # "Add files and more" / "Add files".
-                        add_files = None
-                        for name in (
-                            "Add photos & files",
-                            "Add files and more",
-                            "Add files",
-                        ):
-                            cand = self.page.get_by_role("menuitem", name=name)
-                            if await cand.count() > 0:
-                                add_files = cand.first
-                                break
-
-                        try:
-                            if add_files is None:
-                                raise RuntimeError("add_files menuitem not found")
-                            async with self.page.expect_file_chooser(
-                                timeout=10000
-                            ) as fc_info:
-                                await add_files.click(timeout=5000)
-
-                            file_chooser = await fc_info.value
-                            await file_chooser.set_files(file_path)
+                    file_input = self.page.locator('#upload-files')
+                    if await file_input.count() > 0:
+                        await file_input.set_input_files(file_path)
+                        await self.page.wait_for_timeout(1500)
+                        uploaded = True
+                        logger.info("Used direct #upload-files input (approach 0)")
+                    else:
+                        # Fallback: any input[type=file] that accepts non-image files
+                        generic = self.page.locator(
+                            'input[type="file"]:not([accept="image/*"])'
+                        )
+                        if await generic.count() > 0:
+                            await generic.first.set_input_files(file_path)
+                            await self.page.wait_for_timeout(1500)
                             uploaded = True
-                        except Exception:
-                            logger.info(
-                                "+ menu 'Add photos & files' not found, trying fallback"
-                            )
-                            await self.page.keyboard.press("Escape")
-                            await self.page.wait_for_timeout(500)
-                except Exception:
-                    logger.info("+ menu approach failed, trying fallback")
+                            logger.info("Used generic input[type=file] (approach 0b)")
+                except Exception as e:
+                    logger.debug(f"Direct file input failed: {e}")
 
-                # Approach 2: composer-level "Add files" button (legacy path
-                # visible in some agent-mode states). Anchor via aria-label
-                # where possible; text fallbacks are last-resort.
+                # Approach 1: + menu > "Add photos & files" (older UI builds).
+                if not uploaded:
+                    try:
+                        await self.page.keyboard.press("Escape")
+                        await self.page.wait_for_timeout(300)
+
+                        plus_btn = self.page.locator(self.SELECTORS["plus_menu_button"])
+                        if await plus_btn.count() > 0:
+                            await plus_btn.click(timeout=5000)
+
+                            try:
+                                await self.page.wait_for_selector(
+                                    '[role="menu"][data-state="open"]', timeout=3000
+                                )
+                            except Exception:
+                                logger.debug("+ menu did not show [data-state=open]")
+
+                            add_files = None
+                            for name in (
+                                "Add photos & files",
+                                "Add files and more",
+                                "Add files",
+                            ):
+                                cand = self.page.get_by_role("menuitem", name=name)
+                                if await cand.count() > 0:
+                                    add_files = cand.first
+                                    break
+
+                            try:
+                                if add_files is None:
+                                    raise RuntimeError("add_files menuitem not found")
+                                async with self.page.expect_file_chooser(
+                                    timeout=10000
+                                ) as fc_info:
+                                    await add_files.click(timeout=5000)
+
+                                file_chooser = await fc_info.value
+                                await file_chooser.set_files(file_path)
+                                uploaded = True
+                            except Exception:
+                                logger.info(
+                                    "+ menu 'Add photos & files' not found, trying fallback"
+                                )
+                                await self.page.keyboard.press("Escape")
+                                await self.page.wait_for_timeout(500)
+                    except Exception:
+                        logger.info("+ menu approach failed, trying fallback")
+
+                # Approach 2: composer-level "Add files" button (legacy path).
                 if not uploaded:
                     try:
                         add_files_btn = self.page.locator(
