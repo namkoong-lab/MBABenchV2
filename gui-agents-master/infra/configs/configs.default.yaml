@@ -222,6 +222,13 @@ claude_web:
   model:
     value: "opus_4_8"          # opus_4_8 | sonnet_4_6 | haiku_4_5
     required: false
+  # Reasoning effort for sonnet/opus (low | medium | high | max). These models
+  # expose an "Effort" submenu in the model picker; the agent sets this level
+  # and enables the "Thinking" toggle. Haiku has no effort control and ignores
+  # this. Default max = full reasoning effort.
+  effort:
+    value: "max"
+    required: false
   max_sec_per_task:
     value: 7200                # 2h
     required: false

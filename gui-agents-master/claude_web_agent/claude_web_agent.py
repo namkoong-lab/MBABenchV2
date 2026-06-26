@@ -198,10 +198,19 @@ class ClaudeWebAgent(WebAgent):
     # stable across visual refactors — and keep historical labels as
     # fallbacks because Anthropic has renamed this control before.
     AT_SWITCH_NAMES = (
+        "Thinking",            # current (2026-06): sonnet/opus Effort submenu
         "Adaptive thinking",
         "Extended thinking",
         "Think longer",
     )
+
+    # Reasoning-effort levels for sonnet/opus. Claude.ai nests these (plus the
+    # "Thinking" switch) under an "Effort" submenu in the model dropdown that
+    # only renders on hover. Haiku has no Effort submenu (it exposes an
+    # always-on "Extended" switch directly). The model button label reflects
+    # the active level, e.g. "Sonnet 4.6 Max".
+    EFFORT_LEVELS = ("low", "medium", "high", "max")
+    EFFORT_BASED_MODELS = ("sonnet", "opus")
 
     # Structural fallback: if the switch's role+name lookup doesn't
     # resolve (e.g. the control changes shape), probe for a toggle
@@ -249,11 +258,38 @@ class ClaudeWebAgent(WebAgent):
         return False
 
     async def _close_model_dropdown(self) -> None:
+        """Fully dismiss the model dropdown (and any open Effort submenu).
+
+        Moving the mouse off the menu first is essential: if it stays hovering
+        the Effort submenu trigger, the hover-popover keeps the menu open and
+        Escape can't close it — leaving a base-ui inert backdrop mounted that
+        silently intercepts the next click (e.g. the Web Search toggle). One
+        Escape also doesn't always clear a nested submenu, so press until both
+        the button reports collapsed and no menu is visible.
+        """
         try:
-            btn = await self._get_model_button()
-            if btn and (await btn.get_attribute("aria-expanded")) == "true":
+            try:
+                await self.page.mouse.move(8, 8)
+                await asyncio.sleep(0.2)
+            except Exception:
+                pass
+            for _ in range(5):
+                btn = await self._get_model_button()
+                expanded = bool(btn) and (
+                    await btn.get_attribute("aria-expanded")
+                ) == "true"
+                menu_visible = False
+                for m in await self.page.query_selector_all('[role="menu"]'):
+                    try:
+                        if await m.is_visible():
+                            menu_visible = True
+                            break
+                    except Exception:
+                        continue
+                if not expanded and not menu_visible:
+                    return
                 await self.page.keyboard.press("Escape")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.25)
         except Exception:
             pass
 
@@ -274,6 +310,147 @@ class ClaudeWebAgent(WebAgent):
             except Exception:
                 continue
         return None
+
+    async def _find_effort_item(self):
+        """Return the 'Effort' submenu trigger menuitem, or None.
+
+        The model dropdown must be open. The Effort item is a
+        ``role="menuitem"`` with ``aria-haspopup="menu"`` whose label starts
+        with "Effort" (e.g. "EffortMax"). Present only for sonnet/opus.
+        """
+        try:
+            items = await self.page.query_selector_all('[role="menuitem"]')
+        except Exception:
+            return None
+        for it in items:
+            try:
+                if not await it.is_visible():
+                    continue
+                text = ((await it.text_content()) or "").strip().lower()
+                if text.startswith("effort") and (
+                    await it.get_attribute("aria-haspopup")
+                ) == "menu":
+                    return it
+            except Exception:
+                continue
+        return None
+
+    async def _expand_effort_submenu(self):
+        """Hover the Effort item to render its submenu (Low/Med/High/Max +
+        Thinking). Returns the Effort item element if expanded, else None.
+        Assumes the model dropdown is already open.
+
+        The submenu is a hover-triggered radix popover that collapses easily
+        and renders ~70% of the time on a single hover, so this retries: it
+        re-finds the item each pass (handles go stale on re-render), hovers up
+        to 3×, then falls back to a click. A mouse nudge between tries forces a
+        fresh mouseover event.
+        """
+        for attempt in range(4):
+            effort = await self._find_effort_item()
+            if not effort:
+                return None
+            if (await effort.get_attribute("aria-expanded")) == "true":
+                return effort
+            try:
+                if attempt < 3:
+                    await effort.hover()
+                else:
+                    await effort.click()  # last resort
+                await asyncio.sleep(0.8)
+            except Exception:
+                await asyncio.sleep(0.2)
+            # Check expansion *before* moving the mouse — nudging away would
+            # collapse a just-opened hover submenu.
+            effort = await self._find_effort_item()
+            if effort and (await effort.get_attribute("aria-expanded")) == "true":
+                return effort
+            # Still closed: nudge the mouse off the item so the next hover
+            # re-fires a fresh mouseover event.
+            try:
+                await self.page.mouse.move(8, 8)
+                await asyncio.sleep(0.15)
+            except Exception:
+                pass
+        return None
+
+    async def _reveal_thinking_switch(self):
+        """Return the thinking switch Locator, expanding the Effort submenu if
+        needed. Haiku exposes the switch directly; sonnet/opus nest it under
+        Effort. Assumes the model dropdown is already open.
+        """
+        sw = await self._find_thinking_switch()
+        if sw:
+            return sw
+        # Sonnet/Opus: the "Thinking" switch lives inside the Effort submenu.
+        await self._expand_effort_submenu()
+        return await self._find_thinking_switch()
+
+    async def ensure_effort(self, level: str = "max") -> bool:
+        """Set the reasoning-effort level (sonnet/opus only) via the Effort
+        submenu. Returns True (no-op) for models without an Effort submenu.
+
+        Short-circuits when the model button label already shows the level
+        (e.g. "Sonnet 4.6 Max"), so re-asserting between prompts is cheap.
+        """
+        level = level.lower()
+        if level not in self.EFFORT_LEVELS:
+            logger.warning(
+                f"Unknown effort level {level!r}; expected one of "
+                f"{self.EFFORT_LEVELS}"
+            )
+            return False
+        # Fast path: the model button label reflects the active effort.
+        btn = await self._get_model_button()
+        btn_text = (await btn.text_content() or "").lower() if btn else ""
+        if level in btn_text:
+            logger.debug(f"Effort already {level}")
+            return True
+        try:
+            if not await self._open_model_dropdown():
+                return False
+            effort = await self._expand_effort_submenu()
+            if not effort:
+                await self._close_model_dropdown()
+                # Distinguish "model has no Effort submenu" (e.g. Haiku, whose
+                # button label carries no effort word) from "submenu failed to
+                # render" (sonnet/opus, whose label always shows an effort
+                # level). The former is a legitimate skip; the latter is a
+                # failure the caller should retry.
+                has_effort_ui = any(
+                    lvl in btn_text for lvl in self.EFFORT_LEVELS
+                )
+                if has_effort_ui:
+                    logger.warning("Effort submenu did not render; cannot set effort")
+                    return False
+                logger.debug("No Effort submenu present; skipping effort set")
+                return True
+            # The effort radios (Low/Medium/High/Max) share the menuitemradio
+            # role with the model radios, but no model label contains an effort
+            # word, so a text filter targets the right one.
+            radio = self.page.get_by_role("menuitemradio").filter(
+                has_text=level.capitalize()
+            )
+            if await radio.count() == 0:
+                await self._close_model_dropdown()
+                logger.warning(f"Effort level {level!r} not found in submenu")
+                return False
+            await radio.first.click()
+            await asyncio.sleep(1.0)
+            await self._close_model_dropdown()
+            # Verify via the (re-read) button label.
+            btn = await self._get_model_button()
+            btn_text = (await btn.text_content() or "").lower() if btn else ""
+            ok = level in btn_text
+            if ok:
+                logger.info(f"Effort set to {level}")
+            else:
+                logger.warning(f"Effort set attempted but label is {btn_text!r}")
+            return ok
+        except Exception as e:
+            logger.error(f"Error setting effort={level}: {e}")
+            await self._close_model_dropdown()
+            return False
 
     async def _find_extended_thinking_item(self):
         """Return the menuitem container wrapping the thinking switch.
@@ -340,32 +517,12 @@ class ClaudeWebAgent(WebAgent):
             except Exception:
                 pass
 
-        # Fallback: item-level descent (legacy path).
+        # Fallback: item-level descent (legacy path). The Effort submenu's
+        # "Thinking" switch is found by the role+name lookup above (name
+        # "Thinking" is in AT_SWITCH_NAMES), so no effort-label heuristic is
+        # needed here — effort level and thinking state are independent.
         item = await self._find_extended_thinking_item()
         if not item:
-            # Effort-based UI fallback: Claude.ai >= 2025-06 replaced the
-            # Extended-thinking toggle with an "Effort" submenu item.
-            # "Effort: High" is equivalent to extended thinking enabled.
-            try:
-                items = await self.page.query_selector_all(
-                    '[role="menuitem"], [role="menuitemradio"]'
-                )
-                for menu_item in items:
-                    try:
-                        if not await menu_item.is_visible():
-                            continue
-                        text = ((await menu_item.text_content()) or "").lower()
-                        if "effort" in text:
-                            result = "high" in text
-                            logger.debug(
-                                f"Effort-based ET detection: text={text.strip()!r} "
-                                f"→ ET={'on' if result else 'off'}"
-                            )
-                            return result
-                    except Exception:
-                        continue
-            except Exception:
-                pass
             return None
         for sel in self.ET_SWITCH_SELECTORS:
             try:
@@ -438,6 +595,10 @@ class ClaudeWebAgent(WebAgent):
         try:
             if not await self._open_model_dropdown():
                 return False
+
+            # Sonnet/Opus nest the "Thinking" switch in the Effort submenu,
+            # which only renders on hover — expand it before reading state.
+            await self._reveal_thinking_switch()
 
             current = await self._read_extended_thinking_switch()
             if current is None:
@@ -604,13 +765,27 @@ class ClaudeWebAgent(WebAgent):
                 logger.error(f"Model not set after selection attempt: got {btn_text!r}")
                 return False
 
+            # Reasoning effort (sonnet/opus only). These models expose a
+            # low/medium/high/max "Effort" submenu; default to max so the
+            # agent always runs at full reasoning effort. Haiku has no Effort
+            # submenu (ensure_effort no-ops). Non-fatal: the model is selected.
+            eff_ok = True
+            if model_selector in self.EFFORT_BASED_MODELS:
+                effort_level = self.agent_config.get("effort", "max")
+                eff_ok = await self.ensure_effort(level=effort_level)
+                if not eff_ok:
+                    logger.warning(
+                        f"Could not set effort={effort_level} for {model_lower} "
+                        f"(the model IS selected); continuing."
+                    )
+
             # Delegate Extended thinking to the dedicated helper. Treat an ET
             # configuration failure as NON-FATAL: the model is already
             # correctly selected (verified above) and ET is a secondary
             # preference. Claude.ai periodically relabels/relocates the ET
-            # switch (e.g. "Extended / Always uses deep reasoning", which the
-            # "think"-based detection misses), and a detection miss must not
-            # abort an otherwise-valid run.
+            # switch (e.g. the sonnet/opus "Thinking" switch lives in the
+            # Effort submenu), and a detection miss must not abort an
+            # otherwise-valid run.
             et_ok = await self.ensure_extended_thinking(enabled=extended_thinking)
             if not et_ok:
                 logger.warning(
@@ -622,6 +797,7 @@ class ClaudeWebAgent(WebAgent):
 
             logger.info(
                 f"Model configured: model={model_lower}, "
+                f"effort={'set' if eff_ok else 'unconfirmed'}, "
                 f"extended_thinking={'on' if et_ok else 'unconfirmed'}"
             )
             return True
@@ -1226,6 +1402,10 @@ class ClaudeWebAgent(WebAgent):
         logger.info(f"Processing {len(prompts)} prompt(s)...")
 
         enable_et = self.agent_config.get("enable_extended_thinking", True)
+        target_model = self.agent_config.get("model", "opus")
+        model_selector = target_model.lower().split("_")[0]
+        effort_based = model_selector in self.EFFORT_BASED_MODELS
+        effort_level = self.agent_config.get("effort", "max")
 
         for i, prompt in enumerate(prompts, 1):
             # Check for shutdown
@@ -1241,6 +1421,13 @@ class ClaudeWebAgent(WebAgent):
             logger.info(f"\n{'='*60}")
             logger.info(f"PROMPT {i}/{len(prompts)}")
             logger.info(f"{'='*60}")
+
+            # Re-assert reasoning effort (sonnet/opus) before each submission.
+            # Cheap when already correct — short-circuits on the button label.
+            if effort_based and not await self.ensure_effort(level=effort_level):
+                logger.warning(
+                    f"Could not verify effort={effort_level} before prompt #{i}"
+                )
 
             # Re-assert Extended thinking before every submission — claude.ai
             # resets the toggle on each turn, so we must re-enable each time.
@@ -1260,12 +1447,16 @@ class ClaudeWebAgent(WebAgent):
                     self.completion_logger.end_prompt(success=False)
                 return False
 
-            # Claude.ai flips the Extended thinking switch off mid-stream;
-            # run a watcher during wait_for_response that re-enables it.
+            # Older (haiku-style) UIs flip the Extended thinking switch off
+            # mid-stream, so a watcher re-enables it during wait_for_response.
+            # Sonnet/Opus effort + "Thinking" are sticky account settings that
+            # persist across page loads and don't reset mid-generation, so the
+            # watcher is skipped for them (it otherwise just spams the log with
+            # "model button not found" while the composer is busy generating).
             et_stop = asyncio.Event()
             et_task = (
                 asyncio.create_task(self._watch_extended_thinking(et_stop))
-                if enable_et
+                if enable_et and not effort_based
                 else None
             )
             try:

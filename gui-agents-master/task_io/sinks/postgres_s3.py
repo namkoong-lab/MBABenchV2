@@ -392,14 +392,22 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
         return meta if isinstance(meta, dict) else {}
 
     def _s3_base_key(self, result: AttemptResult, timestamp: str) -> str:
-        # Organize attempts by task name for readable paths:
-        #   {s3_prefix}/{agent_folder}/{task_name}/{timestamp}_{filename}
-        # (the {timestamp}_{filename} suffix is appended by _upload_files).
-        # task_name is sanitized so it can't fork the key path; the timestamp
-        # in the object name keeps re-runs from overwriting earlier attempts.
-        # Fall back to task_id={id} if a task somehow has no name.
+        # Layout: {s3_prefix}/{agent_folder}/{task_name}/{filename}
+        # The timestamp is NOT included here — the engine already embeds one in
+        # each filename (e.g. 20260625_165920_ApfelInc_Solution_…xlsx), so
+        # appending another here would produce a double-stamped key.
+        # _upload_files joins base_key + "/" + local.name (see override below).
         safe_task = _sanitize_s3_segment(result.task_name) or f"task_id={result.task_id}"
-        return f"{self.s3_prefix}/{self.agent_folder}/{safe_task}/{timestamp}"
+        return f"{self.s3_prefix}/{self.agent_folder}/{safe_task}"
+
+    def _upload_files(self, local_files: list[Path], base_key: str) -> list[str]:
+        uris: list[str] = []
+        for local in local_files:
+            key = f"{base_key}/{local.name}"
+            logger.info(f"S3 upload {local} -> s3://{self.s3_bucket}/{key}")
+            self._s3.upload_file(str(local), self.s3_bucket, key)
+            uris.append(f"s3://{self.s3_bucket}/{key}")
+        return uris
 
     def _attempt_values(
         self,
