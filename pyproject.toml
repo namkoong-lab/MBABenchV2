@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bizbenchv2"
+version = "0.1.0"
+description = "BizbenchV2 task ingestion and Gemini-based time estimation scripts."
+requires-python = ">=3.10"
+# Runtime dependencies are tracked in setup/requirements.txt (flat list, so
+# `uv pip freeze > setup/requirements.txt` round-trips cleanly), not here.
+dependencies = []
+
+# Expose the vendored config system (config/python/config.py) as the importable
+# top-level `config` module. An editable install keeps config.py at its real
+# location, so Config.load() still finds config/config_default.yaml one level up.
+[tool.setuptools]
+py-modules = ["config"]
+
+[tool.setuptools.package-dir]
+"" = "config/python"

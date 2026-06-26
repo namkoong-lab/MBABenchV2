@@ -1,0 +1,13 @@
+.env
+# Local config overrides (auto-created from config/config_default.yaml).
+config/config.yaml
+# Editable-install build artifacts.
+*.egg-info/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+
+scratch/
