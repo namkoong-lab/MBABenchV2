@@ -73,3 +73,6 @@ excel_agent/logs/
 # Local run output (solutions, logs, artifacts)
 outputs/
 claude_web_batch_results.json
+
+# One-off overnight/test run scripts (local only)
+run_*.sh

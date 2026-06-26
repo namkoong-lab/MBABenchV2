@@ -19,7 +19,7 @@ source:
   filters:
     task_sources: ["jp"]
     skip_deprecated: true
-    skip_already_attempted: true    # skip tasks already attempted at this (model, prompt_version)
+    skip_already_attempted: false   # disabled so reruns after DB clear work cleanly
 
 sink:
   kind: postgres_s3
