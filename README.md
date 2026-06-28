@@ -1,12 +1,12 @@
-# BizbenchV2
+# MBABenchV2
 
-Scripts for the BizbenchV2 task set: downloading task files from S3 and Neon
+Scripts for the MBABenchV2 task set: downloading task files from S3 and Neon
 into a local folder, and generating expert-human time estimates for each task
 with Gemini. Both scripts are read-only with respect to the `tasks` table.
 
-The tasks live in a Neon Postgres database (BizbenchV2) in a `tasks` table, with
+The tasks live in a Neon Postgres database (MBABenchV2) in a `tasks` table, with
 the starting and solution files stored in S3 under
-`s3://biz-bench/BizbenchV2/tasks/<task_name>/`.
+`s3://mbabench/MBABenchV2/tasks/<task_name>/`.
 
 ## Layout
 
@@ -52,8 +52,8 @@ the standard locations (`~/.aws/credentials` or `AWS_*` env vars).
 ## Prerequisites
 
 - Python 3.10+
-- An AWS profile that can read/write the `biz-bench` S3 bucket
-- The Neon connection string for the BizbenchV2 database
+- An AWS profile that can read/write the `mbabench` S3 bucket
+- The Neon connection string for the MBABenchV2 database
 - A Gemini API key (https://ai.google.dev/)
 
 ## Setup
@@ -73,12 +73,12 @@ bash setup/setup.sh          # or: pip install -r setup/requirements.txt
 
 # 3. Configure environment variables. These are referenced from
 #    config/config_default.yaml via ${env:VAR}; set them in your shell.
-export DATABASE_URL="postgresql://USER:PASSWORD@HOST/BizbenchV2?sslmode=require"
+export DATABASE_URL="postgresql://USER:PASSWORD@HOST/MBABenchV2?sslmode=require"
 export GEMINI_API_KEY="your-gemini-api-key"
 
 # 4. Confirm AWS access (credentials come from ~/.aws/credentials or AWS_* vars)
 aws sts get-caller-identity
-aws s3 ls s3://biz-bench/
+aws s3 ls s3://mbabench/
 ```
 
 ## Downloading the tasks
