@@ -1,8 +1,7 @@
 # MBABenchV2
 
-Scripts for the MBABenchV2 task set: downloading task files from S3 and Neon
-into a local folder, and generating expert-human time estimates for each task
-with Gemini. Both scripts are read-only with respect to the `tasks` table.
+Scripts for the MBABenchV2 task set: adding tasks to S3 and Neon, downloading
+task files locally, and generating expert-human time estimates with Gemini.
 
 The tasks live in a Neon Postgres database (MBABenchV2) in a `tasks` table, with
 the starting and solution files stored in S3 under
@@ -13,6 +12,8 @@ the starting and solution files stored in S3 under
 ```text
 pyproject.toml             Editable-install metadata; exposes `config` as a module.
 scripts/                   The runnable scripts.
+  add_task.py              Upload a new task's files to S3 and register it in
+                           the tasks table (the one WRITE script).
   ingest_tasks.py          Download task folders from S3 + the table into a
                            local directory (read-only on the DB).
   estimate_task_times.py   For each local task folder: convert the starting file
@@ -80,6 +81,34 @@ export GEMINI_API_KEY="your-gemini-api-key"
 aws sts get-caller-identity
 aws s3 ls s3://mbabench/
 ```
+
+## Adding a new task
+
+`add_task.py` uploads a task's files to S3 and registers the task in the DB.
+It is the only script that writes to the `tasks` table. Always dry-run first:
+
+```bash
+python scripts/add_task.py --dry-run \
+    --task-name MyTask \
+    --starting-files /path/to/MyTask.xlsx \
+    --solution-files "/path/to/MyTask - Solution.xlsx"
+
+python scripts/add_task.py \
+    --task-name MyTask \
+    --task-source jp \
+    --starting-files /path/to/MyTask.xlsx \
+    --solution-files "/path/to/MyTask - Solution.xlsx"
+```
+
+The script:
+1. Validates all local files exist before touching S3 or the DB.
+2. Uploads each file to `s3://mbabench/MBABenchV2/tasks/<task_name>/{starting,solution}_files/<filename>`.
+3. Inserts a row into `tasks` with the resulting S3 URIs.
+
+Useful flags:
+- `--task-source NAME` — `task_source` value in the DB (default: `tasks.default_source` from config).
+- `--force` — if the task already exists, re-upload and UPDATE instead of erroring.
+- `--dry-run` — preview everything without executing.
 
 ## Downloading the tasks
 
