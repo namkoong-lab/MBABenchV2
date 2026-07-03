@@ -27,8 +27,8 @@ chatgpt_web:
   agent_mode: false  # control whether to use agentic mode
   # Paste from https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
   # Required — preflight exits if either is null/empty under provider=chatgpt.
-  project_id: "6958bb36c8e88191a6df89918a683e0d"
-  project_slug: "agentic-excel-tests"
+  project_id: "6a3b10e3b0b08191813fc1a0dbd72cbd"
+  project_slug: "mbabenchv2"
   browser:
     # Matches the path the README's VNC-login step writes cookies into.
     profile_dir: "/var/lib/gui-agents/chrome-chatgpt"
