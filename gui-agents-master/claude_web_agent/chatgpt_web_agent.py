@@ -645,6 +645,37 @@ class ChatGPTWebAgent(WebAgent):
         except Exception:
             return 0
 
+    async def _recover_content_load_error(self) -> bool:
+        """Recover from ChatGPT's transient "Content failed to load" error.
+
+        That error replaces the response with a placeholder — real DOM:
+            <h2>Content failed to load</h2>
+            <button class="btn … btn-secondary"><div>Try again</div></button>
+        and leaves the response empty until "Try again" is clicked. Requires
+        BOTH the error text AND a button whose text is exactly "Try again"
+        (specific to this state — the healthy-response button says "Regenerate",
+        not "Try again"), then clicks it. Returns True iff it clicked.
+        """
+        try:
+            clicked = await self.page.evaluate(
+                r"""() => {
+                const main = document.querySelector('main') || document.body;
+                const errRe = /content failed to load|something went wrong|couldn.?t load/i;
+                const hasErr = Array.from(main.querySelectorAll('h1,h2,h3,p,div,span'))
+                    .some(e => e.children.length === 0 && errRe.test(e.textContent || ''));
+                if (!hasErr) return false;
+                const btn = Array.from(main.querySelectorAll('button'))
+                    .find(b => (b.textContent || '').trim().toLowerCase() === 'try again');
+                if (!btn) return false;
+                btn.click();
+                return true;
+            }"""
+            )
+            return bool(clicked)
+        except Exception as e:
+            logger.warning(f"content-load-error recovery check failed: {e}")
+            return False
+
     async def wait_for_response(self, prompt_number: int = 1) -> Optional[str]:
         """Wait for ChatGPT to finish responding.
 
@@ -721,7 +752,18 @@ class ChatGPTWebAgent(WebAgent):
         # The response text must stop changing AND generation indicators must be
         # gone for required_stable consecutive checks.
         stable_count = 0
-        required_stable = 5  # 5 consecutive checks × check_interval (15s at 3s)
+        # Response must be unchanged AND generation stopped for ~60s of
+        # continuous checks before accepting — long enough that a pause in Pro
+        # Extended's chain-of-thought is not mistaken for completion. If
+        # generation resumes, stable_count is reset above, so a think-pause
+        # shorter than the window never triggers acceptance.
+        stable_window_sec = 60
+        required_stable = max(1, round(stable_window_sec / max(1, self.check_interval)))
+        # Cap on auto-recovering ChatGPT's transient "Content failed to load"
+        # error (click "Try again") per prompt, so a persistent failure still
+        # times out instead of looping forever.
+        recovery_attempts = 0
+        max_recovery_attempts = 8
         last_response_text = ""
         last_article_count = baseline_article_count
 
@@ -742,6 +784,33 @@ class ChatGPTWebAgent(WebAgent):
 
             # Always sample response text (even during generation) for monitoring
             current_response = await self._extract_last_response() or ""
+
+            # Auto-recover from ChatGPT's transient "Content failed to load"
+            # error: it wipes the response and shows a "Try again" button, so
+            # without this the response sits empty until the per-prompt timeout.
+            # Fires only when generation has stopped AND the response is empty
+            # (the broken state) AND the error text + button are present.
+            if (
+                not generating
+                and len(current_response.strip()) == 0
+                and recovery_attempts < max_recovery_attempts
+                and await self._recover_content_load_error()
+            ):
+                recovery_attempts += 1
+                logger.warning(
+                    f"'Content failed to load' detected — clicked Try again "
+                    f"(recovery {recovery_attempts}/{max_recovery_attempts})"
+                )
+                stable_count = 0
+                last_response_text = ""
+                # Wait long enough for the reload to actually complete before
+                # re-checking. A short wait just re-clicks while the page is
+                # still reloading from the previous click, hammering the button
+                # and burning the retry cap in seconds. ~20s per attempt lets
+                # each "Try again" resolve, so the cap spans minutes of patient
+                # recovery instead.
+                await self.page.wait_for_timeout(20000)
+                continue
 
             if generating or articles_changed:
                 stable_count = 0
@@ -773,28 +842,40 @@ class ChatGPTWebAgent(WebAgent):
                             "Download",
                         ]
                     )
-                    content_ok = len(current_response) > 50 or has_file_indicator
-                    if content_ok:
+                    # Non-agent (Pro Extended): a finished turn can be very short
+                    # (e.g. "Step 1 complete." — the analysis went into the
+                    # workbook, not the chat). Accept ANY non-empty stable
+                    # response once the min-elapsed floor passes, so a terse reply
+                    # no longer spins until timeout. Do NOT let an early file card
+                    # short-circuit the floor here (that made Pro Extended quit
+                    # after ~30s with a barely-built file). Agent mode is
+                    # unchanged — it keeps the file-card fast path.
+                    if self.agent_mode:
                         effective_min = (
                             min_elapsed_sec_with_file
                             if has_file_indicator
                             else min_elapsed_sec
                         )
-                        if elapsed >= effective_min:
-                            logger.info(
-                                f"Response complete ({int(elapsed)}s elapsed, "
-                                f"{len(current_response)} chars, file_indicator={has_file_indicator})"
-                            )
-                            return current_response
-                        else:
-                            logger.info(
-                                f"Content stable but too early ({int(elapsed)}s < {min_elapsed_sec}s min), "
-                                f"continuing to wait..."
-                            )
-                            stable_count = 0
                     else:
-                        # Content too short and no file indicators — keep waiting
-                        stable_count = 0
+                        effective_min = min_elapsed_sec
+                    content_ok = len(current_response.strip()) > 0
+                    if content_ok and elapsed >= effective_min:
+                        logger.info(
+                            f"Response complete ({int(elapsed)}s elapsed, "
+                            f"{len(current_response)} chars, "
+                            f"file_indicator={has_file_indicator})"
+                        )
+                        return current_response
+                    else:
+                        # Before the min-elapsed floor (or empty response). Keep
+                        # waiting; generation resuming resets stable_count above,
+                        # so we do NOT reset here — once the floor passes we accept
+                        # on the next stable check.
+                        logger.info(
+                            f"Stable but not yet accepting ({int(elapsed)}s "
+                            f"elapsed, need >={effective_min}s, "
+                            f"len={len(current_response.strip())}); continuing..."
+                        )
 
             elapsed = int(asyncio.get_event_loop().time() - start_time)
             # Log every ~30s (use range check since loop interval may skip exact multiples)

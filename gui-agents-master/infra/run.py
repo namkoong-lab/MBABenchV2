@@ -248,6 +248,50 @@ def find_solution_file(
     return matches[0][1]
 
 
+# Post-run output quality gate. Heuristic floor to catch obviously-degraded
+# workbooks (e.g. a tiny stub produced when a ChatGPT "content failed to load"
+# disruption truncated the model). Tunable.
+QUALITY_MIN_BYTES = 12000
+QUALITY_MIN_SHEETS = 3
+
+
+def check_output_quality(solution_file: Path | None) -> tuple[bool, str]:
+    """Return (ok, reason). ok=False flags a suspected-degraded output.
+
+    Runs in infra.run AFTER the engine subprocess returns — i.e. OUTSIDE the
+    engine's own retry loop — so it only records a verdict and never triggers
+    a re-run. Fails OPEN on inspection errors (can't break the pipeline over a
+    false alarm) except a missing/unopenable workbook, which IS a failure.
+    """
+    if solution_file is None:
+        return False, "no solution workbook was produced"
+    try:
+        size = Path(solution_file).stat().st_size
+    except OSError as e:
+        return False, f"solution file not accessible: {e}"
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(solution_file, read_only=True)
+        n_sheets = len(wb.sheetnames)
+        wb.close()
+    except ImportError:
+        logger.warning("openpyxl unavailable; skipping output quality gate")
+        return True, ""
+    except Exception as e:
+        return False, (
+            f"solution workbook could not be opened ({type(e).__name__}); "
+            f"likely corrupt/partial"
+        )
+    if size < QUALITY_MIN_BYTES or n_sheets < QUALITY_MIN_SHEETS:
+        return False, (
+            f"output below quality floor: {size} bytes / {n_sheets} sheet(s) "
+            f"(min {QUALITY_MIN_BYTES} bytes, {QUALITY_MIN_SHEETS} sheets) — "
+            f"suspected content-load disruption"
+        )
+    return True, ""
+
+
 def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) -> int:
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -516,15 +560,39 @@ def main() -> int:
 
             rc = run_engine(engine_config, engine_script, args.timeout)
             finished = datetime.now()
+            solution_file = find_solution_file(
+                run_dir, spec.task_name, spec.solution_name, started
+            )
             if rc == 0:
                 status = "success"
-                succeeded += 1
             elif rc == 124:
                 status = "timeout"
-                failed += 1
             else:
                 status = "failed"
+
+            # Post-engine output quality gate. Runs outside the engine's retry
+            # loop, so it only RECORDS the verdict — it never re-runs. A degraded
+            # output is marked failed-with-reason (no retry, no deprecation);
+            # the stub still uploads to S3 for inspection.
+            quality_reason: str | None = None
+            if status == "success":
+                ok, reason = check_output_quality(solution_file)
+                if not ok:
+                    status = "failed"
+                    quality_reason = reason
+                    logger.warning(f"Output quality gate FAILED: {reason}")
+
+            if status == "success":
+                succeeded += 1
+            else:
                 failed += 1
+
+            extra: dict = {
+                "return_code": rc,
+                "task_metadata": dict(spec.metadata or {}),
+            }
+            if quality_reason:
+                extra["failure_reason"] = quality_reason
 
             result = AttemptResult(
                 task_id=spec.task_id,
@@ -532,18 +600,13 @@ def main() -> int:
                 agent_model_name=identity.model_name,
                 prompt_version=cfg.agent.prompt_version,
                 status=status,
-                solution_file=find_solution_file(
-                    run_dir, spec.task_name, spec.solution_name, started
-                ),
+                solution_file=solution_file,
                 log_file=find_completion_json(log_dir, spec.task_name, started),
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
                 duration_seconds=round((finished - started).total_seconds(), 2),
                 prompt_files=[prompts_file] if prompts_file else [],
-                extra={
-                    "return_code": rc,
-                    "task_metadata": dict(spec.metadata or {}),
-                },
+                extra=extra,
             )
             sink.publish(result)
 
