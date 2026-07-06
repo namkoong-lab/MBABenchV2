@@ -88,7 +88,12 @@ prompts:
     OUTPUTS & DOCUMENTATION
     - Include a key-ratios section and an automated Summary/dashboard that updates live from the model, plus a sense-check comparing key outputs to benchmarks. Document the model's purpose, scope, and key design decisions; add a glossary of colors/conventions and a short 'How to use' note. Keep full precision in intermediate calculations; round only final outputs and note the rounding.
 
-    Build the entire model now. The full rubric you will be scored against follows.
+    WORKING EFFICIENTLY (manage message length and tool use)
+    - Do your work directly in the workbook; keep chat narration to one or two sentences per step. The workbook is the deliverable, not a written description of it.
+    - Build efficiently: write whole sheets/ranges in as few operations as possible rather than cell-by-cell, and do not re-verify or repeat work you have already completed.
+    - Build methodically. If you approach a message-length or tool-use limit, stop at a clean checkpoint - you will be prompted to continue. When you continue, resume exactly where you stopped; never restart the model or repeat completed work.
+
+    Build the model now. The full rubric you will be scored against follows.
 
     == FULL RUBRIC (12 categories, 132 checks) ==
 

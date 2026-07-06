@@ -1372,6 +1372,39 @@ class ClaudeWebAgent(WebAgent):
             logger.debug(f"Error extracting response: {e}")
             return None
 
+    def _response_truncated(self, response: Optional[str]) -> bool:
+        """True if Claude truncated the message at its max length.
+
+        When Claude cuts a turn short it stops generating (state -> READY) and
+        shows a banner -- but the turn is NOT finished. There are (at least) two
+        such banners:
+          * max message length  ("Claude reached its max length for this
+            message" / "response was limited as it hit the maximum length")
+          * tool-use limit       ("Claude hit the maximum number of tool uses
+            for this turn" -- fires on long builds that make many tool calls)
+        Both leave a half-built model, so both must trigger a "Continue" before
+        we advance to the next prompt. Markers are kept specific enough that they
+        don't fire on ordinary model content. If a NEW banner variant appears,
+        the full response tail is logged at prompt completion so we can add it.
+        """
+        if not response:
+            return False
+        lc = response.lower()
+        markers = (
+            # max message length
+            "length for this message",
+            "hit the maximum length allowed",
+            "response was limited as it hit",
+            # tool-use limit (long builds with many tool calls)
+            "maximum number of tool",
+            "limit for tool use",
+            "tool use limit",
+            "hit its limit for using tools",
+            "reached its limit for this turn",
+            "maximum number of tool uses for this turn",
+        )
+        return any(m in lc for m in markers)
+
     async def process_all_prompts(self, files_to_upload: list = None) -> bool:
         """
         Process all prompts from config sequentially.
@@ -1474,8 +1507,44 @@ class ClaudeWebAgent(WebAgent):
                     self.completion_logger.end_prompt(success=False)
                 return False
 
+            # If Claude truncated this message at the max length, it stopped
+            # generating (state -> READY) but the turn isn't actually finished.
+            # Send "Continue" so it completes the step before we advance --
+            # otherwise the next prompt (e.g. the QA step) runs against a
+            # half-built model. Capped so a persistent truncation can't loop
+            # forever. Only runs when the truncation banner is detected, so
+            # normal (untruncated) responses are unaffected.
+            max_length_continues = 5
+            n_cont = 0
+            while self._response_truncated(response) and n_cont < max_length_continues:
+                n_cont += 1
+                logger.info(
+                    f"Prompt #{i} truncated at max message length — sending "
+                    f"'Continue' ({n_cont}/{max_length_continues})"
+                )
+                if not await self.submit_prompt(
+                    "Continue from where you left off and finish this step. "
+                    "Do not restart or repeat earlier work.",
+                    i,
+                ):
+                    logger.warning(
+                        "Failed to submit 'Continue'; keeping truncated response"
+                    )
+                    break
+                cont = await self.wait_for_response(i)
+                if cont is None:
+                    logger.warning("No response to 'Continue'; keeping what we have")
+                    break
+                response = cont
+
             logger.info(f"Prompt #{i} completed successfully")
             logger.info(f"Response preview: {response[:200]}...")
+            # Log the response tail too: interruption banners ("...tool uses for
+            # this turn", "...max length...") render at the END of the message,
+            # so the 200-char head preview hides them. If detection ever misses a
+            # NEW banner variant, this is where we read its exact wording.
+            if len(response) > 200:
+                logger.info(f"Response tail: ...{response[-300:]}")
 
             # End prompt logging
             if self.completion_logger:
