@@ -149,7 +149,7 @@ def preflight_check(engine_config: dict, provider: str) -> list[str]:
         if section.get("model") is None:
             errors.append(
                 "claude_web.model is null — the agent calls .lower() on it and crashes. "
-                "Set claude_web.model to 'sonnet_4_6' / 'opus_4_6' / 'haiku_4_5'."
+                "Set claude_web.model to 'sonnet_4_6' / 'opus_4_6' / 'haiku_4_5' / 'fable_5'."
             )
     elif provider == "chatgpt":
         if not section.get("project_id"):

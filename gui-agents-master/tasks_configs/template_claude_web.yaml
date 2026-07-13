@@ -29,7 +29,7 @@ template:
 
     # Model selection (optional). If null or omitted, uses the currently
     # active model in your Claude.ai session.
-    # Options: opus_4_6, sonnet_4_6, haiku_4_5
+    # Options: opus_4_8, sonnet_4_6, haiku_4_5, fable_5
     model: null
 
     max_sec_per_task: 7200          # 2 hour timeout

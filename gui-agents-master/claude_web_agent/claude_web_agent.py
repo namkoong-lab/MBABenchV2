@@ -204,13 +204,23 @@ class ClaudeWebAgent(WebAgent):
         "Think longer",
     )
 
-    # Reasoning-effort levels for sonnet/opus. Claude.ai nests these (plus the
-    # "Thinking" switch) under an "Effort" submenu in the model dropdown that
-    # only renders on hover. Haiku has no Effort submenu (it exposes an
-    # always-on "Extended" switch directly). The model button label reflects
-    # the active level, e.g. "Sonnet 4.6 Max".
-    EFFORT_LEVELS = ("low", "medium", "high", "max")
-    EFFORT_BASED_MODELS = ("sonnet", "opus")
+    # Reasoning-effort levels for sonnet/opus/fable. Claude.ai nests these
+    # (plus the "Thinking" switch, except for fable — see
+    # NO_THINKING_TOGGLE_MODELS) under an "Effort" submenu in the model
+    # dropdown that only renders on hover. Haiku has no Effort submenu (it
+    # exposes an always-on "Extended" switch directly). The model button
+    # label reflects the active level, e.g. "Sonnet 4.6 Max".
+    EFFORT_LEVELS = ("low", "medium", "high", "extra", "max")
+    EFFORT_BASED_MODELS = ("sonnet", "opus", "fable")
+
+    # Fable's Effort submenu has no nested "Thinking" switch (confirmed
+    # against the live dropdown 2026-07 — sonnet/opus show Low/Medium/High/
+    # Extra/Max plus a Thinking toggle; fable shows the same effort levels
+    # with no toggle at all). ensure_extended_thinking() would otherwise
+    # open the dropdown, fail to find a switch that doesn't exist, and log
+    # spurious warnings on every call (including once per prompt). Models
+    # listed here skip extended-thinking configuration entirely.
+    NO_THINKING_TOGGLE_MODELS = ("fable",)
 
     # Structural fallback: if the switch's role+name lookup doesn't
     # resolve (e.g. the control changes shape), probe for a toggle
@@ -678,8 +688,9 @@ class ClaudeWebAgent(WebAgent):
         "Extended" in the button text).
 
         Args:
-            model: Target model keyword — ``"opus"`` or ``"sonnet"``.
-                   Matched case-insensitively against dropdown item text.
+            model: Target model keyword — e.g. ``"opus"``, ``"sonnet"``,
+                   ``"haiku"``, or ``"fable"``. Matched case-insensitively
+                   against dropdown item text.
             extended_thinking: Whether extended thinking should be on.
 
         Returns:
@@ -765,8 +776,8 @@ class ClaudeWebAgent(WebAgent):
                 logger.error(f"Model not set after selection attempt: got {btn_text!r}")
                 return False
 
-            # Reasoning effort (sonnet/opus only). These models expose a
-            # low/medium/high/max "Effort" submenu; default to max so the
+            # Reasoning effort (EFFORT_BASED_MODELS only). These models expose
+            # a low/medium/high/max "Effort" submenu; default to max so the
             # agent always runs at full reasoning effort. Haiku has no Effort
             # submenu (ensure_effort no-ops). Non-fatal: the model is selected.
             eff_ok = True
@@ -785,20 +796,26 @@ class ClaudeWebAgent(WebAgent):
             # preference. Claude.ai periodically relabels/relocates the ET
             # switch (e.g. the sonnet/opus "Thinking" switch lives in the
             # Effort submenu), and a detection miss must not abort an
-            # otherwise-valid run.
-            et_ok = await self.ensure_extended_thinking(enabled=extended_thinking)
-            if not et_ok:
-                logger.warning(
-                    f"Could not configure extended_thinking={extended_thinking} "
-                    f"for model {model_lower} (the model IS selected); continuing. "
-                    f"If ET matters for this run, the dropdown switch detection "
-                    f"may need updating for the current Claude.ai UI."
-                )
+            # otherwise-valid run. Models in NO_THINKING_TOGGLE_MODELS have no
+            # switch to find at all, so skip the (futile) lookup entirely.
+            if model_selector in self.NO_THINKING_TOGGLE_MODELS:
+                et_ok = True
+                et_label = "n/a (no toggle for this model)"
+            else:
+                et_ok = await self.ensure_extended_thinking(enabled=extended_thinking)
+                et_label = "on" if et_ok else "unconfirmed"
+                if not et_ok:
+                    logger.warning(
+                        f"Could not configure extended_thinking={extended_thinking} "
+                        f"for model {model_lower} (the model IS selected); continuing. "
+                        f"If ET matters for this run, the dropdown switch detection "
+                        f"may need updating for the current Claude.ai UI."
+                    )
 
             logger.info(
                 f"Model configured: model={model_lower}, "
                 f"effort={'set' if eff_ok else 'unconfirmed'}, "
-                f"extended_thinking={'on' if et_ok else 'unconfirmed'}"
+                f"extended_thinking={et_label}"
             )
             return True
 
@@ -1464,7 +1481,11 @@ class ClaudeWebAgent(WebAgent):
 
             # Re-assert Extended thinking before every submission — claude.ai
             # resets the toggle on each turn, so we must re-enable each time.
-            if not await self.ensure_extended_thinking(enabled=enable_et):
+            # Skipped for models with no Thinking switch at all (e.g. fable).
+            if (
+                model_selector not in self.NO_THINKING_TOGGLE_MODELS
+                and not await self.ensure_extended_thinking(enabled=enable_et)
+            ):
                 logger.warning(
                     f"Could not verify Extended thinking state before prompt #{i}"
                 )
@@ -1483,9 +1504,11 @@ class ClaudeWebAgent(WebAgent):
             # Older (haiku-style) UIs flip the Extended thinking switch off
             # mid-stream, so a watcher re-enables it during wait_for_response.
             # Sonnet/Opus effort + "Thinking" are sticky account settings that
-            # persist across page loads and don't reset mid-generation, so the
-            # watcher is skipped for them (it otherwise just spams the log with
-            # "model button not found" while the composer is busy generating).
+            # persist across page loads and don't reset mid-generation, and
+            # fable has no Thinking switch to begin with — so the watcher is
+            # skipped for all EFFORT_BASED_MODELS (it otherwise just spams the
+            # log with "model button not found" while the composer is busy
+            # generating, or — for fable — with switch-not-found warnings).
             et_stop = asyncio.Event()
             et_task = (
                 asyncio.create_task(self._watch_extended_thinking(et_stop))
@@ -1697,36 +1720,53 @@ class ClaudeWebAgent(WebAgent):
                 except Exception:
                     pass
 
-            # Find download buttons in chat only
-            logger.info("Looking for artifact download buttons in chat...")
+            # The Download endpoint streams the file from the conversation's
+            # code-execution sandbox (…/wiggle/download-file?path=/mnt/
+            # user-data/outputs/…), and every in-chat Download button
+            # resolves to the SAME url. Clicking right after the final
+            # response — especially one interrupted mid tool-run — can race
+            # the sandbox file before it settles: the endpoint returns an
+            # empty body, which Chrome saves as a "successful" 0-byte
+            # download. Button choice can't win that race (same url), only
+            # time can — so when a full sweep yields no non-empty Excel
+            # file, wait for the sandbox to settle and re-sweep.
+            SWEEP_ROUNDS = 3
+            SWEEP_RETRY_DELAY_SEC = 30
+            seen_filenames: set[str] = set()
 
-            download_btns = []
+            for sweep in range(1, SWEEP_ROUNDS + 1):
+                # Find download buttons in chat only
+                logger.info("Looking for artifact download buttons in chat...")
 
-            # Scope search to the chat/conversation area to avoid
-            # picking up preview panel buttons
-            for selector in [
-                'main button:text-is("Download")',  # Inside <main> (chat area)
-                'button:text-is("Download")',  # Fallback: anywhere with exact text
-            ]:
-                try:
-                    btns = await self.page.query_selector_all(selector)
-                    visible_btns = []
-                    for b in btns:
-                        if await b.is_visible():
-                            visible_btns.append(b)
-                    if visible_btns:
-                        download_btns = visible_btns
-                        logger.info(
-                            f"Found {len(visible_btns)} download button(s) via: {selector}"
-                        )
-                        break
-                except Exception:
-                    continue
+                download_btns = []
 
-            if not download_btns:
-                logger.warning("No download buttons found on page")
-            else:
-                seen_filenames = set()
+                # Scope search to the chat/conversation area to avoid
+                # picking up preview panel buttons
+                for selector in [
+                    'main button:text-is("Download")',  # Inside <main> (chat area)
+                    'button:text-is("Download")',  # Fallback: anywhere with exact text
+                ]:
+                    try:
+                        btns = await self.page.query_selector_all(selector)
+                        visible_btns = []
+                        for b in btns:
+                            if await b.is_visible():
+                                visible_btns.append(b)
+                        if visible_btns:
+                            download_btns = visible_btns
+                            logger.info(
+                                f"Found {len(visible_btns)} download button(s) via: {selector}"
+                            )
+                            break
+                    except Exception:
+                        continue
+
+                if not download_btns:
+                    # No buttons at all — re-sweeping won't conjure them;
+                    # the engine's "Continue" logic owns this case.
+                    logger.warning("No download buttons found on page")
+                    break
+
                 # Use a short timeout per button — if a button is blocked
                 # by an overlay (e.g. artifact preview panel), fail fast
                 per_btn_timeout = 5000
@@ -1743,19 +1783,52 @@ class ClaudeWebAgent(WebAgent):
                         download = await download_info.value
                         filename = download.suggested_filename
 
-                        # Skip duplicate downloads (same file from preview panel)
+                        # Skip duplicates only once a *valid* (non-empty) copy
+                        # of this filename has already been saved. Earlier
+                        # in-chat cards can reference a stale/invalidated
+                        # artifact version that "downloads" successfully but
+                        # writes an empty file — if we marked it seen here,
+                        # a later button for the same filename (often the
+                        # fresher version) would be wrongly skipped as a dup.
                         if filename in seen_filenames:
                             logger.info(f"Skipping duplicate download: {filename}")
                             await download.cancel()
                             continue
-                        seen_filenames.add(filename)
 
                         if download_dir:
                             save_path = Path(download_dir) / filename
                             await download.save_as(str(save_path))
                         else:
-                            save_path = Path(download.path())
+                            save_path = Path(await download.path())
 
+                        # Guard against 0-byte artifacts: an in-chat download
+                        # button can reference a stale artifact version that
+                        # completes without error but writes no bytes. Poll
+                        # briefly in case the file is still landing on disk,
+                        # then discard a persistent 0-byte result instead of
+                        # accepting it — the next button (if any) gets a
+                        # real attempt since the filename isn't marked seen.
+                        file_size = 0
+                        for _ in range(5):
+                            file_size = (
+                                save_path.stat().st_size if save_path.exists() else 0
+                            )
+                            if file_size > 0:
+                                break
+                            await asyncio.sleep(0.3)
+
+                        if file_size == 0:
+                            logger.warning(
+                                f"Downloaded artifact {i+1} is empty (0 bytes): "
+                                f"{save_path} — discarding, trying next button"
+                            )
+                            try:
+                                save_path.unlink()
+                            except OSError:
+                                pass
+                            continue
+
+                        seen_filenames.add(filename)
                         downloaded_files.append(str(save_path))
                         logger.info(f"Downloaded: {save_path}")
 
@@ -1764,6 +1837,24 @@ class ClaudeWebAgent(WebAgent):
                     except Exception as e:
                         logger.warning(f"Failed to download artifact {i+1}: {e}")
                         continue
+
+                got_excel = any(
+                    f.lower().endswith((".xlsx", ".xls")) for f in downloaded_files
+                )
+                if got_excel:
+                    break
+                if sweep < SWEEP_ROUNDS:
+                    logger.warning(
+                        f"Sweep {sweep}/{SWEEP_ROUNDS} yielded no non-empty Excel "
+                        f"file — waiting {SWEEP_RETRY_DELAY_SEC}s for the sandbox "
+                        f"file to settle, then re-sweeping"
+                    )
+                    await asyncio.sleep(SWEEP_RETRY_DELAY_SEC)
+                else:
+                    logger.warning(
+                        f"All {SWEEP_ROUNDS} download sweeps yielded no non-empty "
+                        f"Excel file"
+                    )
 
         except Exception as e:
             logger.error(f"Failed to download artifacts: {e}")
