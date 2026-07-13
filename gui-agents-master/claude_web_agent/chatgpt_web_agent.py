@@ -1047,9 +1047,46 @@ class ChatGPTWebAgent(WebAgent):
                         const MSG_ACTION_ARIAS = new Set([
                             'Copy response', 'Copy', 'Good response', 'Bad response',
                             'Share', 'Switch model', 'More actions', 'Edit',
-                            'Read aloud', 'Try again', 'Regenerate'
+                            'Read aloud', 'Try again', 'Regenerate',
+                            // Turn-toolbar buttons added by ChatGPT for
+                            // projects/Pro (seen 2026-07-10): icon-only, so
+                            // they passed the heuristic and were harvested as
+                            // "card buttons" when the card itself rendered
+                            // zero buttons (download is hover-revealed now).
+                            'Pro feedback', 'Add to project sources',
+                            'Remove from project sources'
                         ]);
                         for (let depth = 0; depth < 8 && container; depth++) {
+                            // Never ascend past the message-turn wrapper: its
+                            // toolbar buttons are per-TURN actions, not card
+                            // controls, and harvesting them sends clicks to
+                            // feedback/share/project toggles. When we hit this
+                            // boundary without having found any card buttons,
+                            // still register the filename's own block as a
+                            // button-less card — the current ChatGPT build
+                            // reveals the card's download control only on
+                            // hover, so Python needs an element to hover/click.
+                            if (container.className &&
+                                typeof container.className === 'string' &&
+                                container.className.includes('agent-turn')) {
+                                const fb = node.parentElement.closest('div') ||
+                                           node.parentElement;
+                                if (fb && !fb.hasAttribute('data-artifact-card')) {
+                                    const cardIdx = artifactsOut.length;
+                                    const cardId = 'art-card-' + cardIdx;
+                                    fb.setAttribute('data-artifact-card', cardId);
+                                    const displayName = filename.includes('.xls')
+                                        ? filename : 'ai_attempt.xlsx';
+                                    artifactsOut.push({
+                                        filename: displayName,
+                                        cardId: cardId,
+                                        buttons: [],
+                                        containerHtml: fb.outerHTML.substring(0, 1500),
+                                        foundVia: 'turn-boundary-fallback',
+                                    });
+                                }
+                                break;
+                            }
                             const buttons = container.querySelectorAll('button');
                             // Artifact cards have icon-only buttons (SVG icons).
                             const iconButtons = Array.from(buttons).filter(b => {
@@ -1072,6 +1109,8 @@ class ChatGPTWebAgent(WebAgent):
                                     break;
                                 }
                                 const cardIdx = artifactsOut.length;
+                                const cardId = 'art-card-' + cardIdx;
+                                container.setAttribute('data-artifact-card', cardId);
                                 // Tag EVERY icon button — we don't know which
                                 // one is download (icons are sprite-hashed and
                                 // classes don't disambiguate in pro mode), so
@@ -1100,6 +1139,7 @@ class ChatGPTWebAgent(WebAgent):
                                     ? filename : 'ai_attempt.xlsx';
                                 artifactsOut.push({
                                     filename: displayName,
+                                    cardId: cardId,
                                     buttons: buttonMetas,
                                     containerHtml: container.outerHTML.substring(0, 1500),
                                     foundVia: root === document.body ? 'document' : 'article',
@@ -1226,7 +1266,216 @@ class ChatGPTWebAgent(WebAgent):
             # that causes a new file to appear within this window.
             per_button_wait_sec = 6
 
-            for info in artifact_info:
+            async def _attempt_download(click_action, wait_sec):
+                """Run click_action() and return the resulting file Path, or
+                None. CDP path detects a new completed file in download_path;
+                non-CDP path uses Playwright's download event."""
+                if use_cdp_download:
+                    files_before = set(download_path.iterdir())
+                    try:
+                        await click_action()
+                    except Exception as e:
+                        logger.info(f"    click failed: {e}")
+                        return None
+                    deadline = asyncio.get_event_loop().time() + wait_sec
+                    while asyncio.get_event_loop().time() < deadline:
+                        complete = [
+                            f
+                            for f in set(download_path.iterdir()) - files_before
+                            if not f.name.endswith(".crdownload")
+                        ]
+                        if complete:
+                            return complete[0]
+                        await asyncio.sleep(0.3)
+                    return None
+                try:
+                    async with self.page.expect_download(
+                        timeout=wait_sec * 1000
+                    ) as dl_info:
+                        await click_action()
+                    download = await dl_info.value
+                    tmp_target = download_path / (
+                        download.suggested_filename or "artifact.bin"
+                    )
+                    await download.save_as(str(tmp_target))
+                    return tmp_target
+                except Exception as e:
+                    logger.info(f"    no download event ({e})")
+                    return None
+
+            async def _hover_panel_fallback(card_id, filename):
+                """Rescue path for the current ChatGPT build (2026-07-10),
+                where a file card renders NO buttons until hovered and the
+                sprite/rank heuristics have nothing to work with. Try, in
+                order: hover the card and click any revealed download-labeled
+                control; then click the card itself (opens the preview panel)
+                and click a Download control in the panel; Escape to close."""
+                if not card_id:
+                    return None
+                card = self.page.locator(f'[data-artifact-card="{card_id}"]')
+                if await card.count() == 0:
+                    logger.info(f"  {card_id}: card locator missing")
+                    return None
+                card = card.first
+                try:
+                    await card.scroll_into_view_if_needed(timeout=3000)
+                except Exception:
+                    pass
+                try:
+                    await card.hover(timeout=3000)
+                    await asyncio.sleep(0.8)
+                except Exception as e:
+                    logger.info(f"  {card_id}: hover failed ({e})")
+
+                # [aria-label*="ownload"] matches Download/download without
+                # needing a case-insensitive engine.
+                for sel in (
+                    'button[aria-label*="ownload"]',
+                    '[role="button"][aria-label*="ownload"]',
+                    'a[aria-label*="ownload"]',
+                ):
+                    btn = card.locator(sel)
+                    if await btn.count() == 0:
+                        continue
+                    logger.info(f"  {card_id}: hover revealed {sel!r}; clicking")
+                    got = await _attempt_download(
+                        lambda b=btn.first: b.click(force=True, timeout=5000),
+                        per_button_wait_sec,
+                    )
+                    if got:
+                        return got
+
+                # Current build (verified live 2026-07-10): the file is an
+                # inline filename-link <button aria-label="<name>.xlsx"
+                # class="behavior-btn …"> in the markdown. Clicking IT opens
+                # the preview panel, whose header has an icon button with
+                # exact aria-label "Download". A substring match must NOT be
+                # used naively — the sidebar has a "Download apps" item that
+                # matches *="ownload" and downloads nothing.
+                opener = None
+                for sel in (
+                    f'button[aria-label="{filename}"]',
+                    'button[aria-label$=".xlsx"]',
+                    'button[aria-label$=".xls"]',
+                    "button.behavior-btn",
+                ):
+                    cand = card.locator(sel)
+                    if await cand.count() > 0:
+                        opener = cand.last
+                        break
+                if opener is None:
+                    opener = card  # last resort: click the card block itself
+                # Pre-clear: a leftover preview dialog (e.g. from a prior
+                # card) sits at z-[120] and intercepts every click under it —
+                # this is exactly how task 12 (EC2, 2026-07-13) died: the
+                # opener click timed out against an already-open panel and the
+                # old code returned WITHOUT ever dismissing it, wedging the
+                # whole page. Dismiss anything open before clicking ours.
+                try:
+                    if await self.page.locator('[role="dialog"]').count() > 0:
+                        logger.info(
+                            f"  {card_id}: dialog already open — pressing "
+                            f"Escape before opening preview"
+                        )
+                        await self.page.keyboard.press("Escape")
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                logger.info(f"  {card_id}: opening file preview panel")
+                got = None
+                try:
+                    opened = False
+                    try:
+                        await opener.click(timeout=5000)
+                        await asyncio.sleep(2.5)
+                        opened = True
+                    except Exception as e:
+                        logger.info(
+                            f"  {card_id}: preview-open click failed ({e})"
+                        )
+                    if opened:
+                        for sel in (
+                            'button[aria-label="Download"]',  # exact — the panel button
+                            'a[aria-label="Download"]',
+                            'button[aria-label*="ownload"]',
+                            'button:has-text("Download")',
+                        ):
+                            btn = self.page.locator(sel)
+                            visible = None
+                            for k in range(await btn.count()):
+                                cand = btn.nth(k)
+                                try:
+                                    aria = (await cand.get_attribute("aria-label")) or ""
+                                    if "apps" in aria.lower():
+                                        continue  # sidebar "Download apps" trap
+                                    if await cand.is_visible():
+                                        visible = cand
+                                        break
+                                except Exception:
+                                    continue
+                            if visible is None:
+                                continue
+                            logger.info(
+                                f"  {card_id}: panel control {sel!r}; clicking"
+                            )
+                            got = await _attempt_download(
+                                lambda b=visible: b.click(force=True, timeout=5000),
+                                per_button_wait_sec + 9,
+                            )
+                            if got:
+                                break
+                finally:
+                    # Safety net: ALWAYS attempt to dismiss the preview panel
+                    # — on success, on download-not-found, AND on a failed
+                    # opener click — so no code path can leave a dialog
+                    # occluding the page for whatever runs next (another
+                    # card, a Continue prompt, the next attempt).
+                    try:
+                        await self.page.keyboard.press("Escape")
+                        await asyncio.sleep(0.3)
+                    except Exception:
+                        pass
+                return got
+
+            async def _fallback_bounded(card_id, filename, budget_sec=240):
+                """A CDP stall inside the panel flow must cost minutes, not
+                hours: task 12 (2026-07-11) hung 3.5h on a locator await after
+                the renderer died — the engine's per-attempt guard only sets a
+                flag and cannot preempt a hung await, so the orchestrator's 5h
+                deadman was the only backstop. Bound the whole fallback here;
+                on timeout the card is abandoned and the normal retry
+                machinery (fresh attempt, fresh page) gets to recover."""
+                try:
+                    return await asyncio.wait_for(
+                        _hover_panel_fallback(card_id, filename), budget_sec
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"  {card_id}: hover/panel fallback exceeded "
+                        f"{budget_sec}s — abandoning card (page/CDP likely "
+                        f"wedged)"
+                    )
+                    return None
+
+            # Only the NEWEST file matters: grading (infra/run.py
+            # find_solution_file) keeps the newest-mtime workbook and ignores
+            # the rest, so earlier files (e.g. the step-2 snapshot) are
+            # throwaway downloads. Worse, fetching them opens extra preview
+            # panels, and the panel-close race between consecutive cards is
+            # exactly what wedged task 12 on EC2 (2026-07-13) and FundFun/
+            # MarketBalanced locally. So: try the LAST card first and stop on
+            # success; earlier cards are only attempted as a rescue if the
+            # newest yields nothing (e.g. QA turn emitted no fresh file or its
+            # download fails) — a step-2 workbook beats no workbook.
+            if len(artifact_info) > 1:
+                logger.info(
+                    f"{len(artifact_info)} artifact card(s) found — targeting "
+                    f"the newest ({artifact_info[-1]['filename']}); earlier "
+                    f"cards held only as rescue"
+                )
+            for info in reversed(artifact_info):
+                if downloaded:
+                    break  # newest (or a rescue) already secured
                 filename = info["filename"]
                 card_html = info.get("containerHtml", "")
                 buttons = info.get("buttons", [])
@@ -1243,10 +1492,25 @@ class ChatGPTWebAgent(WebAgent):
                         f"rect=({b['rectX']},{b['rectY']},{b['rectW']}x{b['rectH']})"
                     )
 
+                card_id = info.get("cardId", "")
                 if not buttons:
-                    logger.warning(
-                        f"No icon buttons for {filename}. Card DOM: {card_html}"
+                    logger.info(
+                        f"No harvestable icon buttons for {filename} (via "
+                        f"{found_via}) — trying hover/panel fallback"
                     )
+                    got = await _fallback_bounded(card_id, filename)
+                    if got:
+                        target = download_path / filename
+                        if got.name != filename:
+                            got.rename(target)
+                            got = target
+                        downloaded.append(str(got))
+                        logger.info(f"  fallback download -> {got}")
+                    else:
+                        logger.warning(
+                            f"No icon buttons and no fallback download for "
+                            f"{filename}. Card DOM: {card_html}"
+                        )
                     continue
 
                 # Ordering priority:
@@ -1363,10 +1627,24 @@ class ChatGPTWebAgent(WebAgent):
                 if saved_path:
                     downloaded.append(str(saved_path))
                 else:
-                    logger.warning(
-                        f"None of {tried_button_ids} produced a download for "
-                        f"{filename}. Full card DOM: {card_html}"
+                    logger.info(
+                        f"None of {tried_button_ids} downloaded {filename} — "
+                        f"trying hover/panel fallback"
                     )
+                    got = await _fallback_bounded(card_id, filename)
+                    if got:
+                        target = download_path / filename
+                        if got.name != filename:
+                            got.rename(target)
+                            got = target
+                        downloaded.append(str(got))
+                        logger.info(f"  fallback download -> {got}")
+                    else:
+                        logger.warning(
+                            f"None of {tried_button_ids} (nor the hover/panel "
+                            f"fallback) produced a download for {filename}. "
+                            f"Full card DOM: {card_html}"
+                        )
 
             if downloaded:
                 return downloaded
