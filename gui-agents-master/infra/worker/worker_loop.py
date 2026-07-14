@@ -173,10 +173,21 @@ def _run_task_unit(task_id: str, unit: str) -> int:
 
 
 def _status_from_returncode(rc: int) -> str:
+    """Mirror infra/run.py's exit-code contract (see its module docstring).
+
+    'no_tasks' (rc=3) means the run was a filtered no-op — e.g. the task id
+    is deprecated or excluded — and NOTHING was attempted. run.py used to
+    exit 0 there, so a no-op was recorded as success. 'env_blocked' (rc=4)
+    means the CDP-port lock or auth precheck stopped the run before any
+    task started."""
     if rc == 0:
         return "success"
     if rc == 2:
         return "config_error"
+    if rc == 3:
+        return "no_tasks"
+    if rc == 4:
+        return "env_blocked"
     return "failed"
 
 

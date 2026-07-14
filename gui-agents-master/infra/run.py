@@ -17,6 +17,18 @@ Usage (from gui-agents-master/):
     python -m infra.run                       # real run, uses configs.yaml if present
     python -m infra.run --dry-run             # print merged engine configs
     python -m infra.run --start 0 --end 1     # slice tasks
+
+Exit-code contract (consumed by infra/worker/worker_loop.py — keep in sync):
+    0   ran >=1 task and every attempt succeeded (also: --dry-run, or the
+        user declined the interactive confirmation)
+    1   ran >=1 task and >=1 attempt failed
+    2   config / preflight / CLI error — nothing was attempted
+    3   the source yielded no tasks (filters excluded everything, empty
+        slice, or --skip-if-attempted matched an existing attempt) —
+        nothing was attempted. Previously conflated with 0; callers could
+        misread a filtered no-op as success.
+    4   environment gate blocked the run before any task started (CDP
+        lock held by another run, or --auth-precheck failed)
 """
 
 from __future__ import annotations
@@ -25,9 +37,12 @@ import argparse
 import copy
 import json
 import logging
+import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,6 +69,17 @@ logging.basicConfig(
 logger = logging.getLogger("infra.run")
 
 PROVIDER_AGENT_TYPE = {"claude": "claude_web", "chatgpt": "chatgpt_web"}
+
+# Exit codes — see the module docstring for the full contract.
+EXIT_OK = 0
+EXIT_TASK_FAILED = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_NO_TASKS = 3
+EXIT_ENV_BLOCKED = 4
+
+# run_engine's sentinel for "engine subprocess exceeded the deadman and was
+# killed" — matches coreutils timeout(1) so log readers recognize it.
+ENGINE_RC_TIMEOUT = 124
 
 # If a --run-config file has any of these at top level, treat it as a YAML
 # task file (hand it to YamlTaskSource) instead of a project-wide overlay.
@@ -292,7 +318,52 @@ def check_output_quality(solution_file: Path | None) -> tuple[bool, str]:
     return True, ""
 
 
+def _kill_engine_tree(proc: subprocess.Popen) -> None:
+    """SIGTERM the engine's whole process group, escalate to SIGKILL.
+
+    The engine is launched with start_new_session=True, so killing its group
+    reaps anything it spawned without touching run.py's own group (and,
+    critically, without signalling the shared Chrome — that lives in a
+    separate service/session and is never a child of the engine)."""
+    if proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=10)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        logger.error(f"engine pid={proc.pid} survived SIGKILL (?)")
+
+
 def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) -> int:
+    """Run the engine subprocess, streaming its output. Returns its exit
+    code, or ENGINE_RC_TIMEOUT if the deadman killed it.
+
+    The deadman is enforced by proc.wait(timeout=...) on the main thread
+    while a daemon thread pumps stdout. The previous implementation read
+    stdout to EOF on the main thread BEFORE calling wait(timeout=...), so a
+    wedged engine that stopped writing but never exited (e.g. a hung
+    Playwright await after the renderer died) blocked forever and the
+    timeout never even started — the deadman existed but could not fire.
+
+    The finally-block guarantees the engine's process group is reaped on
+    ANY exit from this function (deadman, KeyboardInterrupt, SIGTERM via
+    the SystemExit handler in main, unexpected exception) — run.py never
+    leaves an orphaned engine driving the shared Chrome.
+    """
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".yaml",
@@ -301,6 +372,7 @@ def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) ->
     ) as f:
         yaml.safe_dump(engine_config, f, default_flow_style=False)
         tmp_path = Path(f.name)
+    proc: subprocess.Popen | None = None
     try:
         cmd = [
             sys.executable,
@@ -310,26 +382,131 @@ def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) ->
             "--no-hold",
         ]
         logger.info(f"Engine: {' '.join(cmd)}")
+        if timeout:
+            logger.info(f"Engine deadman: {timeout}s")
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
         )
         assert proc.stdout is not None
-        for line in iter(proc.stdout.readline, ""):
-            print(line, end="", flush=True)
+
+        def _pump(stream) -> None:
+            for line in iter(stream.readline, ""):
+                print(line, end="", flush=True)
+
+        pump = threading.Thread(target=_pump, args=(proc.stdout,), daemon=True)
+        pump.start()
         try:
-            return proc.wait(timeout=timeout)
+            rc = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            return 124
+            logger.error(
+                f"Engine exceeded {timeout}s deadman — killing process group"
+            )
+            _kill_engine_tree(proc)
+            rc = ENGINE_RC_TIMEOUT
+        pump.join(timeout=5)  # flush whatever output remains
+        return rc
     finally:
+        if proc is not None:
+            _kill_engine_tree(proc)
         try:
             tmp_path.unlink()
         except Exception:
             pass
+
+
+def _resolve_cdp_port(cfg: SimpleNamespace, provider: str) -> int | None:
+    """Active provider block's browser.cdp_port, or None if not configured."""
+    try:
+        return int(getattr(cfg, f"{provider}_web").browser.cdp_port)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _acquire_cdp_lock(port: int):
+    """Advisory exclusive lock on the shared Chrome's CDP port.
+
+    Two engines driving one Chrome corrupt BOTH runs (interleaved clicks,
+    stolen focus), so a second run.py targeting the same port must fail
+    fast instead of starting. flock releases automatically when this
+    process exits — including a SIGKILL — so a dead run can never wedge
+    the port shut.
+
+    Returns (lock_file_handle, None) on success — caller must keep the
+    handle alive for the duration of the run — or (None, holder_info) if
+    another process holds the lock. Fails OPEN (None, None handled by
+    caller as acquired) is deliberately NOT used: no fcntl means no lock
+    semantics anywhere, so we just skip locking on such platforms.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None, None  # non-POSIX: skip locking entirely
+    lock_path = Path(tempfile.gettempdir()) / f"gui_agents_cdp_{port}.lock"
+    try:
+        fh = open(lock_path, "a+")
+    except OSError as e:
+        # E.g. the file exists owned by another user (box runs as root,
+        # manual debug run as ubuntu). Locking is advisory protection —
+        # skip it rather than block a legitimate run.
+        logger.warning(f"CDP lock unavailable ({e}); continuing without it")
+        return None, None
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.seek(0)
+        holder = fh.read().strip() or "unknown pid"
+        fh.close()
+        return None, holder
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid={os.getpid()} started={datetime.now().isoformat()}")
+    fh.flush()
+    return fh, None
+
+
+def _auth_precheck(cfg: SimpleNamespace, provider: str) -> tuple[bool, str]:
+    """Verify the browser session is logged in (and, for chatgpt, on the
+    expected plan) before burning a task on a dead session. Reuses the
+    worker box's probe logic — same CDP-attach, same session checks."""
+    port = _resolve_cdp_port(cfg, provider)
+    if port is None:
+        return False, f"no browser.cdp_port configured for provider {provider!r}"
+    try:
+        from infra.worker.auth_probe import _run_probe
+
+        ok, reason, extra = _run_probe(provider, port)
+    except Exception as e:
+        return False, f"probe error: {type(e).__name__}: {e}"
+    if ok:
+        who = extra.get("email") or ""
+        plan = extra.get("plan") or ""
+        detail = f" ({who}{f', plan={plan}' if plan else ''})" if who else ""
+        return True, f"session ok{detail}"
+    return False, reason or "not logged in"
+
+
+def _default_deadman(engine_config: dict, provider: str) -> int | None:
+    """Conservative ceiling for the engine subprocess when --timeout is not
+    given: every legitimate run — all retry attempts at their own per-task
+    budget — fits under it with a wide grace margin, so it only fires on a
+    truly wedged engine (which previously hung run.py forever, since the
+    engine's internal guard cannot preempt a hung await). Returns None if
+    the config keys aren't available (old unlimited behavior)."""
+    section = engine_config.get(f"{provider}_web", {}) or {}
+    try:
+        per_task = int(section.get("max_sec_per_task") or 0)
+        retry = section.get("retry", {}) or {}
+        attempts = int(retry.get("max_total_attempts") or 0)
+    except (TypeError, ValueError):
+        return None
+    if per_task <= 0 or attempts <= 0:
+        return None
+    return per_task * attempts + 1800
 
 
 def _resolve_run_dir(engine_config: dict, provider: str) -> Path:
@@ -413,7 +590,33 @@ def main() -> int:
             "worker loop to execute one queued task per invocation."
         ),
     )
+    parser.add_argument(
+        "--skip-if-attempted",
+        action="store_true",
+        help=(
+            "Force source.filters.skip_already_attempted=True — with "
+            "--task-id this overrides its default re-run behavior, so a "
+            "task that already has a successful attempt becomes a no-op "
+            "(exit 3) instead of a duplicate attempt."
+        ),
+    )
+    parser.add_argument(
+        "--auth-precheck",
+        action="store_true",
+        help=(
+            "Before running, probe the provider session over CDP (login + "
+            "plan check, same probe the worker boxes use). Exit 4 without "
+            "touching any task if the session is dead."
+        ),
+    )
     args = parser.parse_args()
+
+    # SIGTERM (systemctl stop, orchestrator kill) must run our finally
+    # blocks — Python's default handler exits immediately, which would
+    # orphan the engine subprocess (it lives in its own process group and
+    # no longer receives the terminal's signals). SystemExit unwinds
+    # through run_engine's finally, reaping the engine tree.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
 
     run_config_path: Path | None = None
     run_config_is_task_yaml = False
@@ -470,7 +673,13 @@ def main() -> int:
             filters = SimpleNamespace()
             cfg.source.filters = filters
         filters.task_ids = [args.task_id]
-        filters.skip_already_attempted = False
+        filters.skip_already_attempted = bool(args.skip_if_attempted)
+    elif args.skip_if_attempted:
+        filters = getattr(cfg.source, "filters", None)
+        if filters is None:
+            filters = SimpleNamespace()
+            cfg.source.filters = filters
+        filters.skip_already_attempted = True
 
     provider = cfg.provider.kind
 
@@ -497,20 +706,27 @@ def main() -> int:
     )
 
     succeeded = failed = 0
+    cdp_lock = None
     try:
         specs = list(source.iter_tasks())
         specs = specs[args.start : args.end]
         logger.info(f"Loaded {len(specs)} task(s) from source kind={cfg.source.kind}")
 
         if not specs:
-            logger.warning("No tasks to run.")
-            return 0
+            logger.warning(
+                "No tasks to run (source filters excluded everything, or "
+                "the slice is empty)."
+            )
+            return EXIT_NO_TASKS
 
         required = [".".join(p) for p in PROVIDER_REQUIRED_KEYS.get(provider, [])]
         if ensure_overrides_present(
             required, context=f"Preflight for provider {provider!r}"
         ):
-            return 0
+            # Keys were just scaffolded as nulls — the config is incomplete
+            # and nothing was attempted. Previously exit 0, which callers
+            # (worker_loop) recorded as success.
+            return EXIT_CONFIG_ERROR
 
         # Build + preflight every task BEFORE the user-confirmation prompt.
         # If any task has null configs or missing files, abort here so the
@@ -542,6 +758,28 @@ def main() -> int:
                 logger.info("Aborted by user.")
                 return 0
 
+        # Environment gates — only for real runs (dry-run never touches the
+        # browser). Both fail BEFORE any task starts, with a distinct exit
+        # code, so callers can tell "environment blocked" from "task failed".
+        if not args.dry_run:
+            cdp_port = _resolve_cdp_port(cfg, provider)
+            if cdp_port is not None:
+                cdp_lock, holder = _acquire_cdp_lock(cdp_port)
+                if holder is not None:
+                    logger.error(
+                        f"Another run already drives Chrome on CDP port "
+                        f"{cdp_port} ({holder}) — two engines on one browser "
+                        f"corrupt both runs. Wait for it or use a different "
+                        f"browser/port."
+                    )
+                    return EXIT_ENV_BLOCKED
+            if args.auth_precheck:
+                ok, detail = _auth_precheck(cfg, provider)
+                if not ok:
+                    logger.error(f"Auth precheck failed: {detail}")
+                    return EXIT_ENV_BLOCKED
+                logger.info(f"Auth precheck: {detail}")
+
         for i, (spec, engine_config) in enumerate(prepared):
             idx = args.start + i
             logger.info(f"\n{'=' * 60}\nTASK {idx}: {spec.task_name}\n{'=' * 60}")
@@ -558,14 +796,22 @@ def main() -> int:
                 run_dir, spec.task_name, engine_config, started
             )
 
-            rc = run_engine(engine_config, engine_script, args.timeout)
+            # Deadman: --timeout wins; otherwise derive a conservative
+            # ceiling from the provider's own retry budget (None = the old
+            # unlimited behavior if those keys aren't configured).
+            deadman = (
+                args.timeout
+                if args.timeout is not None
+                else _default_deadman(engine_config, provider)
+            )
+            rc = run_engine(engine_config, engine_script, deadman)
             finished = datetime.now()
             solution_file = find_solution_file(
                 run_dir, spec.task_name, spec.solution_name, started
             )
             if rc == 0:
                 status = "success"
-            elif rc == 124:
+            elif rc == ENGINE_RC_TIMEOUT:
                 status = "timeout"
             else:
                 status = "failed"
@@ -612,10 +858,15 @@ def main() -> int:
 
         logger.info(f"\nDone. succeeded={succeeded} failed={failed}")
     finally:
+        if cdp_lock is not None:
+            try:
+                cdp_lock.close()  # closing the fd releases the flock
+            except Exception:
+                pass
         source.close()
         sink.close()
 
-    return 0 if failed == 0 else 1
+    return EXIT_OK if failed == 0 else EXIT_TASK_FAILED
 
 
 if __name__ == "__main__":

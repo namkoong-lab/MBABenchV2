@@ -64,7 +64,10 @@ class CompletedTask:
     task_name: str | None
     started_at: str
     finished_at: str
-    status: str  # 'success' | 'failed' | 'timeout' | 'cancelled' | 'crashed'
+    # 'success' | 'failed' | 'timeout' | 'cancelled' | 'crashed' |
+    # 'config_error' | 'no_tasks' | 'env_blocked'  (worker_loop maps
+    # infra.run exit codes; see _status_from_returncode)
+    status: str
     unit: str
 
 

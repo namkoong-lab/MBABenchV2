@@ -203,19 +203,27 @@ class ChatGPTWebAgent(WebAgent):
     # no stable data-testids — they are identified only by visible label text.
     # Map config values (and common aliases) to the exact on-screen labels.
     # Intelligence levels are role="menuitemradio"; "GPT-5.5" is role="menuitem".
+    # Labels as of the ~2026-07-11 picker update: ['Instant5.5', 'Medium',
+    # 'High', 'Extra High', 'Pro', 'GPT-5.6 Sol']. 'Pro Extended' was renamed
+    # to plain 'Pro' — the old aliases stay mapped so existing configs keep
+    # selecting the pro tier. From 07-11 until this fix, 'pro' silently fell
+    # through to "using current default": correct-looking on browsers whose
+    # account default had migrated to Pro, but a fresh profile (EC2 box)
+    # defaulted to a fast model and produced stub workbooks.
     MODEL_LABELS = {
-        "instant": "Instant",
+        "instant": "Instant5.5",
         "medium": "Medium",
         "high": "High",
         "extra high": "Extra High",
         "extra_high": "Extra High",
         "extrahigh": "Extra High",
-        "pro": "Pro Extended",
-        "pro extended": "Pro Extended",
-        "pro_extended": "Pro Extended",
-        "gpt-5.5": "GPT-5.5",
-        "gpt5.5": "GPT-5.5",
-        "5.5": "GPT-5.5",
+        "pro": "Pro",
+        "pro extended": "Pro",
+        "pro_extended": "Pro",
+        "gpt-5.6": "GPT-5.6 Sol",
+        "gpt5.6": "GPT-5.6 Sol",
+        "sol": "GPT-5.6 Sol",
+        "5.6": "GPT-5.6 Sol",
     }
 
     async def ensure_model_selected(self) -> bool:
@@ -226,9 +234,9 @@ class ChatGPTWebAgent(WebAgent):
         and uses the current default. Lookup is case-insensitive and accepts
         either an alias key or the exact visible label.
 
-        Supported values (config key -> label): ``instant`` -> Instant,
+        Supported values (config key -> label): ``instant`` -> Instant5.5,
         ``medium`` -> Medium, ``high`` -> High, ``extra high`` -> Extra High,
-        ``pro`` -> Pro Extended, ``gpt-5.5`` -> GPT-5.5.
+        ``pro`` -> Pro, ``gpt-5.6`` -> GPT-5.6 Sol.
 
         Selection flow:
           1. Click the composer pill
@@ -252,12 +260,15 @@ class ChatGPTWebAgent(WebAgent):
                     label = v
                     break
         if label is None:
-            logger.warning(
-                "Unknown ChatGPT model '%s'. Valid options: %s. Using current default.",
+            logger.error(
+                "Unknown ChatGPT model '%s'. Valid options: %s. FAILING the "
+                "attempt — running on an unverified default is worse than "
+                "failing loudly (07-11..07-13 the picker rename silently "
+                "downgraded runs for 2 days).",
                 target_model,
                 ", ".join(sorted(set(self.MODEL_LABELS.values()))),
             )
-            return True
+            return False
 
         try:
             logger.info("Selecting ChatGPT model: %s -> '%s'", target_model, label)
@@ -266,10 +277,13 @@ class ChatGPTWebAgent(WebAgent):
                 'button.__composer-pill[aria-haspopup="menu"]'
             ).first
             if not await pill.count():
-                logger.warning(
-                    "ChatGPT model-switcher pill not found — skipping model selection"
+                logger.error(
+                    "ChatGPT model-switcher pill not found — cannot verify "
+                    "the model; FAILING the attempt (a transient miss "
+                    "recovers on the engine's next attempt; a missing pill "
+                    "after a UI redesign must not silently run the default)"
                 )
-                return True
+                return False
 
             # Pill text is the current model — skip if already selected.
             current = (await pill.text_content() or "").strip()
@@ -296,16 +310,29 @@ class ChatGPTWebAgent(WebAgent):
                     '[role="menuitemradio"],[role="menuitem"]',
                     "els => els.map(e => (e.textContent || '').trim()).filter(Boolean)",
                 )
-                logger.warning(
-                    "Model '%s' not found in dropdown (available: %s) — using current default",
+                logger.error(
+                    "Model '%s' not found in dropdown (available: %s) — "
+                    "FAILING the attempt. The picker labels changed again: "
+                    "update MODEL_LABELS in this file to the new label set. "
+                    "(Old behavior silently ran the browser default — that "
+                    "produced 2 days of unverified runs after the 07-11 "
+                    "rename and stub workbooks on fresh profiles.)",
                     label,
                     available,
                 )
                 await self.page.keyboard.press("Escape")
-                return True
+                return False
 
             await asyncio.sleep(0.5)
             new_label = (await pill.text_content() or "").strip()
+            if new_label.casefold() != label.casefold():
+                logger.error(
+                    "Model selection did not take: requested '%s' but pill "
+                    "shows '%s' — FAILING the attempt (unverified model)",
+                    label,
+                    new_label,
+                )
+                return False
             logger.info(
                 "ChatGPT model selected: requested='%s', pill now shows='%s'",
                 label,
@@ -314,12 +341,17 @@ class ChatGPTWebAgent(WebAgent):
             return True
 
         except Exception as e:
-            logger.error("Error selecting ChatGPT model: %s", e)
+            logger.error(
+                "Error selecting ChatGPT model: %s — FAILING the attempt "
+                "(model cannot be verified; the engine's retry loop absorbs "
+                "transient DOM races)",
+                e,
+            )
             try:
                 await self.page.keyboard.press("Escape")
             except Exception:
                 pass
-            return True
+            return False
 
     async def _enable_agent_mode(self) -> bool:
         """Enable Agent mode via + menu > hover More > click Agent mode."""
@@ -366,7 +398,10 @@ class ChatGPTWebAgent(WebAgent):
         """
         await asyncio.sleep(2)
 
-        await self.ensure_model_selected()
+        if not await self.ensure_model_selected():
+            # Loud-fail policy (2026-07-13): a model that can't be verified
+            # must fail the attempt, not silently run the browser default.
+            return False
 
         if self.agent_mode:
             return await self._enable_agent_mode()
@@ -544,7 +579,11 @@ class ChatGPTWebAgent(WebAgent):
             if prompt_number == 1:
                 features_ok = await self.ensure_features_enabled()
                 if not features_ok:
-                    logger.warning("Failed to enable features before sending")
+                    logger.error(
+                        "Feature/model setup failed — aborting send instead "
+                        "of running on an unverified model (see errors above)"
+                    )
+                    return False
 
             # Click send button
             url_before = self.page.url
@@ -1263,8 +1302,23 @@ class ChatGPTWebAgent(WebAgent):
 
             # Per-button click budget. Each card may have N icon buttons and
             # we try them in order; the REAL download button is the first one
-            # that causes a new file to appear within this window.
+            # that causes a new file to appear within this window. Kept short
+            # ON PURPOSE: a wrong button must fail fast so we can try the next.
             per_button_wait_sec = 6
+
+            # Budget for a KNOWN-CORRECT download control (the preview panel's
+            # exact "Download" button, or a hover-revealed download control).
+            # Clicking it makes ChatGPT re-package the file from the
+            # conversation's code-interpreter sandbox — a server round-trip
+            # whose latency is environment-bound: <1s on a local machine, but
+            # ~38s observed on an EC2 box (headless Chrome on shared vCPU +
+            # cloud egress + a Pro account shared with a concurrent run). The
+            # old 15s window was tuned on a fast machine and silently timed
+            # out on the box — the click SUCCEEDED (HTTP 200, file served) but
+            # we'd already stopped watching, so the download was recorded as a
+            # failure and the whole task was thrown away. No wrong-button risk
+            # here (the control is known-correct), so wait generously.
+            panel_download_wait_sec = 90
 
             async def _attempt_download(click_action, wait_sec):
                 """Run click_action() and return the resulting file Path, or
@@ -1340,7 +1394,7 @@ class ChatGPTWebAgent(WebAgent):
                     logger.info(f"  {card_id}: hover revealed {sel!r}; clicking")
                     got = await _attempt_download(
                         lambda b=btn.first: b.click(force=True, timeout=5000),
-                        per_button_wait_sec,
+                        panel_download_wait_sec,
                     )
                     if got:
                         return got
@@ -1394,36 +1448,59 @@ class ChatGPTWebAgent(WebAgent):
                             f"  {card_id}: preview-open click failed ({e})"
                         )
                     if opened:
-                        for sel in (
-                            'button[aria-label="Download"]',  # exact — the panel button
-                            'a[aria-label="Download"]',
-                            'button[aria-label*="ownload"]',
-                            'button:has-text("Download")',
-                        ):
-                            btn = self.page.locator(sel)
-                            visible = None
-                            for k in range(await btn.count()):
-                                cand = btn.nth(k)
-                                try:
-                                    aria = (await cand.get_attribute("aria-label")) or ""
-                                    if "apps" in aria.lower():
-                                        continue  # sidebar "Download apps" trap
-                                    if await cand.is_visible():
-                                        visible = cand
-                                        break
-                                except Exception:
-                                    continue
-                            if visible is None:
-                                continue
+                        # WAIT for the preview VIEWER to fully mount before
+                        # clicking Download. Root cause of the EC2 download
+                        # failures (diagnosed live 2026-07-14 via CDP download
+                        # events): the preview is a <div role="dialog" z-[120]>
+                        # whose Download button appears in the DOM a beat before
+                        # the spreadsheet <canvas> mounts — and the button's
+                        # click handler is NOT wired up until that canvas is
+                        # present. Proven on the box: clicking when only the
+                        # button existed fired NO download (recorder showed zero
+                        # download requests); clicking once the canvas +toolbar
+                        # were present fired the download and the file landed in
+                        # ~1s. The old code searched ~2.5s after opening, hit
+                        # the not-yet-live button (or fell through to a loose
+                        # aria-label*="ownload" selector matching a stray page
+                        # element), clicked a dead control, and then waited the
+                        # full window for a file that was never requested. Fix:
+                        # poll (dialog-scoped) for the exact Download button AND
+                        # the spreadsheet canvas both present before clicking.
+                        visible = None
+                        deadline = asyncio.get_event_loop().time() + 45
+                        while asyncio.get_event_loop().time() < deadline:
+                            ready = await self.page.evaluate(
+                                r"""() => {
+                                const d = document.querySelector('[role="dialog"]');
+                                if (!d) return false;
+                                const dl = d.querySelector('button[aria-label="Download"]');
+                                const canvas = d.querySelector('canvas');
+                                return !!(dl && canvas);
+                            }"""
+                            )
+                            if ready:
+                                btn = self.page.locator(
+                                    '[role="dialog"] button[aria-label="Download"]'
+                                ).first
+                                if await btn.count() and await btn.is_visible():
+                                    visible = btn
+                                    break
+                            await asyncio.sleep(0.5)
+                        if visible is None:
+                            logger.warning(
+                                f"  {card_id}: preview viewer (canvas+Download) "
+                                f"did not fully mount within 45s"
+                            )
+                        else:
+                            # brief extra settle so the click handler is live
+                            await asyncio.sleep(1.0)
                             logger.info(
-                                f"  {card_id}: panel control {sel!r}; clicking"
+                                f"  {card_id}: viewer mounted; clicking Download"
                             )
                             got = await _attempt_download(
                                 lambda b=visible: b.click(force=True, timeout=5000),
-                                per_button_wait_sec + 9,
+                                panel_download_wait_sec,
                             )
-                            if got:
-                                break
                 finally:
                     # Safety net: ALWAYS attempt to dismiss the preview panel
                     # — on success, on download-not-found, AND on a failed
@@ -1437,14 +1514,21 @@ class ChatGPTWebAgent(WebAgent):
                         pass
                 return got
 
-            async def _fallback_bounded(card_id, filename, budget_sec=240):
+            async def _fallback_bounded(card_id, filename, budget_sec=360):
                 """A CDP stall inside the panel flow must cost minutes, not
                 hours: task 12 (2026-07-11) hung 3.5h on a locator await after
                 the renderer died — the engine's per-attempt guard only sets a
                 flag and cannot preempt a hung await, so the orchestrator's 5h
                 deadman was the only backstop. Bound the whole fallback here;
                 on timeout the card is abandoned and the normal retry
-                machinery (fresh attempt, fresh page) gets to recover."""
+                machinery (fresh attempt, fresh page) gets to recover.
+
+                Budget must exceed one panel-open + one full
+                panel_download_wait_sec (90s) with margin, else it would
+                pre-empt a legitimately-slow-but-successful download on a slow
+                EC2 box — the exact bug this change fixes. 360s leaves room for
+                the open + a 90s wait + a rescue selector, while still bounding
+                a truly wedged page to minutes."""
                 try:
                     return await asyncio.wait_for(
                         _hover_panel_fallback(card_id, filename), budget_sec
