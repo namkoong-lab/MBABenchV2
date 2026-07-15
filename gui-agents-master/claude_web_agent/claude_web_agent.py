@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from claude_web_agent.web_agent import WebAgent, WebAgentState, ConversationMessage
+from claude_web_agent.dom_diagnostics import dump_final_message_dom
 
 logger = logging.getLogger(__name__)
 
@@ -1694,6 +1695,17 @@ class ClaudeWebAgent(WebAgent):
             logger.info("Looking for artifacts to download...")
             await asyncio.sleep(1)
 
+            # Always-on diagnostic: record how the finished file is presented
+            # (control form + final-message HTML) before we touch the panel, so
+            # a UI format drift is self-documenting in the log. Claude message
+            # container selectors drift, so several are tried; the control scan
+            # is selector-independent regardless.
+            await dump_final_message_dom(
+                self.page, logger, "claude",
+                ["div.font-claude-message", "[data-testid='assistant-message']",
+                 "[data-is-streaming]", "article"],
+            )
+
             # Close artifact preview panel if open (its Download button
             # duplicates the in-chat download buttons)
             for close_selector in [
@@ -1720,19 +1732,48 @@ class ClaudeWebAgent(WebAgent):
                 except Exception:
                     pass
 
-            # The Download endpoint streams the file from the conversation's
-            # code-execution sandbox (…/wiggle/download-file?path=/mnt/
-            # user-data/outputs/…), and every in-chat Download button
-            # resolves to the SAME url. Clicking right after the final
-            # response — especially one interrupted mid tool-run — can race
-            # the sandbox file before it settles: the endpoint returns an
-            # empty body, which Chrome saves as a "successful" 0-byte
-            # download. Button choice can't win that race (same url), only
-            # time can — so when a full sweep yields no non-empty Excel
-            # file, wait for the sandbox to settle and re-sweep.
-            SWEEP_ROUNDS = 3
+            # Claude xlsx artifacts download as CLIENT-SIDE BLOBS. Playwright's
+            # page.expect_download() CANNOT capture a blob download over a CDP
+            # connection — it saves a 0-byte file (deterministically, not a
+            # race). Chrome's own download manager writes the full file, so we
+            # drive it directly via CDP Browser.setDownloadBehavior and detect
+            # the completed file on disk — the same mechanism the ChatGPT agent
+            # uses. Confirmed 2026-07-14 against a live artifact: on the SAME
+            # Download button, expect_download -> 0 bytes, native CDP -> 101351
+            # bytes. An expect_download fallback is retained for the older
+            # HTTP/sandbox-link download form, which it handles fine.
+            out_dir = Path(download_dir) if download_dir else Path.cwd()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            cdp = None
+            try:
+                cdp = await self.page.context.new_cdp_session(self.page)
+                await cdp.send(
+                    "Browser.setDownloadBehavior",
+                    {
+                        "behavior": "allowAndName",
+                        "downloadPath": str(out_dir.resolve()),
+                        "eventsEnabled": True,
+                    },
+                )
+                logger.info(f"CDP native download path: {out_dir.resolve()}")
+            except Exception as e:
+                logger.warning(
+                    f"CDP download setup failed ({e}); falling back to "
+                    f"page.expect_download (0-byte-prone for blob artifacts)"
+                )
+                cdp = None
+
+            # With native download the file is present the instant the button
+            # is clicked; the re-sweep loop only covers a click that briefly
+            # precedes the file being written (e.g. after a mid-tool-run
+            # interruption). In the common case, sweep 1 succeeds immediately.
+            SWEEP_ROUNDS = 5
             SWEEP_RETRY_DELAY_SEC = 30
-            seen_filenames: set[str] = set()
+            # Whether the chat actually showed a download button this call. If
+            # buttons appeared but every download came back 0-byte, the model
+            # IS finished and the file is present-but-unretrievable — the engine
+            # must NOT re-prompt "Continue" (that just spams a finished model).
+            self.last_download_saw_buttons = False
 
             for sweep in range(1, SWEEP_ROUNDS + 1):
                 # Find download buttons in chat only
@@ -1767,76 +1808,23 @@ class ClaudeWebAgent(WebAgent):
                     logger.warning("No download buttons found on page")
                     break
 
-                # Use a short timeout per button — if a button is blocked
-                # by an overlay (e.g. artifact preview panel), fail fast
-                per_btn_timeout = 5000
+                # Buttons are present => the model delivered a file. Record it
+                # so the engine can tell "present-but-0-byte" (don't re-prompt)
+                # from "no file at all" (Continue is legitimate).
+                self.last_download_saw_buttons = True
+
                 for i, btn in enumerate(download_btns):
-                    try:
-                        logger.info(
-                            f"Downloading artifact {i+1}/{len(download_btns)}..."
-                        )
-                        async with self.page.expect_download(
-                            timeout=per_btn_timeout
-                        ) as download_info:
-                            await btn.click(timeout=per_btn_timeout)
-
-                        download = await download_info.value
-                        filename = download.suggested_filename
-
-                        # Skip duplicates only once a *valid* (non-empty) copy
-                        # of this filename has already been saved. Earlier
-                        # in-chat cards can reference a stale/invalidated
-                        # artifact version that "downloads" successfully but
-                        # writes an empty file — if we marked it seen here,
-                        # a later button for the same filename (often the
-                        # fresher version) would be wrongly skipped as a dup.
-                        if filename in seen_filenames:
-                            logger.info(f"Skipping duplicate download: {filename}")
-                            await download.cancel()
-                            continue
-
-                        if download_dir:
-                            save_path = Path(download_dir) / filename
-                            await download.save_as(str(save_path))
-                        else:
-                            save_path = Path(await download.path())
-
-                        # Guard against 0-byte artifacts: an in-chat download
-                        # button can reference a stale artifact version that
-                        # completes without error but writes no bytes. Poll
-                        # briefly in case the file is still landing on disk,
-                        # then discard a persistent 0-byte result instead of
-                        # accepting it — the next button (if any) gets a
-                        # real attempt since the filename isn't marked seen.
-                        file_size = 0
-                        for _ in range(5):
-                            file_size = (
-                                save_path.stat().st_size if save_path.exists() else 0
-                            )
-                            if file_size > 0:
-                                break
-                            await asyncio.sleep(0.3)
-
-                        if file_size == 0:
-                            logger.warning(
-                                f"Downloaded artifact {i+1} is empty (0 bytes): "
-                                f"{save_path} — discarding, trying next button"
-                            )
-                            try:
-                                save_path.unlink()
-                            except OSError:
-                                pass
-                            continue
-
-                        seen_filenames.add(filename)
-                        downloaded_files.append(str(save_path))
-                        logger.info(f"Downloaded: {save_path}")
-
-                        await asyncio.sleep(0.5)
-
-                    except Exception as e:
-                        logger.warning(f"Failed to download artifact {i+1}: {e}")
-                        continue
+                    logger.info(
+                        f"Downloading artifact {i+1}/{len(download_btns)}..."
+                    )
+                    saved = await self._download_via_button(btn, i, out_dir, cdp)
+                    if saved is not None:
+                        downloaded_files.append(str(saved))
+                        # A valid workbook is all we need — the sibling buttons
+                        # are the SAME artifact (v1/v2/v3 version cards each get
+                        # their own Download button). Stop clicking.
+                        if str(saved).lower().endswith((".xlsx", ".xls")):
+                            break
 
                 got_excel = any(
                     f.lower().endswith((".xlsx", ".xls")) for f in downloaded_files
@@ -1846,8 +1834,7 @@ class ClaudeWebAgent(WebAgent):
                 if sweep < SWEEP_ROUNDS:
                     logger.warning(
                         f"Sweep {sweep}/{SWEEP_ROUNDS} yielded no non-empty Excel "
-                        f"file — waiting {SWEEP_RETRY_DELAY_SEC}s for the sandbox "
-                        f"file to settle, then re-sweeping"
+                        f"file — waiting {SWEEP_RETRY_DELAY_SEC}s and re-sweeping"
                     )
                     await asyncio.sleep(SWEEP_RETRY_DELAY_SEC)
                 else:
@@ -1860,6 +1847,101 @@ class ClaudeWebAgent(WebAgent):
             logger.error(f"Failed to download artifacts: {e}")
 
         return downloaded_files
+
+    async def _download_via_button(
+        self, btn, index: int, out_dir: Path, cdp
+    ) -> Optional[Path]:
+        """Click one in-chat Download button; return the Path to the saved
+        (non-empty) file, or None.
+
+        Uses Chrome's native download manager via CDP when available — this is
+        REQUIRED for Claude's client-side blob artifacts, which
+        page.expect_download() saves as 0 bytes over a CDP connection. Falls
+        back to expect_download for the older HTTP/sandbox-link download form.
+        """
+        if cdp is not None:
+            before = set(out_dir.iterdir())
+            try:
+                await btn.click(timeout=5000)
+            except Exception as e:
+                logger.warning(f"  artifact {index+1}: click failed ({e})")
+                return None
+            # Poll for a newly-completed (non-.crdownload), non-empty file.
+            deadline = asyncio.get_event_loop().time() + 20
+            while asyncio.get_event_loop().time() < deadline:
+                fresh = [
+                    f
+                    for f in set(out_dir.iterdir()) - before
+                    if not f.name.endswith(".crdownload")
+                    and f.is_file()
+                    and f.stat().st_size > 0
+                ]
+                if fresh:
+                    saved = self._finalize_native_download(fresh[0], out_dir)
+                    logger.info(
+                        f"Downloaded: {saved} ({saved.stat().st_size} bytes)"
+                    )
+                    return saved
+                await asyncio.sleep(0.3)
+            logger.warning(
+                f"  artifact {index+1}: no completed file appeared within 20s "
+                f"(native CDP download)"
+            )
+            return None
+
+        # Fallback: Playwright download event (HTTP downloads only).
+        try:
+            async with self.page.expect_download(timeout=5000) as di:
+                await btn.click(timeout=5000)
+            download = await di.value
+            save_path = out_dir / (download.suggested_filename or "artifact.xlsx")
+            await download.save_as(str(save_path))
+        except Exception as e:
+            logger.warning(f"  artifact {index+1}: expect_download failed ({e})")
+            return None
+        size = 0
+        for _ in range(5):
+            size = save_path.stat().st_size if save_path.exists() else 0
+            if size > 0:
+                break
+            await asyncio.sleep(0.3)
+        if size == 0:
+            logger.warning(
+                f"  artifact {index+1} is empty (0 bytes): {save_path} — discarding"
+            )
+            try:
+                save_path.unlink()
+            except OSError:
+                pass
+            return None
+        logger.info(f"Downloaded: {save_path}")
+        return save_path
+
+    def _finalize_native_download(self, f: Path, out_dir: Path) -> Path:
+        """Browser.setDownloadBehavior 'allowAndName' names the completed file
+        by download GUID with NO extension. Give it a real extension so the
+        engine's xlsx/xls check accepts it: xlsx files are ZIP archives, so a
+        'PK' magic prefix => .xlsx. (The engine later renames the file to the
+        canonical task-based solution name, so only the extension matters here.)
+        """
+        if f.suffix.lower() in (".xlsx", ".xls"):
+            return f
+        try:
+            with open(f, "rb") as fh:
+                head = fh.read(4)
+        except OSError:
+            head = b""
+        ext = ".xlsx" if head[:2] == b"PK" else (f.suffix or ".bin")
+        target = out_dir / f"{f.name}{ext}"
+        counter = 1
+        while target.exists():
+            target = out_dir / f"{f.name}_{counter}{ext}"
+            counter += 1
+        try:
+            f.rename(target)
+            return target
+        except OSError:
+            return f
 
 
 # Backward compatibility
