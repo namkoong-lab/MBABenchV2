@@ -10,12 +10,15 @@ Uses Playwright to:
 """
 
 import asyncio
+import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from claude_web_agent.web_agent import WebAgent, WebAgentState, ConversationMessage
+from claude_web_agent.dom_diagnostics import dump_final_message_dom
 
 logger = logging.getLogger(__name__)
 
@@ -972,6 +975,151 @@ class ChatGPTWebAgent(WebAgent):
             logger.error(f"Response extraction failed: {e}")
             return None
 
+    async def _download_via_backend_api(
+        self, download_path: Path, timeout: int
+    ) -> list[str]:
+        """Strategy 0 — download the finished xlsx via ChatGPT's backend API,
+        never opening the file-preview panel (which is what OOM-crashes the
+        renderer on heavy files).
+
+        Code-interpreter output files are referenced in the conversation by a
+        `sandbox:/mnt/data/<name>.xlsx` link inside the assistant message that
+        produced them (NOT by a downloadable file id — that id is minted on
+        demand). The reliable, no-render chain (validated live 2026-07-16),
+        all authenticated GETs through the browser context (cookies + bearer):
+          1. /backend-api/conversation/{cid}        -> messages + sandbox refs
+          2. .../{cid}/interpreter/download?message_id={mid}&sandbox_path={p}
+                                                     -> {download_url: estuary?..sig=}
+          3. GET download_url                        -> the xlsx bytes
+        `sandbox_path` is the RAW /mnt/data/... path (the `sandbox:` prefix
+        must be stripped, or the mint returns file_not_found). No grid renders,
+        so a 3 MB file behaves like a 100 KB one.
+
+        BACKWARDS-COMPATIBLE BY CONSTRUCTION: returns [saved_path] ONLY when it
+        matches the exact xlsx filename the DOM is already offering AND the bytes
+        validate as a non-empty .xlsx. Any ambiguity/error -> returns [] so the
+        caller falls back to the untouched preview/sandbox flow. It therefore
+        downloads the SAME file the old flow targets — just without the preview.
+        """
+        from urllib.parse import quote
+
+        # --- conversation id from the page URL (…/c/{uuid}) ---
+        m = re.search(r"/c/([0-9a-fA-F-]{36})", self.page.url)
+        if not m:
+            logger.info("backend-API: no /c/{uuid} in page URL; deferring")
+            return []
+        cid = m.group(1)
+
+        # --- filenames the DOM is offering (what the engine would click) ---
+        # Prefer a step-3 / final-looking name over the uploaded input file.
+        dom_names = await self.page.evaluate(
+            r"""() => {
+                const names = new Set();
+                const scan = s => {
+                    const mm = (s || '').match(/([\w()\-. ]+\.xlsx)/i);
+                    if (mm) names.add(mm[1].trim());
+                };
+                document.querySelectorAll('button, a, [aria-label]').forEach(el => {
+                    if (el.getAttribute) scan(el.getAttribute('aria-label'));
+                    scan(el.textContent);
+                });
+                return [...names];
+            }"""
+        )
+
+        def _rank(n: str):
+            nl = n.lower()
+            return (("step3" in nl or "final" in nl), "step2" not in nl, len(n))
+
+        dom_names = sorted(dom_names, key=_rank, reverse=True)
+        if not dom_names:
+            logger.info("backend-API: DOM offered no .xlsx name; deferring")
+            return []
+        logger.info(f"backend-API: DOM offers {dom_names[:5]}")
+
+        req = self.page.context.request
+        sess = await (
+            await req.get("https://chatgpt.com/api/auth/session", timeout=timeout)
+        ).json()
+        token = sess.get("accessToken")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        conv = await (
+            await req.get(
+                f"https://chatgpt.com/backend-api/conversation/{cid}",
+                headers=headers,
+                timeout=timeout,
+            )
+        ).json()
+
+        # Collect (basename -> (message_id, /mnt/data path)) for every xlsx
+        # sandbox ref, walking messages oldest→newest so the LAST write of a
+        # given filename wins (the step-3 QA output supersedes earlier steps).
+        mapping = conv.get("mapping") or {}
+
+        def _ctime(item):
+            msg = (item[1].get("message") or {})
+            return msg.get("create_time") or 0
+
+        refs: dict[str, tuple[str, str]] = {}
+        for mid, node in sorted(mapping.items(), key=_ctime):
+            msg = node.get("message") or {}
+            body = json.dumps(msg.get("content") or {})
+            for sref in re.findall(r"sandbox:(/mnt/data/[^\"\\]+?\.xlsx)", body):
+                mid_val = (msg.get("id") or mid)
+                refs[Path(sref).name.lower()] = (mid_val, sref)
+        if not refs:
+            logger.info("backend-API: no sandbox xlsx refs in conversation; deferring")
+            return []
+        logger.info(f"backend-API: sandbox xlsx refs {list(refs.keys())}")
+
+        # STRICT match: the highest-ranked DOM name that maps to a sandbox ref.
+        chosen_name = mid = sandbox_path = None
+        for tname in dom_names:
+            if tname.lower() in refs:
+                chosen_name = tname
+                mid, sandbox_path = refs[tname.lower()]
+                break
+        if not chosen_name:
+            logger.info(
+                "backend-API: no DOM name matched a sandbox ref — deferring to "
+                "preview/sandbox flow (backwards-safe)"
+            )
+            return []
+
+        # Mint the signed download URL (raw /mnt/data path, no sandbox: prefix).
+        mint = await (
+            await req.get(
+                f"https://chatgpt.com/backend-api/conversation/{cid}"
+                f"/interpreter/download"
+                f"?message_id={mid}&sandbox_path={quote(sandbox_path, safe='')}",
+                headers=headers,
+                timeout=timeout,
+            )
+        ).json()
+        url = mint.get("download_url")
+        if mint.get("status") != "success" or not url:
+            logger.info(
+                f"backend-API: mint failed (status={mint.get('status')}, "
+                f"code={mint.get('error_code')}); deferring"
+            )
+            return []
+        resp = await req.get(url, timeout=timeout)
+        body = await resp.body()
+        if resp.status != 200 or len(body) < 200 or body[:2] != b"PK":
+            logger.info(
+                f"backend-API: bytes failed validation (status={resp.status}, "
+                f"len={len(body)}, magic={body[:2]!r}); deferring"
+            )
+            return []
+
+        save_path = download_path / Path(chosen_name).name
+        save_path.write_bytes(body)
+        logger.info(
+            f"backend-API: saved {save_path} ({len(body)} bytes) with NO preview"
+        )
+        return [str(save_path)]
+
     async def download_all_artifacts(
         self, download_dir: Optional[str] = None, timeout: int = 30000
     ) -> list[str]:
@@ -1000,11 +1148,45 @@ class ChatGPTWebAgent(WebAgent):
         download_path = Path(download_dir) if download_dir else Path(".")
         download_path.mkdir(parents=True, exist_ok=True)
 
+        # Strategy 0: download the finished xlsx straight from the backend API,
+        # WITHOUT opening the file-preview panel. The preview renders the whole
+        # spreadsheet grid and OOM-crashes the renderer on heavy files (2-3 MB
+        # models) — this path never renders anything. Fully additive and
+        # guarded: it only returns a file when it can confidently match the
+        # xlsx the DOM is offering; on ANY miss/error it returns [] and we fall
+        # straight through to the proven preview/sandbox flow below, so tasks
+        # that already download keep working unchanged.
+        try:
+            api_files = await self._download_via_backend_api(download_path, timeout)
+            if api_files:
+                logger.info(
+                    f"Downloaded via backend API — preview bypassed (no OOM risk): "
+                    f"{api_files}"
+                )
+                return api_files
+            logger.info(
+                "Backend-API download found no confident match — falling through "
+                "to the preview/sandbox flow"
+            )
+        except Exception as e:
+            logger.info(
+                f"Backend-API download path errored ({e!r}) — falling through to "
+                f"the preview/sandbox flow"
+            )
+
         try:
             # Scroll to the bottom of the conversation to ensure all file cards
             # are rendered in the DOM before searching.
             await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await self.page.wait_for_timeout(2000)
+
+            # Always-on diagnostic: record how the finished file is presented
+            # (control form + final-message HTML) so a UI format drift is
+            # self-documenting in the log rather than a silent zero-file result.
+            await dump_final_message_dom(
+                self.page, logger, "chatgpt",
+                ["[data-message-author-role='assistant']", "article"],
+            )
 
             # Strategy 1: Find artifact preview cards via JS DOM inspection.
             # Only search articles AFTER the baseline count (i.e., new articles
@@ -1448,57 +1630,75 @@ class ChatGPTWebAgent(WebAgent):
                             f"  {card_id}: preview-open click failed ({e})"
                         )
                     if opened:
-                        # WAIT for the preview VIEWER to fully mount before
-                        # clicking Download. Root cause of the EC2 download
-                        # failures (diagnosed live 2026-07-14 via CDP download
-                        # events): the preview is a <div role="dialog" z-[120]>
-                        # whose Download button appears in the DOM a beat before
-                        # the spreadsheet <canvas> mounts — and the button's
-                        # click handler is NOT wired up until that canvas is
-                        # present. Proven on the box: clicking when only the
-                        # button existed fired NO download (recorder showed zero
-                        # download requests); clicking once the canvas +toolbar
-                        # were present fired the download and the file landed in
-                        # ~1s. The old code searched ~2.5s after opening, hit
-                        # the not-yet-live button (or fell through to a loose
-                        # aria-label*="ownload" selector matching a stray page
-                        # element), clicked a dead control, and then waited the
-                        # full window for a file that was never requested. Fix:
-                        # poll (dialog-scoped) for the exact Download button AND
-                        # the spreadsheet canvas both present before clicking.
-                        visible = None
+                        # WAIT for the preview VIEWER to mount before clicking
+                        # Download: the control's click handler is not wired
+                        # until the viewer content has rendered — clicking the
+                        # bare button fires NO request (proven on EC2 2026-07-14
+                        # via CDP download events; clicking once the viewer was
+                        # present fired the download and the file landed in ~1s).
+                        #
+                        # 2026-07-14 (tasks 43/44 failed the batch): the viewer
+                        # shape changed. The old check REQUIRED a <canvas> inside
+                        # a [role="dialog"]; that exact pair no longer mounts, so
+                        # the 45s poll always timed out and every download was
+                        # forfeited even though the file was ready. Loosened on
+                        # three axes: (1) viewer content may render as <canvas>
+                        # OR <iframe>; (2) its container may be [role="dialog"]
+                        # OR <aside>; (3) the Download control is matched by
+                        # EXACT aria-label "Download" (the sidebar "Download
+                        # apps" item is a different label, so still no trap) as a
+                        # button OR anchor. If the control is visible but the
+                        # viewer content never mounts within the window, click it
+                        # anyway as a last resort — a possibly-dead click that
+                        # _attempt_download simply reports as no-file is strictly
+                        # better than forfeiting a finished workbook outright.
+                        dl_sel = (
+                            'button[aria-label="Download"]:visible, '
+                            'a[aria-label="Download"]:visible'
+                        )
+                        visible = None       # button + viewer both confirmed
+                        last_resort = None    # button visible, viewer unconfirmed
                         deadline = asyncio.get_event_loop().time() + 45
                         while asyncio.get_event_loop().time() < deadline:
-                            ready = await self.page.evaluate(
+                            state = await self.page.evaluate(
                                 r"""() => {
-                                const d = document.querySelector('[role="dialog"]');
-                                if (!d) return false;
-                                const dl = d.querySelector('button[aria-label="Download"]');
-                                const canvas = d.querySelector('canvas');
-                                return !!(dl && canvas);
+                                const vis = el => el && el.getBoundingClientRect().width > 0;
+                                const btn = [...document.querySelectorAll(
+                                    'button[aria-label="Download"], a[aria-label="Download"]'
+                                )].find(vis);
+                                const viewer = document.querySelector(
+                                    '[role="dialog"] canvas, [role="dialog"] iframe,'
+                                    + ' aside canvas, aside iframe'
+                                );
+                                return {hasBtn: !!btn, hasViewer: !!viewer};
                             }"""
                             )
-                            if ready:
-                                btn = self.page.locator(
-                                    '[role="dialog"] button[aria-label="Download"]'
-                                ).first
-                                if await btn.count() and await btn.is_visible():
-                                    visible = btn
+                            if state["hasBtn"]:
+                                last_resort = self.page.locator(dl_sel).first
+                                if state["hasViewer"]:
+                                    visible = last_resort
                                     break
                             await asyncio.sleep(0.5)
-                        if visible is None:
+                        target = visible or last_resort
+                        if target is None:
                             logger.warning(
-                                f"  {card_id}: preview viewer (canvas+Download) "
-                                f"did not fully mount within 45s"
+                                f"  {card_id}: no Download control appeared in "
+                                f"the preview within 45s"
                             )
                         else:
+                            if visible is None:
+                                logger.info(
+                                    f"  {card_id}: Download visible but viewer "
+                                    f"content never mounted — clicking anyway"
+                                )
+                            else:
+                                logger.info(
+                                    f"  {card_id}: viewer mounted; clicking Download"
+                                )
                             # brief extra settle so the click handler is live
                             await asyncio.sleep(1.0)
-                            logger.info(
-                                f"  {card_id}: viewer mounted; clicking Download"
-                            )
                             got = await _attempt_download(
-                                lambda b=visible: b.click(force=True, timeout=5000),
+                                lambda b=target: b.click(force=True, timeout=5000),
                                 panel_download_wait_sec,
                             )
                 finally:
