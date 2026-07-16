@@ -348,7 +348,8 @@ def _kill_engine_tree(proc: subprocess.Popen) -> None:
         logger.error(f"engine pid={proc.pid} survived SIGKILL (?)")
 
 
-def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) -> int:
+def run_engine(engine_config: dict, engine_script: Path, timeout: int | None,
+               cdp_port: int | None = None) -> int:
     """Run the engine subprocess, streaming its output. Returns its exit
     code, or ENGINE_RC_TIMEOUT if the deadman killed it.
 
@@ -364,10 +365,15 @@ def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) ->
     the SystemExit handler in main, unexpected exception) — run.py never
     leaves an orphaned engine driving the shared Chrome.
     """
+    # The CDP port is embedded in the temp-config filename so external
+    # supervisors (e.g. infra/overnight) can pgrep-scope the engine child to
+    # ONE browser instance — parallel runs on distinct ports must never sweep
+    # or kill each other's engine.
+    port_tag = f"cdp{cdp_port}_" if cdp_port is not None else ""
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".yaml",
-        prefix=f"gui_agents_{engine_config.get('task_name', 'task')}_",
+        prefix=f"gui_agents_{port_tag}{engine_config.get('task_name', 'task')}_",
         delete=False,
     ) as f:
         yaml.safe_dump(engine_config, f, default_flow_style=False)
@@ -804,7 +810,7 @@ def main() -> int:
                 if args.timeout is not None
                 else _default_deadman(engine_config, provider)
             )
-            rc = run_engine(engine_config, engine_script, deadman)
+            rc = run_engine(engine_config, engine_script, deadman, cdp_port)
             finished = datetime.now()
             solution_file = find_solution_file(
                 run_dir, spec.task_name, spec.solution_name, started
