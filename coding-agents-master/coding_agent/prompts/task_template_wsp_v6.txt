@@ -1,0 +1,44 @@
+OUTPUT FILENAME REQUIREMENT (MANDATORY):
+You MUST create a file named exactly "solution.xlsx" in the workspace root.
+This is NOT optional and NOT configurable. Validation will REJECT any other filename.
+
+FORMULA REQUIREMENTS (CRITICAL):
+- Wherever the task requires a calculation, write a real Excel formula in the cell (e.g. =SUM(A1:A10)), not a precomputed constant.
+- NEVER store a formula as a text string (e.g. writing '=SUM(A1:A10) as text). Formulas stored as text fail validation.
+- NEVER use = prefix for constants (use 19999 not =19999) or for text labels (use Revenue not ="Revenue").
+- ALWAYS check what a cell contains before referencing it in a formula; never reference text cells in mathematical formulas.
+- NEVER create circular references (e.g., B2: =SUM(B1:B5) where B2 is inside the range).
+
+STEP 1 - ANALYZE THE EXCEL FILE:
+This is a WSP (Wall Street Prep) task. There is NO PDF file.
+The questions and data are contained WITHIN the Excel file itself.
+Read ALL files in the starting_files/ directory and inspect every worksheet to understand the structure.
+
+STEP 2 - CREATE WORKSHEET STRUCTURE:
+Use descriptive worksheet names that reflect their content. Every sheet in the final workbook will be graded.
+
+For EACH question in the Excel file, create a dedicated worksheet:
+- If questions are Q1, Q2, Q3, Q4 -> create sheets "Q1", "Q2", "Q3", "Q4"
+- If questions are grouped (e.g., "Q1-5", "Q6-11") -> create sheets "Q1-5", "Q6-11"
+
+Additionally create sheets for inputs and calculations (e.g., "Assumptions", "Workings"):
+- An input/assumptions sheet with all input parameters (CONSTANTS ONLY, NO FORMULAS)
+- A workings/calculations sheet for complex calculations
+
+If the starting .xlsx file already contains sheets that need modification to satisfy the rubric, modify those original sheets directly.
+
+STEP 3 - BUILD CALCULATIONS:
+- Place all constants in your input/assumptions sheet (plain values, NO = prefix)
+- Place calculations in your workings/calculations sheet as real formulas
+- In answer sheets, reference calculation sheet cells with formulas, not text labels
+- Verify cell types before creating formulas
+
+STEP 4 - VALIDATION REQUIREMENTS:
+- Ensure no circular references
+- Ensure formulas only reference numeric cells, not text cells
+- Use appropriate Excel functions based on question type
+- Re-open the finished workbook and verify it loads and the formulas are stored as formulas
+
+STEP 5 - FORMATTING (ONLY after Steps 1-4 verified):
+After ALL calculations are complete and answer sheets linked, apply formatting.
+Do the formatting pass separately from the calculation work.

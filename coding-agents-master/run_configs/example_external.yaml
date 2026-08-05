@@ -1,0 +1,30 @@
+# External-mode example: run YOUR OWN task with YOUR OWN key. No MBABench
+# database, S3, or credentials involved; results land in a local folder.
+#
+# Task folder layout:
+#   my_task/
+#     task.yaml            (task_name: ...; task_source: fmwc|modeloff|wsp)
+#     starting_files/      (your input .xlsx/.pdf files)
+#
+# Usage:
+#   export ANTHROPIC_API_KEY=...   (or OPENAI_API_KEY for codex)
+#   python -m coding_agent.run_task --config run_configs/example_external.yaml \
+#       --task-dir ./my_task --results-dir ./results
+run_name: external_example
+mode: external
+identity: external/claude-code
+agent:
+  cli: claude
+  model: claude-fable-5
+  effort: max
+  extra_args: []
+  env: {}
+template_version: v6
+sandbox:
+  mode: docker
+  image: mbabench-coding-agent:v1
+  cpus: 4
+  memory: 8g
+limits:
+  wall_clock_seconds: 14400
+  junk_seconds: 180

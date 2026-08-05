@@ -8,6 +8,16 @@ The tasks live in a Neon Postgres database (BizbenchV2) in a `tasks` table, with
 the starting and solution files stored in S3 under
 `s3://biz-bench/BizbenchV2/tasks/<task_name>/`.
 
+## Agent pipelines in this repo
+
+- **`gui-agents-master/`** — drives the Claude.ai / ChatGPT web UIs via
+  Playwright to attempt tasks (V2 task set).
+- **`coding-agents-master/`** — runs tasks through the vendors' *coding agent*
+  products (Claude Code, Codex), one sandboxed container per attempt. Note:
+  this pipeline targets the **MBABench V1** benchmark (V1 tasks, prompts,
+  database, and judge) despite living in this repo — see its
+  [README](coding-agents-master/README.md).
+
 ## Layout
 
 ```text
