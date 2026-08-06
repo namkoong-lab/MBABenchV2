@@ -77,7 +77,7 @@ class RunConfig:
     identity: str
     mode: str  # "internal" | "external"
     system_prompt: str = "system_prompt_coding_v1.txt"
-    template_version: str = "v6"  # "v5" = byte-exact CLI-wave templates; "v6" = coding-agent adaptation
+    template_version: str = "v7"  # v7 = GUI-pv9 mirror (default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     internal: InternalConfig = field(default_factory=InternalConfig)
@@ -112,15 +112,15 @@ def load_config(path: str | Path) -> RunConfig:
         identity=raw["identity"],
         mode=raw["mode"],
         system_prompt=raw.get("system_prompt", "system_prompt_coding_v1.txt"),
-        template_version=raw.get("template_version", "v6"),
+        template_version=raw.get("template_version", "v7"),
         sandbox=SandboxConfig(**(raw.get("sandbox") or {})),
         limits=LimitsConfig(**(raw.get("limits") or {})),
         internal=InternalConfig(**(raw.get("internal") or {})),
     )
     if raw.get("workspaces_dir"):
         cfg.workspaces_dir = Path(raw["workspaces_dir"]).expanduser()
-    if cfg.template_version not in ("v5", "v6"):
-        raise ValueError('template_version must be "v5" or "v6"')
+    if cfg.template_version not in ("v5", "v6", "v7"):
+        raise ValueError('template_version must be "v5", "v6", or "v7"')
     if cfg.sandbox.mode not in ("docker", "host"):
         raise ValueError('sandbox.mode must be "docker" or "host"')
     return cfg

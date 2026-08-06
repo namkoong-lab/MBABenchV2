@@ -10,7 +10,7 @@ agent:
   effort: max            # NOTE: effort pinning flag verified at rung 0; add to extra_args/env as needed
   extra_args: []
   env: {}
-template_version: v6     # v6 = coding-agent templates (default); v5 = byte-exact pv1105 templates
+template_version: v7     # v7 = GUI-pv9 mirror (default); v6 = CLI adaptation; v5 = byte-exact pv1105
 sandbox:
   mode: docker           # "host" = UNSANDBOXED (rung-0 debugging only)
   image: mbabench-coding-agent:v1

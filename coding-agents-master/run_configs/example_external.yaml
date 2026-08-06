@@ -19,7 +19,7 @@ agent:
   effort: max
   extra_args: []
   env: {}
-template_version: v6
+template_version: v7
 sandbox:
   mode: docker
   image: mbabench-coding-agent:v1

@@ -102,16 +102,24 @@ One container per attempt, from a pinned image:
 - **System wrapper** `system_prompt_coding_v1.txt` — minimal proctor
   instructions (workspace rules, `solution.xlsx` requirement, no internet,
   work autonomously). New for this pipeline; versioned.
-- **Task templates** — two variants, chosen by `template_version`:
-  - `v6` (default): the pv1105 CLI-wave template structure adapted for coding
-    agents (same output requirements, worksheet structure, formula rules;
-    openpyxl-harness tool references removed).
+- **Task templates** — three variants, chosen by `template_version`:
+  - `v7` (default): mirror of the **GUI wave's pv9 prompt** — the byte-exact
+    pv9 rubric preamble (all 17 grading criteria with good/bad standards,
+    checksum-guarded) + the pv9 three-step closing (`Summary` sheet → model →
+    `Answers` sheet), with only harness-necessitated edits: workspace /
+    solution.xlsx wording, and pv9's "no code interpreter" ban translated to
+    its intent — code may build the workbook, but every calculated value must
+    be a live Excel formula. Task-invariant (one template for fmwc/modeloff/
+    wsp), exactly like the GUI wave. Chosen because the GUI, like this
+    pipeline, is a non-proprietary harness.
+  - `v6`: the pv1105 CLI-wave template structure adapted for coding agents
+    (rubric-blind, like the CLI task templates alone).
   - `v5`: **byte-exact** copies of the pv1105 CLI-wave templates, frozen and
     checksum-guarded. They reference harness tools that don't exist here —
     kept only for strict prompt-comparability experiments.
 - `prompt_version` recorded per attempt = system version × 100 + template
-  version (v1 wrapper + v6 template → **106**; + v5 → 105), continuing the CLI
-  pipeline's numbering scheme (its wave was 1105; GUI was 9).
+  version (v1 wrapper + v7 → **107**; + v6 → 106; + v5 → 105), continuing the
+  CLI pipeline's numbering scheme (its wave was 1105; GUI was 9).
 
 ## Validation and failure taxonomy
 

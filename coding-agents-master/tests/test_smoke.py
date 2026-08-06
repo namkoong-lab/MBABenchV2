@@ -47,8 +47,10 @@ def test_config_and_prompt_versions():
     assert "api.anthropic.com" in cfg.allowed_domains
     assert template_name("modeloff", "v6") == "task_template_fmwc_v6.txt"
     assert template_name("wsp", "v5") == "task_template_wsp_v5.txt"
+    assert template_name("fmwc", "v7") == template_name("wsp", "v7") == "task_template_shared_v7.txt"
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_fmwc_v6.txt") == 106
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_wsp_v5.txt") == 105
+    assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v7.txt") == 107
     print("ok: config + prompt versions")
 
 
@@ -63,8 +65,8 @@ def test_workspace_prompt_and_validation():
         assert len(attempt.manifest) == 1
 
         prompt, pv = build_prompt(cfg, spec, attempt.workspace)
-        assert pv == 106
-        assert "solution.xlsx" in prompt and "WSP" in prompt
+        assert pv == 107  # default = v7 GUI-pv9 mirror, task-invariant
+        assert "solution.xlsx" in prompt and "Summary" in prompt and "ACCURACY" in prompt
         assert (attempt.workspace / "PROMPT.md").exists()
 
         # No solution -> agent_failure

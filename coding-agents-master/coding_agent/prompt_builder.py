@@ -6,10 +6,17 @@ Task templates:
   v5 — byte-exact copies of the pv1105 CLI-wave templates (frozen; checksummed;
        they reference openpyxl-harness tools that coding agents don't have —
        kept for strict-comparability experiments only).
-  v6 — the same structure/requirements adapted for coding agents (default).
+  v6 — the CLI-wave structure/requirements adapted for coding agents.
+  v7 — mirror of the GUI wave's pv9 prompt (DEFAULT): the byte-exact pv9 rubric
+       preamble (all 17 grading criteria) + the pv9 three-step closing
+       (Summary sheet -> model -> Answers sheet) with only harness-necessitated
+       edits (workspace/solution.xlsx wording; the "no code interpreter" ban
+       becomes "code may build the workbook, but every calculated value must be
+       a live Excel formula"). Task-invariant like the GUI wave: one shared
+       template for fmwc/modeloff/wsp.
 
 prompt_version (DB column) follows the CLI convention system*100 + template:
-system_prompt_coding_v1 + template v5 -> 105; + template v6 -> 106.
+system_prompt_coding_v1 + v5 -> 105; + v6 -> 106; + v7 -> 107.
 """
 import hashlib
 import re
@@ -24,12 +31,19 @@ FROZEN_MD5 = {
     "task_template_wsp_v5.txt": "233064b2dd2a38980391e282ef613cc7",
 }
 
+# v7 embeds the GUI wave's pv9 rubric preamble byte-exact; guard its first
+# 11,971 bytes (md5 of SHARED_rubric_preamble.txt) against accidental edits.
+V7_PREAMBLE_MD5 = "7b12403b2dea9ec6d89d333be819ab52"
+V7_PREAMBLE_LEN = 11971
+
 
 def _md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
 def template_name(task_source: str, version: str) -> str:
+    if version == "v7":  # task-invariant, like the GUI wave's pv9
+        return "task_template_shared_v7.txt"
     kind = "wsp" if task_source == "wsp" else "fmwc"  # modeloff uses the fmwc template (CLI-wave convention)
     return f"task_template_{kind}_{version}.txt"
 
@@ -48,6 +62,11 @@ def prompt_file_paths(cfg: RunConfig, task_source: str) -> tuple[Path, Path]:
             raise FileNotFoundError(p)
     if tpl_path.name in FROZEN_MD5 and _md5(tpl_path) != FROZEN_MD5[tpl_path.name]:
         raise RuntimeError(f"{tpl_path.name} no longer matches the frozen pv1105 checksum — do not edit v5 templates")
+    if tpl_path.name == "task_template_shared_v7.txt":
+        import hashlib as _h
+        head = tpl_path.read_bytes()[:V7_PREAMBLE_LEN]
+        if _h.md5(head).hexdigest() != V7_PREAMBLE_MD5:
+            raise RuntimeError("v7 rubric preamble no longer matches the GUI pv9 original — do not edit the preamble section")
     return system_path, tpl_path
 
 
