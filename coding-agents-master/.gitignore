@@ -10,3 +10,4 @@ run_configs/prod_*.yaml
 
 # Secrets
 .env
+ladder/
