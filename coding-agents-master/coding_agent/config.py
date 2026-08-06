@@ -17,11 +17,12 @@ PROMPTS_DIR = PACKAGE_DIR / "prompts"
 
 AGENT_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
 
-# Egress allowlist per agent CLI: the model API plus the CLI's own required
-# service endpoints. Extend per-run via sandbox.network_allow.
+# Egress allowlist per agent CLI: the model API only — CLI telemetry is
+# disabled via env, and the firewall fails closed on unresolvable domains.
+# Extend per-run via sandbox.network_allow if a CLI needs another endpoint.
 DEFAULT_ALLOWED_DOMAINS = {
-    "claude": ["api.anthropic.com", "statsig.anthropic.com", "sentry.io"],
-    "codex": ["api.openai.com", "chatgpt.com"],
+    "claude": ["api.anthropic.com"],
+    "codex": ["api.openai.com"],
 }
 
 

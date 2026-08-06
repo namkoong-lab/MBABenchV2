@@ -18,10 +18,11 @@ def build_command(agent: AgentConfig) -> list[str]:
             "--model", agent.model,
             "--dangerously-skip-permissions",  # the container is the safety boundary
         ]
-        # Effort pinning for claude is settings/env-dependent; pass via
-        # extra_args/env once rung 0 establishes the working flag.
+        if agent.effort:
+            cmd += ["--effort", agent.effort]  # verified in Claude Code 2.1.223 (low|medium|high|xhigh|max)
     elif agent.cli == "codex":
-        cmd = [
+        import shlex
+        args = [
             "codex", "exec",
             "--json",
             "--model", agent.model,
@@ -29,8 +30,17 @@ def build_command(agent: AgentConfig) -> list[str]:
             "--dangerously-bypass-approvals-and-sandbox",  # container is the boundary
         ]
         if agent.effort:
-            cmd += ["-c", f"model_reasoning_effort={agent.effort}"]
-        cmd += ["-"]  # read prompt from stdin
+            args += ["-c", f"model_reasoning_effort={agent.effort}"]
+        args += list(agent.extra_args) + ["-"]  # read prompt from stdin
+        # codex 0.146 does not read OPENAI_API_KEY implicitly: an explicit
+        # `codex login --with-api-key` (stdin) must store it first. The login
+        # pipeline consumes only its own pipe; the exec'd codex inherits the
+        # outer stdin (PROMPT.md). auth.json lives in the container's
+        # ephemeral HOME and dies with it.
+        cmd = ["bash", "-c",
+               "printenv OPENAI_API_KEY | codex login --with-api-key >/dev/null 2>&1 && exec "
+               + shlex.join(args)]
+        return cmd
     else:
         raise ValueError(f"Unknown agent cli: {agent.cli}")
     return cmd + list(agent.extra_args)
