@@ -147,4 +147,5 @@ Because you are writing the workbook with code rather than through the Excel app
 - Reference only cells that exist and contain values. Never use undefined named ranges or invented names (=EBITDA * 2 fails unless EBITDA is explicitly defined).
 - No placeholder formulas (=INSERT_FORMULA_HERE, =SUM(Range_Here), =TODO).
 - Cross-sheet references to sheet names containing spaces need quotes: ='Debt Schedule'!F24.
+- If a range is defined as an Excel Table, do not also apply a worksheet AutoFilter to that same range. A range can carry only one filter; a Table brings its own, and the duplicate makes the file invalid so Excel silently strips the Table on open.
 - Before finishing, re-open solution.xlsx and verify it loads without errors or repair warnings and that formulas are stored as formulas.
