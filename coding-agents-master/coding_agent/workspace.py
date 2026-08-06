@@ -11,6 +11,7 @@ in the attempt dir, so validation can prove the agent produced new work.
 """
 import hashlib
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,7 +40,8 @@ def create_attempt(workspaces_root: Path, spec: TaskSpec) -> Attempt:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     label = f"task{spec.task_id}" if spec.task_id is not None else spec.task_name
     safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(label))[:60]
-    attempt_dir = workspaces_root / f"{safe_label}_{ts}"
+    # ts alone collides when two tracks start the same second — include pid
+    attempt_dir = workspaces_root / f"{safe_label}_{ts}_{os.getpid()}"
     workspace = attempt_dir / "workspace"
     files_dir = workspace / "starting_files"
     files_dir.mkdir(parents=True, exist_ok=False)

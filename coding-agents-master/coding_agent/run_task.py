@@ -57,7 +57,9 @@ def main(argv=None) -> int:
 
     # 1. Fetch task + seed workspace (any failure here is infra, no trial burned).
     try:
-        staging = cfg.workspaces_dir / "_staging"
+        import os as _os
+        from datetime import datetime as _dt
+        staging = cfg.workspaces_dir / f"_staging_{_dt.now():%Y%m%d_%H%M%S}_{_os.getpid()}"
         spec = source.fetch(staging)
         attempt = create_attempt(cfg.workspaces_dir, spec)
     except Exception as e:  # noqa: BLE001 — classified, reported, non-zero exit
