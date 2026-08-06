@@ -137,3 +137,14 @@ Your next step is actually making the model.  Adhere to the professional standar
 Your final step is to create the answers sheet(s).  On this sheet, present the final answers to all questions. Every single answer on this sheet must be directly referenceable to the model you created. Hard coded values are to be generally avoided here.
 
 Please finish all steps without stopping and deliver the final excel workbook as solution.xlsx in the workspace root.
+
+EXCEL FILE VALIDITY REQUIREMENTS:
+Because you are writing the workbook with code rather than through the Excel application, nothing will enforce Excel's rules for you; violating them produces a corrupt or unusable workbook.
+- Worksheet names must be 1-31 characters and cannot contain: / \ ? * [ ] :
+- Never mix text and a formula in the same cell (label in one cell, formula in another).
+- Formulas must be stored as real formulas, not as text strings (a cell containing "=SUM(A1:A10)" as text fails).
+- Never create circular references: a formula must not reference its own cell, directly or through a range that includes it (e.g. B2: =SUM(B1:B3) is circular).
+- Reference only cells that exist and contain values. Never use undefined named ranges or invented names (=EBITDA * 2 fails unless EBITDA is explicitly defined).
+- No placeholder formulas (=INSERT_FORMULA_HERE, =SUM(Range_Here), =TODO).
+- Cross-sheet references to sheet names containing spaces need quotes: ='Debt Schedule'!F24.
+- Before finishing, re-open solution.xlsx and verify it loads without errors or repair warnings and that formulas are stored as formulas.

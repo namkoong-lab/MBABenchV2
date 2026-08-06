@@ -111,7 +111,10 @@ One container per attempt, from a pinned image:
     its intent — code may build the workbook, but every calculated value must
     be a live Excel formula. Task-invariant (one template for fmwc/modeloff/
     wsp), exactly like the GUI wave. Chosen because the GUI, like this
-    pipeline, is a non-proprietary harness.
+    pipeline, is a non-proprietary harness. One addendum beyond pv9: a short
+    Excel mechanical-validity section (sheet-name rules, no formulas-as-text,
+    no circular refs, no undefined names) — rules the Excel UI enforced for
+    free for GUI agents but nothing enforces when writing files with code.
   - `v6`: the pv1105 CLI-wave template structure adapted for coding agents
     (rubric-blind, like the CLI task templates alone).
   - `v5`: **byte-exact** copies of the pv1105 CLI-wave templates, frozen and
