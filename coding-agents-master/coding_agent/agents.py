@@ -8,7 +8,7 @@ config exists so rung-0 corrections never require code changes.
 from .config import AgentConfig
 
 
-def build_command(agent: AgentConfig) -> list[str]:
+def build_command(agent: AgentConfig, relay: bool = False) -> list[str]:
     if agent.cli == "claude":
         cmd = [
             "claude",
@@ -31,6 +31,14 @@ def build_command(agent: AgentConfig) -> list[str]:
         ]
         if agent.effort:
             args += ["-c", f"model_reasoning_effort={agent.effort}"]
+        if relay:
+            # codex ignores OPENAI_BASE_URL; route through the trajectory relay
+            # via a custom provider (env_key keeps API-key billing).
+            args += ["-c", "model_providers.traj.name=traj-relay",
+                     "-c", 'model_providers.traj.base_url="http://127.0.0.1:9877/v1"',
+                     "-c", "model_providers.traj.wire_api=responses",
+                     "-c", "model_providers.traj.env_key=OPENAI_API_KEY",
+                     "-c", "model_provider=traj"]
         args += list(agent.extra_args) + ["-"]  # read prompt from stdin
         # codex 0.146 does not read OPENAI_API_KEY implicitly: an explicit
         # `codex login --with-api-key` (stdin) must store it first. The login

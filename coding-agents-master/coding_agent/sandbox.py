@@ -50,6 +50,15 @@ def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
             "--pids-limit", "1024",
             "-e", f"ALLOWED_DOMAINS={','.join(cfg.allowed_domains)}",
         ]
+        if cfg.record_trajectory:
+            traj_dir = attempt_dir / "trajectory"
+            traj_dir.mkdir(exist_ok=True)
+            upstream = ("https://api.anthropic.com" if cfg.agent.cli == "claude"
+                        else "https://api.openai.com")
+            cmd += ["-v", f"{traj_dir.resolve()}:/trajectory",
+                    "-e", f"TRAJ_UPSTREAM={upstream}"]
+            if cfg.agent.cli == "claude":  # codex is routed via -c provider flags instead
+                agent_env = {**agent_env, "ANTHROPIC_BASE_URL": "http://127.0.0.1:9877"}
         for key, value in agent_env.items():
             cmd += ["-e", f"{key}={value}"]
         cmd += [cfg.sandbox.image] + agent_cmd

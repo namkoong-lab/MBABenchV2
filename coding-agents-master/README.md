@@ -124,6 +124,24 @@ One container per attempt, from a pinned image:
   version (v1 wrapper + v7 → **107**; + v6 → 106; + v5 → 105), continuing the
   CLI pipeline's numbering scheme (its wave was 1105; GUI was 9).
 
+## Trajectory recording
+
+Every attempt captures the agent's full decision trajectory at the API layer:
+a relay inside the container (`docker/traj_relay.py`) sits between the CLI and
+the vendor API and appends one record per model call to `trajectory.jsonl.gz`
+(uploaded with the attempt):
+
+- `request` — the exact model input: the CLI's internal system prompt, tool
+  schemas, and the complete message/input array as sent (grows every step)
+- `response` — the exact model output: text / tool calls / reasoning items,
+  stored raw (SSE streams verbatim); auth headers scrubbed
+- one record per step -> `(request, response)` pairs are training-ready
+
+Claude Code is routed via `ANTHROPIC_BASE_URL`; Codex ignores base-URL env, so
+it is routed via `-c model_providers.traj.*` flags (API-key billing preserved
+through `env_key`). Disable per run with `record_trajectory: false`. Docker
+mode only; the egress firewall still sees only the vendor API.
+
 ## Validation and failure taxonomy
 
 Success requires **all** of: `solution.xlsx` exists · opens as a valid

@@ -15,4 +15,14 @@ if [ "$#" -eq 0 ]; then
 fi
 
 chown agent:agent /workspace 2>/dev/null || true
+
+if [ -n "${TRAJ_UPSTREAM:-}" ]; then
+    mkdir -p /trajectory && chown agent:agent /trajectory
+    runuser -u agent -- python3 /usr/local/bin/traj_relay.py >>/trajectory/relay.log 2>&1 &
+    for i in $(seq 1 30); do
+        python3 -c "import socket; socket.create_connection(('127.0.0.1', ${TRAJ_PORT:-9877}), 1)" 2>/dev/null && break
+        sleep 0.3
+    done
+fi
+
 exec runuser -u agent -- "$@"

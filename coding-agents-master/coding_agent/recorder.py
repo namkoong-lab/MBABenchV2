@@ -44,7 +44,8 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
     if cfg.mode == "external":
         dest = (results_dir or Path("results")) / attempt.attempt_dir.name
         dest.mkdir(parents=True, exist_ok=True)
-        for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "manifest.json"):
+        for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "manifest.json",
+                     "trajectory.jsonl.gz"):
             src = attempt.attempt_dir / name
             if src.exists():
                 shutil.copy2(src, dest / name)
@@ -82,7 +83,7 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
     if verdict.solution_path and verdict.solution_path.exists():
         uploads.append((verdict.solution_path, f"{base}_solution.xlsx"))
     uploads.append((attempt.workspace / "PROMPT.md", f"{base}_PROMPT.md"))
-    for name in ("transcript.jsonl", "telemetry.json", "verdict.json"):
+    for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "trajectory.jsonl.gz"):
         path = attempt.attempt_dir / name
         if path.exists():
             uploads.append((path, f"{base}_{name}"))

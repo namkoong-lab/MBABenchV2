@@ -75,11 +75,21 @@ def main(argv=None) -> int:
     print(f"  prompt_version={prompt_version} ({len(prompt_text):,} chars)")
 
     # 3. Run the agent in the sandbox.
-    cmd = build_command(cfg.agent)
+    cmd = build_command(cfg.agent, relay=cfg.record_trajectory and cfg.sandbox.mode == "docker")
     env = agent_env(cfg.agent, cfg.api_key_env, os.environ[cfg.api_key_env])
     sandbox = run_in_sandbox(cfg, cmd, env, attempt.workspace, attempt.attempt_dir)
     print(f"  agent finished: exit={sandbox.exit_code} "
           f"timed_out={sandbox.timed_out} duration={sandbox.duration_seconds:.0f}s")
+
+    # 3b. Compress the trajectory capture (if any) into an attempt artifact.
+    traj = attempt.attempt_dir / "trajectory" / "trajectory.jsonl"
+    if traj.exists() and traj.stat().st_size:
+        import gzip, shutil as _sh
+        with open(traj, "rb") as fin, gzip.open(attempt.attempt_dir / "trajectory.jsonl.gz", "wb") as fout:
+            _sh.copyfileobj(fin, fout)
+        steps = sum(1 for _ in open(traj, errors="replace"))
+        print(f"  trajectory: {steps} API calls captured "
+              f"({(attempt.attempt_dir / 'trajectory.jsonl.gz').stat().st_size:,} bytes gz)")
 
     # 4. Telemetry (best-effort, never fatal).
     telemetry = parse_transcript(sandbox.transcript_path, cfg.agent.cli)

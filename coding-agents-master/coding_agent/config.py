@@ -77,6 +77,7 @@ class RunConfig:
     agent: AgentConfig
     identity: str
     mode: str  # "internal" | "external"
+    record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
     template_version: str = "v7"  # v7 = GUI-pv9 mirror (default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
@@ -112,6 +113,7 @@ def load_config(path: str | Path) -> RunConfig:
         ),
         identity=raw["identity"],
         mode=raw["mode"],
+        record_trajectory=bool(raw.get("record_trajectory", True)),
         system_prompt=raw.get("system_prompt", "system_prompt_coding_v1.txt"),
         template_version=raw.get("template_version", "v7"),
         sandbox=SandboxConfig(**(raw.get("sandbox") or {})),
