@@ -1,4 +1,4 @@
 {"type":"session.created","session_id":"abc"}
 {"type":"turn.completed","usage":{"input_tokens":5000,"cached_input_tokens":0,"output_tokens":400}}
 {"type":"item.completed","item":{"type":"agent_message","text":"working"}}
-{"type":"turn.completed","usage":{"input_tokens":9000,"cached_input_tokens":4000,"output_tokens":900}}
+{"type":"turn.completed","usage":{"input_tokens":9000,"cached_input_tokens":4000,"cache_write_input_tokens":500,"output_tokens":900,"reasoning_output_tokens":650}}

@@ -63,6 +63,8 @@ def _codex_parse(lines):
             "input_tokens": usage.get("input_tokens", 0),
             "output_tokens": usage.get("output_tokens", 0),
             "cache_read_tokens": usage.get("cached_input_tokens", 0),
+            "cache_write_tokens": usage.get("cache_write_input_tokens", 0),
+            "reasoning_output_tokens": usage.get("reasoning_output_tokens", 0),
         }
         if snapshot == last_cumulative:
             continue

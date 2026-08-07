@@ -105,6 +105,8 @@ def test_telemetry_parsers():
     assert claude["turns"][0]["output_tokens"] == 50
     codex = parse_transcript(FIXTURES / "codex_events.jsonl", "codex")
     assert codex["totals"].get("output_tokens") == 900
+    assert codex["totals"].get("reasoning_output_tokens") == 650
+    assert codex["totals"].get("cache_write_tokens") == 500
     assert codex["cost_usd"] is None
     print("ok: telemetry parsers")
 
