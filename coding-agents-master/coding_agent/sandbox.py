@@ -98,13 +98,16 @@ def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
     # Docker's own failures (bad image, daemon down, firewall abort) surface as
     # exit codes 125-127 from `docker run`, or our entrypoint's dedicated 97.
     infra_error = None
-    if cfg.sandbox.mode == "docker" and exit_code in (97, 125, 126, 127):
+    if cfg.sandbox.mode == "docker" and exit_code not in (0, None):
         tail = ""
         try:
             tail = stderr_log.read_text(errors="replace")[-2000:]
         except OSError:
             pass
-        infra_error = f"Container/infra failure (exit {exit_code}): {tail}"
+        if exit_code in (97, 125, 126, 127):
+            infra_error = f"Container/infra failure (exit {exit_code}): {tail}"
+        elif "docker" in tail.lower() and ("daemon" in tail.lower() or "docker.sock" in tail.lower()):
+            infra_error = f"Docker daemon unreachable (is Docker Desktop running?): {tail[:300]}"
 
     return SandboxResult(exit_code, duration, timed_out, transcript, stderr_log,
                          infra_error=infra_error)
