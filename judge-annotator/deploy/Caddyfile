@@ -1,0 +1,5 @@
+# Replace the IP with the instance's static IP; sslip.io resolves it automatically
+# and Caddy provisions HTTPS on its own.
+54.84.197.221.sslip.io {
+  reverse_proxy 127.0.0.1:8000
+}
