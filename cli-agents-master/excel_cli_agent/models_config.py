@@ -1,10 +1,16 @@
 """Centralized model configuration: pricing, defaults, and cost calculation."""
+import json
+import re
+import urllib.request
 from typing import Dict, Optional
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_MAX_COMPLETION_TOKENS = 8000
 
 # Model pricing (per 1M tokens) - Updated January 2026
+# FALLBACK ONLY: calculate_cost() prefers live prices fetched from
+# OpenRouter's public model list at run start (see resolve_pricing); this
+# table is used only when that fetch fails or the model isn't listed.
 MODEL_PRICING = {
     # GPT-5 series (Flagship models - January 2025)
     "gpt-5.1": {"input": 1.250, "output": 10.00},
@@ -134,21 +140,104 @@ TIMEOUT_BY_REASONING: Dict[Optional[str], int] = {
 }
 
 
+# --- Live pricing -----------------------------------------------------------
+# OpenRouter publishes current per-token prices for every model it routes
+# (including Anthropic/OpenAI list prices) at a public, unauthenticated
+# endpoint. Fetched once per process so each run prices with current data
+# instead of a hand-maintained table.
+_LIVE_PRICING_URL = "https://openrouter.ai/api/v1/models"
+_live_pricing: Optional[Dict[str, Dict[str, float]]] = None
+_live_pricing_attempted = False
+_pricing_warned: set = set()
+
+
+def _fetch_live_pricing(timeout: int = 10) -> Optional[Dict[str, Dict[str, float]]]:
+    """Fetch {model_id: {input, output}} in $/MTok. Cached for the process."""
+    global _live_pricing, _live_pricing_attempted
+    if _live_pricing_attempted:
+        return _live_pricing
+    _live_pricing_attempted = True
+    try:
+        with urllib.request.urlopen(_LIVE_PRICING_URL, timeout=timeout) as resp:
+            data = json.load(resp)
+        pricing = {}
+        for entry in data.get("data", []):
+            p = entry.get("pricing") or {}
+            try:
+                pricing[entry["id"]] = {
+                    "input": float(p["prompt"]) * 1_000_000,
+                    "output": float(p["completion"]) * 1_000_000,
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+        _live_pricing = pricing or None
+        if _live_pricing:
+            print(f"💲 Live pricing loaded from OpenRouter ({len(pricing)} models)")
+    except Exception as e:
+        print(f"⚠️ Live pricing fetch failed ({e}); using static MODEL_PRICING fallback")
+        _live_pricing = None
+    return _live_pricing
+
+
+def _candidate_slugs(model: str) -> list:
+    """Map a model name to the OpenRouter ids it may be listed under.
+
+    Direct-API ids differ from OpenRouter slugs: "claude-fable-5" is listed
+    as "anthropic/claude-fable-5", "claude-opus-4-8" as
+    "anthropic/claude-opus-4.8", "gpt-5.6-sol" as "openai/gpt-5.6-sol".
+    """
+    candidates = [model]
+    dotted = re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", model)
+    if dotted != model:
+        candidates.append(dotted)
+    for name in list(candidates):
+        if "/" not in name:
+            if name.startswith("claude"):
+                candidates.append(f"anthropic/{name}")
+            elif name.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):
+                candidates.append(f"openai/{name}")
+    return candidates
+
+
+def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
+    """Return {input, output} $/MTok for a model, preferring live data.
+
+    Order: live OpenRouter prices (exact id, then direct-API id mapped to
+    its OpenRouter slug) -> static MODEL_PRICING -> None. Falling back or
+    failing to price is warned once per model so silent 0-cost rows can't
+    accumulate unnoticed.
+    """
+    live = _fetch_live_pricing()
+    if live:
+        for slug in _candidate_slugs(model):
+            if slug in live:
+                return live[slug]
+    if model in MODEL_PRICING:
+        if live and model not in _pricing_warned:
+            _pricing_warned.add(model)
+            print(f"⚠️ {model} not in live pricing; using static table price")
+        return MODEL_PRICING[model]
+    if model not in _pricing_warned:
+        _pricing_warned.add(model)
+        print(f"⚠️ No pricing found for {model}; cost will be logged as 0.0")
+    return None
+
+
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Calculate cost in USD for an API call.
 
     Args:
-        model: Model name (e.g., "gpt-4o", "gpt-4o-mini")
+        model: Model name (e.g., "claude-fable-5", "openai/gpt-5.2")
         prompt_tokens: Number of input tokens
         completion_tokens: Number of output tokens
 
     Returns:
-        Cost in USD
+        Cost in USD (0.0 when no price is known — warned by resolve_pricing)
     """
-    if model not in MODEL_PRICING:
+    pricing = resolve_pricing(model)
+    if not pricing:
         return 0.0
 
-    pricing = MODEL_PRICING[model]
     input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
     output_cost = (completion_tokens / 1_000_000) * pricing["output"]
 

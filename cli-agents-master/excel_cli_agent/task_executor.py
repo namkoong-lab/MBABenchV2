@@ -808,8 +808,11 @@ class ExcelTaskExecutor:
             completion_tokens = usage_info.get("completion_tokens", 0)
             total_tokens = usage_info.get("total_tokens", 0)
 
-            # Calculate cost (Opus 4.5 pricing: $5/MTok input, $25/MTok output)
-            cost_usd = (prompt_tokens / 1_000_000 * 5.0) + (completion_tokens / 1_000_000 * 25.0)
+            # Price via models_config (live OpenRouter prices with static
+            # fallback) — never a hardcoded per-model rate.
+            cost_usd = calculate_cost(
+                request.get("model", self.model), prompt_tokens, completion_tokens
+            )
 
             # Accumulate cost on the current execution
             if self.current_execution:
@@ -888,6 +891,12 @@ class ExcelTaskExecutor:
                         "completion_tokens": chunk.usage.completion_tokens or 0,
                         "total_tokens": chunk.usage.total_tokens or 0
                     }
+                    # OpenRouter returns the actual billed cost (USD) when the
+                    # request sets extra_body usage.include — provider-
+                    # authoritative, preferred over any price-table estimate.
+                    billed_cost = getattr(chunk.usage, "cost", None)
+                    if billed_cost is not None:
+                        usage_info["cost"] = float(billed_cost)
         except Exception as e:
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
@@ -916,8 +925,13 @@ class ExcelTaskExecutor:
             completion_tokens = usage_info.get('completion_tokens', 0)
             total_tokens = usage_info.get('total_tokens', 0)
 
-            # Calculate cost
-            cost_usd = calculate_cost(model, prompt_tokens, completion_tokens)
+            # Prefer the provider's own billed cost (OpenRouter usage
+            # accounting); fall back to live/static pricing lookup.
+            provider_cost = usage_info.get('cost')
+            if provider_cost is not None:
+                cost_usd = float(provider_cost)
+            else:
+                cost_usd = calculate_cost(model, prompt_tokens, completion_tokens)
 
             # Accumulate cost on the current execution
             if self.current_execution:
@@ -1174,6 +1188,14 @@ EXECUTION HISTORY:
                                 "reasoning": {"effort": self.reasoning_effort}
                             }
                             print(f"🧠 Reasoning effort (OpenRouter): {self.reasoning_effort}")
+
+                    if not self.use_openai_direct:
+                        # OpenRouter: request the billed cost in the final
+                        # usage chunk so logged cost comes from the provider's
+                        # own accounting rather than a local price estimate.
+                        request_data.setdefault("extra_body", {})["usage"] = {
+                            "include": True
+                        }
 
                     # Note: We rely on _extract_json() and _parse_jsonl_response() to handle
                     # any preamble text (e.g., "Wait: ...") that GPT-5 with reasoning may output.
