@@ -72,7 +72,7 @@ class LimitsConfig:
 # before any attempt runs.
 BENCHMARKS = {
     "v1": {"bucket": "mbabench", "root": "BizbenchV1", "db_name": "BizbenchV1"},
-    "v2": {"bucket": "biz-bench", "root": "MBABenchV2", "db_name": "BizbenchV2"},
+    "v2": {"bucket": "mbabench", "root": "MBABenchV2", "db_name": "MBABenchV2"},
 }
 
 
@@ -167,7 +167,7 @@ def require_env(cfg: RunConfig) -> None:
             f"Missing required environment variables: {', '.join(missing)} "
             f"(set them in the environment or a .env next to coding_agent/)"
         )
-    # A v1 config writing to the BizbenchV2 DB (or vice versa) would record
+    # A v1 config writing to the MBABenchV2 DB (or vice versa) would record
     # attempts against the wrong experiment — refuse before any work runs.
     if cfg.mode == "internal":
         expected_db = BENCHMARKS[cfg.benchmark]["db_name"]

@@ -134,6 +134,13 @@ Versioned prompt files are bundled in `excel_cli_agent/prompts/`. Set the versio
 prompt_version: "v10"  # uses system_prompt_v10.txt + task_template_fmwc_v4.txt
 ```
 
+In auto mode the default follows the `benchmark` key (v1 → v10, v2 → v12),
+and an explicit choice must embed the matching grading rubric: v1..v11 carry
+the 17-check v1 rubric, v12 the 132-check v2 rubric (generated from the GUI
+`prompts_v2/` sources by `tools/build_v12_prompts.py`). A mismatched pairing
+fails at startup; `EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate
+cross-benchmark run.
+
 ## Key Features
 
 - **Local Mode**: Run from local folders with just an API key — no database or cloud setup

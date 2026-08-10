@@ -77,7 +77,7 @@ _VALID_SINK_SCHEMAS: dict[str, set[str | None]] = {
 _BENCHMARK_SCHEMAS = {"v1": "bizbench", "v2": "mbabenchv2"}
 _SCHEMA_S3_DEFAULTS = {
     "bizbench": ("mbabench", "BizbenchV1/attempts"),
-    "mbabenchv2": ("biz-bench", "MBABenchV2/attempts"),
+    "mbabenchv2": ("mbabench", "MBABenchV2/attempts"),
 }
 
 
@@ -89,7 +89,7 @@ def _check_benchmark_schema(cfg: SimpleNamespace, slot: str, schema: str) -> Non
             f"{slot}.schema={schema!r} contradicts benchmark={bench!r} "
             f"(expected {expected!r}). A v1 run must use the bizbench "
             f"schema (BizbenchV1 DB) and a v2 run the mbabenchv2 schema "
-            f"(BizbenchV2 DB) — a mismatch records attempts against the "
+            f"(MBABenchV2 DB) — a mismatch records attempts against the "
             f"wrong experiment."
         )
 

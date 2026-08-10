@@ -46,8 +46,8 @@ def main() -> int:
     v2 = load_config(_cfg("benchmark: v2\n"))
     assert v2.benchmark == "v2"
     assert v2.template_version == "v8"
-    assert (v2.internal.s3_bucket, v2.internal.s3_root) == ("biz-bench", "MBABenchV2")
-    print("OK  benchmark v2 -> v8, biz-bench/MBABenchV2")
+    assert (v2.internal.s3_bucket, v2.internal.s3_root) == ("mbabench", "MBABenchV2")
+    print("OK  benchmark v2 -> v8, mbabench/MBABenchV2")
 
     # explicit internal overrides still win.
     v2b = load_config(_cfg("benchmark: v2\ninternal:\n  s3_bucket: custom\n"))

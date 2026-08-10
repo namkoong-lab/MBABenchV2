@@ -1,4 +1,4 @@
-# benchmark v2 — MBABenchV2 task set (BizbenchV2 DB)
+# benchmark v2 — MBABenchV2 task set (MBABenchV2 DB)
 benchmark: v2
 
 # MBABenchV2 run config — postgres_s3 source, postgres_s3 sink.

@@ -8,7 +8,7 @@ container, producing one Excel workbook per task for the standard MBABench judge
 > `benchmark: v1|v2` in the run config. v1 (default) targets the V1
 > 206-task set (`BizbenchV1` on Neon, `s3://mbabench/BizbenchV1/…`, the
 > pv9-mirror v7 template, the 3-category rubric). v2 targets the
-> MBABenchV2 task set (`BizbenchV2`, `s3://biz-bench/MBABenchV2/…`, the
+> MBABenchV2 task set (`MBABenchV2`, `s3://mbabench/MBABenchV2/…`, the
 > v8 template mirroring the 132-check rubric — graded by the agentic
 > judge). DATABASE_URL is checked against the benchmark at startup. It is
 > the third agent surface alongside the GUI pipeline (vendor chat

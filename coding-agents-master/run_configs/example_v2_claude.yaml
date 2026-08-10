@@ -3,9 +3,9 @@
 #   .venv/bin/python -m coding_agent.run_task \
 #       --config run_configs/example_v2_claude.yaml --task-id 1
 #
-# benchmark: v2 selects the BizbenchV2 experiment end to end:
-#   * S3 defaults become s3://biz-bench/MBABenchV2/... (attempts + prompts)
-#   * DATABASE_URL must be the BizbenchV2 connection string (checked at
+# benchmark: v2 selects the MBABenchV2 experiment end to end:
+#   * S3 defaults become s3://mbabench/MBABenchV2/... (attempts + prompts)
+#   * DATABASE_URL must be the MBABenchV2 connection string (checked at
 #     startup; the run refuses a BizbenchV1 URL)
 #   * template_version defaults to v8 — the v2 132-check-rubric mirror
 #     (generated from the GUI prompt set by tools/build_v8_template.py)

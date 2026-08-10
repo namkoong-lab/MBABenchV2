@@ -34,7 +34,7 @@ except ImportError:
     anthropic = None
 
 from .mcp_client import ExcelMCPClient
-from .models_config import MODEL_PRICING, calculate_cost
+from .models_config import MODEL_PRICING, calculate_cost, resolve_context_window
 
 
 class TaskStatus(Enum):
@@ -72,6 +72,10 @@ class TaskExecution:
     final_result: Optional[str] = None
     error: Optional[str] = None
     total_cost_usd: float = 0.0
+    # True if any iteration's context had to be reduced (sheet summaries /
+    # truncation) to fit the model's input window. Recorded so reduced-context
+    # attempts are identifiable downstream.
+    context_reduced: bool = False
 
 
 class StreamTimeoutError(Exception):
@@ -196,6 +200,15 @@ class ExcelTaskExecutor:
         self.max_completion_tokens = max_completion_tokens  # Max tokens for model output (higher for thinking models)
         self.reasoning_effort = reasoning_effort  # For OpenRouter: None, "xhigh", "high", "medium", "low", "minimal", "none"
 
+        # Context budgeting: degrade the assembled prompt (sheet summaries,
+        # PDF truncation) ONLY when it would exceed the model's input window —
+        # under budget the prompt is byte-identical to historical behavior.
+        # EXCEL_AGENT_CONTEXT_WINDOW overrides the live/static lookup.
+        _ctx_env = os.getenv("EXCEL_AGENT_CONTEXT_WINDOW")
+        self.context_window = int(_ctx_env) if _ctx_env else None
+        self._chars_per_token = 3.6  # conservative start; calibrated per call
+        self._overflow_shrink = 1.0  # tightened when the API 400s on overflow
+
         # Check Langfuse configuration
         self.langfuse_enabled = LANGFUSE_ENABLED and all([
             os.getenv("LANGFUSE_SECRET_KEY"),
@@ -305,8 +318,8 @@ class ExcelTaskExecutor:
         self.context_excels = []
         return {"cleared": count}
 
-    def _extract_pdf_texts(self) -> str:
-        """Extract raw text from all context PDFs"""
+    def _extract_pdf_texts(self, max_chars: int = None) -> str:
+        """Extract raw text from all context PDFs (tail-truncated if budgeted)"""
         if not self.context_pdfs:
             return ""
 
@@ -325,18 +338,34 @@ class ExcelTaskExecutor:
 
             all_text.append("".join(text_parts))
 
-        return "\n".join(all_text)
+        result = "\n".join(all_text)
+        if max_chars is not None and len(result) > max_chars:
+            dropped = len(result) - max_chars
+            result = result[:max_chars] + (
+                f"\n⚠️ [PDF TEXT TRUNCATED — {dropped:,} chars dropped to fit "
+                f"the context window]\n"
+            )
+        return result
 
-    def _extract_excel_texts(self) -> str:
+    def _extract_excel_texts(self, max_chars: int = None) -> str:
         """Extract data from all context Excel files using enhanced grid format"""
         if not self.context_excels:
             return ""
 
         if self.enhanced_excel_context:
-            # Use enhanced grid format for better context understanding
+            # Use enhanced grid format for better context understanding.
+            # Under a budget each file gets an equal share; the grid builder
+            # summarizes that file's largest sheets to fit its share.
+            per_file = (
+                max(20_000, max_chars // len(self.context_excels))
+                if max_chars is not None
+                else None
+            )
             all_text = []
             for excel_path in self.context_excels:
-                grid_text = self._format_excel_as_grid(excel_path, is_solution=False)
+                grid_text = self._format_excel_as_grid(
+                    excel_path, is_solution=False, max_chars=per_file
+                )
                 all_text.append(grid_text)
             return "\n".join(all_text)
         else:
@@ -405,7 +434,9 @@ class ExcelTaskExecutor:
 
         return "\n".join(all_text)
 
-    def _format_excel_as_grid(self, excel_path: str, is_solution: bool = False) -> str:
+    def _format_excel_as_grid(
+        self, excel_path: str, is_solution: bool = False, max_chars: int = None
+    ) -> str:
         """Format Excel file as grid with column letters + row numbers
 
         Used for both:
@@ -417,6 +448,11 @@ class ExcelTaskExecutor:
         Args:
             excel_path: Path to Excel file
             is_solution: True if this is solution.xlsx, False for context files
+            max_chars: When set and the full grid exceeds it, the largest
+                sheets are replaced by structural summaries (used range,
+                sample rows, counts, and a read-on-demand pointer) until the
+                text fits. When None, or when everything fits, the output is
+                byte-identical to the historical full rendering.
 
         Returns:
             Formatted grid text with column letters and row numbers
@@ -439,6 +475,9 @@ class ExcelTaskExecutor:
             total_formulas = 0
             circular_refs_detected = []
             empty_q_sheets = []
+            # (sheet_name, full_text, row_lines, meta) — assembled after the
+            # loop so oversized sheets can be swapped for summaries.
+            rendered_sheets = []
 
             for sheet in wb_formulas.worksheets:
                 sheet_name = sheet.title
@@ -446,7 +485,9 @@ class ExcelTaskExecutor:
 
                 # Get used range
                 if sheet.max_row is None or sheet.max_column is None:
-                    text_parts.append(f"\n=== WORKSHEET: {sheet_name} ===\n(Empty sheet)\n")
+                    rendered_sheets.append(
+                        (sheet_name, f"\n=== WORKSHEET: {sheet_name} ===\n(Empty sheet)\n", [], None)
+                    )
                     # Check if this is a Q sheet that's empty
                     if sheet_name.startswith('Q') and sheet_name[1:].isdigit():
                         empty_q_sheets.append(sheet_name)
@@ -457,8 +498,11 @@ class ExcelTaskExecutor:
                 actual_max_col = sheet.max_column
 
                 used_range = f"{get_column_letter(1)}{1}:{get_column_letter(actual_max_col)}{actual_max_row}"
-                text_parts.append(f"\n=== WORKSHEET: {sheet_name} ===\n")
-                text_parts.append(f"Used Range: {used_range}\n")
+                sheet_parts = [f"\n=== WORKSHEET: {sheet_name} ===\n"]
+                sheet_parts.append(f"Used Range: {used_range}\n")
+                row_lines = []
+                sheet_formula_count = 0
+                nonempty_cells = 0
 
                 # Create grid display with column letters + row numbers
                 for row in range(1, actual_max_row + 1):
@@ -476,11 +520,13 @@ class ExcelTaskExecutor:
 
                         if formula_value is None:
                             continue  # Skip empty cells entirely
+                        nonempty_cells += 1
 
                         cell_type = ""
                         if isinstance(formula_value, str) and formula_value.startswith('='):
                             # It's a formula
                             total_formulas += 1
+                            sheet_formula_count += 1
                             # Check for potential circular reference
                             self_ref_patterns = [
                                 f"'{sheet_name}'!{cell_addr}",  # 'Sheet'!B2
@@ -511,7 +557,17 @@ class ExcelTaskExecutor:
 
                     # Only show rows that have non-empty cells
                     if row_cells:
-                        text_parts.append(f"  {' | '.join(row_cells)}\n")
+                        row_lines.append(f"  {' | '.join(row_cells)}\n")
+
+                sheet_parts.extend(row_lines)
+                meta = {
+                    "used_range": used_range,
+                    "max_row": actual_max_row,
+                    "max_col_letter": get_column_letter(actual_max_col),
+                    "formulas": sheet_formula_count,
+                    "nonempty_cells": nonempty_cells,
+                }
+                rendered_sheets.append((sheet_name, "".join(sheet_parts), row_lines, meta))
 
                 # Check for Q sheets without formulas
                 if sheet_name.startswith('Q') and sheet_name[1:].isdigit():
@@ -523,24 +579,55 @@ class ExcelTaskExecutor:
                     if sheet_formulas == 0:
                         empty_q_sheets.append(sheet_name)
 
-            # Add summary for solution files
+            # Build the tail summary for solution files
+            tail_parts = []
             if is_solution:
-                text_parts.append(f"\nSUMMARY:\n")
-                text_parts.append(f"- {len(wb_formulas.sheetnames)} worksheets: {', '.join(wb_formulas.sheetnames)}\n")
-                text_parts.append(f"- {total_formulas} formulas total\n")
+                tail_parts.append(f"\nSUMMARY:\n")
+                tail_parts.append(f"- {len(wb_formulas.sheetnames)} worksheets: {', '.join(wb_formulas.sheetnames)}\n")
+                tail_parts.append(f"- {total_formulas} formulas total\n")
 
                 if circular_refs_detected:
-                    text_parts.append(f"- ⚠️ POTENTIAL CIRCULAR REFS: {', '.join(circular_refs_detected)}\n")
+                    tail_parts.append(f"- ⚠️ POTENTIAL CIRCULAR REFS: {', '.join(circular_refs_detected)}\n")
                 else:
-                    text_parts.append(f"- ✅ No circular references detected\n")
+                    tail_parts.append(f"- ✅ No circular references detected\n")
 
                 if empty_q_sheets:
-                    text_parts.append(f"- ⚠️ EMPTY Q SHEETS: {', '.join(empty_q_sheets)}\n")
+                    tail_parts.append(f"- ⚠️ EMPTY Q SHEETS: {', '.join(empty_q_sheets)}\n")
                 else:
-                    text_parts.append(f"- ✅ All Q sheets have content\n")
+                    tail_parts.append(f"- ✅ All Q sheets have content\n")
 
             wb_formulas.close()
             wb_data.close()
+
+            # Budget pass: if the full grid exceeds max_chars, replace the
+            # largest sheets with structural summaries (largest first) until
+            # it fits. Under budget nothing changes.
+            sheet_texts = {name: text for name, text, _, _ in rendered_sheets}
+            fixed_chars = sum(len(p) for p in text_parts) + sum(len(p) for p in tail_parts)
+            if max_chars is not None:
+                def _total():
+                    return fixed_chars + sum(len(t) for t in sheet_texts.values())
+
+                by_size = sorted(
+                    (s for s in rendered_sheets if s[3] is not None),
+                    key=lambda s: len(s[1]),
+                    reverse=True,
+                )
+                for sheet_name, full_text, row_lines, meta in by_size:
+                    if _total() <= max_chars:
+                        break
+                    sheet_texts[sheet_name] = self._summarize_sheet_text(
+                        sheet_name, row_lines, meta
+                    )
+                if _total() > max_chars:
+                    print(
+                        f"⚠️ {excel_name}: still {_total():,} chars after summarizing "
+                        f"all sheets (budget {max_chars:,})"
+                    )
+
+            for name, _, _, _ in rendered_sheets:
+                text_parts.append(sheet_texts[name])
+            text_parts.extend(tail_parts)
 
             return "".join(text_parts)
 
@@ -548,13 +635,48 @@ class ExcelTaskExecutor:
             excel_name = Path(excel_path).name
             return f"\n{'='*60}\nEXCEL: {excel_name}\n{'='*60}\nError reading file: {str(e)}\n"
 
-    def _load_solution_context(self) -> str:
+    # Sample rows shown when a sheet is summarized instead of fully rendered.
+    SUMMARY_SAMPLE_ROWS = 8
+
+    def _summarize_sheet_text(self, sheet_name: str, row_lines: list, meta: dict) -> str:
+        """Structural summary standing in for an oversized sheet's full grid.
+
+        Must be LOUD that the data still exists: the model plans from this
+        text alone (stateless loop), so it has to know it can reference the
+        hidden ranges in formulas or read them with get_cell_range.
+        """
+        head = row_lines[: self.SUMMARY_SAMPLE_ROWS]
+        tail = row_lines[-1:] if len(row_lines) > self.SUMMARY_SAMPLE_ROWS else []
+        parts = [
+            f"\n=== WORKSHEET: {sheet_name} ===\n",
+            f"Used Range: {meta['used_range']}\n",
+            (
+                f"⚠️ SHEET SUMMARIZED — too large to display in full "
+                f"({meta['nonempty_cells']:,} non-empty cells, "
+                f"{meta['formulas']} formulas).\n"
+                f"The FULL data still EXISTS in this sheet — it is only hidden "
+                f"from this view. Reference it directly in formulas (e.g. "
+                f"'{sheet_name}'!A2:{meta['max_col_letter']}{meta['max_row']}) "
+                f"or inspect specific ranges with get_cell_range.\n"
+            ),
+            f"First {len(head)} rows (sample):\n",
+            *head,
+        ]
+        if tail:
+            parts.append(f"  ... ({len(row_lines) - len(head) - 1} rows hidden) ...\n")
+            parts.append(f"Last row:\n")
+            parts.extend(tail)
+        return "".join(parts)
+
+    def _load_solution_context(self, max_chars: int = None) -> str:
         """Load solution.xlsx into context with full grid view for fresh context mode"""
         solution_path = Path(self.excel_client.storage_path) / "solution.xlsx"
         if not solution_path.exists():
             return "\n=== SOLUTION FILE ===\nNo solution.xlsx found yet. Create it to begin building your Excel model.\n"
 
-        return self._format_excel_as_grid(str(solution_path), is_solution=True)
+        return self._format_excel_as_grid(
+            str(solution_path), is_solution=True, max_chars=max_chars
+        )
 
     def _save_iteration_snapshot(self, iteration: int, task: TaskExecution = None):
         """Save solution.xlsx copy and the EXACT prompt the AI saw for this iteration."""
@@ -808,8 +930,11 @@ class ExcelTaskExecutor:
             completion_tokens = usage_info.get("completion_tokens", 0)
             total_tokens = usage_info.get("total_tokens", 0)
 
-            # Calculate cost (Opus 4.5 pricing: $5/MTok input, $25/MTok output)
-            cost_usd = (prompt_tokens / 1_000_000 * 5.0) + (completion_tokens / 1_000_000 * 25.0)
+            # Price via models_config (live OpenRouter prices with static
+            # fallback) — never a hardcoded per-model rate.
+            cost_usd = calculate_cost(
+                request.get("model", self.model), prompt_tokens, completion_tokens
+            )
 
             # Accumulate cost on the current execution
             if self.current_execution:
@@ -888,6 +1013,12 @@ class ExcelTaskExecutor:
                         "completion_tokens": chunk.usage.completion_tokens or 0,
                         "total_tokens": chunk.usage.total_tokens or 0
                     }
+                    # OpenRouter returns the actual billed cost (USD) when the
+                    # request sets extra_body usage.include — provider-
+                    # authoritative, preferred over any price-table estimate.
+                    billed_cost = getattr(chunk.usage, "cost", None)
+                    if billed_cost is not None:
+                        usage_info["cost"] = float(billed_cost)
         except Exception as e:
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
@@ -916,8 +1047,13 @@ class ExcelTaskExecutor:
             completion_tokens = usage_info.get('completion_tokens', 0)
             total_tokens = usage_info.get('total_tokens', 0)
 
-            # Calculate cost
-            cost_usd = calculate_cost(model, prompt_tokens, completion_tokens)
+            # Prefer the provider's own billed cost (OpenRouter usage
+            # accounting); fall back to live/static pricing lookup.
+            provider_cost = usage_info.get('cost')
+            if provider_cost is not None:
+                cost_usd = float(provider_cost)
+            else:
+                cost_usd = calculate_cost(model, prompt_tokens, completion_tokens)
 
             # Accumulate cost on the current execution
             if self.current_execution:
@@ -966,12 +1102,42 @@ class ExcelTaskExecutor:
         else:
             return self._get_traditional_context_prompt(task)
 
-    def _get_fresh_context_prompt(self, task: TaskExecution) -> str:
-        """Generate fresh context prompt with current file state and recent tool call history"""
+    # Tools whose results are pure reads — in reduced-context mode their
+    # results are carried forward in full (capped) so the model can act on
+    # data it requested from a summarized sheet one iteration later.
+    READ_TOOLS = {
+        "get_cell_range", "get_formula", "get_used_range", "search_worksheet",
+        "describe_worksheet", "scan_worksheet_structure", "list_worksheets",
+        "get_file_metadata", "summarize_workbook_context", "validate_formula",
+    }
+    READ_RESULT_CARRY_CAP = 15_000  # chars per carried read result
+
+    def _get_fresh_context_prompt(
+        self,
+        task: TaskExecution,
+        solution_override: str = None,
+        carry_read_results: bool = False,
+    ) -> str:
+        """Generate fresh context prompt with current file state and recent tool call history
+
+        Args:
+            solution_override: When not None, used in place of the freshly
+                rendered solution grid (lets the budgeted assembler inject a
+                size-capped rendering, or "" to measure the non-solution head).
+            carry_read_results: Reduced-context mode only — carry recent READ
+                tool results forward in full (capped) instead of the 150-char
+                stub, since summarized sheets make reads the model's only way
+                to see hidden data and the loop is stateless.
+        """
+        solution_text = (
+            solution_override
+            if solution_override is not None
+            else self._load_solution_context()
+        )
         context = f"""CURRENT TASK: {task.user_prompt}
 ITERATION: {task.total_iterations}/{task.max_iterations}
 
-{self._load_solution_context()}
+{solution_text}
 """
 
         # Add recent tool call history (last N calls)
@@ -991,8 +1157,12 @@ ITERATION: {task.total_iterations}/{task.max_iterations}
                     context += f"   Error: {step.error[:100]}\n"
                 elif step.result:
                     result_str = str(step.result.get('result', ''))
-                    if len(result_str) > 150:
-                        result_str = result_str[:147] + "..."
+                    carry_full = (
+                        carry_read_results and step.tool_name in self.READ_TOOLS
+                    )
+                    cap = self.READ_RESULT_CARRY_CAP if carry_full else 150
+                    if len(result_str) > cap:
+                        result_str = result_str[:cap - 3] + "..."
                     context += f"   Result: {result_str}\n"
             context += "\n"
 
@@ -1112,29 +1282,142 @@ EXECUTION HISTORY:
 
         return False
 
+    # Substrings identifying a provider-side context-window rejection
+    # (Anthropic / OpenAI / OpenRouter wordings).
+    _OVERFLOW_SIGNATURES = (
+        "prompt is too long",
+        "maximum context length",
+        "context_length_exceeded",
+        "exceed context limit",
+        "exceed the context limit",
+        "input length and `max_tokens` exceed",
+        "request too large",
+    )
+
+    def _is_context_overflow_error(self, exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(sig in text for sig in self._OVERFLOW_SIGNATURES)
+
+    def _context_budget_chars(self, system_prompt_chars: int) -> int:
+        """Char budget for the user message, derived from the token window."""
+        window = self.context_window or resolve_context_window(self.model)
+        # Reserve the output allowance plus a safety margin for message
+        # framing and tokenizer variance.
+        budget_tokens = max(10_000, window - self.max_completion_tokens - 3_000)
+        budget_chars = int(
+            budget_tokens * self._chars_per_token * self._overflow_shrink
+        )
+        return max(20_000, budget_chars - system_prompt_chars)
+
+    def _assemble_context(self, task: TaskExecution, system_prompt: str) -> str:
+        """Assemble the user message, degrading ONLY when it would overflow.
+
+        Fast path: build everything exactly as the harness always has; if the
+        estimate fits the model's input window, send it byte-identical —
+        zero behavior change for tasks that fit today.
+
+        Reduced path: rebuild with structural summaries for the largest
+        sheets (solution + context workbooks), truncated PDF text, and
+        full-fidelity carry of recent READ tool results (the stateless loop's
+        only way to let the model act on data it requested from a summarized
+        sheet).
+        """
+        context_prompt = self._get_context_prompt(task)
+        pdf_text = self._extract_pdf_texts() if self.context_pdfs else ""
+        excel_text = self._extract_excel_texts() if self.context_excels else ""
+
+        additional_context = ""
+        if self.context_pdfs:
+            additional_context += "\n\n" + pdf_text
+        if self.context_excels:
+            additional_context += "\n\n" + excel_text
+        full = (
+            context_prompt + additional_context
+            if additional_context
+            else context_prompt
+        )
+
+        budget = self._context_budget_chars(len(system_prompt))
+        if len(full) <= budget:
+            return full
+
+        # --- Reduced path ---
+        task.context_reduced = True
+
+        # Measure the non-negotiable head (task + history with read-result
+        # carry, no solution grid) to see what's left for the big parts.
+        if self.fresh_context_mode:
+            head = self._get_fresh_context_prompt(
+                task, solution_override="", carry_read_results=True
+            )
+        else:
+            head = context_prompt
+        remaining = max(30_000, budget - len(head))
+
+        pdf_budget = int(remaining * 0.25) if self.context_pdfs else 0
+        after_pdf = remaining - pdf_budget
+        if self.fresh_context_mode:
+            sol_budget = (
+                int(after_pdf * 0.6) if self.context_excels else after_pdf
+            )
+            excel_budget = after_pdf - sol_budget
+        else:
+            sol_budget = 0
+            excel_budget = after_pdf if self.context_excels else 0
+
+        if self.fresh_context_mode:
+            reduced_head = self._get_fresh_context_prompt(
+                task,
+                solution_override=self._load_solution_context(max_chars=sol_budget),
+                carry_read_results=True,
+            )
+        else:
+            reduced_head = context_prompt
+        reduced = reduced_head
+        if self.context_pdfs:
+            reduced += "\n\n" + self._extract_pdf_texts(max_chars=pdf_budget)
+        if self.context_excels:
+            reduced += "\n\n" + self._extract_excel_texts(max_chars=excel_budget)
+
+        print(
+            f"📉 Context reduced to fit window: {len(full):,} -> "
+            f"{len(reduced):,} chars (budget {budget:,} chars, "
+            f"chars/token {self._chars_per_token:.2f})"
+        )
+        return reduced
+
     def _call_reasoning_engine(self, task: TaskExecution) -> Tuple[Dict[str, Any], str]:
+        """Reason with a context-overflow backstop.
+
+        The char-based budget estimate can be wrong (the first call is
+        uncalibrated), so a provider context-length 400 tightens the
+        calibration and budget and rebuilds the iteration instead of failing
+        the whole attempt.
+        """
+        max_overflow_retries = 2
+        for attempt in range(max_overflow_retries + 1):
+            try:
+                return self._reason_once(task)
+            except Exception as e:
+                if attempt < max_overflow_retries and self._is_context_overflow_error(e):
+                    self._chars_per_token = max(2.0, self._chars_per_token * 0.75)
+                    self._overflow_shrink *= 0.85
+                    print(
+                        f"⚠️ Provider rejected prompt for size; rebuilding with "
+                        f"tighter budget (retry {attempt + 1}/{max_overflow_retries}, "
+                        f"chars/token -> {self._chars_per_token:.2f})"
+                    )
+                    continue
+                raise
+
+    def _reason_once(self, task: TaskExecution) -> Tuple[Dict[str, Any], str]:
         """Call OpenAI to determine next action.
 
         Returns (parsed_json, raw_text) for auditing.
         """
         try:
             system_prompt = self._get_system_prompt()
-            context_prompt = self._get_context_prompt(task)
-
-            # Extract PDF and Excel text if they are in context
-            additional_context = ""
-            if self.context_pdfs:
-                pdf_text = self._extract_pdf_texts()
-                additional_context += "\n\n" + pdf_text
-            if self.context_excels:
-                excel_text = self._extract_excel_texts()
-                additional_context += "\n\n" + excel_text
-
-            if additional_context:
-                full_context = context_prompt + additional_context
-                user_message_content = full_context
-            else:
-                user_message_content = context_prompt
+            user_message_content = self._assemble_context(task, system_prompt)
 
             # Store the exact prompt for snapshot capture
             self._last_user_message = user_message_content
@@ -1174,6 +1457,14 @@ EXECUTION HISTORY:
                                 "reasoning": {"effort": self.reasoning_effort}
                             }
                             print(f"🧠 Reasoning effort (OpenRouter): {self.reasoning_effort}")
+
+                    if not self.use_openai_direct:
+                        # OpenRouter: request the billed cost in the final
+                        # usage chunk so logged cost comes from the provider's
+                        # own accounting rather than a local price estimate.
+                        request_data.setdefault("extra_body", {})["usage"] = {
+                            "include": True
+                        }
 
                     # Note: We rely on _extract_json() and _parse_jsonl_response() to handle
                     # any preamble text (e.g., "Wait: ...") that GPT-5 with reasoning may output.
@@ -1261,7 +1552,19 @@ EXECUTION HISTORY:
                         response_text = response.choices[0].message.content or ""
                     else:
                         raise
-            
+
+            # Calibrate the chars/token estimate against the provider's actual
+            # prompt_tokens so the next iteration's context budget is accurate.
+            # (usage_info is unset only on the non-streaming fallback path.)
+            try:
+                _pt = usage_info.get("prompt_tokens") if isinstance(usage_info, dict) else 0
+                if _pt:
+                    _ratio = (len(system_prompt) + len(user_message_content)) / _pt
+                    if 1.0 <= _ratio <= 10.0:
+                        self._chars_per_token = _ratio
+            except NameError:
+                pass
+
             # Parse JSON response with light cleanup for fenced blocks
             def _extract_json(txt: str) -> Dict[str, Any]:
                 t = (txt or "").strip()
@@ -1623,6 +1926,7 @@ EXECUTION HISTORY:
             # Legacy/additional fields (keep for backward compatibility)
             "user_prompt": task.user_prompt,
             "status": task.status.value,
+            "context_reduced": task.context_reduced,
             "start_time": task.start_time,
             "end_time": task.end_time,
             "iterations": task.total_iterations,

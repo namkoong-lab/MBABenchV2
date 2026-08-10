@@ -32,8 +32,8 @@
 #   v1 — MBABench V1 wave: BizbenchV1 DB (schema "bizbench"), s3://mbabench/
 #        BizbenchV1/attempts, single-prompt pv9 payloads
 #        (tasks_configs/prompts_pv9/), mode/effort-rich identities.
-#   v2 — MBABenchV2 task set: BizbenchV2 DB (schema "mbabenchv2"),
-#        s3://biz-bench/MBABenchV2/attempts, 3-step rubric-v9 prompts
+#   v2 — MBABenchV2 task set: MBABenchV2 DB (schema "mbabenchv2"),
+#        s3://mbabench/MBABenchV2/attempts, 3-step rubric-v9 prompts
 #        (tasks_configs/prompts_v2/), model-only identities.
 benchmark:
   value: "v2"                # "v1" | "v2"
@@ -174,7 +174,7 @@ aws:
     required: false
   # null = derived from the sink schema at build time (task_io/registry.py):
   #   bizbench   -> bucket "mbabench",  prefix "BizbenchV1/attempts"
-  #   mbabenchv2 -> bucket "biz-bench", prefix "MBABenchV2/attempts"
+  #   mbabenchv2 -> bucket "mbabench",  prefix "MBABenchV2/attempts"
   # Set explicitly only to redirect a run to a non-standard bucket/prefix.
   s3_bucket:
     value: null

@@ -9,11 +9,14 @@ model: "PROVIDER/MODEL_SLUG"          # OpenRouter model slug (e.g., "openai/gpt
 auto_mode: true
 
 # Which experiment this run belongs to (default v1 = historical behavior):
-#   v1 -> BizbenchV1 DB, s3://mbabench/BizbenchV1/...
-#   v2 -> BizbenchV2 DB, s3://biz-bench/MBABenchV2/...
+#   v1 -> BizbenchV1 DB, s3://mbabench/BizbenchV1/..., v1-rubric prompts
+#   v2 -> MBABenchV2 DB, s3://mbabench/MBABenchV2/..., v2-rubric prompts (v12)
 # DATABASE_URL is sanity-checked against this at startup so a mismatched
-# config fails before writing anything. Prompts are chosen independently
-# via prompt_version below.
+# config fails before writing anything. prompt_version (below) defaults from
+# the benchmark; an explicit value must embed the same benchmark's rubric
+# (v1..v11 = the 17-check v1 rubric, v12 = the 132-check v2 rubric) or the
+# run refuses to start. EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 forces a deliberate
+# cross-benchmark run.
 benchmark: "v1"
 
 # Where to create workspaces (files downloaded from S3 here)
