@@ -44,7 +44,7 @@ You can have 1 prompt or 20. Compare this to the default prompts that ship with 
 
 | Branch | Agent | Config key | Options |
 |--------|-------|-----------|---------|
-| GUI | Claude | `claude_web.model` | `opus_4_6`, `sonnet_4_6`, `haiku_4_5` |
+| GUI | Claude | `claude_web.model` | `opus_4_6`, `sonnet_4_6`, `haiku_4_5`, `fable_5` |
 | GUI | ChatGPT | `chatgpt_web.model` | `instant`, `thinking`, `pro` |
 | Excel | Claude | `claude_excel_agent.model` | `opus_4_6`, `sonnet_4_6` |
 | Excel | ChatGPT | `chatgpt_excel_agent.model` | `fast`, `standard`, `heavy` |

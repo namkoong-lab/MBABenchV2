@@ -10,12 +10,15 @@ Uses Playwright to:
 """
 
 import asyncio
+import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from claude_web_agent.web_agent import WebAgent, WebAgentState, ConversationMessage
+from claude_web_agent.dom_diagnostics import dump_final_message_dom
 
 logger = logging.getLogger(__name__)
 
@@ -203,19 +206,27 @@ class ChatGPTWebAgent(WebAgent):
     # no stable data-testids — they are identified only by visible label text.
     # Map config values (and common aliases) to the exact on-screen labels.
     # Intelligence levels are role="menuitemradio"; "GPT-5.5" is role="menuitem".
+    # Labels as of the ~2026-07-11 picker update: ['Instant5.5', 'Medium',
+    # 'High', 'Extra High', 'Pro', 'GPT-5.6 Sol']. 'Pro Extended' was renamed
+    # to plain 'Pro' — the old aliases stay mapped so existing configs keep
+    # selecting the pro tier. From 07-11 until this fix, 'pro' silently fell
+    # through to "using current default": correct-looking on browsers whose
+    # account default had migrated to Pro, but a fresh profile (EC2 box)
+    # defaulted to a fast model and produced stub workbooks.
     MODEL_LABELS = {
-        "instant": "Instant",
+        "instant": "Instant5.5",
         "medium": "Medium",
         "high": "High",
         "extra high": "Extra High",
         "extra_high": "Extra High",
         "extrahigh": "Extra High",
-        "pro": "Pro Extended",
-        "pro extended": "Pro Extended",
-        "pro_extended": "Pro Extended",
-        "gpt-5.5": "GPT-5.5",
-        "gpt5.5": "GPT-5.5",
-        "5.5": "GPT-5.5",
+        "pro": "Pro",
+        "pro extended": "Pro",
+        "pro_extended": "Pro",
+        "gpt-5.6": "GPT-5.6 Sol",
+        "gpt5.6": "GPT-5.6 Sol",
+        "sol": "GPT-5.6 Sol",
+        "5.6": "GPT-5.6 Sol",
     }
 
     async def ensure_model_selected(self) -> bool:
@@ -226,9 +237,9 @@ class ChatGPTWebAgent(WebAgent):
         and uses the current default. Lookup is case-insensitive and accepts
         either an alias key or the exact visible label.
 
-        Supported values (config key -> label): ``instant`` -> Instant,
+        Supported values (config key -> label): ``instant`` -> Instant5.5,
         ``medium`` -> Medium, ``high`` -> High, ``extra high`` -> Extra High,
-        ``pro`` -> Pro Extended, ``gpt-5.5`` -> GPT-5.5.
+        ``pro`` -> Pro, ``gpt-5.6`` -> GPT-5.6 Sol.
 
         Selection flow:
           1. Click the composer pill
@@ -252,12 +263,15 @@ class ChatGPTWebAgent(WebAgent):
                     label = v
                     break
         if label is None:
-            logger.warning(
-                "Unknown ChatGPT model '%s'. Valid options: %s. Using current default.",
+            logger.error(
+                "Unknown ChatGPT model '%s'. Valid options: %s. FAILING the "
+                "attempt — running on an unverified default is worse than "
+                "failing loudly (07-11..07-13 the picker rename silently "
+                "downgraded runs for 2 days).",
                 target_model,
                 ", ".join(sorted(set(self.MODEL_LABELS.values()))),
             )
-            return True
+            return False
 
         try:
             logger.info("Selecting ChatGPT model: %s -> '%s'", target_model, label)
@@ -266,10 +280,13 @@ class ChatGPTWebAgent(WebAgent):
                 'button.__composer-pill[aria-haspopup="menu"]'
             ).first
             if not await pill.count():
-                logger.warning(
-                    "ChatGPT model-switcher pill not found — skipping model selection"
+                logger.error(
+                    "ChatGPT model-switcher pill not found — cannot verify "
+                    "the model; FAILING the attempt (a transient miss "
+                    "recovers on the engine's next attempt; a missing pill "
+                    "after a UI redesign must not silently run the default)"
                 )
-                return True
+                return False
 
             # Pill text is the current model — skip if already selected.
             current = (await pill.text_content() or "").strip()
@@ -296,16 +313,29 @@ class ChatGPTWebAgent(WebAgent):
                     '[role="menuitemradio"],[role="menuitem"]',
                     "els => els.map(e => (e.textContent || '').trim()).filter(Boolean)",
                 )
-                logger.warning(
-                    "Model '%s' not found in dropdown (available: %s) — using current default",
+                logger.error(
+                    "Model '%s' not found in dropdown (available: %s) — "
+                    "FAILING the attempt. The picker labels changed again: "
+                    "update MODEL_LABELS in this file to the new label set. "
+                    "(Old behavior silently ran the browser default — that "
+                    "produced 2 days of unverified runs after the 07-11 "
+                    "rename and stub workbooks on fresh profiles.)",
                     label,
                     available,
                 )
                 await self.page.keyboard.press("Escape")
-                return True
+                return False
 
             await asyncio.sleep(0.5)
             new_label = (await pill.text_content() or "").strip()
+            if new_label.casefold() != label.casefold():
+                logger.error(
+                    "Model selection did not take: requested '%s' but pill "
+                    "shows '%s' — FAILING the attempt (unverified model)",
+                    label,
+                    new_label,
+                )
+                return False
             logger.info(
                 "ChatGPT model selected: requested='%s', pill now shows='%s'",
                 label,
@@ -314,12 +344,17 @@ class ChatGPTWebAgent(WebAgent):
             return True
 
         except Exception as e:
-            logger.error("Error selecting ChatGPT model: %s", e)
+            logger.error(
+                "Error selecting ChatGPT model: %s — FAILING the attempt "
+                "(model cannot be verified; the engine's retry loop absorbs "
+                "transient DOM races)",
+                e,
+            )
             try:
                 await self.page.keyboard.press("Escape")
             except Exception:
                 pass
-            return True
+            return False
 
     async def _enable_agent_mode(self) -> bool:
         """Enable Agent mode via + menu > hover More > click Agent mode."""
@@ -366,7 +401,10 @@ class ChatGPTWebAgent(WebAgent):
         """
         await asyncio.sleep(2)
 
-        await self.ensure_model_selected()
+        if not await self.ensure_model_selected():
+            # Loud-fail policy (2026-07-13): a model that can't be verified
+            # must fail the attempt, not silently run the browser default.
+            return False
 
         if self.agent_mode:
             return await self._enable_agent_mode()
@@ -544,7 +582,11 @@ class ChatGPTWebAgent(WebAgent):
             if prompt_number == 1:
                 features_ok = await self.ensure_features_enabled()
                 if not features_ok:
-                    logger.warning("Failed to enable features before sending")
+                    logger.error(
+                        "Feature/model setup failed — aborting send instead "
+                        "of running on an unverified model (see errors above)"
+                    )
+                    return False
 
             # Click send button
             url_before = self.page.url
@@ -645,6 +687,37 @@ class ChatGPTWebAgent(WebAgent):
         except Exception:
             return 0
 
+    async def _recover_content_load_error(self) -> bool:
+        """Recover from ChatGPT's transient "Content failed to load" error.
+
+        That error replaces the response with a placeholder — real DOM:
+            <h2>Content failed to load</h2>
+            <button class="btn … btn-secondary"><div>Try again</div></button>
+        and leaves the response empty until "Try again" is clicked. Requires
+        BOTH the error text AND a button whose text is exactly "Try again"
+        (specific to this state — the healthy-response button says "Regenerate",
+        not "Try again"), then clicks it. Returns True iff it clicked.
+        """
+        try:
+            clicked = await self.page.evaluate(
+                r"""() => {
+                const main = document.querySelector('main') || document.body;
+                const errRe = /content failed to load|something went wrong|couldn.?t load/i;
+                const hasErr = Array.from(main.querySelectorAll('h1,h2,h3,p,div,span'))
+                    .some(e => e.children.length === 0 && errRe.test(e.textContent || ''));
+                if (!hasErr) return false;
+                const btn = Array.from(main.querySelectorAll('button'))
+                    .find(b => (b.textContent || '').trim().toLowerCase() === 'try again');
+                if (!btn) return false;
+                btn.click();
+                return true;
+            }"""
+            )
+            return bool(clicked)
+        except Exception as e:
+            logger.warning(f"content-load-error recovery check failed: {e}")
+            return False
+
     async def wait_for_response(self, prompt_number: int = 1) -> Optional[str]:
         """Wait for ChatGPT to finish responding.
 
@@ -721,7 +794,18 @@ class ChatGPTWebAgent(WebAgent):
         # The response text must stop changing AND generation indicators must be
         # gone for required_stable consecutive checks.
         stable_count = 0
-        required_stable = 5  # 5 consecutive checks × check_interval (15s at 3s)
+        # Response must be unchanged AND generation stopped for ~60s of
+        # continuous checks before accepting — long enough that a pause in Pro
+        # Extended's chain-of-thought is not mistaken for completion. If
+        # generation resumes, stable_count is reset above, so a think-pause
+        # shorter than the window never triggers acceptance.
+        stable_window_sec = 60
+        required_stable = max(1, round(stable_window_sec / max(1, self.check_interval)))
+        # Cap on auto-recovering ChatGPT's transient "Content failed to load"
+        # error (click "Try again") per prompt, so a persistent failure still
+        # times out instead of looping forever.
+        recovery_attempts = 0
+        max_recovery_attempts = 8
         last_response_text = ""
         last_article_count = baseline_article_count
 
@@ -742,6 +826,33 @@ class ChatGPTWebAgent(WebAgent):
 
             # Always sample response text (even during generation) for monitoring
             current_response = await self._extract_last_response() or ""
+
+            # Auto-recover from ChatGPT's transient "Content failed to load"
+            # error: it wipes the response and shows a "Try again" button, so
+            # without this the response sits empty until the per-prompt timeout.
+            # Fires only when generation has stopped AND the response is empty
+            # (the broken state) AND the error text + button are present.
+            if (
+                not generating
+                and len(current_response.strip()) == 0
+                and recovery_attempts < max_recovery_attempts
+                and await self._recover_content_load_error()
+            ):
+                recovery_attempts += 1
+                logger.warning(
+                    f"'Content failed to load' detected — clicked Try again "
+                    f"(recovery {recovery_attempts}/{max_recovery_attempts})"
+                )
+                stable_count = 0
+                last_response_text = ""
+                # Wait long enough for the reload to actually complete before
+                # re-checking. A short wait just re-clicks while the page is
+                # still reloading from the previous click, hammering the button
+                # and burning the retry cap in seconds. ~20s per attempt lets
+                # each "Try again" resolve, so the cap spans minutes of patient
+                # recovery instead.
+                await self.page.wait_for_timeout(20000)
+                continue
 
             if generating or articles_changed:
                 stable_count = 0
@@ -773,28 +884,40 @@ class ChatGPTWebAgent(WebAgent):
                             "Download",
                         ]
                     )
-                    content_ok = len(current_response) > 50 or has_file_indicator
-                    if content_ok:
+                    # Non-agent (Pro Extended): a finished turn can be very short
+                    # (e.g. "Step 1 complete." — the analysis went into the
+                    # workbook, not the chat). Accept ANY non-empty stable
+                    # response once the min-elapsed floor passes, so a terse reply
+                    # no longer spins until timeout. Do NOT let an early file card
+                    # short-circuit the floor here (that made Pro Extended quit
+                    # after ~30s with a barely-built file). Agent mode is
+                    # unchanged — it keeps the file-card fast path.
+                    if self.agent_mode:
                         effective_min = (
                             min_elapsed_sec_with_file
                             if has_file_indicator
                             else min_elapsed_sec
                         )
-                        if elapsed >= effective_min:
-                            logger.info(
-                                f"Response complete ({int(elapsed)}s elapsed, "
-                                f"{len(current_response)} chars, file_indicator={has_file_indicator})"
-                            )
-                            return current_response
-                        else:
-                            logger.info(
-                                f"Content stable but too early ({int(elapsed)}s < {min_elapsed_sec}s min), "
-                                f"continuing to wait..."
-                            )
-                            stable_count = 0
                     else:
-                        # Content too short and no file indicators — keep waiting
-                        stable_count = 0
+                        effective_min = min_elapsed_sec
+                    content_ok = len(current_response.strip()) > 0
+                    if content_ok and elapsed >= effective_min:
+                        logger.info(
+                            f"Response complete ({int(elapsed)}s elapsed, "
+                            f"{len(current_response)} chars, "
+                            f"file_indicator={has_file_indicator})"
+                        )
+                        return current_response
+                    else:
+                        # Before the min-elapsed floor (or empty response). Keep
+                        # waiting; generation resuming resets stable_count above,
+                        # so we do NOT reset here — once the floor passes we accept
+                        # on the next stable check.
+                        logger.info(
+                            f"Stable but not yet accepting ({int(elapsed)}s "
+                            f"elapsed, need >={effective_min}s, "
+                            f"len={len(current_response.strip())}); continuing..."
+                        )
 
             elapsed = int(asyncio.get_event_loop().time() - start_time)
             # Log every ~30s (use range check since loop interval may skip exact multiples)
@@ -852,6 +975,151 @@ class ChatGPTWebAgent(WebAgent):
             logger.error(f"Response extraction failed: {e}")
             return None
 
+    async def _download_via_backend_api(
+        self, download_path: Path, timeout: int
+    ) -> list[str]:
+        """Strategy 0 — download the finished xlsx via ChatGPT's backend API,
+        never opening the file-preview panel (which is what OOM-crashes the
+        renderer on heavy files).
+
+        Code-interpreter output files are referenced in the conversation by a
+        `sandbox:/mnt/data/<name>.xlsx` link inside the assistant message that
+        produced them (NOT by a downloadable file id — that id is minted on
+        demand). The reliable, no-render chain (validated live 2026-07-16),
+        all authenticated GETs through the browser context (cookies + bearer):
+          1. /backend-api/conversation/{cid}        -> messages + sandbox refs
+          2. .../{cid}/interpreter/download?message_id={mid}&sandbox_path={p}
+                                                     -> {download_url: estuary?..sig=}
+          3. GET download_url                        -> the xlsx bytes
+        `sandbox_path` is the RAW /mnt/data/... path (the `sandbox:` prefix
+        must be stripped, or the mint returns file_not_found). No grid renders,
+        so a 3 MB file behaves like a 100 KB one.
+
+        BACKWARDS-COMPATIBLE BY CONSTRUCTION: returns [saved_path] ONLY when it
+        matches the exact xlsx filename the DOM is already offering AND the bytes
+        validate as a non-empty .xlsx. Any ambiguity/error -> returns [] so the
+        caller falls back to the untouched preview/sandbox flow. It therefore
+        downloads the SAME file the old flow targets — just without the preview.
+        """
+        from urllib.parse import quote
+
+        # --- conversation id from the page URL (…/c/{uuid}) ---
+        m = re.search(r"/c/([0-9a-fA-F-]{36})", self.page.url)
+        if not m:
+            logger.info("backend-API: no /c/{uuid} in page URL; deferring")
+            return []
+        cid = m.group(1)
+
+        # --- filenames the DOM is offering (what the engine would click) ---
+        # Prefer a step-3 / final-looking name over the uploaded input file.
+        dom_names = await self.page.evaluate(
+            r"""() => {
+                const names = new Set();
+                const scan = s => {
+                    const mm = (s || '').match(/([\w()\-. ]+\.xlsx)/i);
+                    if (mm) names.add(mm[1].trim());
+                };
+                document.querySelectorAll('button, a, [aria-label]').forEach(el => {
+                    if (el.getAttribute) scan(el.getAttribute('aria-label'));
+                    scan(el.textContent);
+                });
+                return [...names];
+            }"""
+        )
+
+        def _rank(n: str):
+            nl = n.lower()
+            return (("step3" in nl or "final" in nl), "step2" not in nl, len(n))
+
+        dom_names = sorted(dom_names, key=_rank, reverse=True)
+        if not dom_names:
+            logger.info("backend-API: DOM offered no .xlsx name; deferring")
+            return []
+        logger.info(f"backend-API: DOM offers {dom_names[:5]}")
+
+        req = self.page.context.request
+        sess = await (
+            await req.get("https://chatgpt.com/api/auth/session", timeout=timeout)
+        ).json()
+        token = sess.get("accessToken")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        conv = await (
+            await req.get(
+                f"https://chatgpt.com/backend-api/conversation/{cid}",
+                headers=headers,
+                timeout=timeout,
+            )
+        ).json()
+
+        # Collect (basename -> (message_id, /mnt/data path)) for every xlsx
+        # sandbox ref, walking messages oldest→newest so the LAST write of a
+        # given filename wins (the step-3 QA output supersedes earlier steps).
+        mapping = conv.get("mapping") or {}
+
+        def _ctime(item):
+            msg = (item[1].get("message") or {})
+            return msg.get("create_time") or 0
+
+        refs: dict[str, tuple[str, str]] = {}
+        for mid, node in sorted(mapping.items(), key=_ctime):
+            msg = node.get("message") or {}
+            body = json.dumps(msg.get("content") or {})
+            for sref in re.findall(r"sandbox:(/mnt/data/[^\"\\]+?\.xlsx)", body):
+                mid_val = (msg.get("id") or mid)
+                refs[Path(sref).name.lower()] = (mid_val, sref)
+        if not refs:
+            logger.info("backend-API: no sandbox xlsx refs in conversation; deferring")
+            return []
+        logger.info(f"backend-API: sandbox xlsx refs {list(refs.keys())}")
+
+        # STRICT match: the highest-ranked DOM name that maps to a sandbox ref.
+        chosen_name = mid = sandbox_path = None
+        for tname in dom_names:
+            if tname.lower() in refs:
+                chosen_name = tname
+                mid, sandbox_path = refs[tname.lower()]
+                break
+        if not chosen_name:
+            logger.info(
+                "backend-API: no DOM name matched a sandbox ref — deferring to "
+                "preview/sandbox flow (backwards-safe)"
+            )
+            return []
+
+        # Mint the signed download URL (raw /mnt/data path, no sandbox: prefix).
+        mint = await (
+            await req.get(
+                f"https://chatgpt.com/backend-api/conversation/{cid}"
+                f"/interpreter/download"
+                f"?message_id={mid}&sandbox_path={quote(sandbox_path, safe='')}",
+                headers=headers,
+                timeout=timeout,
+            )
+        ).json()
+        url = mint.get("download_url")
+        if mint.get("status") != "success" or not url:
+            logger.info(
+                f"backend-API: mint failed (status={mint.get('status')}, "
+                f"code={mint.get('error_code')}); deferring"
+            )
+            return []
+        resp = await req.get(url, timeout=timeout)
+        body = await resp.body()
+        if resp.status != 200 or len(body) < 200 or body[:2] != b"PK":
+            logger.info(
+                f"backend-API: bytes failed validation (status={resp.status}, "
+                f"len={len(body)}, magic={body[:2]!r}); deferring"
+            )
+            return []
+
+        save_path = download_path / Path(chosen_name).name
+        save_path.write_bytes(body)
+        logger.info(
+            f"backend-API: saved {save_path} ({len(body)} bytes) with NO preview"
+        )
+        return [str(save_path)]
+
     async def download_all_artifacts(
         self, download_dir: Optional[str] = None, timeout: int = 30000
     ) -> list[str]:
@@ -880,11 +1148,45 @@ class ChatGPTWebAgent(WebAgent):
         download_path = Path(download_dir) if download_dir else Path(".")
         download_path.mkdir(parents=True, exist_ok=True)
 
+        # Strategy 0: download the finished xlsx straight from the backend API,
+        # WITHOUT opening the file-preview panel. The preview renders the whole
+        # spreadsheet grid and OOM-crashes the renderer on heavy files (2-3 MB
+        # models) — this path never renders anything. Fully additive and
+        # guarded: it only returns a file when it can confidently match the
+        # xlsx the DOM is offering; on ANY miss/error it returns [] and we fall
+        # straight through to the proven preview/sandbox flow below, so tasks
+        # that already download keep working unchanged.
+        try:
+            api_files = await self._download_via_backend_api(download_path, timeout)
+            if api_files:
+                logger.info(
+                    f"Downloaded via backend API — preview bypassed (no OOM risk): "
+                    f"{api_files}"
+                )
+                return api_files
+            logger.info(
+                "Backend-API download found no confident match — falling through "
+                "to the preview/sandbox flow"
+            )
+        except Exception as e:
+            logger.info(
+                f"Backend-API download path errored ({e!r}) — falling through to "
+                f"the preview/sandbox flow"
+            )
+
         try:
             # Scroll to the bottom of the conversation to ensure all file cards
             # are rendered in the DOM before searching.
             await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await self.page.wait_for_timeout(2000)
+
+            # Always-on diagnostic: record how the finished file is presented
+            # (control form + final-message HTML) so a UI format drift is
+            # self-documenting in the log rather than a silent zero-file result.
+            await dump_final_message_dom(
+                self.page, logger, "chatgpt",
+                ["[data-message-author-role='assistant']", "article"],
+            )
 
             # Strategy 1: Find artifact preview cards via JS DOM inspection.
             # Only search articles AFTER the baseline count (i.e., new articles
@@ -966,9 +1268,46 @@ class ChatGPTWebAgent(WebAgent):
                         const MSG_ACTION_ARIAS = new Set([
                             'Copy response', 'Copy', 'Good response', 'Bad response',
                             'Share', 'Switch model', 'More actions', 'Edit',
-                            'Read aloud', 'Try again', 'Regenerate'
+                            'Read aloud', 'Try again', 'Regenerate',
+                            // Turn-toolbar buttons added by ChatGPT for
+                            // projects/Pro (seen 2026-07-10): icon-only, so
+                            // they passed the heuristic and were harvested as
+                            // "card buttons" when the card itself rendered
+                            // zero buttons (download is hover-revealed now).
+                            'Pro feedback', 'Add to project sources',
+                            'Remove from project sources'
                         ]);
                         for (let depth = 0; depth < 8 && container; depth++) {
+                            // Never ascend past the message-turn wrapper: its
+                            // toolbar buttons are per-TURN actions, not card
+                            // controls, and harvesting them sends clicks to
+                            // feedback/share/project toggles. When we hit this
+                            // boundary without having found any card buttons,
+                            // still register the filename's own block as a
+                            // button-less card — the current ChatGPT build
+                            // reveals the card's download control only on
+                            // hover, so Python needs an element to hover/click.
+                            if (container.className &&
+                                typeof container.className === 'string' &&
+                                container.className.includes('agent-turn')) {
+                                const fb = node.parentElement.closest('div') ||
+                                           node.parentElement;
+                                if (fb && !fb.hasAttribute('data-artifact-card')) {
+                                    const cardIdx = artifactsOut.length;
+                                    const cardId = 'art-card-' + cardIdx;
+                                    fb.setAttribute('data-artifact-card', cardId);
+                                    const displayName = filename.includes('.xls')
+                                        ? filename : 'ai_attempt.xlsx';
+                                    artifactsOut.push({
+                                        filename: displayName,
+                                        cardId: cardId,
+                                        buttons: [],
+                                        containerHtml: fb.outerHTML.substring(0, 1500),
+                                        foundVia: 'turn-boundary-fallback',
+                                    });
+                                }
+                                break;
+                            }
                             const buttons = container.querySelectorAll('button');
                             // Artifact cards have icon-only buttons (SVG icons).
                             const iconButtons = Array.from(buttons).filter(b => {
@@ -991,6 +1330,8 @@ class ChatGPTWebAgent(WebAgent):
                                     break;
                                 }
                                 const cardIdx = artifactsOut.length;
+                                const cardId = 'art-card-' + cardIdx;
+                                container.setAttribute('data-artifact-card', cardId);
                                 // Tag EVERY icon button — we don't know which
                                 // one is download (icons are sprite-hashed and
                                 // classes don't disambiguate in pro mode), so
@@ -1019,6 +1360,7 @@ class ChatGPTWebAgent(WebAgent):
                                     ? filename : 'ai_attempt.xlsx';
                                 artifactsOut.push({
                                     filename: displayName,
+                                    cardId: cardId,
                                     buttons: buttonMetas,
                                     containerHtml: container.outerHTML.substring(0, 1500),
                                     foundVia: root === document.body ? 'document' : 'article',
@@ -1142,10 +1484,282 @@ class ChatGPTWebAgent(WebAgent):
 
             # Per-button click budget. Each card may have N icon buttons and
             # we try them in order; the REAL download button is the first one
-            # that causes a new file to appear within this window.
+            # that causes a new file to appear within this window. Kept short
+            # ON PURPOSE: a wrong button must fail fast so we can try the next.
             per_button_wait_sec = 6
 
-            for info in artifact_info:
+            # Budget for a KNOWN-CORRECT download control (the preview panel's
+            # exact "Download" button, or a hover-revealed download control).
+            # Clicking it makes ChatGPT re-package the file from the
+            # conversation's code-interpreter sandbox — a server round-trip
+            # whose latency is environment-bound: <1s on a local machine, but
+            # ~38s observed on an EC2 box (headless Chrome on shared vCPU +
+            # cloud egress + a Pro account shared with a concurrent run). The
+            # old 15s window was tuned on a fast machine and silently timed
+            # out on the box — the click SUCCEEDED (HTTP 200, file served) but
+            # we'd already stopped watching, so the download was recorded as a
+            # failure and the whole task was thrown away. No wrong-button risk
+            # here (the control is known-correct), so wait generously.
+            panel_download_wait_sec = 90
+
+            async def _attempt_download(click_action, wait_sec):
+                """Run click_action() and return the resulting file Path, or
+                None. CDP path detects a new completed file in download_path;
+                non-CDP path uses Playwright's download event."""
+                if use_cdp_download:
+                    files_before = set(download_path.iterdir())
+                    try:
+                        await click_action()
+                    except Exception as e:
+                        logger.info(f"    click failed: {e}")
+                        return None
+                    deadline = asyncio.get_event_loop().time() + wait_sec
+                    while asyncio.get_event_loop().time() < deadline:
+                        complete = [
+                            f
+                            for f in set(download_path.iterdir()) - files_before
+                            if not f.name.endswith(".crdownload")
+                        ]
+                        if complete:
+                            return complete[0]
+                        await asyncio.sleep(0.3)
+                    return None
+                try:
+                    async with self.page.expect_download(
+                        timeout=wait_sec * 1000
+                    ) as dl_info:
+                        await click_action()
+                    download = await dl_info.value
+                    tmp_target = download_path / (
+                        download.suggested_filename or "artifact.bin"
+                    )
+                    await download.save_as(str(tmp_target))
+                    return tmp_target
+                except Exception as e:
+                    logger.info(f"    no download event ({e})")
+                    return None
+
+            async def _hover_panel_fallback(card_id, filename):
+                """Rescue path for the current ChatGPT build (2026-07-10),
+                where a file card renders NO buttons until hovered and the
+                sprite/rank heuristics have nothing to work with. Try, in
+                order: hover the card and click any revealed download-labeled
+                control; then click the card itself (opens the preview panel)
+                and click a Download control in the panel; Escape to close."""
+                if not card_id:
+                    return None
+                card = self.page.locator(f'[data-artifact-card="{card_id}"]')
+                if await card.count() == 0:
+                    logger.info(f"  {card_id}: card locator missing")
+                    return None
+                card = card.first
+                try:
+                    await card.scroll_into_view_if_needed(timeout=3000)
+                except Exception:
+                    pass
+                try:
+                    await card.hover(timeout=3000)
+                    await asyncio.sleep(0.8)
+                except Exception as e:
+                    logger.info(f"  {card_id}: hover failed ({e})")
+
+                # [aria-label*="ownload"] matches Download/download without
+                # needing a case-insensitive engine.
+                for sel in (
+                    'button[aria-label*="ownload"]',
+                    '[role="button"][aria-label*="ownload"]',
+                    'a[aria-label*="ownload"]',
+                ):
+                    btn = card.locator(sel)
+                    if await btn.count() == 0:
+                        continue
+                    logger.info(f"  {card_id}: hover revealed {sel!r}; clicking")
+                    got = await _attempt_download(
+                        lambda b=btn.first: b.click(force=True, timeout=5000),
+                        panel_download_wait_sec,
+                    )
+                    if got:
+                        return got
+
+                # Current build (verified live 2026-07-10): the file is an
+                # inline filename-link <button aria-label="<name>.xlsx"
+                # class="behavior-btn …"> in the markdown. Clicking IT opens
+                # the preview panel, whose header has an icon button with
+                # exact aria-label "Download". A substring match must NOT be
+                # used naively — the sidebar has a "Download apps" item that
+                # matches *="ownload" and downloads nothing.
+                opener = None
+                for sel in (
+                    f'button[aria-label="{filename}"]',
+                    'button[aria-label$=".xlsx"]',
+                    'button[aria-label$=".xls"]',
+                    "button.behavior-btn",
+                ):
+                    cand = card.locator(sel)
+                    if await cand.count() > 0:
+                        opener = cand.last
+                        break
+                if opener is None:
+                    opener = card  # last resort: click the card block itself
+                # Pre-clear: a leftover preview dialog (e.g. from a prior
+                # card) sits at z-[120] and intercepts every click under it —
+                # this is exactly how task 12 (EC2, 2026-07-13) died: the
+                # opener click timed out against an already-open panel and the
+                # old code returned WITHOUT ever dismissing it, wedging the
+                # whole page. Dismiss anything open before clicking ours.
+                try:
+                    if await self.page.locator('[role="dialog"]').count() > 0:
+                        logger.info(
+                            f"  {card_id}: dialog already open — pressing "
+                            f"Escape before opening preview"
+                        )
+                        await self.page.keyboard.press("Escape")
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                logger.info(f"  {card_id}: opening file preview panel")
+                got = None
+                try:
+                    opened = False
+                    try:
+                        await opener.click(timeout=5000)
+                        await asyncio.sleep(2.5)
+                        opened = True
+                    except Exception as e:
+                        logger.info(
+                            f"  {card_id}: preview-open click failed ({e})"
+                        )
+                    if opened:
+                        # WAIT for the preview VIEWER to mount before clicking
+                        # Download: the control's click handler is not wired
+                        # until the viewer content has rendered — clicking the
+                        # bare button fires NO request (proven on EC2 2026-07-14
+                        # via CDP download events; clicking once the viewer was
+                        # present fired the download and the file landed in ~1s).
+                        #
+                        # 2026-07-14 (tasks 43/44 failed the batch): the viewer
+                        # shape changed. The old check REQUIRED a <canvas> inside
+                        # a [role="dialog"]; that exact pair no longer mounts, so
+                        # the 45s poll always timed out and every download was
+                        # forfeited even though the file was ready. Loosened on
+                        # three axes: (1) viewer content may render as <canvas>
+                        # OR <iframe>; (2) its container may be [role="dialog"]
+                        # OR <aside>; (3) the Download control is matched by
+                        # EXACT aria-label "Download" (the sidebar "Download
+                        # apps" item is a different label, so still no trap) as a
+                        # button OR anchor. If the control is visible but the
+                        # viewer content never mounts within the window, click it
+                        # anyway as a last resort — a possibly-dead click that
+                        # _attempt_download simply reports as no-file is strictly
+                        # better than forfeiting a finished workbook outright.
+                        dl_sel = (
+                            'button[aria-label="Download"]:visible, '
+                            'a[aria-label="Download"]:visible'
+                        )
+                        visible = None       # button + viewer both confirmed
+                        last_resort = None    # button visible, viewer unconfirmed
+                        deadline = asyncio.get_event_loop().time() + 45
+                        while asyncio.get_event_loop().time() < deadline:
+                            state = await self.page.evaluate(
+                                r"""() => {
+                                const vis = el => el && el.getBoundingClientRect().width > 0;
+                                const btn = [...document.querySelectorAll(
+                                    'button[aria-label="Download"], a[aria-label="Download"]'
+                                )].find(vis);
+                                const viewer = document.querySelector(
+                                    '[role="dialog"] canvas, [role="dialog"] iframe,'
+                                    + ' aside canvas, aside iframe'
+                                );
+                                return {hasBtn: !!btn, hasViewer: !!viewer};
+                            }"""
+                            )
+                            if state["hasBtn"]:
+                                last_resort = self.page.locator(dl_sel).first
+                                if state["hasViewer"]:
+                                    visible = last_resort
+                                    break
+                            await asyncio.sleep(0.5)
+                        target = visible or last_resort
+                        if target is None:
+                            logger.warning(
+                                f"  {card_id}: no Download control appeared in "
+                                f"the preview within 45s"
+                            )
+                        else:
+                            if visible is None:
+                                logger.info(
+                                    f"  {card_id}: Download visible but viewer "
+                                    f"content never mounted — clicking anyway"
+                                )
+                            else:
+                                logger.info(
+                                    f"  {card_id}: viewer mounted; clicking Download"
+                                )
+                            # brief extra settle so the click handler is live
+                            await asyncio.sleep(1.0)
+                            got = await _attempt_download(
+                                lambda b=target: b.click(force=True, timeout=5000),
+                                panel_download_wait_sec,
+                            )
+                finally:
+                    # Safety net: ALWAYS attempt to dismiss the preview panel
+                    # — on success, on download-not-found, AND on a failed
+                    # opener click — so no code path can leave a dialog
+                    # occluding the page for whatever runs next (another
+                    # card, a Continue prompt, the next attempt).
+                    try:
+                        await self.page.keyboard.press("Escape")
+                        await asyncio.sleep(0.3)
+                    except Exception:
+                        pass
+                return got
+
+            async def _fallback_bounded(card_id, filename, budget_sec=360):
+                """A CDP stall inside the panel flow must cost minutes, not
+                hours: task 12 (2026-07-11) hung 3.5h on a locator await after
+                the renderer died — the engine's per-attempt guard only sets a
+                flag and cannot preempt a hung await, so the orchestrator's 5h
+                deadman was the only backstop. Bound the whole fallback here;
+                on timeout the card is abandoned and the normal retry
+                machinery (fresh attempt, fresh page) gets to recover.
+
+                Budget must exceed one panel-open + one full
+                panel_download_wait_sec (90s) with margin, else it would
+                pre-empt a legitimately-slow-but-successful download on a slow
+                EC2 box — the exact bug this change fixes. 360s leaves room for
+                the open + a 90s wait + a rescue selector, while still bounding
+                a truly wedged page to minutes."""
+                try:
+                    return await asyncio.wait_for(
+                        _hover_panel_fallback(card_id, filename), budget_sec
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"  {card_id}: hover/panel fallback exceeded "
+                        f"{budget_sec}s — abandoning card (page/CDP likely "
+                        f"wedged)"
+                    )
+                    return None
+
+            # Only the NEWEST file matters: grading (infra/run.py
+            # find_solution_file) keeps the newest-mtime workbook and ignores
+            # the rest, so earlier files (e.g. the step-2 snapshot) are
+            # throwaway downloads. Worse, fetching them opens extra preview
+            # panels, and the panel-close race between consecutive cards is
+            # exactly what wedged task 12 on EC2 (2026-07-13) and FundFun/
+            # MarketBalanced locally. So: try the LAST card first and stop on
+            # success; earlier cards are only attempted as a rescue if the
+            # newest yields nothing (e.g. QA turn emitted no fresh file or its
+            # download fails) — a step-2 workbook beats no workbook.
+            if len(artifact_info) > 1:
+                logger.info(
+                    f"{len(artifact_info)} artifact card(s) found — targeting "
+                    f"the newest ({artifact_info[-1]['filename']}); earlier "
+                    f"cards held only as rescue"
+                )
+            for info in reversed(artifact_info):
+                if downloaded:
+                    break  # newest (or a rescue) already secured
                 filename = info["filename"]
                 card_html = info.get("containerHtml", "")
                 buttons = info.get("buttons", [])
@@ -1162,10 +1776,25 @@ class ChatGPTWebAgent(WebAgent):
                         f"rect=({b['rectX']},{b['rectY']},{b['rectW']}x{b['rectH']})"
                     )
 
+                card_id = info.get("cardId", "")
                 if not buttons:
-                    logger.warning(
-                        f"No icon buttons for {filename}. Card DOM: {card_html}"
+                    logger.info(
+                        f"No harvestable icon buttons for {filename} (via "
+                        f"{found_via}) — trying hover/panel fallback"
                     )
+                    got = await _fallback_bounded(card_id, filename)
+                    if got:
+                        target = download_path / filename
+                        if got.name != filename:
+                            got.rename(target)
+                            got = target
+                        downloaded.append(str(got))
+                        logger.info(f"  fallback download -> {got}")
+                    else:
+                        logger.warning(
+                            f"No icon buttons and no fallback download for "
+                            f"{filename}. Card DOM: {card_html}"
+                        )
                     continue
 
                 # Ordering priority:
@@ -1282,10 +1911,24 @@ class ChatGPTWebAgent(WebAgent):
                 if saved_path:
                     downloaded.append(str(saved_path))
                 else:
-                    logger.warning(
-                        f"None of {tried_button_ids} produced a download for "
-                        f"{filename}. Full card DOM: {card_html}"
+                    logger.info(
+                        f"None of {tried_button_ids} downloaded {filename} — "
+                        f"trying hover/panel fallback"
                     )
+                    got = await _fallback_bounded(card_id, filename)
+                    if got:
+                        target = download_path / filename
+                        if got.name != filename:
+                            got.rename(target)
+                            got = target
+                        downloaded.append(str(got))
+                        logger.info(f"  fallback download -> {got}")
+                    else:
+                        logger.warning(
+                            f"None of {tried_button_ids} (nor the hover/panel "
+                            f"fallback) produced a download for {filename}. "
+                            f"Full card DOM: {card_html}"
+                        )
 
             if downloaded:
                 return downloaded

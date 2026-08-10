@@ -154,7 +154,7 @@ aws:
     value: "AWS_SESSION_TOKEN"
     required: false
   s3_bucket:
-    value: "biz-bench"
+    value: "mbabench"
     required: false
   s3_prefix:
     value: "MBABenchV2/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
@@ -220,12 +220,14 @@ claude_web:
     required: false
   # null crashes the agent at model-selector time — DO NOT leave null.
   model:
-    value: "opus_4_8"          # opus_4_8 | sonnet_4_6 | haiku_4_5
+    value: "opus_4_8"          # opus_4_8 | sonnet_4_6 | haiku_4_5 | fable_5
     required: false
-  # Reasoning effort for sonnet/opus (low | medium | high | max). These models
-  # expose an "Effort" submenu in the model picker; the agent sets this level
-  # and enables the "Thinking" toggle. Haiku has no effort control and ignores
-  # this. Default max = full reasoning effort.
+  # Reasoning effort for sonnet/opus/fable (low | medium | high | extra |
+  # max). These models expose an "Effort" submenu in the model picker; the
+  # agent sets this level. Sonnet/opus also get the nested "Thinking" toggle
+  # enabled; fable's Effort submenu has no Thinking toggle to enable. Haiku
+  # has no effort control and ignores this. Default max = full reasoning
+  # effort.
   effort:
     value: "max"
     required: false
@@ -344,8 +346,12 @@ chatgpt_web:
     max_total_attempts:
       value: 10
       required: false
+    # Per-attempt ceiling. Matches max_sec_per_task (the engine guard takes
+    # min() of the two) so a legitimately slow Extended Pro attempt (90-120
+    # min is normal) runs to natural completion instead of being killed at
+    # 90 min and restarted from scratch in a new chat.
     max_sec_per_attempt:
-      value: 5400
+      value: 7200
       required: false
     sleep_between_retries:
       value: 5

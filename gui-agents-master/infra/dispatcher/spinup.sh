@@ -183,9 +183,9 @@ SSH_KEY_PATH="$HOME/.ssh/$KEY_NAME.pem"
 # imported keypair would falsely register as drift.
 if [[ -f "$SSH_KEY_PATH" ]]; then
   _local_sha1="$(openssl pkcs8 -in "$SSH_KEY_PATH" -nocrypt -topk8 -outform DER 2>/dev/null \
-    | openssl sha1 -c 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' ' || true)"
+    | openssl sha1 -c 2>/dev/null | awk '{print $NF}' | tr -d ' ' || true)"
   _local_md5="$(openssl pkey -in "$SSH_KEY_PATH" -pubout -outform DER 2>/dev/null \
-    | openssl md5 -c 2>/dev/null | awk -F'= ' '{print $2}' | tr -d ' ' || true)"
+    | openssl md5 -c 2>/dev/null | awk '{print $NF}' | tr -d ' ' || true)"
   _aws_fp="$(aws ec2 describe-key-pairs \
       --region "$REGION" --key-names "$KEY_NAME" \
       --query 'KeyPairs[0].KeyFingerprint' --output text 2>/dev/null || true)"

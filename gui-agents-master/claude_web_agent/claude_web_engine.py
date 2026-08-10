@@ -673,6 +673,19 @@ async def run_automation(config: dict) -> bool:
                         if excel_files:
                             break
 
+                    # If download button(s) were present but every download was
+                    # 0-byte, the model has ALREADY delivered the file — sending
+                    # "Continue" is futile (it can't fix a broken sandbox
+                    # download) and just spams a finished chat, bloating the
+                    # conversation. Stop the loop and fail the download cleanly.
+                    if getattr(agent, "last_download_saw_buttons", False):
+                        logger.warning(
+                            "Download button(s) present but every download was "
+                            "0-byte — model already done; NOT sending 'Continue'. "
+                            "Failing download cleanly."
+                        )
+                        break
+
                 if not downloaded_files or not excel_files:
                     agent_attempts += 1
                     completion_logger.end_task(TaskStatus.DOWNLOAD_FAILED)
