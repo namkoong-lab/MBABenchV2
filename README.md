@@ -1,21 +1,42 @@
 # MBABenchV2
 
-Scripts for the MBABenchV2 task set: adding tasks to S3 and Neon, downloading
-task files locally, and generating expert-human time estimates with Gemini.
+The single repo for the MBABench experiments. It hosts every agent pipeline
+plus the judge, and each run declares which **benchmark** it belongs to:
 
-The tasks live in a Neon Postgres database (MBABenchV2) in a `tasks` table, with
-the starting and solution files stored in S3 under
-`s3://mbabench/MBABenchV2/tasks/<task_name>/`.
+| | **v1** (BizbenchV1 wave) | **v2** (MBABenchV2 task set) |
+|---|---|---|
+| DB (Neon) | `BizbenchV1` | `BizbenchV2` |
+| S3 | `s3://mbabench/BizbenchV1/…` | `s3://biz-bench/MBABenchV2/…` |
+| Agent prompts | single-prompt pv9 (`gui-agents-master/tasks_configs/prompts_pv9/`) | 3-step rubric prompts (`gui-agents-master/tasks_configs/prompts_v2/`) |
+| Grading rubric | 3 categories / 17 checks (`judge/prompts/rubrics/rubric_8.json`) | 12 categories / 132 checks (`judge/prompts/rubrics/rubric_9.json`, agentic judge only) |
 
-## Agent pipelines in this repo
+How each pipeline selects the benchmark at launch:
 
-- **`gui-agents-master/`** — drives the Claude.ai / ChatGPT web UIs via
-  Playwright to attempt tasks (V2 task set).
-- **`coding-agents-master/`** — runs tasks through the vendors' *coding agent*
-  products (Claude Code, Codex), one sandboxed container per attempt. Note:
-  this pipeline targets the **MBABench V1** benchmark (V1 tasks, prompts,
-  database, and judge) despite living in this repo — see its
-  [README](coding-agents-master/README.md).
+- **`gui-agents-master/`** — Playwright drives claude.ai / chatgpt.com.
+  Set `benchmark: v1|v2` in the run config; it gates identity labels, the
+  source/sink schema (`bizbench` vs `mbabenchv2`), S3 defaults, and provider
+  preflight. Prompts come from `prompts_file` (defaults to the v2 3-step
+  set; v1 configs point at the pv9 payload). Examples:
+  `infra/configs/run_configs/{bizbenchv1,mbabenchv2}_run_examples/`.
+- **`cli-agents-master/`** — our own harness on raw model APIs.
+  Set `benchmark: v1|v2` in the batch config (S3 + a DATABASE_URL sanity
+  check); prompts are chosen independently via `prompt_version` (v11 = the
+  frozen pv1105 wave prompts).
+- **`coding-agents-master/`** — vendor coding agents (Claude Code, Codex),
+  one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
+  config; v2 flips S3/DB and defaults `template_version` to v8 (the
+  v2-rubric mirror; v7 is the v1 pv9 mirror).
+- **`judge/`** — grades attempts from either benchmark. Select the rubric
+  pair + `check_order` in `judge/project_configs.yaml` (copy from
+  `project_configs.example.yaml`, which documents both presets). The
+  12-category v2 rubric must be graded through the agentic judge.
+
+Cross-benchmark misconfiguration fails at startup in every pipeline (schema
+guards + DATABASE_URL checks) rather than writing to the wrong store.
+
+The rest of this README covers the V2 task-management scripts. Tasks live
+in the Neon `MBABenchV2` database (`tasks` table), with starting and
+solution files in S3 under `s3://biz-bench/BizbenchV2/tasks/<task_name>/`.
 
 ## Layout
 

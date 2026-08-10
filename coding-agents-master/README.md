@@ -4,11 +4,15 @@ Run MBABench financial-modeling tasks through **vendor coding agents** — Claud
 Code (Anthropic) and Codex (OpenAI) — each attempt in its own locked-down
 container, producing one Excel workbook per task for the standard MBABench judge.
 
-> **Scope note:** this folder lives in the MBABenchV2 repo but targets the
-> **MBABench V1 benchmark**: the V1 206-task set, the V1 task prompts, the V1
-> database (`BizbenchV1` on Neon) and S3 layout, and the V1 judge/rubric.
-> It is the third agent surface alongside the V1 GUI pipeline (vendor chat
-> products) and V1 CLI pipeline (raw model APIs in our own harness).
+> **Scope note:** this pipeline runs against either benchmark — set
+> `benchmark: v1|v2` in the run config. v1 (default) targets the V1
+> 206-task set (`BizbenchV1` on Neon, `s3://mbabench/BizbenchV1/…`, the
+> pv9-mirror v7 template, the 3-category rubric). v2 targets the
+> MBABenchV2 task set (`BizbenchV2`, `s3://biz-bench/MBABenchV2/…`, the
+> v8 template mirroring the 132-check rubric — graded by the agentic
+> judge). DATABASE_URL is checked against the benchmark at startup. It is
+> the third agent surface alongside the GUI pipeline (vendor chat
+> products) and CLI pipeline (raw model APIs in our own harness).
 
 ## How it differs from the CLI pipeline
 

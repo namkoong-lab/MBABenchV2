@@ -76,3 +76,24 @@ claude_web_batch_results.json
 
 # One-off overnight/test run scripts (local only)
 run_*.sh
+
+# Operational files — deliberately untracked (standing rule: orchestrators,
+# probes, ladder assets, and production run configs never enter git; prod
+# configs also carry the machine's DB connection string)
+orchestrate_wave.py
+claude_smoke_then_wave.py
+claude_cap_probe.py
+chatgpt_outage_probe.sh
+upload_outage_probe.sh
+tests/ladder/
+infra/configs/run_configs/prod_*.yaml
+infra/configs/run_configs/exp_*.yaml
+infra/configs/run_configs/ladder_*.yaml
+infra/configs/run_configs/tmp*.yaml
+orch_*.log
+gui_deferred_runtime.json*
+smoke_rung2.log
+20*_claudeGUI/
+20*_chatgptGUI/
+20*_smoke_*/
+20*_ladder*/
