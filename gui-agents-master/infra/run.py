@@ -17,6 +17,18 @@ Usage (from gui-agents-master/):
     python -m infra.run                       # real run, uses configs.yaml if present
     python -m infra.run --dry-run             # print merged engine configs
     python -m infra.run --start 0 --end 1     # slice tasks
+
+Exit-code contract (consumed by infra/worker/worker_loop.py — keep in sync):
+    0   ran >=1 task and every attempt succeeded (also: --dry-run, or the
+        user declined the interactive confirmation)
+    1   ran >=1 task and >=1 attempt failed
+    2   config / preflight / CLI error — nothing was attempted
+    3   the source yielded no tasks (filters excluded everything, empty
+        slice, or --skip-if-attempted matched an existing attempt) —
+        nothing was attempted. Previously conflated with 0; callers could
+        misread a filtered no-op as success.
+    4   environment gate blocked the run before any task started (CDP
+        lock held by another run, or --auth-precheck failed)
 """
 
 from __future__ import annotations
@@ -25,9 +37,12 @@ import argparse
 import copy
 import json
 import logging
+import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,6 +69,17 @@ logging.basicConfig(
 logger = logging.getLogger("infra.run")
 
 PROVIDER_AGENT_TYPE = {"claude": "claude_web", "chatgpt": "chatgpt_web"}
+
+# Exit codes — see the module docstring for the full contract.
+EXIT_OK = 0
+EXIT_TASK_FAILED = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_NO_TASKS = 3
+EXIT_ENV_BLOCKED = 4
+
+# run_engine's sentinel for "engine subprocess exceeded the deadman and was
+# killed" — matches coreutils timeout(1) so log readers recognize it.
+ENGINE_RC_TIMEOUT = 124
 
 # If a --run-config file has any of these at top level, treat it as a YAML
 # task file (hand it to YamlTaskSource) instead of a project-wide overlay.
@@ -97,6 +123,14 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
         "agent_type": agent_type,
         "prompts": list(base.get("prompts") or []),
         "prompt_version": base.get("prompt_version"),
+    }
+
+    # prompts_file (single source of truth for the long benchmark prompts)
+    # is passed through; the engine expands it into `prompts`.
+    if base.get("prompts_file"):
+        engine_config["prompts_file"] = base["prompts_file"]
+
+    engine_config |= {
         "task_name": spec.task_name,
         "task_id": spec.task_id,
         "upload_files": [str(p) for p in spec.upload_files],
@@ -138,27 +172,162 @@ def _resolve_upload_path(raw: str, local_files_base: str | None) -> Path:
     return p
 
 
-def preflight_check(engine_config: dict, provider: str) -> list[str]:
+def _preflight_provider_v1(
+    provider: str, section: dict, errors: list[str]
+) -> None:
+    """Benchmark-v1 provider checks: the UI axes the V1 wave pins (Claude
+    chat/cowork mode + effort; ChatGPT chat/work mode + intelligence or
+    effort+speed) all bifurcate the DB identity, so invalid values must
+    fail before the browser is touched."""
+    _CLAUDE_MODELS = (
+        "fable_5", "sonnet_5", "haiku_4_5", "opus_4_8",
+        "opus_4_7", "opus_4_6", "opus_3", "sonnet_4_6",
+    )
+    _EFFORTS = ("low", "medium", "high", "xhigh", "max")
+    _CHATGPT_MODELS = ("gpt_5_6_sol", "gpt_5_5", "gpt_5_4", "gpt_5_3", "o3")
+    _CHATGPT_WORK_MODELS = (
+        "gpt_5_6_sol", "gpt_5_6_terra", "gpt_5_6_luna", "gpt_5_5",
+    )
+    _INTELLIGENCE = ("instant", "medium", "high", "xhigh", "pro")
+    _WORK_EFFORTS = ("light", "medium", "high", "xhigh", "max", "ultra")
+    _WORK_SPEEDS = ("standard", "fast")
+    if provider == "claude":
+        mode = (section.get("mode") or "chat").lower()
+        if mode not in ("chat", "cowork"):
+            errors.append(
+                f"claude_web.mode={mode!r} is not 'chat' or 'cowork'."
+            )
+        approval = section.get("cowork_approval")
+        if approval is not None and approval not in ("manual", "auto", "skip"):
+            errors.append(
+                f"claude_web.cowork_approval={approval!r} is not one of "
+                "manual, auto, skip (or null = auto)."
+            )
+        if section.get("model") is None:
+            errors.append(
+                "claude_web.model is null. The agent tolerates null (keeps "
+                "the session default), but benchmark runs must pin the model "
+                f"for the DB identity. Set one of: {', '.join(_CLAUDE_MODELS)}."
+            )
+        effort = section.get("effort")
+        if effort is not None and effort not in _EFFORTS:
+            errors.append(
+                f"claude_web.effort={effort!r} is not one of "
+                f"{', '.join(_EFFORTS)} (or null)."
+            )
+    elif provider == "chatgpt":
+        if section.get("agent_mode"):
+            errors.append(
+                "chatgpt_web.agent_mode=true, but Agent mode no longer "
+                "exists in the ChatGPT UI (removed ~mid-2026). Set it to "
+                "false and use chatgpt_web.model + chatgpt_web.intelligence."
+            )
+        gmode = (section.get("mode") or "chat").lower()
+        if gmode not in ("chat", "work"):
+            errors.append(f"chatgpt_web.mode={gmode!r} is not 'chat' or 'work'.")
+        if gmode == "work":
+            model = section.get("model")
+            if model is not None and model not in _CHATGPT_WORK_MODELS:
+                errors.append(
+                    f"chatgpt_web.model={model!r} is not a work-mode model "
+                    f"({', '.join(_CHATGPT_WORK_MODELS)}) or null."
+                )
+            w_effort = section.get("effort")
+            if w_effort is not None and w_effort not in _WORK_EFFORTS:
+                errors.append(
+                    f"chatgpt_web.effort={w_effort!r} is not one of "
+                    f"{', '.join(_WORK_EFFORTS)} (or null)."
+                )
+            w_speed = section.get("speed")
+            if w_speed is not None and w_speed not in _WORK_SPEEDS:
+                errors.append(
+                    f"chatgpt_web.speed={w_speed!r} is not one of "
+                    f"{', '.join(_WORK_SPEEDS)} (or null = standard)."
+                )
+            if section.get("intelligence") is not None:
+                errors.append(
+                    "chatgpt_web.intelligence is set but mode=work — the "
+                    "intelligence axis exists only in chat mode. Use "
+                    "chatgpt_web.effort (+ speed) for work mode."
+                )
+        else:
+            intel = section.get("intelligence")
+            if intel is not None and intel not in _INTELLIGENCE:
+                errors.append(
+                    f"chatgpt_web.intelligence={intel!r} is not one of "
+                    f"{', '.join(_INTELLIGENCE)} (or null)."
+                )
+            # Legacy one-axis values stay valid: identity has entries for
+            # them and the agent routes them to the intelligence axis (with
+            # a warning). Only genuinely unknown values are errors.
+            _LEGACY_CHATGPT_MODELS = ("instant", "thinking", "pro")
+            model = section.get("model")
+            if (
+                model is not None
+                and model not in _CHATGPT_MODELS
+                and model not in _LEGACY_CHATGPT_MODELS
+            ):
+                errors.append(
+                    f"chatgpt_web.model={model!r} is not one of "
+                    f"{', '.join(_CHATGPT_MODELS)} "
+                    f"(legacy: {', '.join(_LEGACY_CHATGPT_MODELS)}) or null."
+                )
+
+
+def _preflight_provider_v2(
+    provider: str, section: dict, errors: list[str]
+) -> None:
+    """Benchmark-v2 provider checks: identity bifurcates on model only."""
+    if provider == "claude":
+        if section.get("model") is None:
+            errors.append(
+                "claude_web.model is null — the agent calls .lower() on it and crashes. "
+                "Set claude_web.model to 'sonnet_4_6' / 'opus_4_6' / 'opus_4_8' / "
+                "'haiku_4_5' / 'fable_5'."
+            )
+
+
+def preflight_check(
+    engine_config: dict, provider: str, benchmark: str = "v2"
+) -> list[str]:
     """Collect all problems before we touch the browser. Empty list = OK."""
     errors: list[str] = []
     section_key = f"{provider}_web"
     section = engine_config.get(section_key, {}) or {}
 
-    # Provider-specific contract checks.
-    if provider == "claude":
-        if section.get("model") is None:
-            errors.append(
-                "claude_web.model is null — the agent calls .lower() on it and crashes. "
-                "Set claude_web.model to 'sonnet_4_6' / 'opus_4_6' / 'haiku_4_5'."
-            )
-    elif provider == "chatgpt":
-        if not section.get("project_id"):
-            errors.append(
-                "chatgpt_web.project_id is empty. Copy from "
-                "https://chatgpt.com/g/g-p-{id}-{slug}/project."
-            )
+    # Provider-specific contract checks, benchmark-dependent: the v1 wave
+    # pins UI axes (mode/effort/intelligence) that v2 doesn't use.
+    if (benchmark or "v2").lower() == "v1":
+        _preflight_provider_v1(provider, section, errors)
+    else:
+        _preflight_provider_v2(provider, section, errors)
+
+    if provider == "chatgpt" and not section.get("project_id"):
+        errors.append(
+            "chatgpt_web.project_id is empty. Copy from "
+            "https://chatgpt.com/g/g-p-{id}-{slug}/project."
+        )
         # project_slug is optional — some ChatGPT project URLs have no slug
         # (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug} suffix).
+
+    # prompts_file must exist and be non-empty — a benchmark run with the
+    # wrong (or empty) prompt is worse than one that never starts.
+    pf = engine_config.get("prompts_file")
+    if pf:
+        repo_root = Path(__file__).resolve().parent.parent
+        for raw in [pf] if isinstance(pf, str) else pf:
+            p = Path(raw)
+            if not p.is_absolute():
+                cand = repo_root / p
+                p = cand if cand.exists() else Path.cwd() / p
+            if not p.exists():
+                errors.append(f"prompts_file not found: {raw}")
+            elif p.stat().st_size == 0:
+                errors.append(f"prompts_file is empty: {raw}")
+    elif not engine_config.get("prompts"):
+        errors.append(
+            "No prompts configured — set prompts_file (preferred) or prompts."
+        )
 
     # Upload files must exist on disk, resolved the same way the engine will.
     upload_files = engine_config.get("upload_files") or []
@@ -248,15 +417,111 @@ def find_solution_file(
     return matches[0][1]
 
 
-def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) -> int:
+# Post-run output quality gate. Heuristic floor to catch obviously-degraded
+# workbooks (e.g. a tiny stub produced when a ChatGPT "content failed to load"
+# disruption truncated the model). Tunable.
+QUALITY_MIN_BYTES = 12000
+QUALITY_MIN_SHEETS = 3
+
+
+def check_output_quality(solution_file: Path | None) -> tuple[bool, str]:
+    """Return (ok, reason). ok=False flags a suspected-degraded output.
+
+    Runs in infra.run AFTER the engine subprocess returns — i.e. OUTSIDE the
+    engine's own retry loop — so it only records a verdict and never triggers
+    a re-run. Fails OPEN on inspection errors (can't break the pipeline over a
+    false alarm) except a missing/unopenable workbook, which IS a failure.
+    """
+    if solution_file is None:
+        return False, "no solution workbook was produced"
+    try:
+        size = Path(solution_file).stat().st_size
+    except OSError as e:
+        return False, f"solution file not accessible: {e}"
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(solution_file, read_only=True)
+        n_sheets = len(wb.sheetnames)
+        wb.close()
+    except ImportError:
+        logger.warning("openpyxl unavailable; skipping output quality gate")
+        return True, ""
+    except Exception as e:
+        return False, (
+            f"solution workbook could not be opened ({type(e).__name__}); "
+            f"likely corrupt/partial"
+        )
+    if size < QUALITY_MIN_BYTES or n_sheets < QUALITY_MIN_SHEETS:
+        return False, (
+            f"output below quality floor: {size} bytes / {n_sheets} sheet(s) "
+            f"(min {QUALITY_MIN_BYTES} bytes, {QUALITY_MIN_SHEETS} sheets) — "
+            f"suspected content-load disruption"
+        )
+    return True, ""
+
+
+def _kill_engine_tree(proc: subprocess.Popen) -> None:
+    """SIGTERM the engine's whole process group, escalate to SIGKILL.
+
+    The engine is launched with start_new_session=True, so killing its group
+    reaps anything it spawned without touching run.py's own group (and,
+    critically, without signalling the shared Chrome — that lives in a
+    separate service/session and is never a child of the engine)."""
+    if proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=10)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        logger.error(f"engine pid={proc.pid} survived SIGKILL (?)")
+
+
+def run_engine(engine_config: dict, engine_script: Path, timeout: int | None,
+               cdp_port: int | None = None) -> int:
+    """Run the engine subprocess, streaming its output. Returns its exit
+    code, or ENGINE_RC_TIMEOUT if the deadman killed it.
+
+    The deadman is enforced by proc.wait(timeout=...) on the main thread
+    while a daemon thread pumps stdout. The previous implementation read
+    stdout to EOF on the main thread BEFORE calling wait(timeout=...), so a
+    wedged engine that stopped writing but never exited (e.g. a hung
+    Playwright await after the renderer died) blocked forever and the
+    timeout never even started — the deadman existed but could not fire.
+
+    The finally-block guarantees the engine's process group is reaped on
+    ANY exit from this function (deadman, KeyboardInterrupt, SIGTERM via
+    the SystemExit handler in main, unexpected exception) — run.py never
+    leaves an orphaned engine driving the shared Chrome.
+    """
+    # The CDP port is embedded in the temp-config filename so external
+    # supervisors (e.g. infra/overnight) can pgrep-scope the engine child to
+    # ONE browser instance — parallel runs on distinct ports must never sweep
+    # or kill each other's engine.
+    port_tag = f"cdp{cdp_port}_" if cdp_port is not None else ""
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".yaml",
-        prefix=f"gui_agents_{engine_config.get('task_name', 'task')}_",
+        prefix=f"gui_agents_{port_tag}{engine_config.get('task_name', 'task')}_",
         delete=False,
     ) as f:
         yaml.safe_dump(engine_config, f, default_flow_style=False)
         tmp_path = Path(f.name)
+    proc: subprocess.Popen | None = None
     try:
         cmd = [
             sys.executable,
@@ -266,26 +531,131 @@ def run_engine(engine_config: dict, engine_script: Path, timeout: int | None) ->
             "--no-hold",
         ]
         logger.info(f"Engine: {' '.join(cmd)}")
+        if timeout:
+            logger.info(f"Engine deadman: {timeout}s")
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
         )
         assert proc.stdout is not None
-        for line in iter(proc.stdout.readline, ""):
-            print(line, end="", flush=True)
+
+        def _pump(stream) -> None:
+            for line in iter(stream.readline, ""):
+                print(line, end="", flush=True)
+
+        pump = threading.Thread(target=_pump, args=(proc.stdout,), daemon=True)
+        pump.start()
         try:
-            return proc.wait(timeout=timeout)
+            rc = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            return 124
+            logger.error(
+                f"Engine exceeded {timeout}s deadman — killing process group"
+            )
+            _kill_engine_tree(proc)
+            rc = ENGINE_RC_TIMEOUT
+        pump.join(timeout=5)  # flush whatever output remains
+        return rc
     finally:
+        if proc is not None:
+            _kill_engine_tree(proc)
         try:
             tmp_path.unlink()
         except Exception:
             pass
+
+
+def _resolve_cdp_port(cfg: SimpleNamespace, provider: str) -> int | None:
+    """Active provider block's browser.cdp_port, or None if not configured."""
+    try:
+        return int(getattr(cfg, f"{provider}_web").browser.cdp_port)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _acquire_cdp_lock(port: int):
+    """Advisory exclusive lock on the shared Chrome's CDP port.
+
+    Two engines driving one Chrome corrupt BOTH runs (interleaved clicks,
+    stolen focus), so a second run.py targeting the same port must fail
+    fast instead of starting. flock releases automatically when this
+    process exits — including a SIGKILL — so a dead run can never wedge
+    the port shut.
+
+    Returns (lock_file_handle, None) on success — caller must keep the
+    handle alive for the duration of the run — or (None, holder_info) if
+    another process holds the lock. Fails OPEN (None, None handled by
+    caller as acquired) is deliberately NOT used: no fcntl means no lock
+    semantics anywhere, so we just skip locking on such platforms.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None, None  # non-POSIX: skip locking entirely
+    lock_path = Path(tempfile.gettempdir()) / f"gui_agents_cdp_{port}.lock"
+    try:
+        fh = open(lock_path, "a+")
+    except OSError as e:
+        # E.g. the file exists owned by another user (box runs as root,
+        # manual debug run as ubuntu). Locking is advisory protection —
+        # skip it rather than block a legitimate run.
+        logger.warning(f"CDP lock unavailable ({e}); continuing without it")
+        return None, None
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.seek(0)
+        holder = fh.read().strip() or "unknown pid"
+        fh.close()
+        return None, holder
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid={os.getpid()} started={datetime.now().isoformat()}")
+    fh.flush()
+    return fh, None
+
+
+def _auth_precheck(cfg: SimpleNamespace, provider: str) -> tuple[bool, str]:
+    """Verify the browser session is logged in (and, for chatgpt, on the
+    expected plan) before burning a task on a dead session. Reuses the
+    worker box's probe logic — same CDP-attach, same session checks."""
+    port = _resolve_cdp_port(cfg, provider)
+    if port is None:
+        return False, f"no browser.cdp_port configured for provider {provider!r}"
+    try:
+        from infra.worker.auth_probe import _run_probe
+
+        ok, reason, extra = _run_probe(provider, port)
+    except Exception as e:
+        return False, f"probe error: {type(e).__name__}: {e}"
+    if ok:
+        who = extra.get("email") or ""
+        plan = extra.get("plan") or ""
+        detail = f" ({who}{f', plan={plan}' if plan else ''})" if who else ""
+        return True, f"session ok{detail}"
+    return False, reason or "not logged in"
+
+
+def _default_deadman(engine_config: dict, provider: str) -> int | None:
+    """Conservative ceiling for the engine subprocess when --timeout is not
+    given: every legitimate run — all retry attempts at their own per-task
+    budget — fits under it with a wide grace margin, so it only fires on a
+    truly wedged engine (which previously hung run.py forever, since the
+    engine's internal guard cannot preempt a hung await). Returns None if
+    the config keys aren't available (old unlimited behavior)."""
+    section = engine_config.get(f"{provider}_web", {}) or {}
+    try:
+        per_task = int(section.get("max_sec_per_task") or 0)
+        retry = section.get("retry", {}) or {}
+        attempts = int(retry.get("max_total_attempts") or 0)
+    except (TypeError, ValueError):
+        return None
+    if per_task <= 0 or attempts <= 0:
+        return None
+    return per_task * attempts + 1800
 
 
 def _resolve_run_dir(engine_config: dict, provider: str) -> Path:
@@ -369,7 +739,33 @@ def main() -> int:
             "worker loop to execute one queued task per invocation."
         ),
     )
+    parser.add_argument(
+        "--skip-if-attempted",
+        action="store_true",
+        help=(
+            "Force source.filters.skip_already_attempted=True — with "
+            "--task-id this overrides its default re-run behavior, so a "
+            "task that already has a successful attempt becomes a no-op "
+            "(exit 3) instead of a duplicate attempt."
+        ),
+    )
+    parser.add_argument(
+        "--auth-precheck",
+        action="store_true",
+        help=(
+            "Before running, probe the provider session over CDP (login + "
+            "plan check, same probe the worker boxes use). Exit 4 without "
+            "touching any task if the session is dead."
+        ),
+    )
     args = parser.parse_args()
+
+    # SIGTERM (systemctl stop, orchestrator kill) must run our finally
+    # blocks — Python's default handler exits immediately, which would
+    # orphan the engine subprocess (it lives in its own process group and
+    # no longer receives the terminal's signals). SystemExit unwinds
+    # through run_engine's finally, reaping the engine tree.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
 
     run_config_path: Path | None = None
     run_config_is_task_yaml = False
@@ -426,9 +822,17 @@ def main() -> int:
             filters = SimpleNamespace()
             cfg.source.filters = filters
         filters.task_ids = [args.task_id]
-        filters.skip_already_attempted = False
+        filters.skip_already_attempted = bool(args.skip_if_attempted)
+    elif args.skip_if_attempted:
+        filters = getattr(cfg.source, "filters", None)
+        if filters is None:
+            filters = SimpleNamespace()
+            cfg.source.filters = filters
+        filters.skip_already_attempted = True
 
     provider = cfg.provider.kind
+    benchmark = (getattr(cfg, "benchmark", None) or "v2").lower()
+    logger.info(f"Benchmark: {benchmark}")
 
     engine_script = _REPO_ROOT / "claude_web_agent" / "claude_web_engine.py"
     if not engine_script.exists():
@@ -453,20 +857,27 @@ def main() -> int:
     )
 
     succeeded = failed = 0
+    cdp_lock = None
     try:
         specs = list(source.iter_tasks())
         specs = specs[args.start : args.end]
         logger.info(f"Loaded {len(specs)} task(s) from source kind={cfg.source.kind}")
 
         if not specs:
-            logger.warning("No tasks to run.")
-            return 0
+            logger.warning(
+                "No tasks to run (source filters excluded everything, or "
+                "the slice is empty)."
+            )
+            return EXIT_NO_TASKS
 
         required = [".".join(p) for p in PROVIDER_REQUIRED_KEYS.get(provider, [])]
         if ensure_overrides_present(
             required, context=f"Preflight for provider {provider!r}"
         ):
-            return 0
+            # Keys were just scaffolded as nulls — the config is incomplete
+            # and nothing was attempted. Previously exit 0, which callers
+            # (worker_loop) recorded as success.
+            return EXIT_CONFIG_ERROR
 
         # Build + preflight every task BEFORE the user-confirmation prompt.
         # If any task has null configs or missing files, abort here so the
@@ -475,7 +886,7 @@ def main() -> int:
         had_errors = False
         for spec in specs:
             engine_config = build_engine_config(cfg, spec)
-            errors = preflight_check(engine_config, provider)
+            errors = preflight_check(engine_config, provider, benchmark)
             if errors:
                 had_errors = True
                 logger.error(
@@ -498,6 +909,28 @@ def main() -> int:
                 logger.info("Aborted by user.")
                 return 0
 
+        # Environment gates — only for real runs (dry-run never touches the
+        # browser). Both fail BEFORE any task starts, with a distinct exit
+        # code, so callers can tell "environment blocked" from "task failed".
+        if not args.dry_run:
+            cdp_port = _resolve_cdp_port(cfg, provider)
+            if cdp_port is not None:
+                cdp_lock, holder = _acquire_cdp_lock(cdp_port)
+                if holder is not None:
+                    logger.error(
+                        f"Another run already drives Chrome on CDP port "
+                        f"{cdp_port} ({holder}) — two engines on one browser "
+                        f"corrupt both runs. Wait for it or use a different "
+                        f"browser/port."
+                    )
+                    return EXIT_ENV_BLOCKED
+            if args.auth_precheck:
+                ok, detail = _auth_precheck(cfg, provider)
+                if not ok:
+                    logger.error(f"Auth precheck failed: {detail}")
+                    return EXIT_ENV_BLOCKED
+                logger.info(f"Auth precheck: {detail}")
+
         for i, (spec, engine_config) in enumerate(prepared):
             idx = args.start + i
             logger.info(f"\n{'=' * 60}\nTASK {idx}: {spec.task_name}\n{'=' * 60}")
@@ -514,17 +947,49 @@ def main() -> int:
                 run_dir, spec.task_name, engine_config, started
             )
 
-            rc = run_engine(engine_config, engine_script, args.timeout)
+            # Deadman: --timeout wins; otherwise derive a conservative
+            # ceiling from the provider's own retry budget (None = the old
+            # unlimited behavior if those keys aren't configured).
+            deadman = (
+                args.timeout
+                if args.timeout is not None
+                else _default_deadman(engine_config, provider)
+            )
+            rc = run_engine(engine_config, engine_script, deadman, cdp_port)
             finished = datetime.now()
+            solution_file = find_solution_file(
+                run_dir, spec.task_name, spec.solution_name, started
+            )
             if rc == 0:
                 status = "success"
-                succeeded += 1
-            elif rc == 124:
+            elif rc == ENGINE_RC_TIMEOUT:
                 status = "timeout"
-                failed += 1
             else:
                 status = "failed"
+
+            # Post-engine output quality gate. Runs outside the engine's retry
+            # loop, so it only RECORDS the verdict — it never re-runs. A degraded
+            # output is marked failed-with-reason (no retry, no deprecation);
+            # the stub still uploads to S3 for inspection.
+            quality_reason: str | None = None
+            if status == "success":
+                ok, reason = check_output_quality(solution_file)
+                if not ok:
+                    status = "failed"
+                    quality_reason = reason
+                    logger.warning(f"Output quality gate FAILED: {reason}")
+
+            if status == "success":
+                succeeded += 1
+            else:
                 failed += 1
+
+            extra: dict = {
+                "return_code": rc,
+                "task_metadata": dict(spec.metadata or {}),
+            }
+            if quality_reason:
+                extra["failure_reason"] = quality_reason
 
             result = AttemptResult(
                 task_id=spec.task_id,
@@ -532,27 +997,27 @@ def main() -> int:
                 agent_model_name=identity.model_name,
                 prompt_version=cfg.agent.prompt_version,
                 status=status,
-                solution_file=find_solution_file(
-                    run_dir, spec.task_name, spec.solution_name, started
-                ),
+                solution_file=solution_file,
                 log_file=find_completion_json(log_dir, spec.task_name, started),
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
                 duration_seconds=round((finished - started).total_seconds(), 2),
                 prompt_files=[prompts_file] if prompts_file else [],
-                extra={
-                    "return_code": rc,
-                    "task_metadata": dict(spec.metadata or {}),
-                },
+                extra=extra,
             )
             sink.publish(result)
 
         logger.info(f"\nDone. succeeded={succeeded} failed={failed}")
     finally:
+        if cdp_lock is not None:
+            try:
+                cdp_lock.close()  # closing the fd releases the flock
+            except Exception:
+                pass
         source.close()
         sink.close()
 
-    return 0 if failed == 0 else 1
+    return EXIT_OK if failed == 0 else EXIT_TASK_FAILED
 
 
 if __name__ == "__main__":

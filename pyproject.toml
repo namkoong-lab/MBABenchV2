@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bizbenchv2"
+name = "MBABenchV2"
 version = "0.1.0"
-description = "BizbenchV2 task ingestion and Gemini-based time estimation scripts."
+description = "MBABenchV2 task ingestion and Gemini-based time estimation scripts."
 requires-python = ">=3.10"
 # Runtime dependencies are tracked in setup/requirements.txt (flat list, so
 # `uv pip freeze > setup/requirements.txt` round-trips cleanly), not here.

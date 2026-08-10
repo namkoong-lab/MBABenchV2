@@ -1,4 +1,4 @@
-# config_default.yaml — committed defaults for the BizbenchV2 scripts.
+# config_default.yaml — committed defaults for the MBABenchV2 scripts.
 #
 # This is the canonical, version-controlled config. On first run a local,
 # gitignored `config.yaml` is created next to this file from these defaults;
@@ -8,15 +8,15 @@
 # time via ${env:VAR} so they never get committed — set them in your shell
 # (DATABASE_URL and GEMINI_API_KEY; see the ${env:...} references below).
 
-# Neon Postgres connection for the BizbenchV2 database.
+# Neon Postgres connection for the MBABenchV2 database.
 database:
   url: "${env:DATABASE_URL}"
 
 # S3 storage for task files.
 aws:
-  s3_bucket: "biz-bench"
+  s3_bucket: "mbabench"
   # Tasks are stored under this prefix in the bucket.
-  s3_prefix: "BizbenchV2/tasks"
+  s3_prefix: "MBABenchV2/tasks"
 
 # Gemini settings for the time-estimation script.
 gemini:

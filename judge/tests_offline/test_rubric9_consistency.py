@@ -1,0 +1,74 @@
+"""Offline check: rubric_9 + rubric_9_weights satisfy the judge's own
+consistency contract, and calculate_scores handles all 12 categories.
+
+Run from judge/:  python tests_offline/test_rubric9_consistency.py
+No DB, S3, or LLM access.
+"""
+import json
+import sys
+from pathlib import Path
+
+JUDGE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(JUDGE))
+sys.path.insert(0, str(JUDGE / "main_scripts"))
+
+from judge import (  # noqa: E402
+    calculate_scores,
+    validate_rubric_weights_consistency,
+)
+
+RUBRIC = JUDGE / "prompts/rubrics/rubric_9.json"
+WEIGHTS = JUDGE / "prompts/rubrics/rubric_9_weights.json"
+
+
+def main() -> int:
+    # 1. The judge's own validator must accept the pair.
+    validate_rubric_weights_consistency(str(RUBRIC), str(WEIGHTS))
+    print("OK  validate_rubric_weights_consistency(rubric_9, rubric_9_weights)")
+
+    # Also confirm the v1 pair still validates after de-hardcoding.
+    validate_rubric_weights_consistency(
+        str(JUDGE / "prompts/rubrics/rubric_8.json"),
+        str(JUDGE / "prompts/rubrics/rubric_6_weights.json"),
+    )
+    print("OK  validate_rubric_weights_consistency(rubric_8, rubric_6_weights)")
+
+    rubric = json.loads(RUBRIC.read_text())
+    weights = json.loads(WEIGHTS.read_text())
+
+    # 2. Synthetic all-pass judgement -> total score 100.
+    all_pass = {
+        cat: [
+            {"name": c["name"], "meets_criteria": True, "mistakes": []}
+            for c in checks
+        ]
+        for cat, checks in rubric.items()
+    }
+    res = calculate_scores(all_pass, weights, max_mistakes=1)
+    assert abs(res["total_score"] - 100.0) < 0.5, res["total_score"]
+    print(f"OK  all-pass total_score = {res['total_score']:.2f}")
+    assert len(res["criteria_scores"]) == 12, len(res["criteria_scores"])
+
+    # 3. Fail one whole category -> total drops by that category's weight.
+    one_fail = {
+        cat: [
+            {
+                "name": c["name"],
+                "meets_criteria": cat != "Rounding",
+                "mistakes": ["x"] if cat == "Rounding" else [],
+            }
+            for c in checks
+        ]
+        for cat, checks in rubric.items()
+    }
+    res2 = calculate_scores(one_fail, weights, max_mistakes=1)
+    drop = res["total_score"] - res2["total_score"]
+    assert abs(drop - 1.0) < 0.5, f"Rounding (1%) fail dropped {drop}"
+    print(f"OK  failing Rounding drops score by {drop:.2f} (weight 1%)")
+
+    print("ALL RUBRIC_9 CHECKS PASSED")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

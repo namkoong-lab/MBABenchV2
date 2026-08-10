@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","model":"claude-fable-5"}
+{"type":"assistant","message":{"usage":{"input_tokens":1000,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":900}}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}
+{"type":"assistant","message":{"usage":{"input_tokens":40,"output_tokens":200,"cache_read_input_tokens":1900,"cache_creation_input_tokens":0}}}
+{"type":"result","subtype":"success","total_cost_usd":1.2345,"num_turns":2,"usage":{"input_tokens":1040,"output_tokens":250,"cache_read_input_tokens":1900}}

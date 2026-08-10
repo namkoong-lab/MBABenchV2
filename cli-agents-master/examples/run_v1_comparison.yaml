@@ -1,0 +1,23 @@
+batch_name: "v1 vs v2 Comparison - v1 Agent"
+model: "openai/gpt-5.2"
+auto_mode: true
+
+workspace_base_dir: "./workspaces"
+agent_folder: "openpyxl_openai/gpt-5.2-v1-comparison"
+
+max_trials: 99
+trials_since: "2020-01-01"
+prompt_version: "v1"
+
+tasks:
+  - "Speed-It-Up-Finance-unhfuz"
+
+verbose: true
+enable_langfuse: false
+max_iterations: 30
+fresh_context_mode: true
+enhanced_excel_context: true
+max_completion_tokens: 64000
+reasoning_effort: "none"
+api_timeout_seconds: 300
+cleanup_workspace: true

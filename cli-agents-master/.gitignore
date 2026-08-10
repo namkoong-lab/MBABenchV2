@@ -1,0 +1,100 @@
+# Python cache and artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test & coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Type checker / tooling caches
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.cache/
+
+# Editors & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+
+# Local workspaces and generated Excel artifacts
+excel_workspace/
+excel_workspace/*.xlsx
+excel_workspace/*.xlsm
+excel_workspace/*.xlsb
+excel_workspace/*.xls
+excel_workspace/*.ods
+
+ai_demo_workspace/*.xlsx
+cli_test_workspace/*.xlsx
+
+# Excel temporary lock files
+**/~$*.xlsx
+
+# Misc
+.python-version
+
+# Local non-tracked data bucket
+local_data/
+
+
+#logs
+agent_logs/
+batch_logs/
+
+# Batch logs (stored outside repo)
+batch_logs/
+
+# Log files
+*.log
+
+# Test outputs
+/tmp/*.log
+
+
+# solutions
+solutions_gpt-4o/
+solutions_gpt51/
+bizbench-task-database/configs.yaml
+issues/
+
+# Operational files — deliberately untracked (standing rule: run configs,
+# watchdogs, and handoff docs never enter git)
+run_configs/
+cli_watchdog.sh
+CLI_RUN_HANDOFF.md
+SKIPPED_TASKS.md
+tests/test_recalc_smoke_local.py
+workspaces_*/
+err.txt

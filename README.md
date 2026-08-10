@@ -1,18 +1,50 @@
-# BizbenchV2
+# MBABenchV2
 
-Scripts for the BizbenchV2 task set: downloading task files from S3 and Neon
-into a local folder, and generating expert-human time estimates for each task
-with Gemini. Both scripts are read-only with respect to the `tasks` table.
+The single repo for the MBABench experiments. It hosts every agent pipeline
+plus the judge, and each run declares which **benchmark** it belongs to:
 
-The tasks live in a Neon Postgres database (BizbenchV2) in a `tasks` table, with
-the starting and solution files stored in S3 under
-`s3://biz-bench/BizbenchV2/tasks/<task_name>/`.
+| | **v1** (BizbenchV1 wave) | **v2** (MBABenchV2 task set) |
+|---|---|---|
+| DB (Neon) | `BizbenchV1` | `BizbenchV2` |
+| S3 | `s3://mbabench/BizbenchV1/…` | `s3://biz-bench/MBABenchV2/…` |
+| Agent prompts | single-prompt pv9 (`gui-agents-master/tasks_configs/prompts_pv9/`) | 3-step rubric prompts (`gui-agents-master/tasks_configs/prompts_v2/`) |
+| Grading rubric | 3 categories / 17 checks (`judge/prompts/rubrics/rubric_8.json`) | 12 categories / 132 checks (`judge/prompts/rubrics/rubric_9.json`, agentic judge only) |
+
+How each pipeline selects the benchmark at launch:
+
+- **`gui-agents-master/`** — Playwright drives claude.ai / chatgpt.com.
+  Set `benchmark: v1|v2` in the run config; it gates identity labels, the
+  source/sink schema (`bizbench` vs `mbabenchv2`), S3 defaults, and provider
+  preflight. Prompts come from `prompts_file` (defaults to the v2 3-step
+  set; v1 configs point at the pv9 payload). Examples:
+  `infra/configs/run_configs/{bizbenchv1,mbabenchv2}_run_examples/`.
+- **`cli-agents-master/`** — our own harness on raw model APIs.
+  Set `benchmark: v1|v2` in the batch config (S3 + a DATABASE_URL sanity
+  check); prompts are chosen independently via `prompt_version` (v11 = the
+  frozen pv1105 wave prompts).
+- **`coding-agents-master/`** — vendor coding agents (Claude Code, Codex),
+  one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
+  config; v2 flips S3/DB and defaults `template_version` to v8 (the
+  v2-rubric mirror; v7 is the v1 pv9 mirror).
+- **`judge/`** — grades attempts from either benchmark. Select the rubric
+  pair + `check_order` in `judge/project_configs.yaml` (copy from
+  `project_configs.example.yaml`, which documents both presets). The
+  12-category v2 rubric must be graded through the agentic judge.
+
+Cross-benchmark misconfiguration fails at startup in every pipeline (schema
+guards + DATABASE_URL checks) rather than writing to the wrong store.
+
+The rest of this README covers the V2 task-management scripts. Tasks live
+in the Neon `MBABenchV2` database (`tasks` table), with starting and
+solution files in S3 under `s3://biz-bench/BizbenchV2/tasks/<task_name>/`.
 
 ## Layout
 
 ```text
 pyproject.toml             Editable-install metadata; exposes `config` as a module.
 scripts/                   The runnable scripts.
+  add_task.py              Upload a new task's files to S3 and register it in
+                           the tasks table (the one WRITE script).
   ingest_tasks.py          Download task folders from S3 + the table into a
                            local directory (read-only on the DB).
   estimate_task_times.py   For each local task folder: convert the starting file
@@ -52,8 +84,8 @@ the standard locations (`~/.aws/credentials` or `AWS_*` env vars).
 ## Prerequisites
 
 - Python 3.10+
-- An AWS profile that can read/write the `biz-bench` S3 bucket
-- The Neon connection string for the BizbenchV2 database
+- An AWS profile that can read/write the `mbabench` S3 bucket
+- The Neon connection string for the MBABenchV2 database
 - A Gemini API key (https://ai.google.dev/)
 
 ## Setup
@@ -73,13 +105,41 @@ bash setup/setup.sh          # or: pip install -r setup/requirements.txt
 
 # 3. Configure environment variables. These are referenced from
 #    config/config_default.yaml via ${env:VAR}; set them in your shell.
-export DATABASE_URL="postgresql://USER:PASSWORD@HOST/BizbenchV2?sslmode=require"
+export DATABASE_URL="postgresql://USER:PASSWORD@HOST/MBABenchV2?sslmode=require"
 export GEMINI_API_KEY="your-gemini-api-key"
 
 # 4. Confirm AWS access (credentials come from ~/.aws/credentials or AWS_* vars)
 aws sts get-caller-identity
-aws s3 ls s3://biz-bench/
+aws s3 ls s3://mbabench/
 ```
+
+## Adding a new task
+
+`add_task.py` uploads a task's files to S3 and registers the task in the DB.
+It is the only script that writes to the `tasks` table. Always dry-run first:
+
+```bash
+python scripts/add_task.py --dry-run \
+    --task-name MyTask \
+    --starting-files /path/to/MyTask.xlsx \
+    --solution-files "/path/to/MyTask - Solution.xlsx"
+
+python scripts/add_task.py \
+    --task-name MyTask \
+    --task-source jp \
+    --starting-files /path/to/MyTask.xlsx \
+    --solution-files "/path/to/MyTask - Solution.xlsx"
+```
+
+The script:
+1. Validates all local files exist before touching S3 or the DB.
+2. Uploads each file to `s3://mbabench/MBABenchV2/tasks/<task_name>/{starting,solution}_files/<filename>`.
+3. Inserts a row into `tasks` with the resulting S3 URIs.
+
+Useful flags:
+- `--task-source NAME` — `task_source` value in the DB (default: `tasks.default_source` from config).
+- `--force` — if the task already exists, re-upload and UPDATE instead of erroring.
+- `--dry-run` — preview everything without executing.
 
 ## Downloading the tasks
 

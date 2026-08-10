@@ -11,3 +11,7 @@ venv/
 .DS_Store
 
 scratch/
+# Judge machine-local config (secrets) — copy judge/project_configs.example.yaml
+judge/project_configs.yaml
+judge/scratch/
+judge/judge_results/

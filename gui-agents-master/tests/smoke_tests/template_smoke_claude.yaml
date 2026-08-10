@@ -16,7 +16,9 @@ template:
 
   claude_web:
     project_id: "your-project-id-here"
-    model: null
+    # Standing rule: never burn frontier (Fable/Sol) budget on smoke tests —
+    # haiku is free-tier-cheap and exercises the identical pipeline.
+    model: haiku_4_5
 
     max_sec_per_task: 600
 

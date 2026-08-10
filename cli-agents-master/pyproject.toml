@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "excel-cli-agent"
+version = "0.1.0"
+description = "Excel automation agent for financial modeling benchmarks"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "openpyxl>=3.1.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "pypdf>=3.0.0",
+    "anthropic>=0.40.0",
+    "httpx",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary",
+    "boto3",
+]
+
+[project.optional-dependencies]
+langfuse = ["langfuse>=2.0.0"]
+langchain = ["langchain>=0.2.0", "langchain-openai>=0.1.0"]
+dev = ["pytest", "pytest-cov", "ruff"]
+
+[tool.setuptools.packages.find]
+include = ["excel_cli_agent*", "excel_mcp_server*"]
+
+[tool.setuptools.package-data]
+excel_cli_agent = ["prompts/*.txt"]
+
+[project.scripts]
+excel-agent = "excel_cli_agent.cli:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=excel_cli_agent --cov=excel_mcp_server --cov-report=term-missing"

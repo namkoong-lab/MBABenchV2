@@ -26,6 +26,9 @@ provider:
 
 # ChatGPT agent mode works best with ONE combined prompt rather than a
 # sequence. Replace the global Claude-style list for this task only.
+# This sample uses its own short inline prompt; null out the repo-default
+# prompts_file (v2 3-step benchmark prompts) so the inline list wins.
+prompts_file: null
 prompts:
   - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."
 

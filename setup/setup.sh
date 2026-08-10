@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — set up the BizbenchV2 Python environment.
+# setup.sh — set up the MBABenchV2 Python environment.
 #
 # Installs the runtime dependencies (setup/requirements.txt) and then the
 # project itself in editable mode (pip install -e .), which exposes the vendored
@@ -13,7 +13,7 @@ cd "$REPO_ROOT"
 
 PYTHON="${PYTHON:-python3}"
 
-echo "Installing BizbenchV2 dependencies from $REPO_ROOT ..."
+echo "Installing MBABenchV2 dependencies from $REPO_ROOT ..."
 # Prefer uv if it's available (faster, matches the freeze workflow), else pip.
 if command -v uv >/dev/null 2>&1; then
     uv pip install -r setup/requirements.txt

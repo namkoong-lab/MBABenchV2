@@ -1,0 +1,18 @@
+# Live-watch demo: Opus 5 on the toy task (user-requested demo model).
+# External mode -> no DB/S3 writes. Costs pennies, runs a few minutes.
+run_name: demo_watch
+mode: external
+identity: external/demo-watch
+agent:
+  cli: claude
+  model: claude-opus-5
+  effort: null
+  extra_args: []
+  env: {}
+template_version: v7
+sandbox:
+  mode: docker
+  image: mbabench-coding-agent:v1
+limits:
+  wall_clock_seconds: 1800
+  junk_seconds: 180

@@ -1,0 +1,24 @@
+# Internal-mode example: Claude Code on Fable 5, one MBABench V1 task.
+# Usage: python -m coding_agent.run_task --config run_configs/example_fable.yaml --task-id 83
+# Secrets from env/.env: ANTHROPIC_API_KEY, DATABASE_URL (+ AWS creds via env or ~/.aws).
+run_name: fable_example
+mode: internal
+identity: claudecode_anthropic/claude-fable-5-max
+agent:
+  cli: claude
+  model: claude-fable-5
+  effort: max            # NOTE: effort pinning flag verified at rung 0; add to extra_args/env as needed
+  extra_args: []
+  env: {}
+template_version: v7     # v7 = GUI-pv9 mirror (default); v6 = CLI adaptation; v5 = byte-exact pv1105
+sandbox:
+  mode: docker           # "host" = UNSANDBOXED (rung-0 debugging only)
+  image: mbabench-coding-agent:v1
+  cpus: 4
+  memory: 8g
+limits:
+  wall_clock_seconds: 14400   # 4h hard kill
+  junk_seconds: 180           # sub-3-min "successes" go to needs_review
+internal:
+  s3_bucket: mbabench
+  s3_root: BizbenchV1

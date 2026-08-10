@@ -1,0 +1,42 @@
+# benchmark v1 — MBABench V1 wave (BizbenchV1 DB) — ChatGPT track example.
+#
+#   python -m infra.run --run-config \
+#     infra/configs/run_configs/bizbenchv1_run_examples/sample_bizbenchv1_chatgpt.yaml --dry-run
+#
+# v1 ChatGPT runs use WORK mode (pill > Advanced: effort + speed). With the
+# values below the DB identity resolves to chatgpt_web_work_gpt5.6_sol_ultra.
+# Real production configs (live project ids/ports) stay out of git.
+
+benchmark: v1
+
+source:
+  kind: postgres_s3
+  schema: bizbench
+  filters:
+    task_ids: [7]
+    task_sources: ["fmwc", "modeloff", "wsp"]
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: postgres_s3
+  schema: bizbench
+
+provider:
+  kind: "chatgpt"
+
+prompts_file:
+  - "tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"
+prompt_version: 9
+
+chatgpt_web:
+  project_id: "your-chatgpt-project-id"
+  mode: "work"
+  model: "gpt_5_6_sol"
+  effort: "ultra"
+  speed: "standard"
+  intelligence: null
+  agent_mode: false
+  browser:
+    cdp_port: 9226
+    profile_dir: "~/.chrome-web-agent"

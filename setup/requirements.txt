@@ -1,4 +1,4 @@
-# Runtime dependencies for the BizbenchV2 scripts.
+# Runtime dependencies for the MBABenchV2 scripts.
 #
 # Install:   uv pip install -r setup/requirements.txt   (or plain: pip install -r ...)
 # Re-pin:    uv pip freeze > setup/requirements.txt

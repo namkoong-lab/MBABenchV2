@@ -1,0 +1,100 @@
+OUTPUT FILENAME REQUIREMENT (MANDATORY):
+You MUST create a file named exactly "solution.xlsx" in the workspace.
+This is NOT optional and NOT configurable. Validation will REJECT any other filename.
+Example: create_file(filename="solution.xlsx", worksheets=[...])
+
+CRITICAL CIRCULAR REFERENCE PREVENTION:
+- NEVER use = prefix for constants (use 19999 not =19999)
+- NEVER use = prefix for text (use "Revenue" not ="Revenue")
+- ONLY use = prefix for calculations with set_cell_formula tool
+- ALWAYS check cell contents before referencing in formulas
+- NEVER reference cells containing text in mathematical formulas
+- NEVER create formulas where the cell is within its own range (e.g., B2: =SUM(B1:B5))
+
+FORMULA TOOL USAGE (CRITICAL):
+- ALWAYS use set_cell_formula for ANY formula (no exceptions)
+- NEVER use edit_cells for formulas - they will be stored as text and fail validation
+- edit_cells is ONLY for text labels and numeric constants, NOT formulas
+- For multiple formulas: use actions array with multiple set_cell_formula calls
+Example WRONG: edit_cells([{"cell": "B2", "value": "=SUM(A1:A10)"}])
+Example RIGHT: set_cell_formula({"cell": "B2", "formula": "SUM(A1:A10)"})
+
+STEP 1 - ANALYZE THE EXCEL FILE:
+This is a WSP (Wall Street Prep) task. There is NO PDF file.
+The questions and data are contained WITHIN the Excel file itself.
+- Use summarize_workbook_context and describe_worksheet to understand the structure
+- Look for worksheets containing questions, instructions, or "Model" data
+- The "-Before.xlsx" file contains the starting data you need to work with
+
+STEP 2 - CREATE WORKSHEET STRUCTURE:
+Based on the Excel file structure, create appropriate worksheets:
+- "Assumptions" sheet with all input parameters (CONSTANTS ONLY, NO FORMULAS)
+- "Workings" sheet for complex calculations
+- Additional Q sheets if the Excel file indicates specific questions to answer
+
+STEP 3 - BUILD CALCULATIONS:
+- Place all constants in Assumptions sheet using edit_cells (NO = prefix)
+- Place calculations in Workings sheet using set_cell_formula
+- Reference Workings calculations, not text labels
+- Verify cell types before creating formulas
+
+STEP 4 - VALIDATION REQUIREMENTS:
+- Use validate_formula tool before setting complex formulas
+- Ensure no circular references
+- Ensure formulas only reference numeric cells, not text cells
+- Use appropriate Excel functions based on question type
+
+STEP 5 - SUMMARY & OUTPUT PRESENTATION:
+Structure answer sheets clearly for evaluation:
+- Column A: Question text or row label
+- Column B: Formula referencing calculation sheets
+- Column C: Units or multiple-choice answer if applicable
+
+For complex WSP tasks, create a summary area:
+- Key outputs grouped by category
+- Each row: label in A, formula in B, units in C
+
+STEP 6 - PROFESSIONAL FORMATTING:
+After all calculations are complete, apply professional formatting:
+
+1. Header formatting: Apply dark blue fill with white bold font to all header rows
+   format_cells(filename, sheet, "A1:Z1", fill={"color": "002060"}, font={"color": "FFFFFF", "bold": true})
+
+2. Color-code inputs: Blue font on all hardcoded input values
+   format_cells(filename, "Assumptions", "B2:B50", font={"color": "0000FF"})
+
+3. Number formats: Apply appropriate number_format to all data cells
+   - Currency columns: "$#,##0_);($#,##0)"
+   - Percentage columns: "0.00%"
+   - Integer columns: "#,##0"
+
+4. Column widths: Set labels wide, data columns standard
+   set_column_width(filename, sheet, {"A": 35, "B:Z": 15})
+
+5. Freeze panes: Lock headers and labels on sheets with many rows
+   freeze_panes(filename, sheet, "B2")
+
+6. Borders: Thin under headers, double under totals
+   format_cells(filename, sheet, header_range, border={"style": "thin", "edges": ["bottom"]})
+   format_cells(filename, sheet, total_range, border={"style": "double", "edges": ["bottom"]})
+
+7. Alignment: Right-align numbers, center headers
+   format_cells(filename, sheet, data_range, alignment={"horizontal": "right"})
+   format_cells(filename, sheet, header_range, alignment={"horizontal": "center"})
+
+STEP 7 - FORMULA QUALITY CHECKS:
+Before marking the task complete, verify ALL of the following:
+
+- [ ] IFERROR: Are ALL divisions and lookups wrapped with IFERROR?
+- [ ] Absolute references: Do ALL references to assumption values use $B$2 style?
+- [ ] No full-column refs: No A:A or B:B anywhere - always explicit bounds like B2:B100?
+- [ ] Consistent signs: Are expenses consistently positive (or negative) across ALL sheets?
+- [ ] Helper rows: Are complex formulas (>3 cross-sheet refs) broken into labeled intermediate rows?
+- [ ] No hardcoded answers: Do ALL answer cells contain formulas, not plain numbers?
+- [ ] Labels on everything: Does every formula row have a descriptive label in column A?
+
+STEP 8 - FINALIZATION (MANDATORY):
+- BEFORE marking task complete, ALWAYS run: calculate_and_finalize("solution.xlsx")
+- This calculates all formulas and caches values
+- Verify the tool reports success: true and calculated_formulas > 0
+- Only mark complete AFTER successful finalization

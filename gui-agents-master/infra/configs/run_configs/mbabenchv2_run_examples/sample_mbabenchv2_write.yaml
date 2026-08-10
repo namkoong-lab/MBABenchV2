@@ -1,3 +1,6 @@
+# benchmark v2 — MBABenchV2 task set (BizbenchV2 DB)
+benchmark: v2
+
 # Sample run-config (overlay-shaped) that pulls tasks from the MBABenchV2
 # Postgres DB AND writes attempts back to S3 + task_attempts.
 #
@@ -53,5 +56,8 @@ provider:
 # agent_model_name / agent_folder / agent_model_type are computed from the
 # chatgpt_web block — no yaml field for them.
 
+# This sample uses its own short inline prompt; null out the repo-default
+# prompts_file (v2 3-step benchmark prompts) so the inline list wins.
+prompts_file: null
 prompts:
   - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."

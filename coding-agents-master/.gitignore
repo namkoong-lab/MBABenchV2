@@ -1,0 +1,13 @@
+# Attempt working dirs and outputs
+workspaces/
+results/
+*.log
+
+# Batch orchestrators are operational scripts, deliberately untracked
+orchestrate_*.py
+deferred.json
+run_configs/prod_*.yaml
+
+# Secrets
+.env
+ladder/
