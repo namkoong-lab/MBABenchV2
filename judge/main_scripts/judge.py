@@ -1,5 +1,6 @@
 """Run a local judge on specified attempt and solution files, using the prompt template and rubric."""
 
+import hashlib
 import json
 import shutil
 import time
@@ -44,6 +45,7 @@ from utils.prompt_utils import (
     format_file_section,
     render_rubric_checks,
 )
+from utils.trajectory import TrajectoryRecorder
 
 ### Obtain constants
 load_project_configs()
@@ -973,6 +975,27 @@ def judge_case(
     all_responses = {}
     parse_failures = {}
 
+    recorder = _make_recorder(
+        output_dir,
+        mode="standard",
+        model=model,
+        reasoning_effort=reasoning_effort,
+        attempt_model=attempt_model,
+        versions=versions,
+        check_order=CHECK_ORDER,
+        rubric={"path": str(rubric_json_path), "md5": _file_md5(rubric_json_path)},
+        weights={
+            "path": str(rubric_weight_path) if rubric_weight_path else None,
+            "md5": _file_md5(rubric_weight_path) if rubric_weight_path else None,
+        },
+        template_path=str(template_path),
+        files={
+            "golden_solution": sorted(golden_solution_files),
+            "ai_attempt": sorted(ai_attempt_files),
+            "context": context_file_path.name if context_file_path else None,
+        },
+    )
+
     for stage_idx, stage_messages in enumerate(stages):
         category = (
             CHECK_ORDER[stage_idx]
@@ -1005,12 +1028,46 @@ def judge_case(
         }
 
         for json_attempt in range(max_json_attempts):
-            response, metrics = robust_send_message(
-                client,
-                conversation_messages,
-                model,
-                response_format={"type": "json_object"},
-                reasoning_effort=reasoning_effort,
+            _call_t0 = time.time()
+            try:
+                response, metrics = robust_send_message(
+                    client,
+                    conversation_messages,
+                    model,
+                    response_format={"type": "json_object"},
+                    reasoning_effort=reasoning_effort,
+                )
+            except Exception as api_err:
+                # Record the failed call before propagating so the trajectory
+                # faithfully shows how the grading died.
+                recorder.record_call(
+                    mode="standard",
+                    category=category,
+                    round=json_attempt + 1,
+                    purpose="stage",
+                    model=model,
+                    request_messages=conversation_messages,
+                    request_params={
+                        "response_format": {"type": "json_object"},
+                        "reasoning_effort": reasoning_effort,
+                    },
+                    error=str(api_err),
+                    t0=_call_t0,
+                )
+                raise
+            recorder.record_call(
+                mode="standard",
+                category=category,
+                round=json_attempt + 1,
+                purpose="stage",
+                model=model,
+                request_messages=conversation_messages,
+                request_params={
+                    "response_format": {"type": "json_object"},
+                    "reasoning_effort": reasoning_effort,
+                },
+                response=response,
+                t0=_call_t0,
             )
 
             response_text = response.choices[0].message.content
@@ -1098,6 +1155,12 @@ def judge_case(
                 if response_text is None:
                     response_text = "<empty response>"
                 failed_responses.append(response_text)
+                recorder.record_event(
+                    "parse_failure",
+                    category=category,
+                    round=json_attempt + 1,
+                    error=str(e)[:500],
+                )
                 parse_failures[category] = {
                     "success": True,
                     "count": len(failed_responses),
@@ -1117,6 +1180,13 @@ def judge_case(
             )
             parse_failures[category]["success"] = False
             all_responses[category] = {"raw_response": response_text}
+
+        recorder.record_outcome(
+            category=category,
+            parse_success=parse_success,
+            parse_attempts=len(failed_responses) + (1 if parse_success else 0),
+            judgement=all_responses.get(category),
+        )
 
         # Track cumulative metrics
         token_tracking["evaluations"][category] = cumulative_metrics
@@ -1198,6 +1268,7 @@ def judge_case(
         attempt_context_reduced=attempt_context_reduced,
         context_reduced_details=context_reduced_details,
         reasoning_effort=reasoning_effort,
+        recorder=recorder,
     )
 
 
@@ -1419,6 +1490,31 @@ def _prepare_case(
     }
 
 
+def _file_md5(path) -> str | None:
+    """md5 of a file's bytes, or None if unreadable (trajectory header only)."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _make_recorder(output_dir, **header_fields) -> TrajectoryRecorder:
+    """Build the per-grading trajectory recorder and write its header.
+
+    Enabled by default; set judge.record_trajectory: false (env
+    JUDGE_RECORD_TRAJECTORY) to disable. The file lives in judge_results/
+    so it uploads to S3 with the rest of the grading artifacts.
+    """
+    enabled = str(
+        load_env_var("JUDGE_RECORD_TRAJECTORY", default="true")
+    ).strip().lower() in ("1", "true", "yes")
+    recorder = TrajectoryRecorder(Path(output_dir) / "trajectory.jsonl", enabled=enabled)
+    if enabled:
+        recorder.record_header(**header_fields)
+    return recorder
+
+
 def _resolve_category_score(criteria_scores: dict, *names) -> float | None:
     """Return the first named category's normalized score, else None.
 
@@ -1454,9 +1550,17 @@ def _finalize_case(
     agentic=False,
     auto_routed=False,
     reasoning_effort=None,
+    recorder=None,
 ):
     """Shared finalization: save judgement, calculate scores, write metadata."""
     output_dir = Path(output_dir)
+
+    # Seal the trajectory first so trajectory.jsonl.gz is on disk before the
+    # caller uploads output_dir to S3.
+    if recorder is not None:
+        traj_path = recorder.close()
+        if traj_path:
+            logger.info(f"  Trajectory recorded to: {traj_path}")
 
     # Warn if expected token_tracking keys are missing
     _expected_tt_keys = {
@@ -2606,6 +2710,32 @@ def agentic_judge_case(
     all_responses = {}
     parse_failures = {}
 
+    recorder = _make_recorder(
+        output_dir,
+        mode="agentic",
+        model=model,
+        reasoning_effort=reasoning_effort,
+        attempt_model=attempt_model,
+        versions=versions,
+        check_order=CHECK_ORDER,
+        rubric={"path": str(rubric_json_path), "md5": _file_md5(rubric_json_path)},
+        weights={
+            "path": str(rubric_weight_path) if rubric_weight_path else None,
+            "md5": _file_md5(rubric_weight_path) if rubric_weight_path else None,
+        },
+        template_path=str(template_path),
+        limits={
+            "max_tool_rounds": max_tool_rounds,
+            "context_token_limit": AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
+        },
+        auto_routed=auto_routed,
+        files={
+            "golden_solution": sorted(golden_solution_files),
+            "ai_attempt": sorted(ai_attempt_files),
+            "context": context_file_path.name if context_file_path else None,
+        },
+    )
+
     token_tracking = {
         "evaluations": {},
         "total_message_size": 0,
@@ -2691,6 +2821,14 @@ def agentic_judge_case(
                 state.round - 1,
             )
             logger.info(f"      Pressure ({tier}): {status.splitlines()[0]}")
+            recorder.record_event(
+                "pressure",
+                category=category,
+                round=state.round,
+                tier=tier,
+                estimated_tokens=wire_tokens_est,
+                limit=AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
+            )
             pressure_msg = {"role": "user", "content": status}
             state.append_wire(pressure_msg, tag="pressure_note")
             psize = _measure_message_chars(pressure_msg)
@@ -2702,25 +2840,38 @@ def agentic_judge_case(
             # ratio we derive below is calibrated against the real call.
             wire_chars_at_call = _wire_char_total(state.messages)
 
+            _msgs = state.messages
+            if is_anthropic_model(model) or is_openai_model(model):
+                # OpenAI (direct) 400s on emf/wmf/bmp/tiff parts just like
+                # Anthropic; OpenRouter normalizes them, direct API doesn't.
+                _msgs = strip_unsupported_anthropic_images(_msgs)
+            _create_kwargs = {
+                "model": to_api_model_id(model),
+                "messages": _msgs,
+                "tools": AGENTIC_JUDGE_TOOLS,
+            }
+            if reasoning_effort is not None:
+                # OpenAI chat/completions rejects function tools with any
+                # reasoning_effort except 'none' (gpt-5.5).
+                _create_kwargs["reasoning_effort"] = (
+                    "none" if is_openai_model(model) else reasoning_effort
+                )
+            _call_t0 = time.time()
             try:
-                _msgs = state.messages
-                if is_anthropic_model(model) or is_openai_model(model):
-                    # OpenAI (direct) 400s on emf/wmf/bmp/tiff parts just like
-                    # Anthropic; OpenRouter normalizes them, direct API doesn't.
-                    _msgs = strip_unsupported_anthropic_images(_msgs)
-                _create_kwargs = {
-                    "model": to_api_model_id(model),
-                    "messages": _msgs,
-                    "tools": AGENTIC_JUDGE_TOOLS,
-                }
-                if reasoning_effort is not None:
-                    # OpenAI chat/completions rejects function tools with any
-                    # reasoning_effort except 'none' (gpt-5.5).
-                    _create_kwargs["reasoning_effort"] = (
-                        "none" if is_openai_model(model) else reasoning_effort
-                    )
                 response = client.chat.completions.create(**_create_kwargs)
             except Exception as e:
+                recorder.record_call(
+                    mode="agentic",
+                    category=category,
+                    round=state.round,
+                    purpose="tool_round",
+                    model=model,
+                    request_messages=_create_kwargs["messages"],
+                    request_params={"reasoning_effort": _create_kwargs.get("reasoning_effort")},
+                    tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
+                    error=str(e),
+                    t0=_call_t0,
+                )
                 err_str = str(e)
                 # Context-length errors (400) are not retryable — the same
                 # payload will fail again. Break out and let partial-failure
@@ -2737,6 +2888,12 @@ def agentic_judge_case(
                         error=err_str[:500],
                         wire_chars=wire_chars_at_call,
                     )
+                    recorder.record_event(
+                        "context_overflow",
+                        category=category,
+                        round=state.round,
+                        error=err_str[:500],
+                    )
                     break
                 api_retries += 1
                 if api_retries > max_api_retries:
@@ -2750,8 +2907,28 @@ def agentic_judge_case(
                     f"{api_retries}/{max_api_retries}): {e}. "
                     f"Retrying in {wait}s..."
                 )
+                recorder.record_event(
+                    "api_retry",
+                    category=category,
+                    round=state.round,
+                    retry=api_retries,
+                    error=str(e)[:500],
+                )
                 time.sleep(wait)
                 continue  # retry same round without advancing round_idx
+
+            recorder.record_call(
+                mode="agentic",
+                category=category,
+                round=state.round,
+                purpose="tool_round",
+                model=model,
+                request_messages=_create_kwargs["messages"],
+                request_params={"reasoning_effort": _create_kwargs.get("reasoning_effort")},
+                tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
+                response=response,
+                t0=_call_t0,
+            )
 
             # OpenRouter sometimes wraps upstream provider errors in a 200 OK
             # envelope with choices=null + a top-level `error` field. The SDK
@@ -2785,6 +2962,13 @@ def agentic_judge_case(
                     "empty_choices",
                     error=str(err_detail)[:500],
                     wire_chars=wire_chars_at_call,
+                )
+                recorder.record_event(
+                    "empty_choices",
+                    category=category,
+                    round=state.round,
+                    retry=api_retries,
+                    error=str(err_detail)[:500],
                 )
                 time.sleep(wait)
                 continue  # retry same round without advancing round_idx
@@ -2862,6 +3046,15 @@ def agentic_judge_case(
                         "content": tool_result,
                     }
                     state.append_wire(tool_msg, tag="tool_result")
+                    recorder.record_event(
+                        "tool_exec",
+                        category=category,
+                        round=state.round,
+                        phase="main",
+                        tool=name,
+                        args=_args_parsed,
+                        result=tool_result,
+                    )
                     tsize = _measure_message_chars(tool_msg)
                     cumulative_metrics["message_size"] += tsize
                     cumulative_metrics["message_size_with_images"] += tsize
@@ -2884,6 +3077,13 @@ def agentic_judge_case(
                 )
                 nudge_msg = {"role": "user", "content": nudge_content}
                 state.append_wire(nudge_msg, tag="nudge")
+                recorder.record_event(
+                    "nudge",
+                    category=category,
+                    round=state.round,
+                    phase="main",
+                    pending=missing,
+                )
                 nsize = _measure_message_chars(nudge_msg)
                 cumulative_metrics["message_size"] += nsize
                 cumulative_metrics["message_size_with_images"] += nsize
@@ -2912,6 +3112,12 @@ def agentic_judge_case(
                 "forced_finalization_start",
                 pending=missing_initial,
                 max_tool_rounds=max_tool_rounds,
+            )
+            recorder.record_event(
+                "forced_finalization_start",
+                category=category,
+                round=state.round,
+                pending=missing_initial,
             )
 
             force_msg_content = (
@@ -2948,24 +3154,53 @@ def agentic_judge_case(
                     f"{forced_round}/{max_forced_rounds}..."
                 )
 
+                _msgs = state.messages
+                if is_anthropic_model(model) or is_openai_model(model):
+                    _msgs = strip_unsupported_anthropic_images(_msgs)
+                _create_kwargs = {
+                    "model": to_api_model_id(model),
+                    "messages": _msgs,
+                    "tools": finalize_tools,
+                }
+                if reasoning_effort is not None:
+                    _create_kwargs["reasoning_effort"] = (
+                        "none" if is_openai_model(model) else reasoning_effort
+                    )
+                _call_t0 = time.time()
                 try:
-                    _msgs = state.messages
-                    if is_anthropic_model(model) or is_openai_model(model):
-                        _msgs = strip_unsupported_anthropic_images(_msgs)
-                    _create_kwargs = {
-                        "model": to_api_model_id(model),
-                        "messages": _msgs,
-                        "tools": finalize_tools,
-                    }
-                    if reasoning_effort is not None:
-                        _create_kwargs["reasoning_effort"] = (
-                            "none" if is_openai_model(model) else reasoning_effort
-                        )
                     response = client.chat.completions.create(**_create_kwargs)
                 except Exception as e:
+                    recorder.record_call(
+                        mode="agentic",
+                        category=category,
+                        round=state.round,
+                        purpose="forced_finalization",
+                        model=model,
+                        request_messages=_create_kwargs["messages"],
+                        request_params={
+                            "reasoning_effort": _create_kwargs.get("reasoning_effort")
+                        },
+                        tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
+                        error=str(e),
+                        t0=_call_t0,
+                    )
                     logger.error(f"    Forced finalization API error: {e}. Stopping.")
                     state.log_event("forced_finalization_error", error=str(e)[:500])
                     break
+                recorder.record_call(
+                    mode="agentic",
+                    category=category,
+                    round=state.round,
+                    purpose="forced_finalization",
+                    model=model,
+                    request_messages=_create_kwargs["messages"],
+                    request_params={
+                        "reasoning_effort": _create_kwargs.get("reasoning_effort")
+                    },
+                    tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
+                    response=response,
+                    t0=_call_t0,
+                )
 
                 usage = response.usage
                 if usage:
@@ -3020,6 +3255,15 @@ def agentic_judge_case(
                             "content": tool_result,
                         }
                         state.append_wire(tool_msg, tag="tool_result")
+                        recorder.record_event(
+                            "tool_exec",
+                            category=category,
+                            round=state.round,
+                            phase="forced_finalization",
+                            tool=name,
+                            args=_args_parsed,
+                            result=tool_result,
+                        )
                         tsize = _measure_message_chars(tool_msg)
                         cumulative_metrics["message_size"] += tsize
                         cumulative_metrics["message_size_with_images"] += tsize
@@ -3041,6 +3285,13 @@ def agentic_judge_case(
                     )
                     nudge_msg = {"role": "user", "content": nudge_content}
                     state.append_wire(nudge_msg, tag="nudge")
+                    recorder.record_event(
+                        "nudge",
+                        category=category,
+                        round=state.round,
+                        phase="forced_finalization",
+                        pending=missing_now,
+                    )
                     nsize = _measure_message_chars(nudge_msg)
                     cumulative_metrics["message_size"] += nsize
                     cumulative_metrics["message_size_with_images"] += nsize
@@ -3049,6 +3300,15 @@ def agentic_judge_case(
 
             state.log_event(
                 "forced_finalization_end",
+                pending_after=[
+                    l for l in state.working.check_letters if l in state.working.pending
+                ],
+                forced_rounds_used=forced_round,
+            )
+            recorder.record_event(
+                "forced_finalization_end",
+                category=category,
+                round=state.round,
                 pending_after=[
                     l for l in state.working.check_letters if l in state.working.pending
                 ],
@@ -3083,6 +3343,17 @@ def agentic_judge_case(
 
         state.append_synthetic_final(final_judgement)
         all_responses[category] = final_judgement
+
+        recorder.record_outcome(
+            category=category,
+            judgement=final_judgement,
+            coverage=state.working.coverage_str(),
+            pending=[
+                l for l in state.working.check_letters if l in state.working.pending
+            ],
+            rounds_used=state.round,
+            tool_call_stats=tool_call_stats,
+        )
 
         # Track metrics
         token_tracking["evaluations"][category] = cumulative_metrics
@@ -3171,6 +3442,7 @@ def agentic_judge_case(
         agentic=True,
         auto_routed=auto_routed,
         reasoning_effort=reasoning_effort,
+        recorder=recorder,
     )
 
 

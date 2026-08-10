@@ -73,6 +73,12 @@ judge:
   # Excel extract mode
   fast_cell_extract: true
 
+  # Per-call trajectory recording (utils/trajectory.py): every API request/
+  # response, tool execution, and harness event is written to
+  # judge_results/trajectory.jsonl.gz and uploaded with the grading.
+  # Validate with operation_scripts/validate_judge_trajectory.py.
+  record_trajectory: true
+
 
   # Openrouter model to use for judging
   # openrouter_model: "google/gemini-2.5-flash-lite"
