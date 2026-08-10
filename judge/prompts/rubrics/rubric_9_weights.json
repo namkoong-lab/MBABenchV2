@@ -1,0 +1,570 @@
+{
+  "CategoryWeights": [
+    {
+      "Accuracy": 0.18,
+      "Formatting": 0.13,
+      "Structure": 0.11,
+      "Error Checks": 0.11,
+      "Assumptions": 0.095,
+      "Formulas": 0.09,
+      "Flexibility": 0.08,
+      "Potential Dangers": 0.065,
+      "Documentation": 0.05,
+      "Model Outputs & Executive Summary": 0.05,
+      "Purpose & Scope": 0.03,
+      "Rounding": 0.01
+    }
+  ],
+  "Accuracy": [
+    {
+      "name": "Final calculation accuracy",
+      "weight": 33.3333
+    },
+    {
+      "name": "Starting values",
+      "weight": 33.3333
+    },
+    {
+      "name": "Deliverable completeness",
+      "weight": 33.3333
+    }
+  ],
+  "Assumptions": [
+    {
+      "name": "Centralized assumptions",
+      "weight": 14.2857
+    },
+    {
+      "name": "Unique assumptions",
+      "weight": 14.2857
+    },
+    {
+      "name": "Assumption labeling",
+      "weight": 14.2857
+    },
+    {
+      "name": "Assumption units",
+      "weight": 14.2857
+    },
+    {
+      "name": "Assumption sources",
+      "weight": 14.2857
+    },
+    {
+      "name": "Named ranges for key assumptions",
+      "weight": 14.2857
+    },
+    {
+      "name": "Single date driver",
+      "weight": 14.2857
+    }
+  ],
+  "Documentation": [
+    {
+      "name": "Formula commentary for non-obvious formulas",
+      "weight": 10.0
+    },
+    {
+      "name": "Glossary of conventions",
+      "weight": 10.0
+    },
+    {
+      "name": "How to use guide",
+      "weight": 10.0
+    },
+    {
+      "name": "Linked table of contents",
+      "weight": 10.0
+    },
+    {
+      "name": "Clear tab names",
+      "weight": 10.0
+    },
+    {
+      "name": "Purpose documentation",
+      "weight": 10.0
+    },
+    {
+      "name": "Scope documentation",
+      "weight": 10.0
+    },
+    {
+      "name": "Key design decisions documentation",
+      "weight": 10.0
+    },
+    {
+      "name": "Version history / change log",
+      "weight": 10.0
+    },
+    {
+      "name": "Methodology documentation",
+      "weight": 10.0
+    }
+  ],
+  "Error Checks": [
+    {
+      "name": "Subtotals tie to totals",
+      "weight": 6.6667
+    },
+    {
+      "name": "No formula errors",
+      "weight": 6.6667
+    },
+    {
+      "name": "No unresolved cell warnings",
+      "weight": 6.6667
+    },
+    {
+      "name": "IFERROR/IFNA used only for expected errors",
+      "weight": 6.6667
+    },
+    {
+      "name": "Reasonable file size",
+      "weight": 6.6667
+    },
+    {
+      "name": "Reasonable recalculation time",
+      "weight": 6.6667
+    },
+    {
+      "name": "Cross-sheet value agreement",
+      "weight": 6.6667
+    },
+    {
+      "name": "No unused formatting",
+      "weight": 6.6667
+    },
+    {
+      "name": "Clean Name Manager",
+      "weight": 6.6667
+    },
+    {
+      "name": "Dedicated check rows",
+      "weight": 6.6667
+    },
+    {
+      "name": "Error-check sheet",
+      "weight": 6.6667
+    },
+    {
+      "name": "Master error flag",
+      "weight": 6.6667
+    },
+    {
+      "name": "Consistent units",
+      "weight": 6.6667
+    },
+    {
+      "name": "Units carried through correctly",
+      "weight": 6.6667
+    },
+    {
+      "name": "Justified repeated calculations",
+      "weight": 6.6667
+    }
+  ],
+  "Flexibility": [
+    {
+      "name": "Multi-unit coverage",
+      "weight": 16.6667
+    },
+    {
+      "name": "M&A / divestiture flexibility",
+      "weight": 16.6667
+    },
+    {
+      "name": "Capitalization switches",
+      "weight": 16.6667
+    },
+    {
+      "name": "Reuse as planning tool",
+      "weight": 16.6667
+    },
+    {
+      "name": "Time-period flexibility",
+      "weight": 16.6667
+    },
+    {
+      "name": "Driver-based, formula-linked architecture",
+      "weight": 16.6667
+    }
+  ],
+  "Formatting": [
+    {
+      "name": "Actuals vs. forecast demarcation",
+      "weight": 2.7778
+    },
+    {
+      "name": "Input cells marked",
+      "weight": 2.7778
+    },
+    {
+      "name": "Input cells data validation",
+      "weight": 2.7778
+    },
+    {
+      "name": "Reasonable number formats",
+      "weight": 2.7778
+    },
+    {
+      "name": "Consistent number formats",
+      "weight": 2.7778
+    },
+    {
+      "name": "No bright-yellow highlighting",
+      "weight": 2.7778
+    },
+    {
+      "name": "Blue font for hardcoded inputs",
+      "weight": 2.7778
+    },
+    {
+      "name": "Black font for calculations",
+      "weight": 2.7778
+    },
+    {
+      "name": "Green font for cross-sheet links",
+      "weight": 2.7778
+    },
+    {
+      "name": "Red font for external links",
+      "weight": 2.7778
+    },
+    {
+      "name": "Consistent color coding",
+      "weight": 2.7778
+    },
+    {
+      "name": "Consistent formatting",
+      "weight": 2.7778
+    },
+    {
+      "name": "Limited color palette",
+      "weight": 2.7778
+    },
+    {
+      "name": "No colors that mimic standard coding",
+      "weight": 2.7778
+    },
+    {
+      "name": "Minimal non-standard color usage",
+      "weight": 2.7778
+    },
+    {
+      "name": "Sparing conditional formatting",
+      "weight": 2.7778
+    },
+    {
+      "name": "Sparing border usage",
+      "weight": 2.7778
+    },
+    {
+      "name": "Header & title shading",
+      "weight": 2.7778
+    },
+    {
+      "name": "Totals visually distinguished",
+      "weight": 2.7778
+    },
+    {
+      "name": "Consistent zoom level",
+      "weight": 2.7778
+    },
+    {
+      "name": "Active cell reset to A1 on all sheets",
+      "weight": 2.7778
+    },
+    {
+      "name": "Text left-aligned",
+      "weight": 2.7778
+    },
+    {
+      "name": "Numbers right-aligned",
+      "weight": 2.7778
+    },
+    {
+      "name": "Negatives in parentheses",
+      "weight": 2.7778
+    },
+    {
+      "name": "Zeros as dashes",
+      "weight": 2.7778
+    },
+    {
+      "name": "Thousands separators",
+      "weight": 2.7778
+    },
+    {
+      "name": "Currency stated",
+      "weight": 2.7778
+    },
+    {
+      "name": "Sufficient column widths",
+      "weight": 2.7778
+    },
+    {
+      "name": "Reasonable column widths",
+      "weight": 2.7778
+    },
+    {
+      "name": "Consistent column widths",
+      "weight": 2.7778
+    },
+    {
+      "name": "Consistent row heights",
+      "weight": 2.7778
+    },
+    {
+      "name": "Reasonable row heights",
+      "weight": 2.7778
+    },
+    {
+      "name": "No merged cells",
+      "weight": 2.7778
+    },
+    {
+      "name": "Print areas set",
+      "weight": 2.7778
+    },
+    {
+      "name": "Page breaks set",
+      "weight": 2.7778
+    },
+    {
+      "name": "File extension (.xlsx)",
+      "weight": 2.7778
+    }
+  ],
+  "Formulas": [
+    {
+      "name": "Use standard formula set",
+      "weight": 10.0
+    },
+    {
+      "name": "Modern formula usage",
+      "weight": 10.0
+    },
+    {
+      "name": "Avoid volatile functions",
+      "weight": 10.0
+    },
+    {
+      "name": "No hardcoded numbers in formulas",
+      "weight": 10.0
+    },
+    {
+      "name": "Simple, stepwise formulas",
+      "weight": 10.0
+    },
+    {
+      "name": "Consistent formulas across blocks",
+      "weight": 10.0
+    },
+    {
+      "name": "Inconsistent formulas flagged",
+      "weight": 10.0
+    },
+    {
+      "name": "Correct reference anchoring",
+      "weight": 10.0
+    },
+    {
+      "name": "Consistent reference anchoring",
+      "weight": 10.0
+    },
+    {
+      "name": "Avoid whole-column references",
+      "weight": 10.0
+    }
+  ],
+  "Model Outputs & Executive Summary": [
+    {
+      "name": "Output reasonableness check",
+      "weight": 25.0
+    },
+    {
+      "name": "Key ratios & outputs section",
+      "weight": 25.0
+    },
+    {
+      "name": "Cross-scenario summary",
+      "weight": 25.0
+    },
+    {
+      "name": "Automated summary",
+      "weight": 25.0
+    }
+  ],
+  "Potential Dangers": [
+    {
+      "name": "No hidden sheets",
+      "weight": 10.0
+    },
+    {
+      "name": "No hidden rows/columns",
+      "weight": 10.0
+    },
+    {
+      "name": "No white-on-white hiding",
+      "weight": 10.0
+    },
+    {
+      "name": "Password protection disclosed",
+      "weight": 10.0
+    },
+    {
+      "name": "Passwords available",
+      "weight": 10.0
+    },
+    {
+      "name": "No external links",
+      "weight": 10.0
+    },
+    {
+      "name": "Macros/VBA disclosed",
+      "weight": 10.0
+    },
+    {
+      "name": "VBA vs. native alternatives",
+      "weight": 10.0
+    },
+    {
+      "name": "Consistent sign convention",
+      "weight": 10.0
+    },
+    {
+      "name": "No errors under extreme-but-plausible inputs",
+      "weight": 10.0
+    }
+  ],
+  "Purpose & Scope": [
+    {
+      "name": "Architecture suited to audience",
+      "weight": 50.0
+    },
+    {
+      "name": "Structure fits purpose",
+      "weight": 50.0
+    }
+  ],
+  "Rounding": [
+    {
+      "name": "Full precision in intermediates",
+      "weight": 33.3333
+    },
+    {
+      "name": "Rounded outputs",
+      "weight": 33.3333
+    },
+    {
+      "name": "Rounding documented",
+      "weight": 33.3333
+    }
+  ],
+  "Structure": [
+    {
+      "name": "Essential components present",
+      "weight": 3.8462
+    },
+    {
+      "name": "Cover sheet first",
+      "weight": 3.8462
+    },
+    {
+      "name": "Tab structure approach",
+      "weight": 3.8462
+    },
+    {
+      "name": "Vertical alignment of same-type data",
+      "weight": 3.8462
+    },
+    {
+      "name": "Label-to-value alignment",
+      "weight": 3.8462
+    },
+    {
+      "name": "Best-fit structure for stated purpose",
+      "weight": 3.8462
+    },
+    {
+      "name": "Deal vs. planning orientation",
+      "weight": 3.8462
+    },
+    {
+      "name": "Real fiscal year handling",
+      "weight": 3.8462
+    },
+    {
+      "name": "Stub period handling",
+      "weight": 3.8462
+    },
+    {
+      "name": "Functional sheet separation",
+      "weight": 3.8462
+    },
+    {
+      "name": "Logical tab order",
+      "weight": 3.8462
+    },
+    {
+      "name": "Functional calculation sections",
+      "weight": 3.8462
+    },
+    {
+      "name": "Buffer rows for totals",
+      "weight": 3.8462
+    },
+    {
+      "name": "Buffer rows between sections",
+      "weight": 3.8462
+    },
+    {
+      "name": "Clear section headers",
+      "weight": 3.8462
+    },
+    {
+      "name": "Consistent tab structure",
+      "weight": 3.8462
+    },
+    {
+      "name": "Freeze panes set",
+      "weight": 3.8462
+    },
+    {
+      "name": "One timeline per sheet",
+      "weight": 3.8462
+    },
+    {
+      "name": "Chronological left-to-right",
+      "weight": 3.8462
+    },
+    {
+      "name": "Time period headers",
+      "weight": 3.8462
+    },
+    {
+      "name": "Data-type designation (actuals vs. estimates)",
+      "weight": 3.8462
+    },
+    {
+      "name": "Clear row labels",
+      "weight": 3.8462
+    },
+    {
+      "name": "Clear column labels",
+      "weight": 3.8462
+    },
+    {
+      "name": "Circularity - valid justification",
+      "weight": 3.8462
+    },
+    {
+      "name": "Circularity - documentation",
+      "weight": 3.8462
+    },
+    {
+      "name": "Circularity breaker switch",
+      "weight": 3.8462
+    }
+  ]
+}
