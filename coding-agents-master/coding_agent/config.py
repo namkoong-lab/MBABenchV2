@@ -65,6 +65,17 @@ class LimitsConfig:
     junk_seconds: int = 180
 
 
+# Per-benchmark storage + DB wiring. `benchmark` in the run config selects
+# the experiment; internal.s3_bucket/s3_root default from it (explicit
+# values in the YAML still win), and require_env() sanity-checks
+# DATABASE_URL against the expected DB name so a mismatched config fails
+# before any attempt runs.
+BENCHMARKS = {
+    "v1": {"bucket": "mbabench", "root": "BizbenchV1", "db_name": "BizbenchV1"},
+    "v2": {"bucket": "biz-bench", "root": "MBABenchV2", "db_name": "BizbenchV2"},
+}
+
+
 @dataclass
 class InternalConfig:
     s3_bucket: str = "mbabench"
@@ -77,9 +88,10 @@ class RunConfig:
     agent: AgentConfig
     identity: str
     mode: str  # "internal" | "external"
+    benchmark: str = "v1"  # "v1" (BizbenchV1 wave) | "v2" (MBABenchV2 task set)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
-    template_version: str = "v7"  # v7 = GUI-pv9 mirror (default); v6 = CLI adaptation; v5 = byte-exact CLI templates
+    template_version: str = "v7"  # v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     internal: InternalConfig = field(default_factory=InternalConfig)
@@ -102,6 +114,17 @@ def load_config(path: str | Path) -> RunConfig:
     if raw.get("mode") not in ("internal", "external"):
         raise ValueError('mode must be "internal" or "external"')
 
+    benchmark = str(raw.get("benchmark", "v1")).lower()
+    if benchmark not in BENCHMARKS:
+        raise ValueError(
+            f'benchmark must be one of {sorted(BENCHMARKS)} '
+            f'(v1 = BizbenchV1 wave, v2 = MBABenchV2 task set)'
+        )
+    # internal S3 defaults follow the benchmark; explicit YAML values win.
+    internal_raw = dict(raw.get("internal") or {})
+    internal_raw.setdefault("s3_bucket", BENCHMARKS[benchmark]["bucket"])
+    internal_raw.setdefault("s3_root", BENCHMARKS[benchmark]["root"])
+
     cfg = RunConfig(
         run_name=raw["run_name"],
         agent=AgentConfig(
@@ -113,17 +136,20 @@ def load_config(path: str | Path) -> RunConfig:
         ),
         identity=raw["identity"],
         mode=raw["mode"],
+        benchmark=benchmark,
         record_trajectory=bool(raw.get("record_trajectory", True)),
         system_prompt=raw.get("system_prompt", "system_prompt_coding_v1.txt"),
-        template_version=raw.get("template_version", "v7"),
+        template_version=raw.get(
+            "template_version", "v8" if benchmark == "v2" else "v7"
+        ),
         sandbox=SandboxConfig(**(raw.get("sandbox") or {})),
         limits=LimitsConfig(**(raw.get("limits") or {})),
-        internal=InternalConfig(**(raw.get("internal") or {})),
+        internal=InternalConfig(**internal_raw),
     )
     if raw.get("workspaces_dir"):
         cfg.workspaces_dir = Path(raw["workspaces_dir"]).expanduser()
-    if cfg.template_version not in ("v5", "v6", "v7"):
-        raise ValueError('template_version must be "v5", "v6", or "v7"')
+    if cfg.template_version not in ("v5", "v6", "v7", "v8"):
+        raise ValueError('template_version must be "v5", "v6", "v7", or "v8"')
     if cfg.sandbox.mode not in ("docker", "host"):
         raise ValueError('sandbox.mode must be "docker" or "host"')
     return cfg
@@ -141,3 +167,14 @@ def require_env(cfg: RunConfig) -> None:
             f"Missing required environment variables: {', '.join(missing)} "
             f"(set them in the environment or a .env next to coding_agent/)"
         )
+    # A v1 config writing to the BizbenchV2 DB (or vice versa) would record
+    # attempts against the wrong experiment — refuse before any work runs.
+    if cfg.mode == "internal":
+        expected_db = BENCHMARKS[cfg.benchmark]["db_name"]
+        if f"/{expected_db}" not in os.environ.get("DATABASE_URL", ""):
+            raise SystemExit(
+                f"benchmark={cfg.benchmark} expects a {expected_db} "
+                f"DATABASE_URL, but the configured URL points elsewhere. "
+                f"Export the {expected_db} connection string or fix the "
+                f"config's benchmark key."
+            )

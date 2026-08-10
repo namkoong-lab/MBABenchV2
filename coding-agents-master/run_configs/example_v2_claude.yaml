@@ -1,0 +1,33 @@
+# Benchmark-v2 example: Claude Code on the MBABenchV2 task set.
+#
+#   .venv/bin/python -m coding_agent.run_task \
+#       --config run_configs/example_v2_claude.yaml --task-id 1
+#
+# benchmark: v2 selects the BizbenchV2 experiment end to end:
+#   * S3 defaults become s3://biz-bench/MBABenchV2/... (attempts + prompts)
+#   * DATABASE_URL must be the BizbenchV2 connection string (checked at
+#     startup; the run refuses a BizbenchV1 URL)
+#   * template_version defaults to v8 — the v2 132-check-rubric mirror
+#     (generated from the GUI prompt set by tools/build_v8_template.py)
+# Grade v2 attempts with the agentic judge + rubric_9 (see
+# judge/project_configs.example.yaml).
+
+run_name: example_v2_claude
+benchmark: v2
+mode: internal
+identity: coding_claude_haiku_4_5   # cheap model for pipeline shakeout;
+                                    # collision-check before production use
+
+agent:
+  cli: claude
+  model: claude-haiku-4-5-20251001  # never burn frontier budget on smoke
+  env:
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
+    API_TIMEOUT_MS: "3600000"
+
+sandbox:
+  mode: docker
+  image: mbabench-coding-agent:v1
+
+limits:
+  wall_clock_seconds: 14400

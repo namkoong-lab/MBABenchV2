@@ -36,14 +36,22 @@ FROZEN_MD5 = {
 V7_PREAMBLE_MD5 = "7b12403b2dea9ec6d89d333be819ab52"
 V7_PREAMBLE_LEN = 11971
 
+# v8 (benchmark v2) embeds the v2 132-check rubric byte-exact from
+# gui-agents-master/tasks_configs/prompts_v2/step2_build.txt ("== FULL
+# RUBRIC" onward). Regenerate the template with tools/build_v8_template.py;
+# never edit the rubric section by hand.
+V8_RUBRIC_MD5 = "ff2e3d483da45b722ed1a39db07d1c14"
+V8_RUBRIC_LEN = 60470
+V8_RUBRIC_MARKER = "== FULL RUBRIC"
+
 
 def _md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
 def template_name(task_source: str, version: str) -> str:
-    if version == "v7":  # task-invariant, like the GUI wave's pv9
-        return "task_template_shared_v7.txt"
+    if version in ("v7", "v8"):  # task-invariant, like the GUI prompt sets
+        return f"task_template_shared_{version}.txt"
     kind = "wsp" if task_source == "wsp" else "fmwc"  # modeloff uses the fmwc template (CLI-wave convention)
     return f"task_template_{kind}_{version}.txt"
 
@@ -67,6 +75,16 @@ def prompt_file_paths(cfg: RunConfig, task_source: str) -> tuple[Path, Path]:
         head = tpl_path.read_bytes()[:V7_PREAMBLE_LEN]
         if _h.md5(head).hexdigest() != V7_PREAMBLE_MD5:
             raise RuntimeError("v7 rubric preamble no longer matches the GUI pv9 original — do not edit the preamble section")
+    if tpl_path.name == "task_template_shared_v8.txt":
+        import hashlib as _h
+        text = tpl_path.read_text()
+        idx = text.index(V8_RUBRIC_MARKER)
+        rubric = text[idx:idx + V8_RUBRIC_LEN]
+        if _h.md5(rubric.encode()).hexdigest() != V8_RUBRIC_MD5:
+            raise RuntimeError(
+                "v8 rubric section no longer matches the v2 GUI original — "
+                "regenerate with tools/build_v8_template.py instead of editing"
+            )
     return system_path, tpl_path
 
 
