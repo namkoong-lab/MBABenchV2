@@ -63,12 +63,35 @@ def _resolve_from_value_or_env(
 # unrelated backends.
 _VALID_SOURCE_SCHEMAS: dict[str, set[str | None]] = {
     "yaml": {None},
-    "postgres_s3": {"mbabenchv2"},
+    "postgres_s3": {"bizbench", "mbabenchv2"},
 }
 _VALID_SINK_SCHEMAS: dict[str, set[str | None]] = {
     "local": {None},
-    "postgres_s3": {"mbabenchv2"},
+    "postgres_s3": {"bizbench", "mbabenchv2"},
 }
+
+# Which postgres_s3 schema each benchmark uses, and the S3 defaults that go
+# with it. A mismatched (benchmark, schema) pair — e.g. benchmark v1 writing
+# through the mbabenchv2 sink — would silently record attempts against the
+# wrong experiment's DB/bucket, so it is refused at build time.
+_BENCHMARK_SCHEMAS = {"v1": "bizbench", "v2": "mbabenchv2"}
+_SCHEMA_S3_DEFAULTS = {
+    "bizbench": ("mbabench", "BizbenchV1/attempts"),
+    "mbabenchv2": ("biz-bench", "MBABenchV2/attempts"),
+}
+
+
+def _check_benchmark_schema(cfg: SimpleNamespace, slot: str, schema: str) -> None:
+    bench = (getattr(cfg, "benchmark", None) or "v2").lower()
+    expected = _BENCHMARK_SCHEMAS.get(bench)
+    if expected is not None and schema != expected:
+        raise ValueError(
+            f"{slot}.schema={schema!r} contradicts benchmark={bench!r} "
+            f"(expected {expected!r}). A v1 run must use the bizbench "
+            f"schema (BizbenchV1 DB) and a v2 run the mbabenchv2 schema "
+            f"(BizbenchV2 DB) — a mismatch records attempts against the "
+            f"wrong experiment."
+        )
 
 
 def _validate_kind_schema(
@@ -123,9 +146,18 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
 
         return YamlTaskSource(yaml_path=_resolve(cfg.source.yaml_path))
 
-    if kind == "postgres_s3" and schema == "mbabenchv2":
-        from .sources.postgres_s3 import MBABenchV2PostgresS3TaskSource
+    if kind == "postgres_s3" and schema in ("bizbench", "mbabenchv2"):
+        from .sources.postgres_s3 import (
+            BizbenchPostgresS3TaskSource,
+            MBABenchV2PostgresS3TaskSource,
+        )
 
+        _check_benchmark_schema(cfg, "source", schema)
+        source_cls = (
+            BizbenchPostgresS3TaskSource
+            if schema == "bizbench"
+            else MBABenchV2PostgresS3TaskSource
+        )
         db_url = _resolve_db_url(getattr(cfg, "database", None))
         scratch_dir = _resolve(cfg.paths.scratch_dir)
         filters = cfg.source.filters
@@ -141,7 +173,7 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
             aws_cfg, "session_token", "session_token_env"
         )
         identity = resolve_agent_identity(cfg)
-        return MBABenchV2PostgresS3TaskSource(
+        return source_cls(
             db_url=db_url,
             scratch_dir=scratch_dir,
             agent_model_name=identity.model_name,
@@ -175,9 +207,18 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
 
         return LocalAttemptSink(output_dir=_resolve(cfg.sink.output_dir))
 
-    if kind == "postgres_s3" and schema == "mbabenchv2":
-        from .sinks.postgres_s3 import MBABenchV2PostgresS3AttemptSink
+    if kind == "postgres_s3" and schema in ("bizbench", "mbabenchv2"):
+        from .sinks.postgres_s3 import (
+            BizbenchPostgresS3AttemptSink,
+            MBABenchV2PostgresS3AttemptSink,
+        )
 
+        _check_benchmark_schema(cfg, "sink", schema)
+        sink_cls = (
+            BizbenchPostgresS3AttemptSink
+            if schema == "bizbench"
+            else MBABenchV2PostgresS3AttemptSink
+        )
         db_url = _resolve_db_url(getattr(cfg, "database", None))
         aws_cfg = getattr(cfg, "aws", None)
         region = getattr(aws_cfg, "region", None) if aws_cfg is not None else None
@@ -190,10 +231,11 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
         session_token = _resolve_from_value_or_env(
             aws_cfg, "session_token", "session_token_env"
         )
-        s3_bucket = getattr(aws_cfg, "s3_bucket", None) or "mbabench"
-        s3_prefix = getattr(aws_cfg, "s3_prefix", None) or "MBABenchV2/attempts"
+        default_bucket, default_prefix = _SCHEMA_S3_DEFAULTS[schema]
+        s3_bucket = getattr(aws_cfg, "s3_bucket", None) or default_bucket
+        s3_prefix = getattr(aws_cfg, "s3_prefix", None) or default_prefix
         identity = resolve_agent_identity(cfg)
-        return MBABenchV2PostgresS3AttemptSink(
+        return sink_cls(
             db_url=db_url,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,

@@ -24,6 +24,22 @@
 # ============================================================================
 
 
+# ---- Which benchmark this run belongs to -----------------------------------
+# The repo drives two experiments with different task sets, DBs, prompt sets,
+# grading rubrics, and DB label conventions. Every run must know which one it
+# is; the value gates identity resolution (agent_identity.py), source/sink
+# schema validation (task_io/registry.py), and provider preflight (run.py).
+#   v1 — MBABench V1 wave: BizbenchV1 DB (schema "bizbench"), s3://mbabench/
+#        BizbenchV1/attempts, single-prompt pv9 payloads
+#        (tasks_configs/prompts_pv9/), mode/effort-rich identities.
+#   v2 — MBABenchV2 task set: BizbenchV2 DB (schema "mbabenchv2"),
+#        s3://biz-bench/MBABenchV2/attempts, 3-step rubric-v9 prompts
+#        (tasks_configs/prompts_v2/), model-only identities.
+benchmark:
+  value: "v2"                # "v1" | "v2"
+  required: true
+
+
 # ---- Which provider / agent is running -------------------------------------
 provider:
   kind:
@@ -64,10 +80,12 @@ source:
     required: true
 
   # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
-  # Currently the only value is "mbabenchv2" (MBABenchV2PostgresS3TaskSource).
-  # Must be null/omitted for kinds that don't use it (e.g. "yaml").
+  # "bizbench" (BizbenchPostgresS3TaskSource, benchmark v1) or "mbabenchv2"
+  # (MBABenchV2PostgresS3TaskSource, benchmark v2) — must match `benchmark`
+  # above (enforced at build time). Must be null/omitted for kinds that
+  # don't use it (e.g. "yaml").
   schema:
-    value: null              # null | "mbabenchv2"
+    value: null              # null | "bizbench" | "mbabenchv2"
     required: false
 
   # Used when kind == "yaml". Either a single file with a `tasks:` list, or a
@@ -100,10 +118,11 @@ sink:
     required: true
 
   # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
-  # Currently the only value is "mbabenchv2" (MBABenchV2PostgresS3AttemptSink).
-  # Must be null/omitted for kinds that don't use it (e.g. "local").
+  # "bizbench" (benchmark v1, Hive-style S3 keys) or "mbabenchv2" (benchmark
+  # v2, task-name S3 keys) — must match `benchmark` above (enforced at build
+  # time). Must be null/omitted for kinds that don't use it (e.g. "local").
   schema:
-    value: null              # null | "mbabenchv2"
+    value: null              # null | "bizbench" | "mbabenchv2"
     required: false
 
   # Used when kind == "local"
@@ -153,11 +172,15 @@ aws:
   session_token_env:
     value: "AWS_SESSION_TOKEN"
     required: false
+  # null = derived from the sink schema at build time (task_io/registry.py):
+  #   bizbench   -> bucket "mbabench",  prefix "BizbenchV1/attempts"
+  #   mbabenchv2 -> bucket "biz-bench", prefix "MBABenchV2/attempts"
+  # Set explicitly only to redirect a run to a non-standard bucket/prefix.
   s3_bucket:
-    value: "mbabench"
+    value: null
     required: false
   s3_prefix:
-    value: "MBABenchV2/attempts"   # final key = {prefix}/{agent_folder}/task_source={src}/task_id={id}/...
+    value: null
     required: false
 
 
@@ -191,14 +214,30 @@ poll:
 
 
 # ---- Shared (both providers) -----------------------------------------------
-# Prompts sent sequentially to the AI. Claude-friendly default; for ChatGPT
-# override with a single combined prompt in configs.yaml or per-task.
+# Prompts sent sequentially to the AI. Leave `prompts` empty and use
+# `prompts_file` (below) so every config shares one copy of the long
+# benchmark prompts — preflight fails if neither is set.
 prompts:
+  value: []                    # unused when prompts_file is set (below)
+  required: false
+
+# Single source of truth for the long benchmark prompts. One file per
+# prompt, expanded into `prompts` by the engine, in order. Paths resolve
+# relative to the repo root, then CWD. prompts_file wins over an inline
+# `prompts` list; a missing file is fatal (running the benchmark with the
+# wrong prompt is worse than not running it).
+#
+# Default = the v2 3-step sequence (provenance:
+# tasks_configs/prompts_v2/README.md). ChatGPT agent-mode runs should
+# override steps 2-3 with the agent_*.txt variants. Benchmark-v1 runs
+# override with the single pv9 payload, e.g.:
+#   prompts_file: ["tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"]
+prompts_file:
   value:
-    - "Analyze the attached files. Summarize the key data and questions to answer."
-    # - "Build an Excel solution on a new sheet. Use formulas (no hardcoded values) and organize the workbook clearly."
-    # - "Create a summary sheet with your final answers and conclusions. Then download the workbook."
-  required: true
+    - "tasks_configs/prompts_v2/step1_analyze.txt"
+    - "tasks_configs/prompts_v2/step2_build.txt"
+    - "tasks_configs/prompts_v2/step3_qa.txt"
+  required: false
 
 prompt_version:
   value: 9                     # engine config's prompt_version (top-level); rubric v9
@@ -218,16 +257,30 @@ claude_web:
   project_id:
     value: null
     required: false
-  # null crashes the agent at model-selector time — DO NOT leave null.
-  model:
-    value: "opus_4_8"          # opus_4_8 | sonnet_4_6 | haiku_4_5 | fable_5
+  # Surface mode: "chat" | "cowork" (benchmark-v1 axis; v2 runs use chat).
+  # Selection persists across sessions; the agent asserts it every task.
+  # Bifurcates the v1 DB identity.
+  mode:
+    value: "chat"
     required: false
-  # Reasoning effort for sonnet/opus/fable (low | medium | high | extra |
-  # max). These models expose an "Effort" submenu in the model picker; the
-  # agent sets this level. Sonnet/opus also get the nested "Thinking" toggle
-  # enabled; fable's Effort submenu has no Thinking toggle to enable. Haiku
-  # has no effort control and ignores this. Default max = full reasoning
-  # effort.
+  # Cowork action approvals: manual | auto | skip (null = auto). "manual"
+  # pauses for every action and stalls unattended runs. Cowork mode only.
+  cowork_approval:
+    value: "auto"
+    required: false
+  # Model config value → claude.ai dropdown label (see MODEL_LABELS in
+  # claude_web_agent.py). null crashes the agent at model-selector time —
+  # DO NOT leave null; benchmark runs must pin it for the DB identity.
+  model:
+    value: "opus_4_8"          # fable_5 | sonnet_5 | haiku_4_5 | opus_4_8 |
+                               # opus_4_7 | opus_4_6 | opus_3 | sonnet_4_6
+    required: false
+  # Reasoning effort via the model dropdown's Effort submenu
+  # (low | medium | high | xhigh | max; xhigh renders as "Extra" in the UI).
+  # Sonnet/opus also get the nested "Thinking" toggle enabled; fable's
+  # Effort submenu has no Thinking toggle. Haiku has no effort control and
+  # ignores this. null = keep the session's current level. Bifurcates the
+  # v1 DB identity.
   effort:
     value: "max"
     required: false
@@ -314,12 +367,38 @@ chatgpt_web:
   project_slug:
     value: null
     required: false
-  # null is valid (uses the current session default).
+  # Model (the nested submenu of the composer pill). null is valid (uses
+  # the current session default; benchmark-v1 runs must pin it).
+  # v1 chat-mode values: gpt_5_6_sol | gpt_5_5 | gpt_5_4 | gpt_5_3 | o3
+  # v1 work-mode values: gpt_5_6_sol | gpt_5_6_terra | gpt_5_6_luna | gpt_5_5
+  # legacy one-axis values (still valid): instant | thinking | pro
   model:
-    value: "pro"               # instant | thinking | pro | null
+    value: "pro"
     required: false
+  # Surface mode: "chat" | "work" (benchmark-v1 axis). Selection persists
+  # across sessions; the agent asserts it every task. Bifurcates the v1 DB
+  # identity.
+  mode:
+    value: "chat"
+    required: false
+  # WORK-mode picker (pill menu > Advanced): effort + speed. Must be null
+  # in chat mode. Bifurcate the v1 DB identity.
+  effort:
+    value: null                # light | medium | high | xhigh | max | ultra | null
+    required: false
+  speed:
+    value: null                # standard | fast | null (null = standard)
+    required: false
+  # CHAT-mode intelligence axis (the pill's top-level radios). Must be
+  # null when mode == "work". Bifurcates the v1 DB identity.
+  intelligence:
+    value: null                # instant | medium | high | xhigh | pro | null
+    required: false
+  # benchmark v2: false = Extended Pro (no Code Interpreter); true = ChatGPT
+  # Agent (its own identity). benchmark v1 REFUSES agent_mode=true — the
+  # Agent surface was removed from the ChatGPT UI ~mid-2026.
   agent_mode:
-    value: false               # false = Extended Pro (no Code Interpreter); true = ChatGPT Agent
+    value: false
     required: false
   max_sec_per_task:
     value: 7200                # 2h

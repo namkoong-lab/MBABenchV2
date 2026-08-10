@@ -247,14 +247,26 @@ class PostgresS3TaskSource:
         self._conn = None
 
 
-# ----- MBABenchV2-specific subclass -------------------------------------------
+# ----- Benchmark-specific subclasses ----------------------------------------
 
+# v2 (BizbenchV2 DB): tasks table without the legacy old_id column.
 MBABENCHV2_TASK_SCHEMA = TaskSchema(
     table="tasks",
     id_col="id",
     name_col="task_name",
     files_col="task_starting_files",
     extra_cols=("task_source",),
+)
+
+# v1 (BizbenchV1 DB): identical shape plus the legacy `old_id` mapping
+# column carried through spec.metadata for cross-referencing pre-refresh
+# attempt rows.
+BIZBENCH_TASK_SCHEMA = TaskSchema(
+    table="tasks",
+    id_col="id",
+    name_col="task_name",
+    files_col="task_starting_files",
+    extra_cols=("task_source", "old_id"),
 )
 
 MBABENCHV2_ATTEMPTS_TABLE = "task_attempts"
@@ -268,7 +280,7 @@ MBABENCHV2_TASKS_SOURCE_COL = "task_source"
 
 
 class MBABenchV2PostgresS3TaskSource(PostgresS3TaskSource):
-    """MBABenchV2-wired source.
+    """MBABenchV2-wired source (benchmark v2; also the base for v1's source).
 
     Adds three filters via `_extra_where()`:
       * `task_sources`           — WHERE `tasks.task_source = ANY(%s)`
@@ -280,6 +292,8 @@ class MBABenchV2PostgresS3TaskSource(PostgresS3TaskSource):
     Also overrides `_starting_files_dir` to use the
     `{scratch_dir}/gui/task_id={id}/starting_files/` layout.
     """
+
+    TASK_SCHEMA = MBABENCHV2_TASK_SCHEMA
 
     def __init__(
         self,
@@ -322,7 +336,7 @@ class MBABenchV2PostgresS3TaskSource(PostgresS3TaskSource):
         super().__init__(
             db_url=db_url,
             scratch_dir=scratch_dir,
-            task_schema=MBABENCHV2_TASK_SCHEMA,
+            task_schema=self.TASK_SCHEMA,
             task_ids=task_ids,
             aws_region=aws_region,
             aws_access_key_id=aws_access_key_id,
@@ -429,3 +443,13 @@ class MBABenchV2PostgresS3TaskSource(PostgresS3TaskSource):
             out.append((clause, [self.agent_model_name, self.prompt_version]))
 
         return out
+
+
+class BizbenchPostgresS3TaskSource(MBABenchV2PostgresS3TaskSource):
+    """Benchmark v1 source (BizbenchV1 DB).
+
+    Identical filter/query behavior; the only difference is the task schema
+    (carries the legacy `old_id` column through spec.metadata).
+    """
+
+    TASK_SCHEMA = BIZBENCH_TASK_SCHEMA

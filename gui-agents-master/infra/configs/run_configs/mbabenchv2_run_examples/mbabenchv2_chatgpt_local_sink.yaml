@@ -1,3 +1,6 @@
+# benchmark v2 — MBABenchV2 task set (BizbenchV2 DB)
+benchmark: v2
+
 # MBABenchV2 run config — postgres_s3 source, local sink, ChatGPT provider.
 #
 # Use this for initial ChatGPT validation: pulls tasks from Neon V2 + S3 but

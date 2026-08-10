@@ -8,11 +8,18 @@ Symmetric with `task_io/sources/postgres_s3.py`:
       _s3_base_key(result, timestamp) -> str
       _attempt_values(result, uris)   -> dict[col -> value]
 
-* `MBABenchV2PostgresS3AttemptSink` — MBABenchV2-wired subclass. Hardcodes
-  the `task_attempts` schema and the Hive-style S3 layout used by
-  cli-agents' `auto_batch_runner.py`. `cost` is always NULL (GUI runs
-  are subscription-based); failed/timeout runs are still inserted with
-  `agent_failed=true`.
+* `_TaskAttemptsPostgresS3Sink` — shared wiring for both benchmark DBs:
+  the `task_attempts` schema (identical in BizbenchV1 and BizbenchV2),
+  credential validation, and row assembly. `cost` is always NULL (GUI
+  runs are subscription-based); failed/timeout runs are still inserted
+  with `agent_failed=true`.
+
+* `BizbenchPostgresS3AttemptSink` — benchmark v1 (BizbenchV1 DB). Keeps
+  the Hive-style S3 layout used by cli-agents' `auto_batch_runner.py`:
+  `{prefix}/{agent_folder}/task_source={src}/task_id={id}/{ts}_{name}`.
+
+* `MBABenchV2PostgresS3AttemptSink` — benchmark v2 (BizbenchV2 DB).
+  Task-name-based S3 layout: `{prefix}/{agent_folder}/{task_name}/{name}`.
 """
 
 from __future__ import annotations
@@ -212,14 +219,40 @@ class PostgresS3AttemptSink:
             )
             for c in schema.columns
         ]
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(stmt, params)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        # Neon (serverless PG) drops idle connections server-side during long
+        # GUI tasks; the stale socket still reads as open client-side, so the
+        # next execute dies with OperationalError ("SSL connection has been
+        # closed unexpectedly") and even rollback() then raises. Losing that
+        # insert loses the whole attempt (files are already in S3) AND kills
+        # the run mid-pass (observed 3x on 2026-07-24). Reconnect and retry
+        # once on stale-connection errors; the INSERT is not committed on the
+        # dead connection, so the retry cannot double-insert.
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            conn = self._connect()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(stmt, params)
+                conn.commit()
+                return
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                last_exc = e
+                logger.warning(
+                    f"Sink: DB connection stale ({e.__class__.__name__}: {e}); "
+                    f"{'reconnecting and retrying' if attempt == 0 else 'giving up'}"
+                )
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
+        raise last_exc
 
     # --- public API --------------------------------------------------------
 
@@ -242,9 +275,11 @@ class PostgresS3AttemptSink:
         self._conn = None
 
 
-# ----- MBABenchV2-specific subclass -------------------------------------------
+# ----- Benchmark-specific subclasses ----------------------------------------
 
-MBABENCHV2_ATTEMPT_SCHEMA = AttemptSchema(
+# The task_attempts table is column-identical in BizbenchV1 and BizbenchV2;
+# only the DB pointed at (database.url) and the S3 key layout differ.
+TASK_ATTEMPTS_SCHEMA = AttemptSchema(
     table="task_attempts",
     columns=(
         "task_id",
@@ -265,18 +300,10 @@ MBABENCHV2_ATTEMPT_SCHEMA = AttemptSchema(
 )
 
 
-class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
-    """MBABenchV2-wired sink.
+class _TaskAttemptsPostgresS3Sink(PostgresS3AttemptSink):
+    """Shared task_attempts wiring for both benchmarks (see module docstring).
 
-    S3 layout (organized by task name for readable paths):
-        {s3_prefix}/{agent_folder}/{task_name}/{ts}_{name}
-    e.g. MBABenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_solution.xlsx
-
-    task_name is sanitized (_sanitize_s3_segment) so it stays a single key
-    segment; the {ts} prefix on each file keeps re-runs from overwriting
-    earlier attempts. task_source / db_task_id still flow through
-    `result.extra["task_metadata"]` (populated by the source) and are
-    written to the task_attempts row, just no longer encoded in the S3 path.
+    Subclasses pick the S3 key layout via `_s3_base_key` / `_upload_files`.
     """
 
     def __init__(
@@ -296,14 +323,14 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
     ):
         if not agent_folder:
             raise ValueError(
-                "MBABenchV2PostgresS3AttemptSink: agent_folder is required. "
+                "task_attempts sink: agent_folder is required. "
                 "This is derived from resolve_agent_identity(cfg) — "
                 "an empty value means the resolver returned an invalid "
                 "AgentIdentity (check infra/configs/agent_identity.py)."
             )
         if not agent_model_name:
             raise ValueError(
-                "MBABenchV2PostgresS3AttemptSink: agent_model_name is required. "
+                "task_attempts sink: agent_model_name is required. "
                 "This is derived from resolve_agent_identity(cfg) — "
                 "an empty value means the resolver returned an invalid "
                 "AgentIdentity (check infra/configs/agent_identity.py)."
@@ -323,7 +350,7 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
                     "aws.secret_access_key_env) and re-run."
                 )
             raise ValueError(
-                "MBABenchV2PostgresS3AttemptSink: aws.access_key_id and "
+                "task_attempts sink: aws.access_key_id and "
                 "aws.secret_access_key are required. Set them in "
                 "configs.yaml, or export the env vars named by "
                 "aws.access_key_id_env / aws.secret_access_key_env. The "
@@ -334,7 +361,7 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
             db_url=db_url,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
-            attempt_schema=MBABENCHV2_ATTEMPT_SCHEMA,
+            attempt_schema=TASK_ATTEMPTS_SCHEMA,
             aws_region=aws_region,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
@@ -354,7 +381,7 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
         return ensure_overrides_present(
             ["database.url"],
             context=(
-                "MBABenchV2PostgresS3AttemptSink needs a DB connection, but "
+                "task_attempts sink needs a DB connection, but "
                 "database.url is empty and the env var named in "
                 "database.url_env is not set"
             ),
@@ -377,7 +404,7 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
         return ensure_overrides_present(
             ["aws.access_key_id", "aws.secret_access_key"],
             context=(
-                "MBABenchV2PostgresS3AttemptSink needs AWS credentials, "
+                "task_attempts sink needs AWS credentials, "
                 "but aws.access_key_id / aws.secret_access_key are empty "
                 "and the env vars named in aws.access_key_id_env / "
                 "aws.secret_access_key_env are not set. The boto3 default "
@@ -390,24 +417,6 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
         extra = result.extra or {}
         meta = extra.get("task_metadata")
         return meta if isinstance(meta, dict) else {}
-
-    def _s3_base_key(self, result: AttemptResult, timestamp: str) -> str:
-        # Layout: {s3_prefix}/{agent_folder}/{task_name}/{filename}
-        # The timestamp is NOT included here — the engine already embeds one in
-        # each filename (e.g. 20260625_165920_ApfelInc_Solution_…xlsx), so
-        # appending another here would produce a double-stamped key.
-        # _upload_files joins base_key + "/" + local.name (see override below).
-        safe_task = _sanitize_s3_segment(result.task_name) or f"task_id={result.task_id}"
-        return f"{self.s3_prefix}/{self.agent_folder}/{safe_task}"
-
-    def _upload_files(self, local_files: list[Path], base_key: str) -> list[str]:
-        uris: list[str] = []
-        for local in local_files:
-            key = f"{base_key}/{local.name}"
-            logger.info(f"S3 upload {local} -> s3://{self.s3_bucket}/{key}")
-            self._s3.upload_file(str(local), self.s3_bucket, key)
-            uris.append(f"s3://{self.s3_bucket}/{key}")
-        return uris
 
     def _attempt_values(
         self,
@@ -422,7 +431,7 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
                 db_task_id = int(result.task_id)
             except (TypeError, ValueError) as e:
                 raise ValueError(
-                    f"MBABenchV2PostgresS3AttemptSink: task_id must resolve to "
+                    f"task_attempts sink: task_id must resolve to "
                     f"an int, got {result.task_id!r}. Ensure the source "
                     f"populates spec.metadata['db_task_id'] or yields numeric "
                     f"task_ids (this sink writes to task_attempts.task_id "
@@ -456,3 +465,53 @@ class MBABenchV2PostgresS3AttemptSink(PostgresS3AttemptSink):
             "agent_failed_reason": agent_failed_reason,
             "deprecated": False,
         }
+
+
+class BizbenchPostgresS3AttemptSink(_TaskAttemptsPostgresS3Sink):
+    """Benchmark v1 sink (BizbenchV1 DB).
+
+    S3 layout (mirrors cli-agents-master/auto_batch_runner.py):
+        {s3_prefix}/{agent_folder}/task_source={src}/task_id={id}/{ts}_{name}
+
+    The source (`BizbenchPostgresS3TaskSource`) populates
+    `spec.metadata["task_source"]` and `spec.metadata["db_task_id"]`; the
+    runner threads those through as `result.extra["task_metadata"]` so
+    they land here. Uses the base `_upload_files` ("_"-joined), so each
+    file key ends `{timestamp}_{filename}`.
+    """
+
+    def _s3_base_key(self, result: AttemptResult, timestamp: str) -> str:
+        task_source = self._task_metadata(result).get("task_source") or "unknown"
+        return (
+            f"{self.s3_prefix}/{self.agent_folder}"
+            f"/task_source={task_source}/task_id={result.task_id}/{timestamp}"
+        )
+
+
+class MBABenchV2PostgresS3AttemptSink(_TaskAttemptsPostgresS3Sink):
+    """Benchmark v2 sink (BizbenchV2 DB).
+
+    S3 layout (organized by task name for readable paths):
+        {s3_prefix}/{agent_folder}/{task_name}/{name}
+    e.g. MBABenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_solution.xlsx
+
+    task_name is sanitized (_sanitize_s3_segment) so it stays a single key
+    segment. The timestamp is NOT added here — the engine already embeds one
+    in each filename, so appending another would double-stamp the key.
+    task_source / db_task_id still flow through
+    `result.extra["task_metadata"]` (populated by the source) and are
+    written to the task_attempts row, just not encoded in the S3 path.
+    """
+
+    def _s3_base_key(self, result: AttemptResult, timestamp: str) -> str:
+        safe_task = _sanitize_s3_segment(result.task_name) or f"task_id={result.task_id}"
+        return f"{self.s3_prefix}/{self.agent_folder}/{safe_task}"
+
+    def _upload_files(self, local_files: list[Path], base_key: str) -> list[str]:
+        uris: list[str] = []
+        for local in local_files:
+            key = f"{base_key}/{local.name}"
+            logger.info(f"S3 upload {local} -> s3://{self.s3_bucket}/{key}")
+            self._s3.upload_file(str(local), self.s3_bucket, key)
+            uris.append(f"s3://{self.s3_bucket}/{key}")
+        return uris

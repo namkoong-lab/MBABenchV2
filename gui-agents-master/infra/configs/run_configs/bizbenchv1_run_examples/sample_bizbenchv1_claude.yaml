@@ -1,0 +1,47 @@
+# benchmark v1 — MBABench V1 wave (BizbenchV1 DB) — Claude track example.
+#
+#   python -m infra.run --run-config \
+#     infra/configs/run_configs/bizbenchv1_run_examples/sample_bizbenchv1_claude.yaml --dry-run
+#
+# The repo defaults (configs.default.yaml) are v2-flavored, so a v1 run
+# config must pin EVERY v1 axis explicitly — benchmark, schema, mode,
+# model, effort, and the pv9 prompts_file. With the values below the DB
+# identity resolves to claude_web_cowork_fable5_max and attempts are
+# written to BizbenchV1.task_attempts + s3://mbabench/BizbenchV1/attempts/.
+#
+# Real production configs (with live project ids, ports, and task lists)
+# are operational files kept out of git — copy this shape and fill in.
+
+benchmark: v1
+
+source:
+  kind: postgres_s3
+  schema: bizbench
+  filters:
+    task_ids: [7]                    # e.g. one quick in-scope task
+    task_sources: ["fmwc", "modeloff", "wsp"]
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: postgres_s3
+  schema: bizbench
+
+provider:
+  kind: "claude"
+
+# The single-prompt pv9 payload used on the 206-task V1 wave (byte-exact
+# recovery; see tasks_configs/prompts_pv9/README.md).
+prompts_file:
+  - "tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"
+prompt_version: 9
+
+claude_web:
+  project_id: "your-claude-project-id"
+  mode: "cowork"
+  cowork_approval: "auto"
+  model: "fable_5"
+  effort: "max"
+  browser:
+    cdp_port: 9223
+    profile_dir: "~/.chrome-web-agent-claude2"

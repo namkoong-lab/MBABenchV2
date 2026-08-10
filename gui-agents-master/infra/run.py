@@ -123,6 +123,14 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
         "agent_type": agent_type,
         "prompts": list(base.get("prompts") or []),
         "prompt_version": base.get("prompt_version"),
+    }
+
+    # prompts_file (single source of truth for the long benchmark prompts)
+    # is passed through; the engine expands it into `prompts`.
+    if base.get("prompts_file"):
+        engine_config["prompts_file"] = base["prompts_file"]
+
+    engine_config |= {
         "task_name": spec.task_name,
         "task_id": spec.task_id,
         "upload_files": [str(p) for p in spec.upload_files],
@@ -164,27 +172,162 @@ def _resolve_upload_path(raw: str, local_files_base: str | None) -> Path:
     return p
 
 
-def preflight_check(engine_config: dict, provider: str) -> list[str]:
+def _preflight_provider_v1(
+    provider: str, section: dict, errors: list[str]
+) -> None:
+    """Benchmark-v1 provider checks: the UI axes the V1 wave pins (Claude
+    chat/cowork mode + effort; ChatGPT chat/work mode + intelligence or
+    effort+speed) all bifurcate the DB identity, so invalid values must
+    fail before the browser is touched."""
+    _CLAUDE_MODELS = (
+        "fable_5", "sonnet_5", "haiku_4_5", "opus_4_8",
+        "opus_4_7", "opus_4_6", "opus_3", "sonnet_4_6",
+    )
+    _EFFORTS = ("low", "medium", "high", "xhigh", "max")
+    _CHATGPT_MODELS = ("gpt_5_6_sol", "gpt_5_5", "gpt_5_4", "gpt_5_3", "o3")
+    _CHATGPT_WORK_MODELS = (
+        "gpt_5_6_sol", "gpt_5_6_terra", "gpt_5_6_luna", "gpt_5_5",
+    )
+    _INTELLIGENCE = ("instant", "medium", "high", "xhigh", "pro")
+    _WORK_EFFORTS = ("light", "medium", "high", "xhigh", "max", "ultra")
+    _WORK_SPEEDS = ("standard", "fast")
+    if provider == "claude":
+        mode = (section.get("mode") or "chat").lower()
+        if mode not in ("chat", "cowork"):
+            errors.append(
+                f"claude_web.mode={mode!r} is not 'chat' or 'cowork'."
+            )
+        approval = section.get("cowork_approval")
+        if approval is not None and approval not in ("manual", "auto", "skip"):
+            errors.append(
+                f"claude_web.cowork_approval={approval!r} is not one of "
+                "manual, auto, skip (or null = auto)."
+            )
+        if section.get("model") is None:
+            errors.append(
+                "claude_web.model is null. The agent tolerates null (keeps "
+                "the session default), but benchmark runs must pin the model "
+                f"for the DB identity. Set one of: {', '.join(_CLAUDE_MODELS)}."
+            )
+        effort = section.get("effort")
+        if effort is not None and effort not in _EFFORTS:
+            errors.append(
+                f"claude_web.effort={effort!r} is not one of "
+                f"{', '.join(_EFFORTS)} (or null)."
+            )
+    elif provider == "chatgpt":
+        if section.get("agent_mode"):
+            errors.append(
+                "chatgpt_web.agent_mode=true, but Agent mode no longer "
+                "exists in the ChatGPT UI (removed ~mid-2026). Set it to "
+                "false and use chatgpt_web.model + chatgpt_web.intelligence."
+            )
+        gmode = (section.get("mode") or "chat").lower()
+        if gmode not in ("chat", "work"):
+            errors.append(f"chatgpt_web.mode={gmode!r} is not 'chat' or 'work'.")
+        if gmode == "work":
+            model = section.get("model")
+            if model is not None and model not in _CHATGPT_WORK_MODELS:
+                errors.append(
+                    f"chatgpt_web.model={model!r} is not a work-mode model "
+                    f"({', '.join(_CHATGPT_WORK_MODELS)}) or null."
+                )
+            w_effort = section.get("effort")
+            if w_effort is not None and w_effort not in _WORK_EFFORTS:
+                errors.append(
+                    f"chatgpt_web.effort={w_effort!r} is not one of "
+                    f"{', '.join(_WORK_EFFORTS)} (or null)."
+                )
+            w_speed = section.get("speed")
+            if w_speed is not None and w_speed not in _WORK_SPEEDS:
+                errors.append(
+                    f"chatgpt_web.speed={w_speed!r} is not one of "
+                    f"{', '.join(_WORK_SPEEDS)} (or null = standard)."
+                )
+            if section.get("intelligence") is not None:
+                errors.append(
+                    "chatgpt_web.intelligence is set but mode=work — the "
+                    "intelligence axis exists only in chat mode. Use "
+                    "chatgpt_web.effort (+ speed) for work mode."
+                )
+        else:
+            intel = section.get("intelligence")
+            if intel is not None and intel not in _INTELLIGENCE:
+                errors.append(
+                    f"chatgpt_web.intelligence={intel!r} is not one of "
+                    f"{', '.join(_INTELLIGENCE)} (or null)."
+                )
+            # Legacy one-axis values stay valid: identity has entries for
+            # them and the agent routes them to the intelligence axis (with
+            # a warning). Only genuinely unknown values are errors.
+            _LEGACY_CHATGPT_MODELS = ("instant", "thinking", "pro")
+            model = section.get("model")
+            if (
+                model is not None
+                and model not in _CHATGPT_MODELS
+                and model not in _LEGACY_CHATGPT_MODELS
+            ):
+                errors.append(
+                    f"chatgpt_web.model={model!r} is not one of "
+                    f"{', '.join(_CHATGPT_MODELS)} "
+                    f"(legacy: {', '.join(_LEGACY_CHATGPT_MODELS)}) or null."
+                )
+
+
+def _preflight_provider_v2(
+    provider: str, section: dict, errors: list[str]
+) -> None:
+    """Benchmark-v2 provider checks: identity bifurcates on model only."""
+    if provider == "claude":
+        if section.get("model") is None:
+            errors.append(
+                "claude_web.model is null — the agent calls .lower() on it and crashes. "
+                "Set claude_web.model to 'sonnet_4_6' / 'opus_4_6' / 'opus_4_8' / "
+                "'haiku_4_5' / 'fable_5'."
+            )
+
+
+def preflight_check(
+    engine_config: dict, provider: str, benchmark: str = "v2"
+) -> list[str]:
     """Collect all problems before we touch the browser. Empty list = OK."""
     errors: list[str] = []
     section_key = f"{provider}_web"
     section = engine_config.get(section_key, {}) or {}
 
-    # Provider-specific contract checks.
-    if provider == "claude":
-        if section.get("model") is None:
-            errors.append(
-                "claude_web.model is null — the agent calls .lower() on it and crashes. "
-                "Set claude_web.model to 'sonnet_4_6' / 'opus_4_6' / 'haiku_4_5' / 'fable_5'."
-            )
-    elif provider == "chatgpt":
-        if not section.get("project_id"):
-            errors.append(
-                "chatgpt_web.project_id is empty. Copy from "
-                "https://chatgpt.com/g/g-p-{id}-{slug}/project."
-            )
+    # Provider-specific contract checks, benchmark-dependent: the v1 wave
+    # pins UI axes (mode/effort/intelligence) that v2 doesn't use.
+    if (benchmark or "v2").lower() == "v1":
+        _preflight_provider_v1(provider, section, errors)
+    else:
+        _preflight_provider_v2(provider, section, errors)
+
+    if provider == "chatgpt" and not section.get("project_id"):
+        errors.append(
+            "chatgpt_web.project_id is empty. Copy from "
+            "https://chatgpt.com/g/g-p-{id}-{slug}/project."
+        )
         # project_slug is optional — some ChatGPT project URLs have no slug
         # (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug} suffix).
+
+    # prompts_file must exist and be non-empty — a benchmark run with the
+    # wrong (or empty) prompt is worse than one that never starts.
+    pf = engine_config.get("prompts_file")
+    if pf:
+        repo_root = Path(__file__).resolve().parent.parent
+        for raw in [pf] if isinstance(pf, str) else pf:
+            p = Path(raw)
+            if not p.is_absolute():
+                cand = repo_root / p
+                p = cand if cand.exists() else Path.cwd() / p
+            if not p.exists():
+                errors.append(f"prompts_file not found: {raw}")
+            elif p.stat().st_size == 0:
+                errors.append(f"prompts_file is empty: {raw}")
+    elif not engine_config.get("prompts"):
+        errors.append(
+            "No prompts configured — set prompts_file (preferred) or prompts."
+        )
 
     # Upload files must exist on disk, resolved the same way the engine will.
     upload_files = engine_config.get("upload_files") or []
@@ -688,6 +831,8 @@ def main() -> int:
         filters.skip_already_attempted = True
 
     provider = cfg.provider.kind
+    benchmark = (getattr(cfg, "benchmark", None) or "v2").lower()
+    logger.info(f"Benchmark: {benchmark}")
 
     engine_script = _REPO_ROOT / "claude_web_agent" / "claude_web_engine.py"
     if not engine_script.exists():
@@ -741,7 +886,7 @@ def main() -> int:
         had_errors = False
         for spec in specs:
             engine_config = build_engine_config(cfg, spec)
-            errors = preflight_check(engine_config, provider)
+            errors = preflight_check(engine_config, provider, benchmark)
             if errors:
                 had_errors = True
                 logger.error(
