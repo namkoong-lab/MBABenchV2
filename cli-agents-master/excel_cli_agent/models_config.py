@@ -167,6 +167,7 @@ def _fetch_live_pricing(timeout: int = 10) -> Optional[Dict[str, Dict[str, float
                 pricing[entry["id"]] = {
                     "input": float(p["prompt"]) * 1_000_000,
                     "output": float(p["completion"]) * 1_000_000,
+                    "context": int(entry["context_length"] or 0) or None,
                 }
             except (KeyError, TypeError, ValueError):
                 continue
@@ -221,6 +222,42 @@ def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
         _pricing_warned.add(model)
         print(f"⚠️ No pricing found for {model}; cost will be logged as 0.0")
     return None
+
+
+# FALLBACK ONLY: resolve_context_window() prefers the live context_length
+# from the same OpenRouter fetch; these cover the direct-API ids in use when
+# that fetch fails.
+MODEL_CONTEXT_WINDOWS = {
+    "claude-fable-5": 200_000,
+    "claude-opus-4-8": 200_000,
+    "claude-opus-4-6": 200_000,
+    "gpt-5.6-sol": 400_000,
+}
+DEFAULT_CONTEXT_WINDOW = 128_000
+
+
+def resolve_context_window(model: str) -> int:
+    """Return the model's input context window in tokens.
+
+    Order: live OpenRouter context_length -> static MODEL_CONTEXT_WINDOWS ->
+    DEFAULT_CONTEXT_WINDOW (conservative). Warned once per model on fallback.
+    """
+    live = _fetch_live_pricing()
+    if live:
+        for slug in _candidate_slugs(model):
+            ctx = (live.get(slug) or {}).get("context")
+            if ctx:
+                return ctx
+    if model in MODEL_CONTEXT_WINDOWS:
+        return MODEL_CONTEXT_WINDOWS[model]
+    key = f"ctx:{model}"
+    if key not in _pricing_warned:
+        _pricing_warned.add(key)
+        print(
+            f"⚠️ No context window found for {model}; "
+            f"assuming {DEFAULT_CONTEXT_WINDOW:,} tokens"
+        )
+    return DEFAULT_CONTEXT_WINDOW
 
 
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
