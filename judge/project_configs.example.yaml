@@ -15,6 +15,13 @@
 #   standard (non-agentic) judge path is hardcoded to the 3-category
 #   template and REFUSES other rubrics — v2 grading must run through the
 #   agentic judge (--agentic), whose category loop follows check_order.
+#
+# The DB grading scripts validate the whole preset at startup
+# (validate_benchmark_coherence in main_scripts/grade_from_db.py):
+# check_order must match the rubric's categories, and rubric_version 8/9
+# must pair with the BizbenchV1/BizbenchV2 DATABASE_URL and the matching
+# s3 bucket/prefix. Mixed v1/v2 settings abort before any DB or S3 write;
+# JUDGE_SKIP_BENCHMARK_GUARD=1 bypasses (for one-off experiments only).
 project:
   name: "BizbenchJudge" # Used for logging and ENV vars prefixing.
 keys:

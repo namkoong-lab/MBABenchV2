@@ -1,13 +1,26 @@
 import json
 import re
-import string
 from pathlib import Path
 
 import yaml
 
 from .excel_utils import NOGRADE_PREFIX, encode_file_to_base64
 
-LETTERS = string.ascii_uppercase
+
+def check_letter(idx: int) -> str:
+    """0-based check index -> Excel-style letter label (A..Z, AA, AB, ...).
+
+    Rubric categories may exceed 26 checks (rubric_9's Formatting has 36),
+    so labels continue past Z the way spreadsheet columns do. Every site
+    that renders, derives, or maps check letters must use this function so
+    prompt text, valid-letter lists, and name mappings agree.
+    """
+    label = ""
+    idx += 1  # 1-based for the mod-26 arithmetic
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        label = chr(ord("A") + rem) + label
+    return label
 
 
 def load_template(template_path: str) -> list[dict]:
@@ -86,7 +99,7 @@ def render_rubric_checks(rubric_path: str, category: str) -> str:
     items = rubric[category]
     blocks = []
     for i, item in enumerate(items):
-        letter = LETTERS[i]
+        letter = check_letter(i)
         blocks.append(
             f"Check {letter}: {item['description']}\n"
             f"Pass: {item['good']}\n"
@@ -352,20 +365,16 @@ def build_check_name_mapping(rubric_json_path: str) -> dict:
 
             for category, items in category_items.items():
                 for idx, item in enumerate(items):
-                    if idx < len(LETTERS) and "name" in item:
-                        mapping[(category, LETTERS[idx])] = item["name"]
+                    if "name" in item:
+                        mapping[(category, check_letter(idx))] = item["name"]
         else:
             # New format: {"Accuracy": [...], "Formula": [...], ...}
             for category, items in data.items():
                 if isinstance(items, list):
                     for idx, item in enumerate(items):
-                        if (
-                            idx < len(LETTERS)
-                            and isinstance(item, dict)
-                            and "description" in item
-                        ):
+                        if isinstance(item, dict) and "description" in item:
                             name = item.get("name", item["description"][:40])
-                            mapping[(category, LETTERS[idx])] = name
+                            mapping[(category, check_letter(idx))] = name
     except Exception as e:
         import logging
 

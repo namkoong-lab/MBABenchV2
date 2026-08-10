@@ -80,6 +80,8 @@ fetch_attempts_by_ids = _gfd.fetch_attempts_by_ids
 get_db_connection = _gfd.get_db_connection
 resolve_agentic_mode = _gfd.resolve_agentic_mode
 add_agentic_cli_args = _gfd.add_agentic_cli_args
+cache_namespace = _gfd.cache_namespace
+validate_benchmark_coherence = _gfd.validate_benchmark_coherence
 
 
 # ---------------------------------------------------------------------------
@@ -365,13 +367,11 @@ class GradeOrchestrator:
         # Provider-routed, cached client (thread-safe per SDK).
         self.client = get_client(model)
 
-        # Persistent CSV cache roots
-        self.solution_cache_base = (
-            Path(scratch_base) / "grade_cache" / "solution_csv_cache"
-        )
-        self.attempt_cache_base = (
-            Path(scratch_base) / "grade_cache" / "attempt_csv_cache"
-        )
+        # Persistent CSV cache roots, namespaced by database name because
+        # task/attempt ids collide across the v1 and v2 databases.
+        cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
+        self.solution_cache_base = cache_root / "solution_csv_cache"
+        self.attempt_cache_base = cache_root / "attempt_csv_cache"
         self.solution_cache_base.mkdir(parents=True, exist_ok=True)
         self.attempt_cache_base.mkdir(parents=True, exist_ok=True)
 
@@ -964,6 +964,10 @@ def main():
             load_env_var("PATHS_SCRATCH_PATH", default="./scratch")
         )
     )
+
+    # Refuse to start if rubric, check_order, DATABASE_URL, and the S3
+    # grading tree don't all belong to the same benchmark (v1 vs v2).
+    validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
 
     run_id = time.strftime("%Y%m%d_%H%M%S")
     scratch_run_dir = Path(scratch_base) / "grade_runs" / run_id

@@ -2,7 +2,6 @@
 
 import json
 import shutil
-import string
 import time
 import traceback
 import uuid
@@ -39,6 +38,7 @@ from utils.misc_utils import (
 from utils.prompt_utils import (
     add_file_confirmation,
     build_check_name_mapping,
+    check_letter,
     compile_prompt,
     encode_file_to_base64,
     format_file_section,
@@ -1419,6 +1419,18 @@ def _prepare_case(
     }
 
 
+def _resolve_category_score(criteria_scores: dict, *names) -> float | None:
+    """Return the first named category's normalized score, else None.
+
+    Aliases cover rubric naming drift (v1 "Formula" vs rubric_9 "Formulas").
+    """
+    for name in names:
+        score = criteria_scores.get(name, {}).get("normalized_score")
+        if score is not None:
+            return score
+    return None
+
+
 def _finalize_case(
     all_responses,
     output_dir,
@@ -1605,18 +1617,30 @@ def _finalize_case(
     }
     if score_results:
         result["score_results"] = score_results
-        result["accuracy_score"] = (
-            score_results["criteria_scores"].get("Accuracy", {}).get("normalized_score")
+        criteria_scores = score_results["criteria_scores"]
+        # Legacy per-category keys feed the three v1-era DB grade columns.
+        # Category names differ across rubrics (v1 "Formula", rubric_9
+        # "Formulas"), so resolve through aliases; a rubric that lacks the
+        # category yields None for that column rather than failing the run.
+        result["accuracy_score"] = _resolve_category_score(
+            criteria_scores, "Accuracy"
         )
-        result["formula_score"] = (
-            score_results["criteria_scores"].get("Formula", {}).get("normalized_score")
+        result["formula_score"] = _resolve_category_score(
+            criteria_scores, "Formula", "Formulas"
         )
-        result["formatting_score"] = (
-            score_results["criteria_scores"]
-            .get("Formatting", {})
-            .get("normalized_score")
+        result["formatting_score"] = _resolve_category_score(
+            criteria_scores, "Formatting"
         )
         result["final_score"] = score_results["total_score"]
+        # Score completeness is judged against the configured weights file
+        # (the scoring contract), not a fixed v1 category list: any weighted
+        # category without a normalized score (e.g. skipped on parse
+        # failure) means the totals can't be trusted.
+        result["missing_categories"] = [
+            cat
+            for cat in weights_data["CategoryWeights"][0]
+            if criteria_scores.get(cat, {}).get("normalized_score") is None
+        ]
 
         scoring_warnings = score_results.get("scoring_warnings") or {}
         if any(scoring_warnings.get(k) for k in scoring_warnings):
@@ -2601,7 +2625,7 @@ def agentic_judge_case(
 
         rubric_checks_text = render_rubric_checks(str(rubric_json_path), category)
         num_checks = len(_rubric_data.get(category, []))
-        check_letters = list(string.ascii_uppercase[:num_checks])
+        check_letters = [check_letter(i) for i in range(num_checks)]
 
         compile_kwargs = dict(
             category=category,

@@ -25,6 +25,7 @@ import traceback
 import urllib.request
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Ensure judge/ directory is in Python path for local imports
 _judge_root = Path(__file__).resolve().parent.parent
@@ -57,6 +58,9 @@ AGENTIC_JUDGE_MAX_ROUNDS = int(
 
 # Task IDs that should use the agentic judge by default. Override per-run with
 # --agentic (force all on) or --no-agentic (force all off).
+# NOTE: these ids are only meaningful for one database — BizbenchV1 and
+# BizbenchV2 reuse the same numeric ranges, so re-populate (or clear) this
+# list when switching benchmarks.
 TASKS_TO_GRADE_WITH_AGENTIC_JUDGE: set[int] = set(
     [
         # 104,
@@ -148,8 +152,8 @@ def add_agentic_cli_args(parser):
 # ---------------------------------------------------------------------------
 
 
-def get_db_connection():
-    """Create a PostgreSQL connection using DATABASE_URL env var."""
+def get_db_url():
+    """Return the Postgres URL from DATABASE_URL (or the config-derived var)."""
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
@@ -157,7 +161,129 @@ def get_db_connection():
         raise EnvironmentError(
             "DATABASE_URL not set. Run: source judge/project_configs.sh"
         )
-    return psycopg2.connect(db_url)
+    return db_url
+
+
+def get_db_connection():
+    """Create a PostgreSQL connection using DATABASE_URL env var."""
+    return psycopg2.connect(get_db_url())
+
+
+def cache_namespace() -> str:
+    """Namespace for the persistent grade_cache, derived from the DB name.
+
+    task_id / attempt_id are only unique within one database; BizbenchV1 and
+    BizbenchV2 reuse the same numeric ranges, so caches keyed by bare ids
+    must never be shared across benchmarks.
+    """
+    try:
+        db_name = urlparse(get_db_url()).path.lstrip("/").rsplit("/", 1)[-1]
+    except EnvironmentError:
+        db_name = ""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", db_name) or "default"
+
+
+# Documented rubric <-> store pairings (README + project_configs.example.yaml):
+# rubric_version 8 grades the BizbenchV1 wave, rubric_version 9 the MBABenchV2
+# task set. Legacy rubric versions have no preset and skip the pairing check.
+BENCHMARK_PRESETS = {
+    "8": {
+        "db_name": "BizbenchV1",
+        "s3_bucket": "mbabench",
+        "s3_prefix_root": "BizbenchV1",
+    },
+    "9": {
+        "db_name": "BizbenchV2",
+        "s3_bucket": "biz-bench",
+        "s3_prefix_root": "MBABenchV2",
+    },
+}
+
+V1_CATEGORY_SET = {"Accuracy", "Formula", "Formatting"}
+
+
+def validate_benchmark_coherence(rubric_path, force_agentic, force_no_agentic):
+    """Fail fast when a run mixes v1 and v2 benchmark settings.
+
+    Mirrors the startup guards in the agent pipelines: a grading run must not
+    read attempts from one benchmark's DB while grading with the other's
+    rubric, check_order, or S3 grading tree. Called before any DB or S3 work
+    so a misconfigured run dies without side effects. Set
+    JUDGE_SKIP_BENCHMARK_GUARD=1 to bypass for one-off cross-benchmark
+    experiments (logged loudly).
+    """
+    with open(rubric_path, "r", encoding="utf-8") as f:
+        rubric_categories = set(json.load(f).keys()) - {"CategoryWeights"}
+
+    check_order = [
+        c.strip()
+        for c in load_env_var(
+            "JUDGE_CHECK_ORDER", default="Accuracy,Formula,Formatting"
+        ).split(",")
+    ]
+    if set(check_order) != rubric_categories:
+        sys.exit(
+            f"Benchmark config error: judge.check_order {sorted(set(check_order))} "
+            f"does not match the categories of {rubric_path} "
+            f"{sorted(rubric_categories)}. Update judge.check_order in "
+            f"project_configs.yaml to the rubric's category list (both presets "
+            f"are documented in project_configs.example.yaml)."
+        )
+
+    if os.environ.get("JUDGE_SKIP_BENCHMARK_GUARD") == "1":
+        logger.warning(
+            "JUDGE_SKIP_BENCHMARK_GUARD=1 — skipping rubric<->DB<->S3 pairing "
+            "checks. Gradings may be written against the wrong benchmark."
+        )
+        return
+
+    if rubric_categories != V1_CATEGORY_SET:
+        if force_no_agentic:
+            sys.exit(
+                f"Benchmark config error: --no-agentic forces the standard "
+                f"judge, but {rubric_path} is not the 3-category v1 rubric. "
+                f"Non-v1 rubrics (e.g. the v2 rubric_9) must be graded with "
+                f"the agentic judge."
+            )
+        if not force_agentic:
+            sys.exit(
+                f"Benchmark config error: {rubric_path} is not the 3-category "
+                f"v1 rubric, so every attempt must go through the agentic "
+                f"judge. Re-run with --agentic."
+            )
+
+    preset = BENCHMARK_PRESETS.get(
+        str(load_env_var("JUDGE_RUBRIC_VERSION", default=""))
+    )
+    if not preset:
+        return
+
+    db_name = urlparse(get_db_url()).path.lstrip("/").rsplit("/", 1)[-1]
+    if db_name != preset["db_name"]:
+        sys.exit(
+            f"Benchmark config error: rubric_version "
+            f"{load_env_var('JUDGE_RUBRIC_VERSION')} grades the "
+            f"{preset['db_name']} database, but DATABASE_URL points at "
+            f"{db_name!r}. Point DATABASE_URL at {preset['db_name']} or "
+            f"switch the judge config to the other benchmark preset."
+        )
+
+    s3_bucket = load_env_var("S3_RAW_FILES_BUCKET", default=None)
+    s3_prefix = load_env_var("S3_RAW_FILES_PREFIX", default=None)
+    if s3_bucket and s3_bucket != preset["s3_bucket"]:
+        sys.exit(
+            f"Benchmark config error: rubric_version "
+            f"{load_env_var('JUDGE_RUBRIC_VERSION')} uploads gradings to "
+            f"bucket {preset['s3_bucket']!r}, but s3.raw_files_bucket is "
+            f"{s3_bucket!r}."
+        )
+    if s3_prefix and not s3_prefix.startswith(preset["s3_prefix_root"]):
+        sys.exit(
+            f"Benchmark config error: rubric_version "
+            f"{load_env_var('JUDGE_RUBRIC_VERSION')} uploads gradings under "
+            f"{preset['s3_prefix_root']}/..., but s3.raw_files_prefix is "
+            f"{s3_prefix!r}."
+        )
 
 
 def fetch_attempts_by_ids(conn, attempt_ids):
@@ -669,22 +795,23 @@ def grade_single_attempt(
         }
         scored_results = result.get("score_results", {})
 
-        # Warn loudly if expected scores are missing from judge_case result
-        missing_scores = [
-            key
-            for key in (
-                "accuracy_score",
-                "formula_score",
-                "formatting_score",
-                "final_score",
-            )
-            if result.get(key) is None
-        ]
+        # Warn loudly if expected scores are missing from the judge result.
+        # Completeness is defined by the configured weights file (via
+        # result["missing_categories"], computed in _finalize_case against
+        # the weights' CategoryWeights), so this works identically for the
+        # v1 3-category rubric and the v2 12-category rubric_9.
+        if result.get("score_results"):
+            missing_scores = list(result.get("missing_categories") or [])
+            if result.get("final_score") is None:
+                missing_scores.append("final_score")
+        else:
+            missing_scores = ["all categories (no score_results)"]
         if missing_scores:
             logger.warning(
-                f"  WARNING: judge_case returned no scores for attempt {attempt_id}! "
-                f"Missing keys: {missing_scores}. "
-                f"This likely means rubric_weight_path was not provided or weights "
+                f"  WARNING: judge returned incomplete scores for attempt "
+                f"{attempt_id}! Missing: {missing_scores}. "
+                f"This likely means rubric_weight_path was not provided, a "
+                f"category was skipped on parse failure, or weights "
                 f"calculation failed. Scores will default to 0."
             )
 
@@ -882,6 +1009,10 @@ def main(args):
     )
     model = args.model
 
+    # Refuse to start if rubric, check_order, DATABASE_URL, and the S3
+    # grading tree don't all belong to the same benchmark (v1 vs v2).
+    validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
+
     # Resolve scratch path
     scratch_base = os.environ.get("SCRATCH_PATH")
     if not scratch_base:
@@ -945,10 +1076,13 @@ def main(args):
         client = get_client(model)
 
         # Grade each attempt
-        # Persistent caches for extracted CSVs — avoids re-extracting across runs
-        solution_cache_base = Path(scratch_base) / "grade_cache" / "solution_csv_cache"
+        # Persistent caches for extracted CSVs — avoids re-extracting across
+        # runs. Namespaced by database name because task/attempt ids collide
+        # across the v1 and v2 databases.
+        cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
+        solution_cache_base = cache_root / "solution_csv_cache"
         solution_cache_base.mkdir(parents=True, exist_ok=True)
-        attempt_cache_base = Path(scratch_base) / "grade_cache" / "attempt_csv_cache"
+        attempt_cache_base = cache_root / "attempt_csv_cache"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
         attempt_filter = args.attempt_sheet_name_filter
         # Namespace attempt cache by filter state — filtered extractions are a
