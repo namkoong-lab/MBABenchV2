@@ -1,0 +1,69 @@
+# Auto Batch Config Template
+# Automated pipeline: DB lookup -> trial check -> S3 download -> execute -> S3 upload -> DB entry
+#
+# Usage:
+#   nohup excel-agent --batch-config my_auto_config.yaml > ~/my_run.log 2>&1 &
+
+batch_name: "Auto Batch - MODEL_DISPLAY_NAME"
+model: "PROVIDER/MODEL_SLUG"          # OpenRouter model slug (e.g., "openai/gpt-5.2", "qwen/qwen3-235b-a22b-thinking-2507")
+auto_mode: true
+
+# Which experiment this run belongs to (default v1 = historical behavior):
+#   v1 -> BizbenchV1 DB, s3://mbabench/BizbenchV1/...
+#   v2 -> BizbenchV2 DB, s3://biz-bench/MBABenchV2/...
+# DATABASE_URL is sanity-checked against this at startup so a mismatched
+# config fails before writing anything. Prompts are chosen independently
+# via prompt_version below.
+benchmark: "v1"
+
+# Where to create workspaces (files downloaded from S3 here)
+workspace_base_dir: "~/auto_batch_MODEL_NAME"    # ~ is expanded automatically
+
+# Agent folder for S3 paths + DB agent_model_name
+# Convention: "openpyxl_{provider}/{model}"
+agent_folder: "openpyxl_PROVIDER/MODEL_SLUG"
+
+# Trials mode: max attempts per task+model combo
+max_trials: 7                         # Skip if >= 7 attempts exist (default: 7)
+trials_since: "2026-02-05"            # Only count attempts after this date (default: today)
+                                      # Set to old date to count ALL attempts, or today to ignore v0
+
+# --- Task Selection (pick ONE) ---
+
+# Option A: Explicit task names (from DB tasks.task_name)
+# tasks:
+#   - "1.-1st-Year-Analyst-Fall-2022-fuw8gf"
+#   - "Lifetime-Value"
+#   - "MO13 Round 2 - Sec 2 - Mergers and Acquisitions"
+
+# Option B: Auto-discover from DB (mutually exclusive with tasks:)
+task_filter:
+  task_source: "fmwc"               # optional: "fmwc", "modeloff", "wsp", or omit for all
+  missing_for_model: true           # only tasks with < max_trials attempts for this model
+
+# --- Model Settings ---
+verbose: true
+max_iterations: 10
+fresh_context_mode: true
+enhanced_excel_context: true
+recent_history_count: 3
+max_completion_tokens: 64000          # Use 64000 for frontier models, 16000 for smaller models
+api_timeout_seconds: 600
+cleanup_workspace: true                   # Delete workspace after S3 upload (default: true)
+
+# --- API Endpoint ---
+# base_url: auto-detects provider from URL. Omit to use legacy behavior (OpenRouter if key set, else OpenAI).
+# base_url: "http://localhost:8000/v1"         # vLLM / SGLang (local)
+# base_url: "https://openrouter.ai/api/v1"    # OpenRouter
+# base_url: "https://api.openai.com/v1"        # OpenAI direct
+# base_url: "https://api.anthropic.com"        # Anthropic (auto-detected, uses Anthropic SDK)
+
+# --- Optional Model-Specific Settings ---
+# reasoning_effort: "none"           # For GPT 5.2 (reasoning eats into max_completion_tokens, truncating JSONL output)
+# reasoning_effort: "high"           # For Gemini 3 Pro
+# thinking_budget_tokens: 50000      # For Opus 4.5 with Anthropic
+
+# task_template is AUTO-SELECTED per task based on task_source:
+#   fmwc/modeloff -> batch_config_template.yaml
+#   wsp -> batch_config_template_wsp.yaml
+# Override by setting task_template: here (rarely needed)

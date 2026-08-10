@@ -1,0 +1,36 @@
+# Local mode — no DB, no S3. Reads from local folders, saves results locally.
+# Usage: excel-agent --batch-config examples/test_local.yaml
+#
+# 1. Put task files (PDFs, xlsx) in a folder
+# 2. Point workspaces[].path to that folder
+# 3. Results saved to results_dir with attempts.jsonl log
+
+batch_name: "local-test"
+model: "openai/gpt-4o-mini"
+local_mode: true
+
+# API endpoint (optional, omit for default)
+# base_url: "http://localhost:8000/v1"
+
+# Input: folders containing task files
+workspaces:
+  - path: "./my_task_files/"
+
+# Where fresh workspaces are created (agent works here)
+workspace_base_dir: "./workspaces"
+
+# Where final results are saved + attempts.jsonl log
+results_dir: "./results"
+
+# Task type: "fmwc" (default) or "wsp" — selects the task template
+task_type: "fmwc"
+
+# Execution settings
+max_iterations: 3
+prompt_version: "v10"
+max_completion_tokens: 16000
+api_timeout_seconds: 120
+fresh_context_mode: true
+enhanced_excel_context: true
+cleanup_workspace: false              # Keep workspace for inspection
+verbose: true

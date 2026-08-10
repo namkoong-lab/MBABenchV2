@@ -1,0 +1,26 @@
+# Mini batch test — 3 tasks, 3 iterations each, cheap model
+# Usage: excel-agent --batch-config examples/test_mini_batch.yaml
+#
+# API endpoint: set base_url below, or BASE_URL in .env, or omit for default.
+
+batch_name: "mini-batch-test"
+model: "openai/gpt-4o-mini"
+auto_mode: true
+
+workspace_base_dir: "./workspaces"
+max_iterations: 3
+max_trials: 99
+trials_since: "2020-01-01"
+prompt_version: "v10"
+cleanup_workspace: false
+
+tasks:
+  - "Speed-It-Up-Finance-unhfuz"
+  - "Lifetime-Value"
+  - "1.-1st-Year-Analyst-Fall-2022-fuw8gf"
+
+max_completion_tokens: 16000
+api_timeout_seconds: 120
+fresh_context_mode: true
+enhanced_excel_context: true
+verbose: true

@@ -1,0 +1,29 @@
+# Quick test config — single task, 3 iterations, cheapest model
+# Usage: excel-agent --batch-config examples/test_quick.yaml
+#
+# API endpoint: set base_url below, or BASE_URL in .env, or omit for default.
+# Examples:
+#   base_url: "http://localhost:8000/v1"       # vLLM / SGLang
+#   base_url: "https://openrouter.ai/api/v1"  # OpenRouter
+#   base_url: "https://api.anthropic.com"      # Anthropic
+
+batch_name: "quick-test"
+model: "openai/gpt-4o-mini"
+auto_mode: true
+
+workspace_base_dir: "./workspaces"
+max_iterations: 3
+max_trials: 99
+trials_since: "2020-01-01"
+prompt_version: "v10"
+cleanup_workspace: false          # Keep workspace for inspection
+
+tasks:
+  - "Speed-It-Up-Finance-unhfuz"
+
+# Minimal token budget for cheap runs
+max_completion_tokens: 16000
+api_timeout_seconds: 120
+fresh_context_mode: true
+enhanced_excel_context: true
+verbose: true
