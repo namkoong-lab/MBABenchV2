@@ -1,0 +1,3 @@
+{
+ "alice": "<bcrypt hash — python3 -c \"import bcrypt; print(bcrypt.hashpw(b'PASSWORD', bcrypt.gensalt()).decode())\">"
+}
