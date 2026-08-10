@@ -9,7 +9,7 @@ Symmetric with `task_io/sources/postgres_s3.py`:
       _attempt_values(result, uris)   -> dict[col -> value]
 
 * `_TaskAttemptsPostgresS3Sink` — shared wiring for both benchmark DBs:
-  the `task_attempts` schema (identical in BizbenchV1 and BizbenchV2),
+  the `task_attempts` schema (identical in BizbenchV1 and MBABenchV2),
   credential validation, and row assembly. `cost` is always NULL (GUI
   runs are subscription-based); failed/timeout runs are still inserted
   with `agent_failed=true`.
@@ -18,7 +18,7 @@ Symmetric with `task_io/sources/postgres_s3.py`:
   the Hive-style S3 layout used by cli-agents' `auto_batch_runner.py`:
   `{prefix}/{agent_folder}/task_source={src}/task_id={id}/{ts}_{name}`.
 
-* `MBABenchV2PostgresS3AttemptSink` — benchmark v2 (BizbenchV2 DB).
+* `MBABenchV2PostgresS3AttemptSink` — benchmark v2 (MBABenchV2 DB).
   Task-name-based S3 layout: `{prefix}/{agent_folder}/{task_name}/{name}`.
 """
 
@@ -277,7 +277,7 @@ class PostgresS3AttemptSink:
 
 # ----- Benchmark-specific subclasses ----------------------------------------
 
-# The task_attempts table is column-identical in BizbenchV1 and BizbenchV2;
+# The task_attempts table is column-identical in BizbenchV1 and MBABenchV2;
 # only the DB pointed at (database.url) and the S3 key layout differ.
 TASK_ATTEMPTS_SCHEMA = AttemptSchema(
     table="task_attempts",
@@ -489,7 +489,7 @@ class BizbenchPostgresS3AttemptSink(_TaskAttemptsPostgresS3Sink):
 
 
 class MBABenchV2PostgresS3AttemptSink(_TaskAttemptsPostgresS3Sink):
-    """Benchmark v2 sink (BizbenchV2 DB).
+    """Benchmark v2 sink (MBABenchV2 DB).
 
     S3 layout (organized by task name for readable paths):
         {s3_prefix}/{agent_folder}/{task_name}/{name}

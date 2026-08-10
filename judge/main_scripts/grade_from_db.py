@@ -59,7 +59,7 @@ AGENTIC_JUDGE_MAX_ROUNDS = int(
 # Task IDs that should use the agentic judge by default. Override per-run with
 # --agentic (force all on) or --no-agentic (force all off).
 # NOTE: these ids are only meaningful for one database — BizbenchV1 and
-# BizbenchV2 reuse the same numeric ranges, so re-populate (or clear) this
+# MBABenchV2 reuse the same numeric ranges, so re-populate (or clear) this
 # list when switching benchmarks.
 TASKS_TO_GRADE_WITH_AGENTIC_JUDGE: set[int] = set(
     [
@@ -173,7 +173,7 @@ def cache_namespace() -> str:
     """Namespace for the persistent grade_cache, derived from the DB name.
 
     task_id / attempt_id are only unique within one database; BizbenchV1 and
-    BizbenchV2 reuse the same numeric ranges, so caches keyed by bare ids
+    MBABenchV2 reuse the same numeric ranges, so caches keyed by bare ids
     must never be shared across benchmarks.
     """
     try:
@@ -193,8 +193,8 @@ BENCHMARK_PRESETS = {
         "s3_prefix_root": "BizbenchV1",
     },
     "9": {
-        "db_name": "BizbenchV2",
-        "s3_bucket": "biz-bench",
+        "db_name": "MBABenchV2",
+        "s3_bucket": "mbabench",
         "s3_prefix_root": "MBABenchV2",
     },
 }

@@ -16,7 +16,7 @@ identity namespace:
        + model + effort; ChatGPT mode (chat/work) + model + intelligence or
        effort+speed. agent_mode is refused (removed from the ChatGPT UI
        ~mid-2026; historical rows keep the old label).
-  v2 — the MBABenchV2 task set (BizbenchV2 DB, rubric-v9 3-step prompts).
+  v2 — the MBABenchV2 task set (MBABenchV2 DB, rubric-v9 3-step prompts).
        Labels bifurcate on model only; agent_mode=True collapses to the
        chatgpt_agent identity (that backend's model dropdown is cosmetic).
 
@@ -124,7 +124,7 @@ _V1_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
 
 
 # =========================================================================
-# V2 identity tables — MBABenchV2 task set (BizbenchV2 DB)
+# V2 identity tables — MBABenchV2 task set (MBABenchV2 DB)
 # =========================================================================
 
 # Signature: (claude_web.model,). Extend the tuple — and every entry — when

@@ -19,7 +19,7 @@
 # The DB grading scripts validate the whole preset at startup
 # (validate_benchmark_coherence in main_scripts/grade_from_db.py):
 # check_order must match the rubric's categories, and rubric_version 8/9
-# must pair with the BizbenchV1/BizbenchV2 DATABASE_URL and the matching
+# must pair with the BizbenchV1/MBABenchV2 DATABASE_URL and the matching
 # s3 bucket/prefix. Mixed v1/v2 settings abort before any DB or S3 write;
 # JUDGE_SKIP_BENCHMARK_GUARD=1 bypasses (for one-off experiments only).
 project:
@@ -107,7 +107,7 @@ s3:
   # after each grading. The final raw_files_path is:
   #   s3://{raw_files_bucket}/{raw_files_prefix}/{timestamp}_{uuid}/
   # v1 (default) below; for v2 gradings use:
-  #   raw_files_bucket: "biz-bench"
+  #   raw_files_bucket: "mbabench"
   #   raw_files_prefix: "MBABenchV2/grading"
   raw_files_bucket: "mbabench"
   raw_files_prefix: "BizbenchV1/grading"

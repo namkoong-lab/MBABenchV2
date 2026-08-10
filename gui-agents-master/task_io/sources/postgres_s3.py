@@ -249,7 +249,7 @@ class PostgresS3TaskSource:
 
 # ----- Benchmark-specific subclasses ----------------------------------------
 
-# v2 (BizbenchV2 DB): tasks table without the legacy old_id column.
+# v2 (MBABenchV2 DB): tasks table without the legacy old_id column.
 MBABENCHV2_TASK_SCHEMA = TaskSchema(
     table="tasks",
     id_col="id",
