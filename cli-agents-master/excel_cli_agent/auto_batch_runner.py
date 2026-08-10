@@ -24,7 +24,10 @@ from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchRe
 
 from .db.database import SessionLocal
 from .db.models import Task, TaskAttempt
-from .prompt_versions import PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, parse_prompt_version
+from .prompt_versions import (
+    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, parse_prompt_version,
+    rubric_for_prompt_version,
+)
 
 # Resolved prompt paths (set by load_config based on prompt_version)
 SYSTEM_PROMPT_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERSION]["system"]
@@ -52,12 +55,13 @@ class AutoBatchRunner(BatchRunner):
 
     # Per-benchmark storage wiring. The benchmark also gates a DATABASE_URL
     # sanity check (see load_config) so a v1 config can never write to the
-    # BizbenchV2 DB or vice versa. Prompt selection stays independent — the
-    # `prompt_version` key picks the prompt set, `benchmark` picks the
-    # experiment's DB/S3.
+    # MBABenchV2 DB or vice versa. Prompts pair with the benchmark by default:
+    # `prompt_version` still picks the prompt set, but load_config defaults it
+    # from `benchmark` and refuses a prompt set embedding the other
+    # benchmark's rubric (EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 overrides).
     BENCHMARKS = {
         "v1": {"bucket": "mbabench", "root": "BizbenchV1", "db_name": "BizbenchV1"},
-        "v2": {"bucket": "biz-bench", "root": "MBABenchV2", "db_name": "BizbenchV2"},
+        "v2": {"bucket": "mbabench", "root": "MBABenchV2", "db_name": "MBABenchV2"},
     }
 
     def __init__(self, config_path: str, server_path: str, api_key: str,
@@ -153,11 +157,33 @@ class AutoBatchRunner(BatchRunner):
                 f"the config's benchmark key) before running."
             )
 
-        # Resolve prompt version from config (or default)
+        # Resolve prompt version from config; the default follows the
+        # benchmark (v1 -> DEFAULT_PROMPT_VERSION, v2 -> the v2-rubric set),
+        # and an explicit choice must embed this benchmark's rubric — running
+        # v2 tasks against prompts that promise the v1 grading rubric (or
+        # vice versa) invalidates the wave. Set EXCEL_AGENT_SKIP_RUBRIC_GUARD=1
+        # for a deliberate cross-benchmark experiment (logged loudly).
         global SYSTEM_PROMPT_PATH, TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH
-        prompt_ver = config.get('prompt_version', DEFAULT_PROMPT_VERSION)
+        default_ver = "v12" if benchmark == "v2" else DEFAULT_PROMPT_VERSION
+        prompt_ver = config.get('prompt_version', default_ver)
         if prompt_ver not in PROMPT_VERSIONS:
             raise ValueError(f"Unknown prompt_version '{prompt_ver}'. Available: {list(PROMPT_VERSIONS.keys())}")
+        prompt_rubric = rubric_for_prompt_version(prompt_ver)
+        if prompt_rubric != benchmark:
+            if os.environ.get("EXCEL_AGENT_SKIP_RUBRIC_GUARD"):
+                print(f"⚠️  EXCEL_AGENT_SKIP_RUBRIC_GUARD set — running benchmark "
+                      f"{benchmark} with the {prompt_rubric}-rubric prompt set "
+                      f"({prompt_ver}) as a deliberate cross-benchmark experiment.")
+            else:
+                suggestion = "v12" if benchmark == "v2" else "v11"
+                raise ValueError(
+                    f"prompt_version {prompt_ver} embeds the {prompt_rubric} "
+                    f"grading rubric, but benchmark={benchmark} tasks are graded "
+                    f"with the {benchmark} rubric. Use prompt_version "
+                    f"{suggestion} (or omit the key to default it from the "
+                    f"benchmark); set EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 to force "
+                    f"a cross-benchmark run."
+                )
         ver_files = PROMPT_VERSIONS[prompt_ver]
         SYSTEM_PROMPT_PATH = PROMPTS_DIR / ver_files["system"]
         TASK_TEMPLATE_FMWC_PATH = PROMPTS_DIR / ver_files["fmwc"]
@@ -458,8 +484,9 @@ class AutoBatchRunner(BatchRunner):
             except Exception as e:
                 print(f"  ⚠️  Failed to upload system prompt: {e}")
 
-        # Upload task templates (both variants)
-        for template_path in [TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH]:
+        # Upload task templates (both variants; v12's slots share one file,
+        # so dedupe to keep prompt_files free of repeats)
+        for template_path in dict.fromkeys([TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH]):
             if template_path.exists():
                 s3_key = f"{prompts_prefix}/{timestamp}_{template_path.name}"
                 try:
