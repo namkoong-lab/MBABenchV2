@@ -109,8 +109,11 @@ class BatchRunner:
                       if f.name.lower() != "solution.xlsx"]
         excel_context_files = [str(f.name) for f in xlsx_files]
 
-        # Find all .pdf files
-        pdf_files = [str(f) for f in workspace.glob("*.pdf")]
+        # Find all .pdf files. Bare names, like the Excel list above: consumers
+        # join these onto the workspace/storage path, so a prefixed path would
+        # double the workspace segment and silently resolve to a missing file
+        # (the empty-PDF-context defect: agents ran without the case PDFs).
+        pdf_files = [str(f.name) for f in workspace.glob("*.pdf")]
 
         config = WorkspaceConfig(
             path=workspace_path,
@@ -222,15 +225,27 @@ class BatchRunner:
             # Connect to Excel MCP server (synchronous)
             excel_client.connect()
 
-            # Add PDF context
+            # Add PDF context. A detected file that fails to register means the
+            # agent would run without task content — hard-fail instead of
+            # producing an invalid (empty-context) attempt.
             if workspace_config.detected_pdf_files:
                 add_result = task_executor.add_context_pdfs(workspace_config.detected_pdf_files)
                 print(f"✅ Added {len(add_result['added'])} PDFs to context")
+                if add_result['not_found']:
+                    raise RuntimeError(
+                        f"Detected PDFs failed to register as context: "
+                        f"{add_result['not_found']} — aborting this task"
+                    )
 
-            # Add Excel context
+            # Add Excel context (same guard)
             if workspace_config.detected_excel_files:
                 add_result = task_executor.add_context_excels(workspace_config.detected_excel_files)
                 print(f"✅ Added {len(add_result['added'])} Excel file(s) to context")
+                if add_result['not_found']:
+                    raise RuntimeError(
+                        f"Detected Excel files failed to register as context: "
+                        f"{add_result['not_found']} — aborting this task"
+                    )
 
             # Show configuration
             print(f"🧠 Model: {self.config['model']}")

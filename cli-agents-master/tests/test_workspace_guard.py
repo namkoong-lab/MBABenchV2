@@ -112,6 +112,34 @@ def test_s3_preflight_passes():
         runner._verify_s3_access()
 
 
+def test_detected_pdfs_resolve_from_relative_workspace():
+    """PDF detection must yield bare names: consumers join them onto the
+    workspace path, so a prefixed relative path silently resolved to a
+    missing file and dropped every PDF from context (empty-PDF defect)."""
+    import os
+    from excel_cli_agent.batch_runner import BatchRunner
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        os.chdir(tmp)
+        try:
+            ws = Path("workspaces_rel/Task_X_1_2")
+            ws.mkdir(parents=True)
+            (ws / "Case Materials.pdf").write_bytes(b"%PDF-1.4 stub")
+            (ws / "Model.xlsx").write_bytes(b"PK stub")
+
+            runner = object.__new__(BatchRunner)
+            cfg = runner.detect_workspace_files(str(ws))
+
+            assert cfg.detected_pdf_files == ["Case Materials.pdf"], cfg.detected_pdf_files
+            assert cfg.detected_excel_files == ["Model.xlsx"], cfg.detected_excel_files
+            # the join every consumer performs must hit the real file
+            for name in cfg.detected_pdf_files + cfg.detected_excel_files:
+                assert (Path(str(ws)) / name).exists(), name
+        finally:
+            os.chdir(old_cwd)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
