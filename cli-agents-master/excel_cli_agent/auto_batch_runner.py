@@ -406,20 +406,22 @@ class AutoBatchRunner(BatchRunner):
 
         print(f"  📁 Workspace: {workspace}")
 
+        # A task with no registered starting files would run the agent with no
+        # task content at all (the July empty-context defect) — refuse it.
         if not task_info.task_starting_files:
-            print(f"  ⚠️  No starting files for task {task_info.task_name}")
-            return str(workspace)
+            raise RuntimeError(
+                f"Task '{task_info.task_name}' has no task_starting_files; "
+                "refusing to run the agent with an empty workspace"
+            )
 
         for s3_uri in task_info.task_starting_files:
             # Parse s3://bucket/key
             if not s3_uri.startswith("s3://"):
-                print(f"  ⚠️  Invalid S3 URI: {s3_uri}")
-                continue
+                raise RuntimeError(f"Invalid S3 URI for '{task_info.task_name}': {s3_uri}")
 
             parts = s3_uri[5:].split("/", 1)
             if len(parts) != 2:
-                print(f"  ⚠️  Invalid S3 URI format: {s3_uri}")
-                continue
+                raise RuntimeError(f"Invalid S3 URI format for '{task_info.task_name}': {s3_uri}")
 
             bucket = parts[0]
             key = parts[1]
@@ -433,11 +435,48 @@ class AutoBatchRunner(BatchRunner):
             try:
                 print(f"  ⬇️  Downloading: {filename}")
                 self.s3_client.download_file(bucket, key, str(local_path))
-                print(f"  ✅ Downloaded: {filename} ({local_path.stat().st_size:,} bytes)")
             except Exception as e:
-                print(f"  ❌ Failed to download {filename}: {e}")
+                raise RuntimeError(
+                    f"Failed to download {s3_uri} for '{task_info.task_name}': {e}. "
+                    "Aborting this task — running without starting files would "
+                    "produce an invalid (empty-context) attempt."
+                ) from e
+            size = local_path.stat().st_size
+            if size == 0:
+                raise RuntimeError(
+                    f"Downloaded zero-byte file {filename} from {s3_uri} for "
+                    f"'{task_info.task_name}'; refusing to run on an empty starting file"
+                )
+            print(f"  ✅ Downloaded: {filename} ({size:,} bytes)")
+
+        # Belt and braces: every registered starting file must now be present
+        # and non-empty in the workspace before the agent is allowed to run.
+        missing = [
+            uri.split("/")[-1]
+            for uri in task_info.task_starting_files
+            if not (workspace / uri.split("/")[-1]).exists()
+            or (workspace / uri.split("/")[-1]).stat().st_size == 0
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Workspace for '{task_info.task_name}' is missing starting files "
+                f"after download: {missing}"
+            )
 
         return str(workspace)
+
+    def _verify_s3_access(self):
+        """Abort the batch immediately if S3 credentials/bucket access are broken."""
+        try:
+            self.s3_client.head_bucket(Bucket=self._s3_bucket)
+            print(f"  ✅ S3 access verified: s3://{self._s3_bucket}")
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot access s3://{self._s3_bucket} ({e}). Check AWS "
+                "credentials (e.g. export AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY). "
+                "Refusing to start: without S3 the batch would run agents on "
+                "empty workspaces and record invalid attempts."
+            ) from e
 
     def cleanup_workspace(self, workspace_path: str):
         """Delete entire workspace folder after results are uploaded to S3."""
@@ -610,6 +649,12 @@ class AutoBatchRunner(BatchRunner):
 
         # Load configuration
         config = self.load_config()
+
+        # Fail fast if S3 is unreachable (e.g. no AWS credentials in the
+        # environment). A batch that cannot download starting files must not
+        # start: silent download failures previously produced empty-context
+        # attempts that looked normal in the DB.
+        self._verify_s3_access()
 
         # Setup batch logging directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
