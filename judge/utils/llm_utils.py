@@ -316,7 +316,11 @@ def robust_send_message(
                 # judge prompt's strict-JSON instruction plus
                 # _extract_json_from_response, which handles fenced and
                 # trailing-text responses.
-                kwargs["max_tokens"] = 16000
+                # 32000 (was 16000): on Claude Opus 5 thinking is always on and
+                # counts against max_tokens, so 16k truncated the largest
+                # category's JSON mid-array (14 of 23 parse failures were
+                # Formatting, the longest form). 2026-08-12.
+                kwargs["max_tokens"] = 32000
                 kwargs.pop("reasoning_effort", None)
                 kwargs.pop("response_format", None)
                 # Anthropic accepts only jpeg/png/gif/webp image inputs and
