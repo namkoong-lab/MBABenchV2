@@ -665,11 +665,19 @@ class ChatGPTWebAgent(WebAgent):
                 return False
 
     async def _find_work_row(self, prefix: str):
-        """A work-mode picker row ("Model…", "Effort…", "Speed…")."""
+        """A work-mode picker row ("Model…", "Effort…", "Speed…").
+
+        Scoped to an OPEN [role="menu"]: `.__menu-item` also matches the
+        left sidebar, and a conversation title starting with the prefix
+        (live 2026-08-10: "Model Durumunu Kontrol" in the project sidebar)
+        made _ensure_work_rows_visible short-circuit without ever opening
+        the pill menu — the role-scoped click then found nothing and the
+        task failed with "Work picker row 'Model' not clickable"."""
         h = await self.page.evaluate_handle(
             """(prefix) => Array.from(document.querySelectorAll(
                 '.__menu-item, [role^="menuitem"]'
             )).filter(el => el.getClientRects().length > 0)
+              .filter(el => el.closest('[role="menu"]'))
               .find(el => (el.textContent || '').trim().startsWith(prefix)) || null""",
             prefix,
         )
