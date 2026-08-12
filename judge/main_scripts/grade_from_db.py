@@ -894,6 +894,7 @@ def write_grading_to_db(conn, attempt, result, model, agentic=False):
         PROMPT_VERSION = load_env_var("JUDGE_PROMPT_VERSION", required=True)
         JUDGE_VERSION = load_env_var("JUDGE_VERSION", required=True)
     RUBRIC_VERSION = load_env_var("JUDGE_RUBRIC_VERSION", required=True)
+    RUBRIC_WEIGHT_VERSION = load_env_var("JUDGE_RUBRIC_WEIGHT_VERSION", required=True)
 
     # Enforce grade's existence
     if not result.get("scores"):
@@ -950,7 +951,7 @@ def write_grading_to_db(conn, attempt, result, model, agentic=False):
         "formula_grade": result.get("scores", {}).get("formula_grade", 0),
         "format_grade": result.get("scores", {}).get("format_grade", 0),
         "rubric_version": RUBRIC_VERSION,
-        "rubric_weight_version": RUBRIC_VERSION,
+        "rubric_weight_version": RUBRIC_WEIGHT_VERSION,
         "prompt_version": PROMPT_VERSION,
         "scored_results": json.dumps(result.get("scored_results", {})),
         "time_elapsed_min": round(result.get("elapsed_seconds", 0) / 60, 4),
