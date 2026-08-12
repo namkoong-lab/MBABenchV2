@@ -1760,6 +1760,14 @@ EXECUTION HISTORY:
                     }, response_text)
 
         except Exception as e:
+            if self._is_context_overflow_error(e):
+                # Context-overflow 400s must reach _call_reasoning_engine's
+                # backstop, which tightens chars/token and rebuilds the
+                # iteration. Swallowing them here left that ladder inert: the
+                # overflow surfaced as request_clarification and the attempt
+                # died as needs_clarification (seen live 2026-08-11,
+                # gpt-5.6-sol 922k-token limit 400 on task 379).
+                raise
             return ({
                 "reasoning": f"Error calling reasoning engine: {str(e)}",
                 "action": {"tool_name": "request_clarification", "arguments": {"question": str(e)}},
