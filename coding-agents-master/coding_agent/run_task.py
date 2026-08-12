@@ -23,7 +23,7 @@ from .config import load_config, load_dotenv_if_present, require_env
 from .prompt_builder import build_prompt
 from .recorder import record
 from .sandbox import run_in_sandbox
-from .task_source import ExternalSource, InternalSource
+from .task_source import ExternalSource, InternalSource, verify_s3_access
 from .telemetry import parse_transcript, write_telemetry
 from .validate import validate, write_verdict
 from .workspace import create_attempt
@@ -48,6 +48,13 @@ def main(argv=None) -> int:
         if args.task_id is None:
             parser.error("internal mode requires --task-id")
         source = InternalSource(args.task_id)
+        try:
+            verify_s3_access(cfg.internal.s3_bucket)
+        except Exception as e:  # noqa: BLE001 — classified, reported, non-zero exit
+            print(f"❌ infra_failure: S3 preflight failed for bucket "
+                  f"'{cfg.internal.s3_bucket}' — fix AWS credentials before "
+                  f"running (nothing was staged, no trial burned): {e}")
+            return EXIT_CODES["infra_failure"]
     else:
         if not args.task_dir:
             parser.error("external mode requires --task-dir")
