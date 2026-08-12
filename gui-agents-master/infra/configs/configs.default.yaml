@@ -358,9 +358,10 @@ claude_web:
 
 # ---- ChatGPT provider block (passed as engine_config["chatgpt_web"]) -------
 chatgpt_web:
-  # REQUIRED for chatgpt provider — copy from
-  # https://chatgpt.com/g/g-p-{project_id}-{slug}/project. Preflight exits
-  # if these are null/empty when provider.kind == "chatgpt".
+  # null = start at the chatgpt.com homepage (no project scope; chats land
+  # in the account's main history — the agent logs a warning). To pin runs
+  # to a project, copy the id from
+  # https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
   project_id:
     value: null
     required: false

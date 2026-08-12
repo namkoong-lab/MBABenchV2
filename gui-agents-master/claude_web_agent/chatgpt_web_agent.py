@@ -95,6 +95,11 @@ class ChatGPTWebAgent(WebAgent):
 
     @property
     def project_url(self) -> str:
+        # null/empty project_id = no project scope: the homepage is a new
+        # chat (mirrors claude_web's project_id fallback). Conversations
+        # then land in the account's main history, not in a project.
+        if not self.project_id:
+            return self.CHATGPT_BASE_URL
         slug_part = f"-{self.project_slug}" if self.project_slug else ""
         return f"{self.CHATGPT_BASE_URL}/g/g-p-{self.project_id}{slug_part}/project"
 
@@ -110,7 +115,16 @@ class ChatGPTWebAgent(WebAgent):
             self._baseline_article_count = 0
             self._baseline_set = False
 
-            logger.info(f"Navigating to ChatGPT project: {self.project_url}")
+            if self.project_id:
+                logger.info(
+                    f"Navigating to ChatGPT project: {self.project_url}"
+                )
+            else:
+                logger.warning(
+                    "chatgpt_web.project_id is empty — starting at the "
+                    "chatgpt.com homepage (no project scope; conversations "
+                    "land in the account's main chat history)"
+                )
 
             # NOTE: Do NOT call set_viewport_size on CDP pages — it uses
             # Emulation.setDeviceMetricsOverride which crashes ChatGPT tabs.
@@ -325,6 +339,19 @@ class ChatGPTWebAgent(WebAgent):
         model = self.agent_config.get("model")
         intelligence = self.agent_config.get("intelligence")
 
+        # Only the chat path calls this resolver, so effort/speed in the
+        # config can only be a misconfiguration (they are work-mode knobs).
+        # Warn instead of silently ignoring — a chat run configured with
+        # effort: ultra ran at the session-default intelligence, unnoticed
+        # (observed 2026-08-12).
+        if self.agent_config.get("effort") or self.agent_config.get("speed"):
+            logger.warning(
+                "chatgpt_web.effort/speed apply only to WORK mode and are "
+                "ignored in chat mode. Chat's Effort submenu (the UI "
+                "renamed intelligence to 'Effort' 2026-08-12) is driven by "
+                "chatgpt_web.intelligence (instant|medium|high|xhigh|pro)."
+            )
+
         if model and model.lower() in self.LEGACY_MODEL_TO_INTELLIGENCE:
             routed = self.LEGACY_MODEL_TO_INTELLIGENCE[model.lower()]
             logger.warning(
@@ -442,13 +469,36 @@ class ChatGPTWebAgent(WebAgent):
 
     async def _model_submenu_parent(self):
         """The menuitem that carries the CURRENT model name and opens the
-        model submenu (role=menuitem + aria-haspopup=menu)."""
+        model submenu (role=menuitem + aria-haspopup=menu).
+
+        2026-08-12 (observed live): the chat pill menu gained a second
+        submenu trigger — "Effort", holding the former top-level
+        intelligence radios — so prefer the row captioned "Model" and
+        fall back to first-visible for older single-trigger builds."""
+        items = await self.page.query_selector_all(
+            '[role="menuitem"][aria-haspopup="menu"]'
+        )
+        first_visible = None
+        for it in items:
+            if await it.is_visible():
+                if first_visible is None:
+                    first_visible = it
+                if "model" in (((await it.text_content()) or "").lower()):
+                    return it
+        return first_visible
+
+    async def _effort_submenu_parent(self):
+        """The chat-mode "Effort" submenu trigger (new 2026-08-12): the
+        reasoning tiers (Instant..Pro) moved from top-level radios into
+        this submenu. Returns None on older builds — callers then fall
+        back to the top-level radio path."""
         items = await self.page.query_selector_all(
             '[role="menuitem"][aria-haspopup="menu"]'
         )
         for it in items:
             if await it.is_visible():
-                return it
+                if "effort" in (((await it.text_content()) or "").lower()):
+                    return it
         return None
 
     async def _open_model_submenu(self, parent) -> bool:
@@ -497,6 +547,21 @@ class ChatGPTWebAgent(WebAgent):
             return False
         return True
 
+    @staticmethod
+    def _model_row_shows(row_text: str, model_label: str) -> bool:
+        """True iff the submenu-parent row is showing model_label.
+
+        text_content() concatenates the row's caption and value.
+        Historically the row was just the value ('GPT-5.6 Sol…'); since
+        2026-08-12 (observed live on task 1 ApfelInc) it carries a
+        'Model' caption first ('ModelGPT-5.6 Sol'), which broke plain
+        startswith. Strip the caption, then match on the remainder.
+        """
+        t = row_text.strip()
+        if t.lower().startswith("model"):
+            t = t[len("model"):].lstrip()
+        return t.lower().startswith(model_label.lower())
+
     async def ensure_model_and_intelligence(self) -> bool:
         """Select the configured model (submenu) and intelligence (radios).
 
@@ -525,7 +590,7 @@ class ChatGPTWebAgent(WebAgent):
                     await self._close_pill_menu()
                     return False
                 current = ((await parent.text_content()) or "").strip()
-                if current.lower().startswith(model_label.lower()):
+                if self._model_row_shows(current, model_label):
                     logger.info(f"Model already {current!r}")
                     await self._close_pill_menu()
                 else:
@@ -550,7 +615,7 @@ class ChatGPTWebAgent(WebAgent):
                         else ""
                     )
                     await self._close_pill_menu()
-                    if not now.lower().startswith(model_label.lower()):
+                    if not self._model_row_shows(now, model_label):
                         logger.error(
                             f"Model verification failed: wanted {model_label!r}, "
                             f"menu shows {now!r}"
@@ -568,6 +633,16 @@ class ChatGPTWebAgent(WebAgent):
                     logger.info(f"Intelligence already {pill_text!r}")
                 else:
                     if not await self._open_pill_menu():
+                        return False
+                    # 2026-08-12 UI: the tiers live in an "Effort" submenu
+                    # (formerly top-level radios). Open it when present;
+                    # older builds fall through to the top-level radios.
+                    effort_parent = await self._effort_submenu_parent()
+                    if effort_parent is not None and not (
+                        await self._open_model_submenu(effort_parent)
+                    ):
+                        logger.error("Effort submenu did not expand")
+                        await self._close_pill_menu()
                         return False
                     if not await self._click_visible_radio(intel_label):
                         logger.error(
@@ -905,12 +980,46 @@ class ChatGPTWebAgent(WebAgent):
         if the + menu approach fails — the button text changes depending on
         whether agent mode is active.
         """
-        logger.info("upload_files v3 (plus-wait + row-retry) active")
+        logger.info("upload_files v4 (direct-input + plus-wait + row-retry) active")
         try:
             for file_path in file_paths:
                 logger.info(f"Uploading file: {file_path}")
 
                 uploaded = False
+
+                # Approach 0 (2026-08-12, observed live on task 1
+                # ApfelInc, chat surface): the + menu row renders with the
+                # expected text but clicking it no longer fires a
+                # filechooser event, so both chooser-based approaches
+                # timed out. The composer form carries a permanent hidden
+                # <input id="upload-files" multiple> with no accept filter
+                # (the two accept="image/*" inputs are the photo/camera
+                # paths); setting files on it directly fires the React
+                # change handler and attaches the file. Success requires
+                # the attachment tile to appear — otherwise fall through
+                # to the menu approaches for builds without this input.
+                try:
+                    direct_input = self.page.locator(
+                        'input#upload-files[type="file"]')
+                    if await direct_input.count() > 0:
+                        filename = Path(file_path).name
+                        await self._set_input_files_cdp_safe(
+                            direct_input.first, file_path)
+                        chip = self.page.locator(
+                            f'[role="group"]:has-text("{filename}"), '
+                            f'button[aria-label="{filename}"]'
+                        )
+                        await chip.first.wait_for(
+                            state="attached", timeout=10000)
+                        uploaded = True
+                        logger.info(
+                            "Uploaded via hidden input#upload-files "
+                            "(direct set_input_files)")
+                except Exception as e_direct:
+                    logger.info(
+                        f"Direct input#upload-files upload failed — "
+                        f"falling back to + menu ({e_direct!r:.200})"
+                    )
 
                 # Approach 1: + panel > "Add photos & files" row.
                 # The + panel is no longer an ARIA menu (2026-07 UI): rows
@@ -934,7 +1043,7 @@ class ChatGPTWebAgent(WebAgent):
                             state="visible", timeout=10000)
                     except Exception:
                         pass
-                    if await plus_btn.count() > 0:
+                    if not uploaded and await plus_btn.count() > 0:
                         await plus_btn.click(timeout=5000)
                         await self.page.wait_for_timeout(1200)
                         # Auto-waiting row lookup with re-click retries: a
@@ -1257,6 +1366,44 @@ class ChatGPTWebAgent(WebAgent):
             )
         except Exception:
             return None
+
+    async def _set_input_files_cdp_safe(self, input_locator, file_path) -> None:
+        """set_input_files directly on a hidden <input type=file> (no
+        filechooser event involved), with the same raw-CDP fallback as
+        _set_files_cdp_safe for files over Playwright's 50MB CDP cap."""
+        try:
+            await input_locator.set_input_files(file_path)
+            return
+        except Exception as e:
+            if "larger than 50Mb" not in str(e):
+                raise
+        logger.info(
+            "File exceeds Playwright's 50MB CDP cap — using raw CDP "
+            "DOM.setFileInputFiles on the hidden input"
+        )
+        el = await input_locator.element_handle()
+        await el.evaluate("el => el.setAttribute('data-cdp-upload', '1')")
+        cdp = await self.page.context.new_cdp_session(self.page)
+        try:
+            doc = await cdp.send("DOM.getDocument")
+            node = await cdp.send("DOM.querySelector", {
+                "nodeId": doc["root"]["nodeId"],
+                "selector": 'input[data-cdp-upload="1"]',
+            })
+            if not node.get("nodeId"):
+                raise RuntimeError("tagged file input not found via CDP")
+            files = file_path if isinstance(file_path, list) else [file_path]
+            await cdp.send("DOM.setFileInputFiles", {
+                "files": [str(p) for p in files],
+                "nodeId": node["nodeId"],
+            })
+        finally:
+            await cdp.detach()
+            try:
+                await el.evaluate(
+                    "el => el.removeAttribute('data-cdp-upload')")
+            except Exception:
+                pass
 
     async def _set_files_cdp_safe(self, file_chooser, file_path) -> None:
         """set_files with a raw-CDP fallback for files over Playwright's
