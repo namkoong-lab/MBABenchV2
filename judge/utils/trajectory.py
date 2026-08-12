@@ -152,7 +152,8 @@ class TrajectoryRecorder:
                 },
                 "response": self._dedup(response_j),
                 "usage": usage,
-                "latency_ms": round((time.time() - t0) * 1000, 1) if t0 else None,
+                # NB: the `round` parameter above shadows the builtin here
+                "latency_ms": int((time.time() - t0) * 1000) if t0 else None,
                 "error": error,
             }
         )
