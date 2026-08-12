@@ -127,15 +127,25 @@ _V1_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
 # V2 identity tables — MBABenchV2 task set (MBABenchV2 DB)
 # =========================================================================
 
-# Signature: (claude_web.model,). Extend the tuple — and every entry — when
-# adding another Claude field that should bifurcate the DB label (e.g.
-# effort, once V2 runs start pinning it).
+# Signature: (claude_web.mode, claude_web.model). Mode joined the key
+# 2026-08-12 so chat and cowork cohorts stay separable in the DB; the
+# chat entries keep the original model-only labels for continuity with
+# rows recorded before the change. Extend the tuple — and every entry —
+# when adding another Claude field that should bifurcate the DB label
+# (e.g. effort, once V2 runs start pinning it).
 _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
-    ("sonnet_4_6",): AgentIdentity("claude_sonnet_4_6", "claude_sonnet_4_6"),
-    ("opus_4_6",): AgentIdentity("claude_opus_4_6", "claude_opus_4_6"),
-    ("opus_4_8",): AgentIdentity("claude_opus_4_8", "claude_opus_4_8"),
-    ("haiku_4_5",): AgentIdentity("claude_haiku_4_5", "claude_haiku_4_5"),
-    ("fable_5",): AgentIdentity("claude_fable_5", "claude_fable_5"),
+    ("chat", "sonnet_4_6"): AgentIdentity(
+        "claude_sonnet_4_6", "claude_sonnet_4_6"
+    ),
+    ("chat", "opus_4_6"): AgentIdentity("claude_opus_4_6", "claude_opus_4_6"),
+    ("chat", "opus_4_8"): AgentIdentity("claude_opus_4_8", "claude_opus_4_8"),
+    ("chat", "haiku_4_5"): AgentIdentity("claude_haiku_4_5", "claude_haiku_4_5"),
+    ("chat", "fable_5"): AgentIdentity("claude_fable_5", "claude_fable_5"),
+    # 2026-08-12: cowork cohort (collision-checked against
+    # task_attempts.agent_model_name in both DBs — 0 rows).
+    ("cowork", "fable_5"): AgentIdentity(
+        "claude_fable_5_cowork", "claude_fable_5_cowork"
+    ),
 }
 
 
@@ -145,14 +155,28 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
 # bifurcate by model.
 _V2_CHATGPT_AGENT_IDENTITY = AgentIdentity("chatgpt_agent", "chatgpt_agent")
 
-# Signature for non-agent-mode runs: (chatgpt_web.model,). model=None means
-# "let the session default win"; that + agent_mode=False is the legacy
-# `chatgpt_web` label, kept for DB continuity with pre-refactor rows.
+# Signature for non-agent-mode runs: (chatgpt_web.mode, chatgpt_web.model).
+# Mode joined the key 2026-08-12 (chat entries keep their original labels
+# for DB continuity). model=None means "let the session default win"; that
+# + agent_mode=False is the legacy `chatgpt_web` label, kept for DB
+# continuity with pre-refactor rows.
 _V2_CHATGPT_NON_AGENT_IDENTITIES: dict[tuple, AgentIdentity] = {
-    (None,): AgentIdentity("chatgpt_web", "chatgpt_web"),
-    ("instant",): AgentIdentity("chatgpt_instant", "chatgpt_instant"),
-    ("thinking",): AgentIdentity("chatgpt_thinking", "chatgpt_thinking"),
-    ("pro",): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
+    ("chat", None): AgentIdentity("chatgpt_web", "chatgpt_web"),
+    ("chat", "instant"): AgentIdentity("chatgpt_instant", "chatgpt_instant"),
+    ("chat", "thinking"): AgentIdentity(
+        "chatgpt_thinking", "chatgpt_thinking"
+    ),
+    ("chat", "pro"): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
+    # 2026-08-12: GPT-5.6 Sol for v2 runs (collision-checked against
+    # task_attempts.agent_model_name in both DBs — 0 rows). Mirrors the
+    # model-only v2 Claude naming (claude_fable_5 -> chatgpt_gpt_5_6_sol).
+    ("chat", "gpt_5_6_sol"): AgentIdentity(
+        "chatgpt_gpt_5_6_sol", "chatgpt_gpt_5_6_sol"
+    ),
+    # 2026-08-12: work-mode cohort (collision-checked in both DBs — 0 rows).
+    ("work", "gpt_5_6_sol"): AgentIdentity(
+        "chatgpt_gpt_5_6_sol_work", "chatgpt_gpt_5_6_sol_work"
+    ),
 }
 
 
@@ -249,12 +273,14 @@ def _resolve_chatgpt_v1(cfg: SimpleNamespace) -> AgentIdentity:
 def _resolve_claude_v2(cfg: SimpleNamespace) -> AgentIdentity:
     block = _claude_block(cfg)
     model = getattr(block, "model", None)
-    key = (model,)
+    mode = (getattr(block, "mode", None) or "chat").lower()
+    key = (mode, model)
     try:
         return _V2_CLAUDE_IDENTITIES[key]
     except KeyError:
         raise UnknownAgentCombination(
-            f"No v2 Claude identity for claude_web.model={model!r}. "
+            f"No v2 Claude identity for "
+            f"(claude_web.mode, claude_web.model)={key!r}. "
             f"Known: {list(_V2_CLAUDE_IDENTITIES)}. "
             f"Add an entry in infra/configs/agent_identity.py "
             f"if this is a real combination."
@@ -267,14 +293,16 @@ def _resolve_chatgpt_v2(cfg: SimpleNamespace) -> AgentIdentity:
     if agent_mode:
         # ChatGPT Agent is its own backend; chatgpt_web.model is cosmetic.
         return _V2_CHATGPT_AGENT_IDENTITY
+    mode = (getattr(block, "mode", None) or "chat").lower()
     model = getattr(block, "model", None)
-    key = (model,)
+    key = (mode, model)
     try:
         return _V2_CHATGPT_NON_AGENT_IDENTITIES[key]
     except KeyError:
         raise UnknownAgentCombination(
             f"No v2 ChatGPT identity for "
-            f"(chatgpt_web.model, agent_mode=False)={key!r}. "
+            f"(chatgpt_web.mode, chatgpt_web.model, agent_mode=False)"
+            f"={key!r}. "
             f"Known (non-agent): {list(_V2_CHATGPT_NON_AGENT_IDENTITIES)}. "
             f"Add an entry in infra/configs/agent_identity.py "
             f"if this is a real combination."
