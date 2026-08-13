@@ -27,7 +27,8 @@ class Task(Base):
     task_source = Column(String(100), nullable=True)  # 'fmwc', 'modeloff', or 'wsp'
     deprecated = Column(Boolean, nullable=True)
     deprecated_reason = Column(Text, nullable=True)
-    old_id = Column(Integer, nullable=True)
+    # No old_id: the column exists in BizbenchV1 but not MBABenchV2, and a mapped
+    # attribute lands in every SELECT — it broke all v2 task lookups (2026-08-12).
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True))
 

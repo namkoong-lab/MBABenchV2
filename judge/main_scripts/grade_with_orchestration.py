@@ -82,6 +82,7 @@ resolve_agentic_mode = _gfd.resolve_agentic_mode
 add_agentic_cli_args = _gfd.add_agentic_cli_args
 cache_namespace = _gfd.cache_namespace
 validate_benchmark_coherence = _gfd.validate_benchmark_coherence
+AGENTIC_JUDGE_MAX_ROUNDS = _gfd.AGENTIC_JUDGE_MAX_ROUNDS
 
 
 # ---------------------------------------------------------------------------
@@ -898,7 +899,15 @@ def main():
         action="store_false",
         default=True,
     )
-    parser.add_argument("--max-tool-rounds", type=int, default=20)
+    parser.add_argument(
+        "--max-tool-rounds",
+        type=int,
+        default=AGENTIC_JUDGE_MAX_ROUNDS,
+        help=(
+            "(Agentic only) Max tool-calling rounds per category "
+            f"(default: {AGENTIC_JUDGE_MAX_ROUNDS}, from agentic_judge.max_rounds)"
+        ),
+    )
     parser.add_argument(
         "--on-overflow",
         choices=["route_to_agentic", "shorten"],

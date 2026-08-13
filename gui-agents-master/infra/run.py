@@ -302,13 +302,11 @@ def preflight_check(
     else:
         _preflight_provider_v2(provider, section, errors)
 
-    if provider == "chatgpt" and not section.get("project_id"):
-        errors.append(
-            "chatgpt_web.project_id is empty. Copy from "
-            "https://chatgpt.com/g/g-p-{id}-{slug}/project."
-        )
-        # project_slug is optional — some ChatGPT project URLs have no slug
-        # (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug} suffix).
+    # chatgpt_web.project_id is optional since 2026-08-12: null/empty falls
+    # back to the chatgpt.com homepage (no project scope), mirroring the
+    # claude_web project_id fallback. The agent logs a warning in that case.
+    # project_slug is likewise optional — some ChatGPT project URLs have no
+    # slug (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug}).
 
     # prompts_file must exist and be non-empty — a benchmark run with the
     # wrong (or empty) prompt is worse than one that never starts.
@@ -683,10 +681,9 @@ def _resolve_log_dir(engine_config: dict, provider: str) -> Path:
 # into configs.yaml as explicit null entries.
 PROVIDER_REQUIRED_KEYS: dict[str, list[tuple[str, ...]]] = {
     "claude": [("claude_web", "model")],
-    "chatgpt": [
-        ("chatgpt_web", "project_id"),
-        # project_slug is optional — omitted when the project URL has no slug
-    ],
+    # chatgpt has no hard-required keys since project_id became optional
+    # (2026-08-12, homepage fallback); project_slug was always optional.
+    "chatgpt": [],
 }
 
 

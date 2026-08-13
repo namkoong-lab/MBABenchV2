@@ -28,10 +28,11 @@ How each pipeline selects the benchmark at launch:
   one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
   config; v2 flips S3/DB and defaults `template_version` to v8 (the
   v2-rubric mirror; v7 is the v1 pv9 mirror).
-- **`judge/`** — grades attempts from either benchmark. Select the rubric
-  pair + `check_order` in `judge/project_configs.yaml` (copy from
-  `project_configs.example.yaml`, which documents both presets). The
-  12-category v2 rubric must be graded through the agentic judge.
+- **`judge/`** — grades attempts from either benchmark. The active config
+  is `judge/project_configs.yaml`: copy it from the tracked preset for the
+  benchmark you want — `project_configs.v1.example.yaml` or
+  `project_configs.v2.example.yaml`. The 12-category v2 rubric must be
+  graded through the agentic judge (`--agentic`).
 
 Cross-benchmark misconfiguration fails at startup in every pipeline (schema
 guards + DATABASE_URL checks) rather than writing to the wrong store.

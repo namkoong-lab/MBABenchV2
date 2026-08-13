@@ -48,6 +48,18 @@ class ExternalSource:
         )
 
 
+def verify_s3_access(bucket: str) -> None:
+    """Raise unless the bucket answers with the current AWS credentials.
+
+    Credentials may come from ~/.aws rather than env vars, so presence checks
+    prove nothing — only a real call does. The recorder needs S3 again at the
+    end of a multi-hour attempt; a run that would fail there must not start.
+    """
+    import boto3
+
+    boto3.client("s3").head_bucket(Bucket=bucket)
+
+
 class InternalSource:
     """Reads the `tasks` row (READ-ONLY) and downloads starting files from S3."""
 
