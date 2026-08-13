@@ -41,6 +41,9 @@ class WorkspaceResult:
     final_result: Optional[str]
     start_time: Optional[float] = None   # epoch timestamp
     end_time: Optional[float] = None     # epoch timestamp
+    # True if any iteration ran with reduced context (sheet summarization /
+    # PDF truncation); None when execution errored before we could know.
+    context_reduced: Optional[bool] = None
 
 
 @dataclass
@@ -263,6 +266,7 @@ class BatchRunner:
             result.task_id = task_execution.task_id
             result.iterations = task_execution.total_iterations
             result.final_result = task_execution.final_result
+            result.context_reduced = task_execution.context_reduced
 
             if task_execution.status == TaskStatus.COMPLETED:
                 result.status = "success"

@@ -56,6 +56,10 @@ class TaskAttempt(Base):
     deprecated = Column(Boolean, nullable=False, default=False)
     deprecated_reason = Column(Text, nullable=True)
     prompt_version = Column(Integer, nullable=True)
+    # True if any iteration ran with reduced context (sheet summarization /
+    # PDF truncation). NULL: unknown, predates this column, or a pipeline
+    # without the concept (GUI / coding rows).
+    context_reduced = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True))
 
