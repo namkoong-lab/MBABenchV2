@@ -628,6 +628,7 @@ class AutoBatchRunner(BatchRunner):
             agent_failed_reason=agent_failed_reason,
             deprecated=False,
             prompt_version=prompt_version,
+            context_reduced=workspace_result.context_reduced,
         )
 
         db = SessionLocal()
