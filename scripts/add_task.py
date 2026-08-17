@@ -137,6 +137,12 @@ def register_task(
 
 
 def main():
+    sys.exit(
+        "add_task.py is temporarily deprecated: the config format is being "
+        "updated. Re-enable this script once config/config_default.yaml and "
+        "the config/ loaders have settled."
+    )
+
     ap = argparse.ArgumentParser(
         description="Upload a new task to S3 and register it in the tasks table."
     )

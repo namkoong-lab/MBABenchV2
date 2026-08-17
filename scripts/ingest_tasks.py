@@ -119,6 +119,12 @@ def process_task(task, s3, out_dir: Path, dry_run: bool, counts):
 
 
 def main():
+    sys.exit(
+        "ingest_tasks.py is temporarily deprecated: the config format is being "
+        "updated. Re-enable this script once config/config_default.yaml and "
+        "the config/ loaders have settled."
+    )
+
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--out-dir",

@@ -216,6 +216,12 @@ def process_task(task_dir: Path, client, cfg, dry_run, force, skip_names, counts
 
 
 def main():
+    sys.exit(
+        "estimate_task_times.py is temporarily deprecated: the config format "
+        "is being updated. Re-enable this script once config/config_default.yaml "
+        "and the config/ loaders have settled."
+    )
+
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--tasks-dir",
