@@ -375,11 +375,19 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
             or default_bucket
         )
         s3_prefix = getattr(aws_cfg, "s3_prefix", None) or default_prefix
+        # Local mirror of everything uploaded, laid out under the same key
+        # path as in the bucket. paths.output_dir is the run-wide output
+        # root (sink.output_dir is the local sink's own ndjson location and
+        # only applies when sink.kind=local). Empty/null disables mirroring.
+        paths_cfg = getattr(cfg, "paths", None)
+        mirror_raw = getattr(paths_cfg, "output_dir", "") if paths_cfg else ""
+        mirror_dir = _resolve(mirror_raw) if mirror_raw else None
         identity = resolve_agent_identity(cfg)
         return sink_cls(
             db_url=db_url,
             s3_bucket=s3_bucket,
             s3_prefix=s3_prefix,
+            mirror_dir=mirror_dir,
             agent_folder=identity.agent_folder,
             agent_model_name=identity.model_name,
             agent_model_type=identity.agent_model_type,

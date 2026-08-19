@@ -4,9 +4,10 @@ Symmetric with `task_io/sources/postgres_s3.py`:
 
 * `PostgresS3AttemptSink` — generic. Uploads an AttemptResult's files to
   S3 and inserts one row into an attempts table. Knows only about one
-  schema (AttemptSchema) and two hooks subclasses override:
-      _s3_base_key(result, timestamp) -> str
-      _attempt_values(result, uris)   -> dict[col -> value]
+  schema (AttemptSchema) and three hooks subclasses override:
+      _s3_base_key(result, timestamp)  -> str
+      _file_key(base_key, local)       -> str
+      _attempt_values(result, uris)    -> dict[col -> value]
 
 * `_TaskAttemptsPostgresS3Sink` — shared wiring for both benchmark DBs:
   the `task_attempts` schema (identical in BizbenchV1 and MBABenchV2),
@@ -19,12 +20,20 @@ Symmetric with `task_io/sources/postgres_s3.py`:
   `{prefix}/{agent_folder}/task_source={src}/task_id={id}/{ts}_{name}`.
 
 * `MBABenchV2PostgresS3AttemptSink` — benchmark v2 (MBABenchV2 DB).
-  Task-name-based S3 layout: `{prefix}/{agent_folder}/{task_name}/{name}`.
+  Task-name-based S3 layout, one folder per attempt:
+  `{prefix}/{agent_folder}/{task_name}/{ts}_{run_id}/{name}`.
+
+Every uploaded file is also copied to a local mirror directory
+(`mirror_dir`, wired from `paths.output_dir`) under the SAME relative
+path as its S3 key, so the folder on disk can be diffed against the
+bucket by eye. The mirror is best-effort: S3 stays the record of truth.
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +89,8 @@ class PostgresS3AttemptSink:
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
+        mirror_dir: str | Path | None = None,
+        run_id: str | None = None,
     ):
         if not db_url:
             raise ValueError(
@@ -92,6 +103,13 @@ class PostgresS3AttemptSink:
         self.s3_bucket = s3_bucket
         self.s3_prefix = (s3_prefix or "").rstrip("/")
         self.attempt_schema = attempt_schema
+        self.mirror_dir = Path(mirror_dir) if mirror_dir else None
+        # One id per sink instance = one per `python -m infra.run` invocation,
+        # shared by every task in that run. It disambiguates two runs of the
+        # same (agent, task) that land in the same second, and makes "every
+        # artifact from that run" a single grep over the S3 keys. 8 hex chars:
+        # a full uuid4 would dominate the key without adding usable entropy.
+        self.run_id = run_id or uuid.uuid4().hex[:8]
 
         self._conn: psycopg2.extensions.connection | None = None
         client_kwargs: dict[str, Any] = {}
@@ -153,6 +171,15 @@ class PostgresS3AttemptSink:
         Default layout: `{s3_prefix}/task_id={id}/{timestamp}`."""
         return f"{self.s3_prefix}/task_id={result.task_id}/{timestamp}"
 
+    def _file_key(self, base_key: str, local: Path) -> str:
+        """Full S3 key for one uploaded file.
+
+        Default joins with "_" because the base key ends in a timestamp
+        rather than a folder segment — subclasses whose base key IS a folder
+        override this to join with "/".
+        """
+        return f"{base_key}_{local.name}"
+
     def _attempt_values(
         self,
         result: AttemptResult,
@@ -192,12 +219,35 @@ class PostgresS3AttemptSink:
             out.append(p)
         return out
 
+    def _mirror_file(self, local: Path, key: str) -> None:
+        """Copy an uploaded file into the local mirror at the same relative
+        path as its S3 key, so `mirror_dir` reads like a local checkout of
+        the bucket.
+
+        Runs AFTER the upload succeeds, so the mirror only ever contains
+        files that really reached S3. Best-effort: a full disk or a
+        permission error must not fail an attempt whose files are already
+        safely in the bucket and about to be recorded in the DB.
+        """
+        if self.mirror_dir is None:
+            return
+        dest = self.mirror_dir / key
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local, dest)
+        except OSError as e:
+            logger.warning(
+                f"Local mirror failed for {local} -> {dest} "
+                f"({type(e).__name__}: {e}); the S3 copy stands"
+            )
+
     def _upload_files(self, local_files: list[Path], base_key: str) -> list[str]:
         uris: list[str] = []
         for local in local_files:
-            key = f"{base_key}_{local.name}"
+            key = self._file_key(base_key, local)
             logger.info(f"S3 upload {local} -> s3://{self.s3_bucket}/{key}")
             self._s3.upload_file(str(local), self.s3_bucket, key)
+            self._mirror_file(local, key)
             uris.append(f"s3://{self.s3_bucket}/{key}")
         return uris
 
@@ -267,8 +317,13 @@ class PostgresS3AttemptSink:
         logger.info(
             f"Sink: recorded attempt for task_id={result.task_id} "
             f"status={result.status} attempt_files={len(attempt_uris)} "
-            f"prompt_files={len(prompt_uris)}"
+            f"prompt_files={len(prompt_uris)} "
+            f"s3://{self.s3_bucket}/{base}"
         )
+        if self.mirror_dir is not None:
+            # A prefix, not necessarily a directory — the v1 layout joins the
+            # base key to the filename with "_" rather than "/".
+            logger.info(f"Sink: local mirror under {self.mirror_dir / base}*")
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:
@@ -321,6 +376,8 @@ class _TaskAttemptsPostgresS3Sink(PostgresS3AttemptSink):
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
+        mirror_dir: str | Path | None = None,
+        run_id: str | None = None,
     ):
         if not agent_folder:
             raise ValueError(
@@ -349,11 +406,21 @@ class _TaskAttemptsPostgresS3Sink(PostgresS3AttemptSink):
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
+            mirror_dir=mirror_dir,
+            run_id=run_id,
         )
         self.agent_folder = agent_folder
         self.agent_model_name = agent_model_name
         self.agent_model_type = agent_model_type
         self.prompt_version = prompt_version
+        mirror_note = (
+            f"mirrored to {self.mirror_dir}" if self.mirror_dir else "no local mirror"
+        )
+        logger.info(
+            f"Sink: run_id={self.run_id} -> "
+            f"s3://{self.s3_bucket}/{self.s3_prefix}/{self.agent_folder}/ "
+            f"({mirror_note})"
+        )
 
     def _task_metadata(self, result: AttemptResult) -> dict:
         extra = result.extra or {}
@@ -433,27 +500,36 @@ class BizbenchPostgresS3AttemptSink(_TaskAttemptsPostgresS3Sink):
 class MBABenchV2PostgresS3AttemptSink(_TaskAttemptsPostgresS3Sink):
     """Benchmark v2 sink (MBABenchV2 DB).
 
-    S3 layout (organized by task name for readable paths):
-        {s3_prefix}/{agent_folder}/{task_name}/{name}
-    e.g. MBABenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_solution.xlsx
+    S3 layout — one folder per attempt, under a per-task folder:
+        {s3_prefix}/{agent_folder}/{task_name}/{timestamp}_{run_id}/{name}
+    e.g. MBABenchV2/attempts/claude_opus_4_8/ApfelInc/20260623_120000_9f3ac81b/
+         ├── 20260623_115804_ApfelInc_Solution_claude_web_Model.xlsx
+         ├── completion_claude_web_20260623_115012_ApfelInc.json
+         └── prompts_ApfelInc_20260623_115012.json
+
+    Every file from one attempt lands in that single folder, so an attempt
+    can be downloaded, diffed, or deleted as a unit — the previous layout
+    interleaved every attempt for a task in one flat folder and relied on
+    the engine's per-file timestamps to tell them apart, which broke down
+    for files stamped in the same second and made "which workbook goes with
+    which prompt record?" a filename-parsing exercise.
+
+    `timestamp` is the publish time (per task); `run_id` is constant across
+    every task in one `infra.run` invocation, so it also groups a sweep.
 
     task_name is sanitized (_sanitize_s3_segment) so it stays a single key
-    segment. The timestamp is NOT added here — the engine already embeds one
-    in each filename, so appending another would double-stamp the key.
-    task_source / db_task_id still flow through
+    segment. task_source / db_task_id still flow through
     `result.extra["task_metadata"]` (populated by the source) and are
     written to the task_attempts row, just not encoded in the S3 path.
     """
 
     def _s3_base_key(self, result: AttemptResult, timestamp: str) -> str:
         safe_task = _sanitize_s3_segment(result.task_name) or f"task_id={result.task_id}"
-        return f"{self.s3_prefix}/{self.agent_folder}/{safe_task}"
+        return (
+            f"{self.s3_prefix}/{self.agent_folder}/{safe_task}"
+            f"/{timestamp}_{self.run_id}"
+        )
 
-    def _upload_files(self, local_files: list[Path], base_key: str) -> list[str]:
-        uris: list[str] = []
-        for local in local_files:
-            key = f"{base_key}/{local.name}"
-            logger.info(f"S3 upload {local} -> s3://{self.s3_bucket}/{key}")
-            self._s3.upload_file(str(local), self.s3_bucket, key)
-            uris.append(f"s3://{self.s3_bucket}/{key}")
-        return uris
+    def _file_key(self, base_key: str, local: Path) -> str:
+        # The base key is a real folder here, so join with "/".
+        return f"{base_key}/{local.name}"

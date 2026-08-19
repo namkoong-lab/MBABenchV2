@@ -71,8 +71,15 @@ paths:
   scratch_dir:
     value: "scratch/gui-agents"   # downloaded starting_files land here
     required: true
+  # Local mirror of everything the postgres_s3 sink uploads, laid out under
+  # the same relative path as the S3 key, e.g.
+  #   outputs/MBABenchV2/attempts/claude_haiku_4_5/BasicGrowth/{ts}_{run_id}/
+  # so the folder on disk can be diffed against the bucket by eye. Copies are
+  # best-effort — a mirror failure warns and the run continues, since S3 is
+  # the record of truth. Set to "" to disable mirroring. (The `local` sink's
+  # own ndjson path is sink.output_dir, not this key.)
   output_dir:
-    value: "outputs"              # local sink writes solutions here
+    value: "outputs"
     required: false
   venv_path:
     value: ""                     # override if the runner shells out
