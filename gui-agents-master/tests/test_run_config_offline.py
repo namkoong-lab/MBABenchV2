@@ -40,7 +40,7 @@ def check_v1():
         override_path=REPO / "infra/configs/does_not_exist.yaml",
         run_config_data={
             "benchmark": "v1",
-            "prompts_file": ["tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"],
+            # No prompts_file: 9 selects the pv9 payload via the registry.
             "prompt_version": 9,
             "source": {"kind": "postgres_s3", "schema": "bizbench"},
             "sink": {"kind": "postgres_s3", "schema": "bizbench"},
@@ -105,6 +105,7 @@ def check_v1_missing_axes_fails():
         run_config_data={
             "benchmark": "v1",
             "provider": {"kind": "chatgpt"},
+            "prompt_version": 9,  # pv9 single prompt
             "chatgpt_web": {
                 "project_id": "x",
                 "mode": "work",

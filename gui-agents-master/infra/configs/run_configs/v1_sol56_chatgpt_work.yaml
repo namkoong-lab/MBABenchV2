@@ -1,0 +1,47 @@
+# TUTORIAL EXAMPLE — benchmark v1, ChatGPT GPT-5.6 Sol in Work mode.
+# DB identity resolves to: chatgpt_web_work_gpt5.6_sol_ultra
+# Settings copied from bizbenchv1_run_examples/gapfill_gui_sol_remaining.yaml
+# (the config used for the recent Sol gap-fill runs), project id blanked.
+#
+# Run (from gui-agents-master/, Chrome already running + logged in):
+#   python -m infra.run --run-config \
+#     infra/configs/run_configs/tutorial_examples/v1_sol56_chatgpt_work.yaml --dry-run
+# Then drop --dry-run and add -y to run for real.
+
+benchmark: v1
+
+source:
+  kind: postgres_s3
+  schema: bizbench                   # v1 = BizbenchV1 DB + s3://mbabench/BizbenchV1/
+  filters:
+    task_ids: [61, 104]              # two tasks, run one after the other — replace with yours
+    task_sources: ["fmwc", "modeloff", "wsp"]
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: postgres_s3
+  schema: bizbench
+
+provider:
+  kind: "chatgpt"
+
+# 9 = the single pv9 payload used on the whole v1 wave.
+prompt_version: 9
+
+chatgpt_web:
+  project_id: "your-chatgpt-project-id"  # from the project URL on chatgpt.com
+  # 4h budgets (copied from the gap-fill runs — long tasks failed at the 2h default).
+  max_sec_per_task: 14400
+  max_wait_per_prompt_seconds: 14400
+  retry:
+    max_sec_per_attempt: 14400
+  mode: "work"                       # the "work" agent surface (vs "chat")
+  model: "gpt_5_6_sol"
+  effort: "ultra"                    # work mode uses effort + speed
+  speed: "standard"
+  intelligence: null                 # chat-mode knob; unused in work mode
+  agent_mode: false
+  browser:
+    cdp_port: 9222                   # ChatGPT lane runs on its own Chrome + port
+    profile_dir: "~/.chrome-web-agent"

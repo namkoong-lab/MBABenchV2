@@ -1,0 +1,75 @@
+# Prompt-version registry — maps `prompt_version` to the prompt file(s) sent.
+#
+# WHY THIS EXISTS
+# `prompt_version` used to be a free-form label that nothing checked against
+# the prompt text actually sent: the run config named a number for the DB
+# and, separately, named `prompts_file` for the agent, so the two could
+# disagree. This file makes the version the single key that selects the text,
+# so the DB label and the prompt are the same decision.
+#
+# HOW IT IS USED
+# infra/configs/prompt_registry.py reads this file; infra/run.py resolves the
+# run's `prompt_version` through it and populates `prompts_file`. Precedence:
+#
+#   1. an explicit `prompts_file` in the run config  — wins, registry skipped
+#   2. this registry, keyed by `prompt_version`
+#
+# Layer 1 keeps every pre-registry run config working unchanged. New configs
+# should set `prompt_version` only and let the registry pick the files.
+#
+# ONE VERSION, ONE PROMPT SET. Every entry names exactly one `files` list.
+# Paths are repo-root-relative (repo root = gui-agents-master/) and are sent
+# to the agent IN ORDER, one chat turn each; a single-element list is a
+# single-turn prompt.
+#
+# ADDING A VERSION
+# Add an entry; never edit an existing one. A version that has been used for
+# a real run is immutable — rows in task_attempts already point at it, and
+# rewriting the text under a live number silently invalidates that history.
+# New text = new number.
+#
+# NUMBERING
+#   9        the number the earlier wave already carries in
+#            task_attempts.prompt_version, kept so that history and future
+#            runs on the same prompt name the same thing.
+#   2xx      the rubric-v9 (132-check) prompt sets.
+
+versions:
+
+  9:
+    label: "pv9 single prompt"
+    description: >
+      The BizbenchV1 GUI wave payload, recovered byte-exact from
+      task_attempts.prompt_files in S3 on 2026-07-21. One prompt containing
+      the 17-check rubric preamble plus a three-step closing the model
+      executes in a single turn.
+
+      9 is the number that whole wave already carries in
+      task_attempts.prompt_version, so keeping it here means existing rows
+      and future runs on this prompt name the same set.
+    files:
+      - "tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"
+
+  200:
+    label: "rubric-v9 3-step"
+    description: >
+      Three prompts, one chat turn each: analyze & plan (Summary sheet) ->
+      build (embeds the full 132-check rubric) -> QA & download. These are
+      the files the repo default has always sent, now under a number that
+      means only this.
+    files:
+      - "tasks_configs/prompts_v2/step1_analyze.txt"
+      - "tasks_configs/prompts_v2/step2_build.txt"
+      - "tasks_configs/prompts_v2/step3_qa.txt"
+
+  201:
+    label: "rubric-v9 single-pass"
+    description: >
+      All three deliverables (Summary -> model -> Answers) plus the step-3 QA
+      checklist folded into ONE chat turn. The rubric body is byte-identical
+      to step2_build.txt from its `== FULL RUBRIC ==` marker onward, so
+      scores stay comparable to version 200 and any delta is attributable to
+      turn structure alone. ~67k chars: expect the output cap to be hit
+      mid-build and the agent's truncation-continue loop to resume it.
+    files:
+      - "tasks_configs/prompts/v2_1.txt"

@@ -55,8 +55,14 @@ provider:
 # block below. `prompt_version` is still operator-controlled because it's
 # independent of any behavior field.
 agent:
+  # DERIVED — leave null. The run's prompt version is the top-level
+  # `prompt_version`, which both selects the prompt files and is written to
+  # task_attempts.prompt_version; run.py copies it here before building the
+  # sink. This key survives only because run configs may still set it, in
+  # which case it must match the top-level value (a mismatch is refused —
+  # it would record a row under a version the agent was never sent).
   prompt_version:
-    value: 9                 # rubric-v9 prompt set; matches DEFAULT_MODELS_PROMPT_VERSION
+    value: null
     required: false
 
 
@@ -232,33 +238,46 @@ poll:
 
 
 # ---- Shared (both providers) -----------------------------------------------
-# Prompts sent sequentially to the AI. Leave `prompts` empty and use
-# `prompts_file` (below) so every config shares one copy of the long
-# benchmark prompts — preflight fails if neither is set.
+# Prompts sent sequentially to the AI, one chat turn each. Leave `prompts`
+# empty: prompt selection is driven by `prompt_version` (below) through
+# tasks_configs/prompts/registry.yaml, so every config shares one copy of the
+# long benchmark prompts. Preflight fails if nothing resolves.
 prompts:
-  value: []                    # unused when prompts_file is set (below)
+  value: []                    # inline prompts; loses to prompts_file
   required: false
 
-# Single source of truth for the long benchmark prompts. One file per
-# prompt, expanded into `prompts` by the engine, in order. Paths resolve
+# ESCAPE HATCH — normally leave this null and let `prompt_version` (below)
+# select the prompts via tasks_configs/prompts/registry.yaml.
+#
+# Setting it pins the prompt files directly and BYPASSES the registry, which
+# means `prompt_version` becomes a label only: the run records one number
+# while sending whatever text you list here, with nothing checking that they
+# agree. That is exactly the drift the registry exists to prevent, so use
+# this only for one-off experiments with prompts not worth registering.
+#
+# One file per prompt, sent in order, one chat turn each. Paths resolve
 # relative to the repo root, then CWD. prompts_file wins over an inline
 # `prompts` list; a missing file is fatal (running the benchmark with the
 # wrong prompt is worse than not running it).
-#
-# Default = the v2 3-step sequence (provenance:
-# tasks_configs/prompts_v2/README.md). ChatGPT agent-mode runs should
-# override steps 2-3 with the agent_*.txt variants. Benchmark-v1 runs
-# override with the single pv9 payload, e.g.:
-#   prompts_file: ["tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"]
 prompts_file:
-  value:
-    - "tasks_configs/prompts_v2/step1_analyze.txt"
-    - "tasks_configs/prompts_v2/step2_build.txt"
-    - "tasks_configs/prompts_v2/step3_qa.txt"
+  value: null
   required: false
 
+# Selects the prompt file(s) for this run from
+# tasks_configs/prompts/registry.yaml, AND is written to
+# task_attempts.prompt_version — one key, so the DB label and the text the
+# agent receives cannot disagree. Registered versions:
+#
+#     9    pv9 single prompt         (17-check rubric, 1 turn)
+#   200    rubric-v9 3-step          (132-check rubric, 3 turns)
+#   201    rubric-v9 single-pass     (132-check rubric, 1 turn)
+#
+# Default 200 = exactly the files this repo has always sent by default,
+# under a number that identifies only them.
+# Must equal agent.prompt_version if that is also set; run.py refuses a
+# mismatch rather than picking one.
 prompt_version:
-  value: 9                     # engine config's prompt_version (top-level); rubric v9
+  value: 200
   required: false
 
 # Empty = let the engine resolve paths from CWD. Set to the directory

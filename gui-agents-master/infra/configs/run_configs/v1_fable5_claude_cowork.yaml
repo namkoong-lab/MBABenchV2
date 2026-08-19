@@ -1,0 +1,41 @@
+# TUTORIAL EXAMPLE — benchmark v1, Claude Fable 5 in Cowork mode.
+# DB identity resolves to: claude_web_cowork_fable5_max
+# Settings copied from bizbenchv1_run_examples/sample_bizbenchv1_claude.yaml
+# (the shape used on the v1 wave and the recent gap-fill runs).
+#
+# Run (from gui-agents-master/, Chrome already running + logged in):
+#   python -m infra.run --run-config \
+#     infra/configs/run_configs/tutorial_examples/v1_fable5_claude_cowork.yaml --dry-run
+# Then drop --dry-run and add -y to run for real.
+
+benchmark: v1
+
+source:
+  kind: postgres_s3
+  schema: bizbench                   # v1 = BizbenchV1 DB + s3://mbabench/BizbenchV1/
+  filters:
+    # task_ids: [321]             # gap-fill: Data-King-os4rhc, Grapes-of-Wrath-mxir1s
+    task_ids: [330]
+    task_sources: ["fmwc", "modeloff", "wsp"]
+    skip_deprecated: true
+    skip_already_attempted: true     # rerunning this config skips tasks already done
+
+sink:
+  kind: postgres_s3
+  schema: bizbench
+
+provider:
+  kind: "claude"
+
+# 9 = the single pv9 payload used on the whole v1 wave.
+prompt_version: 9
+
+claude_web:
+  project_id: "01a01020-7466-74f6-b818-cae972ba0ff4"  # must exist in the account logged into cdp_port 9223
+  mode: "cowork"                     # the "cowork" agent surface (vs "chat")
+  cowork_approval: "auto"            # never "manual" for unattended runs
+  model: "fable_5"
+  effort: "max"
+  browser:
+    cdp_port: 9223                   # Claude lane runs on its own Chrome + port
+    profile_dir: "~/.chrome-web-agent-claude2"

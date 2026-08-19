@@ -6,8 +6,6 @@
 # task_attempts insert. Haiku is the cheapest/fastest model that is a real
 # v2 identity, so the attempt this produces is legitimate benchmark data
 # rather than junk.
-#
-# Run it with infra/configs/run_configs/smoke_test.sh (dry-run first).
 
 benchmark: v2
 
@@ -33,9 +31,7 @@ sink:
 provider:
   kind: "claude"
 
-# No prompts_file override: the repo default IS the v2 3-step set
-# (prompts_v2/step1_analyze, step2_build, step3_qa) at prompt_version 9.
-prompt_version: 9
+prompt_version: 201
 
 claude_web:
   mode: "chat"                       # v2 runs use the plain chat surface

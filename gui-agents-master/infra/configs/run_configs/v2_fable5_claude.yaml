@@ -1,0 +1,43 @@
+# TUTORIAL EXAMPLE — benchmark v2, Claude Fable 5.
+# DB identity resolves to: claude_fable_5  (v2 identity is model-only)
+# Shape copied from mbabenchv2_run_examples/mbabenchv2_db_sink.yaml.
+#
+# Note: prompt_version 200 IS the v2 3-step set (prompts_v2/step1..step3) —
+# the version selects the files, so there is no prompts_file to keep in sync.
+# v2 runs use the plain "chat" surface (the repo default), not cowork.
+#
+# Run (from gui-agents-master/, Chrome already running + logged in):
+#   python -m infra.run --run-config \
+#     infra/configs/run_configs/tutorial_examples/v2_fable5_claude.yaml --dry-run
+# Then drop --dry-run and add -y to run for real.
+
+benchmark: v2
+
+source:
+  kind: postgres_s3
+  schema: mbabenchv2                 # v2 = MBABenchV2 DB + s3://mbabench/MBABenchV2/
+  filters:
+    task_ids: [1, 2]                 # two tasks, run one after the other — replace with yours
+    task_sources: ["jp"]             # the v2 task set
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: postgres_s3
+  schema: mbabenchv2
+
+provider:
+  kind: "claude"
+
+prompt_version: 200
+
+claude_web:
+  mode: "chat"                       # "cowork" instead -> identity claude_fable_5_cowork
+  model: "fable_5"                   # required — v2 preflight refuses null
+  # Highest effort tier (low < medium < high < xhigh < max); Fable has no
+  # separate Thinking toggle. NOTE: effort is NOT part of the v2 DB
+  # identity — keep it the same for every run recorded under claude_fable_5.
+  effort: "max"
+  browser:
+    cdp_port: 9223
+    profile_dir: "~/.chrome-web-agent-claude2"

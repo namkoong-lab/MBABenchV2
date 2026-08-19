@@ -63,8 +63,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 from infra.configs import (  # noqa: E402
     ConfigError,
+    describe_prompt_version,
     load_configs,
     resolve_agent_identity,
+    resolve_prompt_files,
 )
 from task_io import (  # noqa: E402
     AttemptResult,
@@ -73,7 +75,10 @@ from task_io import (  # noqa: E402
     build_source,
     describe_database_target,
 )
-from claude_web_agent.claude_web_engine import _sanitize_name  # noqa: E402
+from claude_web_agent.claude_web_engine import (  # noqa: E402
+    _sanitize_name,
+    resolve_prompts,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -124,7 +129,15 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
         {agent_type, prompts, prompt_version, local_files_base,
          task_name, task_id, task_source, upload_files, solution_name,
          <provider>_web: {...}}
+
+    Prompt selection also lands here rather than only in main(): this is the
+    function that decides what the engine receives, so a caller that skips
+    main() (tests, any future entrypoint) must not silently produce a config
+    with no prompts. main() resolves first so it can log the choice once per
+    run, in which case cfg.prompts_file is already set and this is a no-op.
     """
+    if not getattr(cfg, "prompts_file", None):
+        cfg.prompts_file = resolve_prompt_files(cfg)
     base = _ns_to_dict(cfg)
 
     provider = cfg.provider.kind
@@ -389,18 +402,40 @@ def _write_prompts_file(
 ) -> Path | None:
     """Materialize the per-task prompt payload so the sink can upload it.
 
-    Returns None if the engine has no prompts to log — the sink treats a
-    missing path as "no prompt_files to record" rather than a failure."""
+    Records the prompt TEXT, not the file paths: this JSON is the only
+    artifact that survives in S3 as evidence of what the agent was actually
+    asked, and a path is not evidence once the file changes.
+
+    `prompts` is empty in engine_config whenever the run uses `prompts_file`
+    (the normal path — the engine expands it in the subprocess, after this
+    record is written), so expand it here through the engine's own resolver
+    rather than reading the key. That resolver is also the one the engine
+    will use, so the recorded text is what the agent receives, not a second
+    guess at it.
+
+    Returns None only if the run genuinely has no prompts to log — the sink
+    treats a missing path as "no prompt_files to record" rather than a
+    failure."""
     prompts = engine_config.get("prompts") or []
+    if not prompts and engine_config.get("prompts_file"):
+        try:
+            prompts = resolve_prompts(dict(engine_config)).get("prompts") or []
+        except (FileNotFoundError, OSError) as e:
+            # Preflight already checked existence, so this is close to
+            # unreachable — but losing the record must not lose the run.
+            logger.warning(f"Could not record prompt text: {e}")
+            prompts = []
     if not prompts:
         return None
     run_dir.mkdir(parents=True, exist_ok=True)
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in task_name)
     ts = started.strftime("%Y%m%d_%H%M%S")
     path = run_dir / f"prompts_{safe_name}_{ts}.json"
+    pf = engine_config.get("prompts_file")
     payload = {
         "prompts": prompts,
         "prompt_version": engine_config.get("prompt_version"),
+        "prompts_file": [pf] if isinstance(pf, str) else list(pf or []),
     }
     path.write_text(json.dumps(payload, indent=2))
     return path
@@ -830,6 +865,31 @@ def main() -> int:
     provider = cfg.provider.kind
     benchmark = (getattr(cfg, "benchmark", None) or "v2").lower()
     logger.info(f"Benchmark: {benchmark}")
+
+    # Prompt selection. An explicit prompts_file in the run config wins and
+    # skips the registry (this is what keeps pre-registry configs working);
+    # otherwise prompt_version picks the files, so the DB label and the text
+    # the agent receives are the same decision. See
+    # tasks_configs/prompts/registry.yaml.
+    if getattr(cfg, "prompts_file", None):
+        logger.info(
+            f"prompts_file set explicitly ({cfg.prompts_file}) — prompt "
+            f"registry bypassed; prompt_version is a label only for this run."
+        )
+    else:
+        try:
+            cfg.prompts_file = resolve_prompt_files(cfg)
+        except ConfigError as e:
+            logger.error(f"Prompt selection failed:\n{e}")
+            return EXIT_CONFIG_ERROR
+        logger.info(describe_prompt_version(cfg, cfg.prompts_file))
+
+    # The sink writes cfg.agent.prompt_version to task_attempts. Copy the
+    # top-level value across so the recorded version is by construction the
+    # one that selected the prompts, rather than a second key that can drift
+    # from it. resolve_prompt_files already refused any disagreement.
+    if getattr(cfg, "prompt_version", None) is not None:
+        cfg.agent.prompt_version = cfg.prompt_version
 
     # Which database this run reads/writes, and which layer supplied it.
     # Logged BEFORE the build so a credential failure still shows what was

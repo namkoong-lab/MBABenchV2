@@ -1,0 +1,181 @@
+"""Resolve a run's `prompt_version` to the prompt file(s) it selects.
+
+`prompt_version` used to be a label nothing checked: the run config named a
+number for the DB and, separately, named `prompts_file` for the agent. The
+two could disagree, and did — the V1 and V2 waves both shipped as version 9
+against different rubrics, so a task_attempts row could not tell you what
+the agent was asked to do.
+
+This module makes the version the single key that picks the text. The map
+lives in tasks_configs/prompts/registry.yaml (data, not code, so adding a
+prompt set is a one-file change).
+
+Precedence, applied by infra/run.py:
+
+  1. an explicit `prompts_file` in the run config — wins, registry skipped
+  2. this registry, keyed by `prompt_version`
+
+Layer 1 is what keeps every pre-registry run config working unchanged.
+
+Typical usage:
+
+    from infra.configs import resolve_prompt_files
+    files = resolve_prompt_files(cfg)     # ["tasks_configs/prompts/v2_1.txt"]
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import yaml
+
+from .loader import ConfigError
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+REGISTRY_PATH = _REPO_ROOT / "tasks_configs" / "prompts" / "registry.yaml"
+
+
+class PromptVersionError(ConfigError):
+    """The run's prompt_version cannot be resolved to prompt files."""
+
+
+@dataclass(frozen=True)
+class PromptVersion:
+    """One registered version: one number, one prompt set."""
+
+    version: int
+    files: tuple[str, ...]  # repo-root-relative, in send order
+    label: str = ""
+    description: str = ""
+
+
+def load_registry(path: Path = REGISTRY_PATH) -> dict[int, PromptVersion]:
+    """Parse registry.yaml into {version: PromptVersion}.
+
+    Raises PromptVersionError on a missing/malformed file rather than
+    returning an empty map — a silently empty registry would surface as
+    "unknown prompt_version" and send the operator hunting the wrong bug.
+    """
+    if not path.exists():
+        raise PromptVersionError(
+            f"Prompt registry not found: {path}. It maps prompt_version to "
+            f"prompt files; without it a run config must set prompts_file "
+            f"explicitly."
+        )
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise PromptVersionError(f"Prompt registry is not valid YAML ({path}):\n{e}")
+
+    versions = data.get("versions")
+    if not isinstance(versions, dict) or not versions:
+        raise PromptVersionError(
+            f"Prompt registry has no `versions:` mapping: {path}"
+        )
+
+    out: dict[int, PromptVersion] = {}
+    for raw_version, entry in versions.items():
+        try:
+            version = int(raw_version)
+        except (TypeError, ValueError):
+            raise PromptVersionError(
+                f"Prompt registry key {raw_version!r} is not an integer "
+                f"version ({path})."
+            )
+        if not isinstance(entry, dict):
+            raise PromptVersionError(
+                f"Prompt registry entry {version} must be a mapping ({path})."
+            )
+        files = entry.get("files")
+        if isinstance(files, str):
+            files = [files]
+        if not isinstance(files, list) or not files:
+            raise PromptVersionError(
+                f"Prompt registry entry {version} has no `files:` list ({path})."
+            )
+        out[version] = PromptVersion(
+            version=version,
+            files=tuple(str(f) for f in files),
+            label=entry.get("label") or "",
+            description=(entry.get("description") or "").strip(),
+        )
+    return out
+
+
+def _config_prompt_version(cfg: SimpleNamespace) -> Any:
+    """The run's prompt_version, with the two config keys reconciled.
+
+    `prompt_version` (top level, engine-facing) and `agent.prompt_version`
+    (the value written to task_attempts.prompt_version) are separate knobs
+    that have always defaulted to the same number. A config that moved only
+    one of them would send one prompt set and label the row with another, so
+    a disagreement is refused rather than silently resolved.
+    """
+    top = getattr(cfg, "prompt_version", None)
+    agent = getattr(getattr(cfg, "agent", None), "prompt_version", None)
+    if top is not None and agent is not None and top != agent:
+        raise PromptVersionError(
+            f"prompt_version={top!r} but agent.prompt_version={agent!r}. "
+            f"The first selects the prompt files and is sent to the engine; "
+            f"the second is written to task_attempts.prompt_version. A "
+            f"mismatch records the row under a version the agent was never "
+            f"sent. Set both to the same value (or only one)."
+        )
+    return top if top is not None else agent
+
+
+def resolve_prompt_files(
+    cfg: SimpleNamespace, registry_path: Path = REGISTRY_PATH
+) -> list[str]:
+    """Repo-relative prompt file paths for this run, in send order.
+
+    Does not read the prompt text — existence is checked by run.py's
+    preflight and the text is loaded by the engine's resolve_prompts(), both
+    of which resolve relative paths against the repo root.
+    """
+    version = _config_prompt_version(cfg)
+    if version is None:
+        raise PromptVersionError(
+            "No prompt_version set and no prompts_file given — nothing "
+            "identifies which prompt to send. Set prompt_version to an entry "
+            "in tasks_configs/prompts/registry.yaml."
+        )
+
+    registry = load_registry(registry_path)
+    try:
+        version = int(version)
+    except (TypeError, ValueError):
+        raise PromptVersionError(
+            f"prompt_version={version!r} is not an integer. Known versions: "
+            f"{sorted(registry)}."
+        )
+
+    entry = registry.get(version)
+    if entry is None:
+        known = ", ".join(
+            f"{v} ({registry[v].label})" for v in sorted(registry)
+        )
+        raise PromptVersionError(
+            f"prompt_version={version} is not in the prompt registry "
+            f"({registry_path.name}). Known versions: {known}. Add an entry "
+            f"there, or set prompts_file explicitly to bypass the registry."
+        )
+
+    return list(entry.files)
+
+
+def describe_prompt_version(cfg: SimpleNamespace, files: list[str]) -> str:
+    """One log line naming the resolved prompt set and where it came from."""
+    version = _config_prompt_version(cfg)
+    try:
+        entry = load_registry().get(int(version)) if version is not None else None
+    except (PromptVersionError, TypeError, ValueError):
+        entry = None
+    label = f" {entry.label!r}" if entry and entry.label else ""
+    n = len(files)
+    turns = "1 turn" if n == 1 else f"{n} turns"
+    return f"prompt_version={version}{label} -> {turns}: {', '.join(files)}"
