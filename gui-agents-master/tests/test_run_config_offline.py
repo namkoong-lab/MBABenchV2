@@ -3,9 +3,14 @@ for both benchmarks. No DB, AWS, or browser access.
 
 Run from gui-agents-master:  .venv/bin/python tests/test_run_config_offline.py
 """
+import os
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace as NS
+
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -116,10 +121,122 @@ def check_v1_missing_axes_fails():
     print("OK  v1 invalid work-effort rejected by preflight")
 
 
+# --- credential resolution (task_io/registry.py) ----------------------------
+#
+# The database url is keyed by benchmark in the monorepo config, so a run
+# config cannot name one experiment and write to the other's DB. These checks
+# run against a temp config dir — never the operator's real credentials.
+
+TEMP_CONFIG = {
+    "database": {
+        "v1_url": "postgresql://u:p@host/BizbenchV1?sslmode=require",
+        "v2_url": "postgresql://u:p@host/MBABenchV2?sslmode=require",
+    },
+    "aws": {
+        "s3_bucket": "mbabench",
+        "access_key_id": "AKIAFAKE",
+        "secret_access_key": "secretfake",
+    },
+}
+
+
+@contextmanager
+def temp_repo_config(data: dict | None):
+    """Point the monorepo-config lookup at a throwaway dir (or a missing one)."""
+    with tempfile.TemporaryDirectory() as td:
+        cfg_dir = Path(td) / "config"
+        if data is not None:
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config_default.yaml").write_text("{}\n")
+            (cfg_dir / "config.yaml").write_text(yaml.safe_dump(data))
+        prev = os.environ.get("MBABENCH_CONFIG_DIR")
+        os.environ["MBABENCH_CONFIG_DIR"] = str(cfg_dir)
+        try:
+            yield cfg_dir
+        finally:
+            if prev is None:
+                os.environ.pop("MBABENCH_CONFIG_DIR", None)
+            else:
+                os.environ["MBABENCH_CONFIG_DIR"] = prev
+
+
+def _cfg(benchmark: str, **extra):
+    return load_configs(
+        default_path=REPO / "infra/configs/configs.default.yaml",
+        override_path=REPO / "infra/configs/does_not_exist.yaml",
+        run_config_data={"benchmark": benchmark, **extra},
+    )
+
+
+def check_db_url_follows_benchmark():
+    from task_io.registry import _resolve_db_url, describe_database_target
+
+    with temp_repo_config(TEMP_CONFIG):
+        assert "BizbenchV1" in _resolve_db_url(_cfg("v1"))
+        assert "MBABenchV2" in _resolve_db_url(_cfg("v2"))
+        # The log line names the DB and never leaks the password.
+        desc = describe_database_target(_cfg("v2"))
+        assert desc.startswith("MBABenchV2 "), desc
+        assert "p@host" not in desc and ":p" not in desc, desc
+    print("OK  database url follows `benchmark` (v1 -> BizbenchV1, v2 -> MBABenchV2)")
+
+
+def check_explicit_url_wins():
+    """A box's pushed configs.yaml must still be able to override."""
+    from task_io.registry import _resolve_db_url
+
+    with temp_repo_config(TEMP_CONFIG):
+        cfg = _cfg("v2", database={"url": "postgresql://u:p@box/Explicit"})
+        assert "Explicit" in _resolve_db_url(cfg), _resolve_db_url(cfg)
+    print("OK  explicit configs.yaml database.url still wins")
+
+
+def check_env_fallback_and_no_file_creation():
+    """The box path: no monorepo config at all -> env var, nothing written."""
+    from task_io.registry import _resolve_db_url
+
+    with temp_repo_config(None) as cfg_dir:
+        os.environ["MBABENCHV2JUDGE_KEYS_DATABASE_URL"] = "postgresql://u:p@box/BoxDB"
+        try:
+            assert "BoxDB" in _resolve_db_url(_cfg("v2"))
+        finally:
+            os.environ.pop("MBABENCHV2JUDGE_KEYS_DATABASE_URL", None)
+        # Reading a config must never write one — Config.load defaults to
+        # create_missing=True, which would seed a file on a worker box.
+        assert not cfg_dir.exists(), f"reading a config created {cfg_dir}"
+    print("OK  missing monorepo config -> env var, and nothing is created")
+
+
+def check_aws_creds_resolve():
+    from task_io.registry import _repo_value
+
+    with temp_repo_config(TEMP_CONFIG):
+        assert _repo_value("aws", "access_key_id") == "AKIAFAKE"
+        assert _repo_value("aws", "secret_access_key") == "secretfake"
+        # session_token has no monorepo equivalent — env-only by design.
+        assert _repo_value("aws", "session_token") is None
+    print("OK  aws credentials resolve from the monorepo config")
+
+
+def check_null_creds_fall_through():
+    """`null` placeholders must behave like absent keys, not empty strings."""
+    from task_io.registry import _repo_value
+
+    blank = {"database": TEMP_CONFIG["database"], "aws": {"access_key_id": None}}
+    with temp_repo_config(blank):
+        assert _repo_value("aws", "access_key_id") is None
+    print("OK  null credentials fall through to the next layer")
+
+
 def main() -> int:
     check_v1()
     check_v2()
     check_v1_missing_axes_fails()
+    check_db_url_follows_benchmark()
+    check_explicit_url_wins()
+    check_env_fallback_and_no_file_creation()
+    check_aws_creds_resolve()
+    check_null_creds_fall_through()
     print("ALL OFFLINE RUN-CONFIG CHECKS PASSED")
     return 0
 

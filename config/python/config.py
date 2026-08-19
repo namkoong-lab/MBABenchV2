@@ -21,6 +21,16 @@ Usage::
     "app.name" in cfg                   # → True
     cfg.flat_keys()                     # → ["app.name", "app.workers", ...]
 
+Required fields: any value equal to the sentinel ``__REQUIRED__`` marks a
+field the user must fill in. Loading aborts with :class:`ConfigRequiredError`
+listing every such field, so a half-configured install fails at startup
+instead of somewhere deep in a run::
+
+    venv_path: __REQUIRED__     # in config_default.yaml
+
+Pass ``strict=True`` to also treat an unset ``${env:VAR}`` (one with no
+``:-default``) as ``__REQUIRED__`` rather than silently expanding to "".
+
 The thin module-level functions ``load_config``, ``get`` and ``deep_merge``
 remain as backward-compatible wrappers around :class:`Config`.
 
@@ -45,6 +55,27 @@ logger = logging.getLogger(__name__)
 # an explicit default of ``None``.
 _MISSING = object()
 
+# Placeholder for "the user must fill this in". Any field holding this value
+# aborts the load. Mirrors CONFIG_REQUIRED in bash/config.sh.
+REQUIRED = "__REQUIRED__"
+
+
+class ConfigRequiredError(ValueError):
+    """Raised when fields are still set to the ``__REQUIRED__`` placeholder.
+
+    ``keys`` holds every offending dotted key, so callers can report them all
+    rather than fixing one field per run.
+    """
+
+    def __init__(self, keys: list[str], user_file: os.PathLike | str | None = None) -> None:
+        self.keys = list(keys)
+        self.user_file = user_file
+        where = f" in {user_file}" if user_file is not None else ""
+        listed = "\n".join(f"  - {k}" for k in self.keys)
+        super().__init__(
+            f"config: {len(self.keys)} field(s) still set to {REQUIRED}{where}:\n{listed}"
+        )
+
 
 class Config:
     """A loaded, merged two-tiered config with dotted access.
@@ -67,6 +98,9 @@ class Config:
 
     DEFAULT_FILENAME = "config_default.yaml"
     USER_FILENAME = "config.yaml"
+
+    # Placeholder marking a field the user must fill in; see module docstring.
+    REQUIRED = REQUIRED
 
     # Matches ${env:VAR} and ${env:VAR:-default}
     _ENV_REF = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -97,18 +131,35 @@ class Config:
         config_dir: str | os.PathLike | None = None,
         *,
         create_missing: bool = True,
+        check_required: bool = True,
+        strict: bool = False,
     ) -> "Config":
         """Load the merged two-tiered config.
 
         Creates ``config.yaml`` from ``config_default.yaml`` on first run
-        (unless ``create_missing=False``).
+        (unless ``create_missing=False``). Raises :class:`ConfigRequiredError`
+        if any field is still ``__REQUIRED__`` (unless ``check_required=False``).
         """
         cfg = cls(config_dir=config_dir)
-        cfg.reload(create_missing=create_missing)
+        cfg.reload(
+            create_missing=create_missing,
+            check_required=check_required,
+            strict=strict,
+        )
         return cfg
 
-    def reload(self, *, create_missing: bool = True) -> "Config":
-        """Re-read both tiers from disk and rebuild the merged data in place."""
+    def reload(
+        self,
+        *,
+        create_missing: bool = True,
+        check_required: bool = True,
+        strict: bool = False,
+    ) -> "Config":
+        """Re-read both tiers from disk and rebuild the merged data in place.
+
+        ``strict`` makes an unset ``${env:VAR}`` with no ``:-default`` expand
+        to ``__REQUIRED__`` instead of "", so the required check catches it.
+        """
         if not self.default_file.is_file():
             raise FileNotFoundError(f"defaults not found: {self.default_file}")
 
@@ -125,7 +176,9 @@ class Config:
         )
 
         merged = self.deep_merge(defaults, user)
-        self._data = self._expand_env(merged)
+        self._data = self._expand_env(merged, strict=strict)
+        if check_required:
+            self.check_required()
         return self
 
     def _seed_user_file(self) -> None:
@@ -156,6 +209,33 @@ class Config:
         if value is _MISSING:
             raise KeyError(f"required config key missing: {dotted_key!r}")
         return value
+
+    def required_keys(self) -> list[str]:
+        """Dotted keys still holding the ``__REQUIRED__`` placeholder.
+
+        List elements are reported with their index, e.g. ``features[1]``.
+        """
+        found: list[str] = []
+
+        def walk(node: Any, prefix: str) -> None:
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    walk(v, f"{prefix}.{k}" if prefix else str(k))
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    walk(v, f"{prefix}[{i}]")
+            elif node == REQUIRED:
+                found.append(prefix)
+
+        walk(self._data, "")
+        return found
+
+    def check_required(self) -> "Config":
+        """Raise :class:`ConfigRequiredError` if any field is ``__REQUIRED__``."""
+        pending = self.required_keys()
+        if pending:
+            raise ConfigRequiredError(pending, self.user_file)
+        return self
 
     def flat_keys(self) -> list[str]:
         """All leaf keys as dotted paths (mirrors bash ``config keys``)."""
@@ -249,18 +329,18 @@ class Config:
         return result
 
     @classmethod
-    def _expand_env(cls, value: Any) -> Any:
+    def _expand_env(cls, value: Any, *, strict: bool = False) -> Any:
         """Recursively expand ${env:VAR} / ${env:VAR:-default} in string leaves."""
         if isinstance(value, dict):
-            return {k: cls._expand_env(v) for k, v in value.items()}
+            return {k: cls._expand_env(v, strict=strict) for k, v in value.items()}
         if isinstance(value, list):
-            return [cls._expand_env(v) for v in value]
+            return [cls._expand_env(v, strict=strict) for v in value]
         if isinstance(value, str):
-            return cls._expand_env_str(value)
+            return cls._expand_env_str(value, strict=strict)
         return value
 
     @classmethod
-    def _expand_env_str(cls, text: str) -> str:
+    def _expand_env_str(cls, text: str, *, strict: bool = False) -> str:
         def repl(match: re.Match) -> str:
             name, has_default = match.group(1), match.group(2)
             if name in os.environ:
@@ -268,7 +348,9 @@ class Config:
             if has_default is not None:
                 return has_default
             logger.warning("env var not set: %s", name)
-            return ""
+            # Under strict, hand the required check a value it will reject
+            # instead of quietly substituting an empty string.
+            return REQUIRED if strict else ""
 
         return cls._ENV_REF.sub(repl, text)
 
@@ -277,13 +359,18 @@ class Config:
 # Thin wrappers so existing callers keep working unchanged.
 
 
-def load_config(config_dir: str | os.PathLike | None = None) -> Config:
+def load_config(
+    config_dir: str | os.PathLike | None = None,
+    *,
+    check_required: bool = True,
+    strict: bool = False,
+) -> Config:
     """Load and return a :class:`Config` (replaces the old dict-returning API).
 
     A ``Config`` supports ``cfg["app"]["name"]`` and ``get(cfg, "app.name")``,
     so existing callers keep working.
     """
-    return Config.load(config_dir)
+    return Config.load(config_dir, check_required=check_required, strict=strict)
 
 
 def get(cfg: Config | dict, dotted_key: str, default: Any = None) -> Any:

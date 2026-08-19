@@ -24,10 +24,16 @@ reference docs worth keeping open:
 ### One-time prereqs (laptop)
 
 1. **AWS CLI v2** installed and configured (`aws configure` or SSO).
-2. **Fill in [configs/configs.yaml](configs/)** (gitignored) with at minimum
-   `database.url`, `aws.access_key_id`, `aws.secret_access_key`, and the
-   `agent.*` identity for the cohort you'll run. Schema:
-   [configs/configs.default.yaml](configs/configs.default.yaml).
+2. **Fill in `<repo>/config/config.yaml`** (gitignored, one level above
+   `gui-agents-master/`) with `database.v1_url`, `database.v2_url`,
+   `aws.access_key_id`, and `aws.secret_access_key`. Both database urls live
+   there together and the run config's `benchmark:` key picks between them,
+   so there is nothing to swap by hand when moving between experiments.
+
+   Credentials no longer live in `infra/configs/configs.yaml` — that file is
+   now purely the box-side run profile. See the `database:` / `aws:` comment
+   blocks in [configs/configs.default.yaml](configs/configs.default.yaml) for
+   the full resolution order.
 3. **AWS key pair + security group** — idempotent bootstrap:
 
    ```bash
@@ -39,6 +45,14 @@ reference docs worth keeping open:
    `dispatcher/.aws_defaults` so later scripts don't re-prompt.
 
 ### Per box
+
+> **`spinup.sh` is currently blocked.** It harvested credentials from the
+> laptop's `infra/configs/configs.yaml`, which no longer holds them. It exits
+> with instructions rather than provisioning a box against a guessed database
+> — it needs to be told which benchmark the box serves before it can pick
+> between `database.v1_url` and `database.v2_url`. **Existing boxes are
+> unaffected**: their `/etc/gui-agents/secrets.env` is already written, and
+> `dispatch config push` never touched credentials.
 
 1. **Spin up** — launches, installs, registers in
    [dispatcher/boxes.yaml](dispatcher/):

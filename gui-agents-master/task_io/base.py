@@ -40,6 +40,26 @@ class AttemptResult:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+# Credential-failure messages, shared by the postgres_s3 source and sink so
+# both name the same file. These used to offer to scaffold null entries into
+# infra/configs/configs.yaml; that file no longer holds secrets, and the
+# prompt would have recreated it. Fail with directions instead.
+_MISSING_DB_URL_MSG = (
+    "postgres_s3 {what}: no database url. Set database.v1_url / database.v2_url "
+    "in <repo>/config/config.yaml (the run's `benchmark` picks which one), or "
+    "export the env var named by database.url_env."
+)
+
+_MISSING_AWS_MSG = (
+    "postgres_s3 {what}: no AWS credentials. Set aws.access_key_id / "
+    "aws.secret_access_key in <repo>/config/config.yaml, or export the env "
+    "vars named by aws.access_key_id_env / aws.secret_access_key_env. The "
+    "boto3 default credential chain (~/.aws/credentials, IAM role, etc.) is "
+    "intentionally NOT consulted — a benchmark run must not silently pick up "
+    "whichever identity happens to be ambient."
+)
+
+
 @runtime_checkable
 class TaskSource(Protocol):
     def iter_tasks(self) -> Iterator[TaskSpec]: ...

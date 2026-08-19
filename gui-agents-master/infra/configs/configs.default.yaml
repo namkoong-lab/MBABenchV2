@@ -131,10 +131,25 @@ sink:
     required: false
 
 
-# ---- Database (Phase 1+) ---------------------------------------------------
-# Either set `url.value` directly in configs.yaml, or leave it empty and set
-# `url_env` to the name of an env var that holds the connection string
-# (existing convention: MBABENCHV2JUDGE_KEYS_DATABASE_URL).
+# ---- Database --------------------------------------------------------------
+# NORMALLY LEAVE `url` EMPTY. The connection string comes from the monorepo
+# config at <repo>/config/config.yaml, which holds both databases side by
+# side and is selected by the `benchmark` key at the top of this file:
+#
+#     database:
+#       v1_url: "...neon.tech/BizbenchV1?..."     <- benchmark: v1
+#       v2_url: "...neon.tech/MBABenchV2?..."     <- benchmark: v2
+#
+# That is what makes "v2 run recorded into the v1 DB" impossible: the run
+# config picks the benchmark and the database together, or neither.
+#
+# Resolution order (task_io/registry.py), first hit wins:
+#   1. `url` below — an explicit override. On EC2 boxes this whole file is
+#      the pushed run profile, so the escape hatch stays available.
+#   2. <repo>/config/config.yaml -> database.v{1,2}_url  (benchmark-selected)
+#   3. the env var named by `url_env`. This is the box path: spinup.sh writes
+#      /etc/gui-agents/secrets.env and boxes never see the monorepo config.
+#      NOTE it is a single blind url — it cannot tell v1 from v2.
 database:
   url:
     value: ""
@@ -144,12 +159,15 @@ database:
     required: false
 
 
-# ---- AWS / S3 (Phase 2+) ---------------------------------------------------
-# Credentials follow the same direct-or-env pattern as `database.url`:
-#   * set `access_key_id.value` + `secret_access_key.value` in configs.yaml, OR
-#   * leave them empty and set the `_env` keys to env vars that hold them.
-# If both are empty, boto3's default credential chain is used (~/.aws/
-# credentials, IAM role, etc.).
+# ---- AWS / S3 --------------------------------------------------------------
+# Same three layers as `database` above:
+#   1. `access_key_id` / `secret_access_key` below (explicit override)
+#   2. <repo>/config/config.yaml -> aws.access_key_id / aws.secret_access_key
+#   3. the env vars named by the `*_env` keys (the box path)
+# `session_token` has no monorepo equivalent — layers 1 and 3 only.
+# If nothing resolves, the postgres_s3 source/sink RAISE rather than falling
+# through to boto3's default credential chain: a benchmark run must not
+# silently pick up whichever AWS identity happens to be ambient.
 aws:
   region:
     value: "us-east-1"

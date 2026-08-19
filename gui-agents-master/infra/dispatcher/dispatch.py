@@ -41,6 +41,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from infra.configs import load_configs  # noqa: E402
+from task_io.registry import _resolve_db_url_with_source  # noqa: E402
 from infra.dispatcher.boxes import Box, find_by_alias, load_boxes  # noqa: E402
 from infra.dispatcher.diagnostics import (  # noqa: E402
     ConnectivityVerdict,
@@ -255,21 +256,35 @@ def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> Non
 
 
 def _get_db_url() -> str:
+    """Resolve the DB url through the same layers as a run (registry.py).
+
+    CAVEAT — this is benchmark-blind. `load_configs()` here reads no
+    --run-config, so `cfg.benchmark` is whatever configs.yaml says, i.e.
+    the default "v2" on a laptop. Every dispatcher subcommand that reaches
+    the DB (`assign`, `backlog`) therefore targets the v2 database unless
+    MBABENCH_BENCHMARK says otherwise. Boxes are pinned to one experiment
+    each, so this only matters when dispatching against the v1 wave.
+    """
     cfg = load_configs()
-    db_cfg = getattr(cfg, "database", None)
-    direct = getattr(db_cfg, "url", "") or ""
-    if direct:
-        return direct
-    env_name = getattr(db_cfg, "url_env", "") or ""
-    if env_name:
-        v = os.environ.get(env_name, "") or ""
-        if v:
-            return v
-    raise ValueError(
-        "Could not resolve database URL. Set database.url in "
-        "infra/configs/configs.yaml or export the env var named in "
-        "database.url_env."
-    )
+    override = os.environ.get("MBABENCH_BENCHMARK", "").strip().lower()
+    if override:
+        if override not in ("v1", "v2"):
+            raise ValueError(
+                f"MBABENCH_BENCHMARK={override!r} is not 'v1' or 'v2'."
+            )
+        cfg.benchmark = override
+
+    url, source = _resolve_db_url_with_source(cfg)
+    if not url:
+        raise ValueError(
+            "Could not resolve database URL. Set database.v1_url / "
+            "database.v2_url in <repo>/config/config.yaml, or export the env "
+            "var named in database.url_env. (This command resolved benchmark="
+            f"{getattr(cfg, 'benchmark', 'v2')!r}; set MBABENCH_BENCHMARK to "
+            "target the other one.)"
+        )
+    logger.debug("dispatcher database: %s", source)
+    return url
 
 
 def _list_eligible_tasks(

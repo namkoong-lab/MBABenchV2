@@ -3,15 +3,22 @@
 Reads configs from infra/configs/, builds a TaskSource + AttemptSink, and
 drives the existing claude_web_engine.py subprocess once per task.
 
-infra/configs/ is the *only* input surface: no template file is loaded.
-For each task, the engine config is built by:
+Config layering (later wins), all of it project-wide — there is no
+per-task override layer:
 
-    1. Start with the full nested cfg dict (from configs.default.yaml +
-       configs.yaml).
-    2. Deep-merge the task's non-reserved YAML keys on top (layer 3 —
-       scoped to that task only).
-    3. Select the active provider block and assemble the dict the engine
-       expects.
+    1. infra/configs/configs.default.yaml   (schema + defaults)
+    2. infra/configs/configs.yaml           (optional; the pushed run
+       profile on EC2 boxes, absent on a laptop)
+    3. --run-config <file>                  (the per-experiment overlay)
+
+Credentials are NOT part of that stack. The database url and AWS keys come
+from the monorepo config at <repo>/config/config.yaml, with the url picked
+by `benchmark` (v1 -> database.v1_url, v2 -> database.v2_url); boxes, which
+never see that file, fall back to the env vars in /etc/gui-agents/secrets.env.
+See task_io/registry.py for the full precedence.
+
+Per task, the engine config is then built by selecting the active provider
+block from the merged cfg and assembling the dict the engine expects.
 
 Usage (from gui-agents-master/):
     python -m infra.run                       # real run, uses configs.yaml if present
@@ -56,11 +63,16 @@ if str(_REPO_ROOT) not in sys.path:
 
 from infra.configs import (  # noqa: E402
     ConfigError,
-    ensure_overrides_present,
     load_configs,
     resolve_agent_identity,
 )
-from task_io import AttemptResult, TaskSpec, build_sink, build_source  # noqa: E402
+from task_io import (  # noqa: E402
+    AttemptResult,
+    TaskSpec,
+    build_sink,
+    build_source,
+    describe_database_target,
+)
 from claude_web_agent.claude_web_engine import _sanitize_name  # noqa: E402
 
 logging.basicConfig(
@@ -675,18 +687,6 @@ def _resolve_log_dir(engine_config: dict, provider: str) -> Path:
     return Path(log_dir)
 
 
-# Per-provider config keys that the preflight in this file enforces. Keep
-# this list in sync with `preflight_check()` below — these are the keys
-# that path *requires* the user to set, and the only ones worth scaffolding
-# into configs.yaml as explicit null entries.
-PROVIDER_REQUIRED_KEYS: dict[str, list[tuple[str, ...]]] = {
-    "claude": [("claude_web", "model")],
-    # chatgpt has no hard-required keys since project_id became optional
-    # (2026-08-12, homepage fallback); project_slug was always optional.
-    "chatgpt": [],
-}
-
-
 def _confirm_tasks(specs: list[TaskSpec]) -> bool:
     """Print the loaded task list and ask the user to confirm."""
     print(f"\nAbout to run {len(specs)} task(s):")
@@ -772,7 +772,7 @@ def main() -> int:
             run_config_path = _REPO_ROOT / run_config_path
         if not run_config_path.exists():
             logger.error(f"--run-config file not found: {run_config_path}")
-            return 2
+            return EXIT_CONFIG_ERROR
         with open(run_config_path) as f:
             run_config_data = yaml.safe_load(f) or {}
         if not isinstance(run_config_data, dict):
@@ -780,7 +780,7 @@ def main() -> int:
                 f"--run-config must be a YAML mapping at top level: "
                 f"{run_config_path}"
             )
-            return 2
+            return EXIT_CONFIG_ERROR
         run_config_is_task_yaml = bool(_RUN_CONFIG_TASK_KEYS & set(run_config_data))
 
     try:
@@ -800,7 +800,7 @@ def main() -> int:
             cfg = load_configs(run_config_path=run_config_path)
     except ConfigError as e:
         logger.error(f"Config load failed:\n{e}")
-        return 2
+        return EXIT_CONFIG_ERROR
 
     if run_config_is_task_yaml:
         cfg.source.kind = "yaml"
@@ -813,7 +813,7 @@ def main() -> int:
                 f"{cfg.source.kind!r}). Use a run-config with "
                 f"source.kind=postgres_s3 or drop --task-id."
             )
-            return 2
+            return EXIT_CONFIG_ERROR
         filters = getattr(cfg.source, "filters", None)
         if filters is None:
             filters = SimpleNamespace()
@@ -831,10 +831,16 @@ def main() -> int:
     benchmark = (getattr(cfg, "benchmark", None) or "v2").lower()
     logger.info(f"Benchmark: {benchmark}")
 
+    # Which database this run reads/writes, and which layer supplied it.
+    # Logged BEFORE the build so a credential failure still shows what was
+    # attempted. Never prints the password — see describe_database_target.
+    if "postgres_s3" in (cfg.source.kind, cfg.sink.kind):
+        logger.info(f"Database: {describe_database_target(cfg)}")
+
     engine_script = _REPO_ROOT / "claude_web_agent" / "claude_web_engine.py"
     if not engine_script.exists():
         logger.error(f"Engine not found: {engine_script}")
-        return 2
+        return EXIT_CONFIG_ERROR
 
     try:
         source = build_source(cfg)
@@ -844,7 +850,7 @@ def main() -> int:
         # (database.url, aws.*), unknown source/sink kinds, etc.
         # Swallow the traceback and log the message the class raised.
         logger.error(f"Source/sink build failed:\n{e}")
-        return 2
+        return EXIT_CONFIG_ERROR
 
     identity = resolve_agent_identity(cfg)
     logger.info(
@@ -867,15 +873,6 @@ def main() -> int:
             )
             return EXIT_NO_TASKS
 
-        required = [".".join(p) for p in PROVIDER_REQUIRED_KEYS.get(provider, [])]
-        if ensure_overrides_present(
-            required, context=f"Preflight for provider {provider!r}"
-        ):
-            # Keys were just scaffolded as nulls — the config is incomplete
-            # and nothing was attempted. Previously exit 0, which callers
-            # (worker_loop) recorded as success.
-            return EXIT_CONFIG_ERROR
-
         # Build + preflight every task BEFORE the user-confirmation prompt.
         # If any task has null configs or missing files, abort here so the
         # user never sees "About to run" for a run that's guaranteed to fail.
@@ -896,10 +893,10 @@ def main() -> int:
                 prepared.append((spec, engine_config))
         if had_errors:
             logger.error(
-                "Fix infra/configs/configs.yaml or the task YAML and re-run. "
+                "Fix the --run-config or the task YAML and re-run. "
                 "configs.default.yaml lists every available key."
             )
-            return 2
+            return EXIT_CONFIG_ERROR
 
         if not args.dry_run and not args.yes:
             if not _confirm_tasks(specs):

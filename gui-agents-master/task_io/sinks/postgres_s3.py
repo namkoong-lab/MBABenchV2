@@ -36,7 +36,7 @@ import psycopg2
 import psycopg2.extras
 from psycopg2 import sql
 
-from ..base import AttemptResult
+from ..base import _MISSING_AWS_MSG, _MISSING_DB_URL_MSG, AttemptResult
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,8 @@ class PostgresS3AttemptSink:
     ):
         if not db_url:
             raise ValueError(
-                "PostgresS3AttemptSink: db_url is empty. Set database.url "
-                "in configs.yaml or export the env var named in "
-                "database.url_env."
+                "PostgresS3AttemptSink: db_url is empty. "
+                + _MISSING_DB_URL_MSG.format(what="task_attempts sink")
             )
         if not s3_bucket:
             raise ValueError("PostgresS3AttemptSink: s3_bucket is empty.")
@@ -127,7 +126,9 @@ class PostgresS3AttemptSink:
             raise ValueError(
                 f"AWS preflight failed: sts.get_caller_identity() errored "
                 f"({type(e).__name__}: {e}). Check aws.access_key_id / "
-                f"aws.secret_access_key in configs.yaml."
+                f"aws.secret_access_key in <repo>/config/config.yaml, or the "
+                f"env vars named by aws.access_key_id_env / "
+                f"aws.secret_access_key_env."
             ) from e
         logger.info(
             f"AWS identity: account={ident.get('Account')} " f"arn={ident.get('Arn')}"
@@ -335,28 +336,10 @@ class _TaskAttemptsPostgresS3Sink(PostgresS3AttemptSink):
                 "an empty value means the resolver returned an invalid "
                 "AgentIdentity (check infra/configs/agent_identity.py)."
             )
-        if not db_url and self._offer_db_url_scaffolding():
-            raise ValueError(
-                "database.url was scaffolded as null in configs.yaml — "
-                "fill it in (or export the env var named in database.url_env) "
-                "and re-run."
-            )
+        if not db_url:
+            raise ValueError(_MISSING_DB_URL_MSG.format(what="task_attempts sink"))
         if not (aws_access_key_id and aws_secret_access_key):
-            if self._offer_aws_creds_scaffolding():
-                raise ValueError(
-                    "aws credentials were scaffolded as null in "
-                    "configs.yaml — fill them in (or export the env vars "
-                    "named in aws.access_key_id_env / "
-                    "aws.secret_access_key_env) and re-run."
-                )
-            raise ValueError(
-                "task_attempts sink: aws.access_key_id and "
-                "aws.secret_access_key are required. Set them in "
-                "configs.yaml, or export the env vars named by "
-                "aws.access_key_id_env / aws.secret_access_key_env. The "
-                "boto3 default credential chain (~/.aws/credentials, IAM "
-                "role, etc.) is intentionally NOT consulted."
-            )
+            raise ValueError(_MISSING_AWS_MSG.format(what="task_attempts sink"))
         super().__init__(
             db_url=db_url,
             s3_bucket=s3_bucket,
@@ -371,47 +354,6 @@ class _TaskAttemptsPostgresS3Sink(PostgresS3AttemptSink):
         self.agent_model_name = agent_model_name
         self.agent_model_type = agent_model_type
         self.prompt_version = prompt_version
-
-    @staticmethod
-    def _offer_db_url_scaffolding() -> bool:
-        try:
-            from infra.configs import ensure_overrides_present
-        except ImportError:
-            return False
-        return ensure_overrides_present(
-            ["database.url"],
-            context=(
-                "task_attempts sink needs a DB connection, but "
-                "database.url is empty and the env var named in "
-                "database.url_env is not set"
-            ),
-        )
-
-    @staticmethod
-    def _offer_aws_creds_scaffolding() -> bool:
-        """Prompt to scaffold aws.access_key_id / aws.secret_access_key in
-        configs.yaml when neither direct values nor the env vars named by
-        aws.*_env yielded credentials.
-
-        We intentionally do NOT fall back to boto3's default credential
-        chain: credentials must come from configs.yaml or the explicitly
-        named env vars. Returns True iff entries were scaffolded and the
-        caller should abort."""
-        try:
-            from infra.configs import ensure_overrides_present
-        except ImportError:
-            return False
-        return ensure_overrides_present(
-            ["aws.access_key_id", "aws.secret_access_key"],
-            context=(
-                "task_attempts sink needs AWS credentials, "
-                "but aws.access_key_id / aws.secret_access_key are empty "
-                "and the env vars named in aws.access_key_id_env / "
-                "aws.secret_access_key_env are not set. The boto3 default "
-                "credential chain (~/.aws/credentials, IAM role, etc.) "
-                "is intentionally NOT consulted"
-            ),
-        )
 
     def _task_metadata(self, result: AttemptResult) -> dict:
         extra = result.extra or {}

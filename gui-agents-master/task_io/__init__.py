@@ -1,5 +1,5 @@
 from .base import AttemptResult, AttemptSink, TaskSource, TaskSpec
-from .registry import build_sink, build_source
+from .registry import build_sink, build_source, describe_database_target
 
 __all__ = [
     "AttemptResult",
@@ -8,4 +8,5 @@ __all__ = [
     "TaskSpec",
     "build_sink",
     "build_source",
+    "describe_database_target",
 ]

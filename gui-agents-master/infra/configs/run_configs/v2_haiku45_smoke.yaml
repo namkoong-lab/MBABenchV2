@@ -1,0 +1,64 @@
+# PIPELINE SMOKE TEST — benchmark v2, Claude Haiku 4.5, no extended reasoning.
+# DB identity resolves to: claude_haiku_4_5   (v2 identity is model-only)
+#
+# Purpose: exercise the full path end to end after the credential refactor —
+# monorepo config -> DB query -> S3 download -> browser run -> S3 upload ->
+# task_attempts insert. Haiku is the cheapest/fastest model that is a real
+# v2 identity, so the attempt this produces is legitimate benchmark data
+# rather than junk.
+#
+# Run it with infra/configs/run_configs/smoke_test.sh (dry-run first).
+
+benchmark: v2
+
+source:
+  kind: postgres_s3
+  schema: mbabenchv2                 # v2 = MBABenchV2 DB + s3://mbabench/MBABenchV2/
+  filters:
+    task_ids: [2]                    # BasicGrowth — small, and has no haiku attempt yet
+    task_sources: ["jp"]
+    skip_deprecated: true
+    # false so re-running the smoke test actually re-runs instead of exiting 3
+    # once the first attempt lands. Flip to true for real benchmark sweeps.
+    skip_already_attempted: false
+
+# SINK — swap these two lines to `kind: local` (and drop `schema`) for a
+# source-only smoke test that writes nothing to the DB or S3. Note that the
+# local sink exercises NEITHER the S3 upload nor the task_attempts insert,
+# which is most of what this test exists to cover.
+sink:
+  kind: postgres_s3
+  schema: mbabenchv2
+
+provider:
+  kind: "claude"
+
+# No prompts_file override: the repo default IS the v2 3-step set
+# (prompts_v2/step1_analyze, step2_build, step3_qa) at prompt_version 9.
+prompt_version: 9
+
+claude_web:
+  mode: "chat"                       # v2 runs use the plain chat surface
+  model: "haiku_4_5"
+  # Haiku 4.5 has no Effort submenu in the claude.ai model dropdown — this is
+  # the "non-extended reasoning" configuration. null = leave the session's
+  # current state alone; the agent skips the effort selector entirely.
+  # (v2 identities key on model only, so effort would not affect the DB label
+  # even if the control existed.)
+  effort: null
+
+  # Smoke-test budgets: 30 min/task and 2 attempts, so a wedged run fails in
+  # ~1.5h instead of the 6h the 2h/10-attempt defaults would allow.
+  # run.py's deadman = max_sec_per_task * retry.max_total_attempts + 1800.
+  max_sec_per_task: 1800
+  max_wait_per_prompt_seconds: 1800
+  retry:
+    max_agent_attempts: 2
+    max_total_attempts: 2
+    max_sec_per_task: 1800
+    max_sec_per_attempt: 1800
+
+  browser:
+    # Matches the Chrome launch command in CheatSheet.md.
+    cdp_port: 9223
+    profile_dir: "~/.chrome-web-agent-claude2"

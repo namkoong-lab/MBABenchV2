@@ -128,15 +128,51 @@ echo "  model_name:       $AGENT_MODEL_NAME   (→ task_attempts.agent_model_nam
 echo "  agent_folder:     $AGENT_FOLDER       (→ S3 prefix segment)"
 echo "  agent_model_type: $AGENT_MODEL_TYPE   (→ task_attempts.agent_model_type)"
 
-# Collect operator credentials from the laptop's infra/configs/configs.yaml
-# up front. Fail fast rather than halfway through launching a box we can't
-# actually configure. Same file the operator already curates for local runs;
-# accepts both raw scalars and the {value: ...} leaf form.
+# ─── NOT YET MIGRATED — see infra/configs/repo_config.py ────────────────────
+#
+# Secrets moved out of infra/configs/configs.yaml and into the monorepo
+# config at <repo>/config/config.yaml, which keys the database url by
+# benchmark (database.v1_url / database.v2_url) and spells the AWS key
+# `aws.access_key`, not `aws.access_key_id`. The laptop configs.yaml this
+# block harvested from no longer exists.
+#
+# Porting it is not just a path swap: a box is pinned to ONE experiment, so
+# spinup has to decide which url to bake into /etc/gui-agents/secrets.env.
+# That means reading `benchmark:` out of --config-template (none of the
+# templates in config_templates/ set it today, so they'd all silently take
+# the v2 default) or adding an explicit --benchmark flag. Provisioning a box
+# against the wrong database is exactly the failure this whole change set
+# exists to make impossible, so this stops rather than guesses.
+#
+# TO PORT:
+#   1. add --benchmark {v1|v2} (required, no default) to the arg parser
+#   2. read database.v${BENCHMARK}_url + aws.access_key /
+#      aws.secret_access_key from "$REPO_ROOT/../config/config.yaml"
+#   3. keep generate_secrets_env() as-is — the env var NAMES on the box do
+#      not change, only where the laptop reads the values from
+#   4. re-point the two error messages below at config/config.yaml
+#
+# Everything else in this script (AMI launch, rsync, systemd, VNC login) is
+# unaffected. Existing boxes keep running: their secrets.env is already
+# written and `dispatch config push` does not touch credentials.
+cat >&2 <<'EOF'
+spinup.sh is not migrated to the monorepo config yet.
+
+Credentials now live in <repo>/config/config.yaml (database.v1_url /
+database.v2_url, aws.access_key, aws.secret_access_key) instead of
+gui-agents-master/infra/configs/configs.yaml, which this script read.
+
+Spinning up a new box needs the port described in the comment above this
+message (it must be told which benchmark the box serves). Until then:
+
+  * existing boxes are unaffected — their /etc/gui-agents/secrets.env is
+    already written, and `dispatch config push` never touched credentials
+  * local runs work: python -m infra.run --run-config <file>
+
+EOF
+exit 2
+
 LAPTOP_CONFIGS="$REPO_ROOT/infra/configs/configs.yaml"
-if [[ ! -r "$LAPTOP_CONFIGS" ]]; then
-  echo "$LAPTOP_CONFIGS not found. Create it with database.url + aws.*" >&2
-  exit 2
-fi
 # Emit three lines: DB, AKID, SAK, STK (STK may be empty).
 CREDS="$(python3 - "$LAPTOP_CONFIGS" <<'PY' 2>/dev/null || true
 import sys, yaml

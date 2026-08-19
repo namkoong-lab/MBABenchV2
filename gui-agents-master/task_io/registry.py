@@ -3,10 +3,26 @@
 Both builders take the full `cfg` (not just the `source`/`sink` subtree) so
 backends like `postgres_s3` can reach other top-level blocks (`database`,
 `paths`, `agent`, `aws`) without re-plumbing arguments.
+
+CREDENTIAL PRECEDENCE (database url and AWS keys alike), first hit wins:
+
+  1. an explicit value in infra/configs/configs.yaml — on EC2 boxes that
+     file is the pushed run profile, so it stays able to override.
+  2. the monorepo config at <repo>/config/config.yaml. The database url is
+     selected there by `cfg.benchmark` (v1 -> database.v1_url, v2 ->
+     database.v2_url), which is what makes "wrong benchmark, wrong DB"
+     unrepresentable: the run config picks both or neither.
+  3. the env var named by database.url_env / aws.*_env. This is how the
+     worker boxes resolve everything — they never see layer 2.
+
+Layer 2 sits above the env vars deliberately: it is the only benchmark-aware
+source. MBABENCHV2JUDGE_KEYS_DATABASE_URL is a single blind url that cannot
+distinguish v1 from v2.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +31,14 @@ from infra.configs import resolve_agent_identity
 
 from .base import AttemptSink, TaskSource
 
+logger = logging.getLogger(__name__)
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Points the monorepo-config lookup at a different directory. Used by the
+# tests; also an escape hatch for layouts where the installed location is
+# wrong. Unset -> Config resolves its own directory via the editable install.
+_REPO_CONFIG_DIR_ENV = "MBABENCH_CONFIG_DIR"
 
 
 def _resolve(path: str | Path) -> Path:
@@ -25,34 +48,144 @@ def _resolve(path: str | Path) -> Path:
     return (_REPO_ROOT / p).resolve()
 
 
-def _resolve_db_url(database_cfg: SimpleNamespace | None) -> str:
-    if database_cfg is None:
-        return ""
-    direct = getattr(database_cfg, "url", "") or ""
+def _repo_value(*path: str) -> str | None:
+    """Non-empty string at a path in <repo>/config/config.yaml, else None.
+
+    `from config import Config` works because the root pyproject.toml exposes
+    config/python/config.py as a top-level module, so an editable install
+    resolves it from any cwd. This wrapper adds the three things that import
+    does not give you:
+
+    * It never raises. Worker boxes install only
+      gui-agents-master/requirements.txt and never rsync config/, so the
+      import fails there — and that failure IS the signal to fall through to
+      /etc/gui-agents/secrets.env, not an error.
+    * It never writes. Config.load() defaults to create_missing=True, which
+      seeds a config.yaml from the defaults as a side effect of reading one.
+    * A `null` placeholder (config_default.yaml ships `access_key_id: null`)
+      yields None, so an unset key falls through to the next layer rather
+      than resolving to something falsy-but-present.
+    """
+    try:
+        from config import Config
+    except ImportError:
+        logger.debug("monorepo `config` module not installed; using env vars")
+        return None
+
+    override = os.environ.get(_REPO_CONFIG_DIR_ENV)
+    # Config.load warns about every unset ${env:VAR} in the file, including
+    # keys gui-agents never reads (gemini_api_key, ...). Not worth a warning
+    # to someone starting a benchmark run.
+    cfg_log = logging.getLogger("config")
+    prev_level = cfg_log.level
+    cfg_log.setLevel(logging.ERROR)
+    try:
+        data = Config.load(
+            Path(override).expanduser() if override else None,
+            create_missing=False,
+            check_required=False,
+        ).as_dict()
+    except Exception as e:  # noqa: BLE001 — degrade, never break the caller
+        logger.warning(
+            "could not read the monorepo config (%s: %s); falling back to "
+            "environment variables",
+            type(e).__name__,
+            e,
+        )
+        return None
+    finally:
+        cfg_log.setLevel(prev_level)
+
+    node = data
+    for key in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node.strip() if isinstance(node, str) and node.strip() else None
+
+
+def _benchmark(cfg: SimpleNamespace) -> str:
+    return (getattr(cfg, "benchmark", None) or "v2").lower()
+
+
+def _resolve_db_url_with_source(cfg: SimpleNamespace) -> tuple[str, str]:
+    """(url, human-readable provenance). See the module docstring for order."""
+    database_cfg = getattr(cfg, "database", None)
+
+    direct = (getattr(database_cfg, "url", "") or "") if database_cfg else ""
     if direct:
-        return direct
-    env_name = getattr(database_cfg, "url_env", "") or ""
+        return direct, "configs.yaml database.url"
+
+    # The benchmark picks the database. This is the whole point of the
+    # layering: a run config names one experiment and gets that experiment's
+    # DB, with no second file to keep in sync.
+    bench = _benchmark(cfg)
+    repo_url = _repo_value("database", f"{bench}_url")
+    if repo_url:
+        return repo_url, f"config/config.yaml database.{bench}_url"
+
+    env_name = (getattr(database_cfg, "url_env", "") or "") if database_cfg else ""
     if env_name:
-        return os.environ.get(env_name, "") or ""
-    return ""
+        value = os.environ.get(env_name, "") or ""
+        if value:
+            return value, f"${env_name}"
+
+    return "", "unresolved"
+
+
+def _resolve_db_url(cfg: SimpleNamespace) -> str:
+    return _resolve_db_url_with_source(cfg)[0]
+
+
+def _database_name(url: str) -> str:
+    """Database name out of a connection string, dropping every credential."""
+    tail = url.split("://", 1)[-1].split("/", 1)
+    if len(tail) < 2:
+        return "?"
+    return tail[1].split("?", 1)[0] or "?"
+
+
+def describe_database_target(cfg: SimpleNamespace) -> str:
+    """One safe log line naming the DB a run will read/write, and why.
+
+    Never includes the password — a run.py log is routinely pasted into
+    issues and chats.
+    """
+    url, source = _resolve_db_url_with_source(cfg)
+    if not url:
+        return f"unresolved ({source})"
+    return f"{_database_name(url)} (from {source})"
 
 
 def _resolve_from_value_or_env(
-    cfg: SimpleNamespace | None, value_key: str, env_key: str
+    cfg: SimpleNamespace | None,
+    value_key: str,
+    env_key: str,
+    repo_section: str | None = None,
 ) -> str | None:
-    """Direct `value_key` wins; otherwise read env var named by `env_key`.
-    Returns None if neither yields a non-empty string, so boto3 can fall
-    back to its default credential chain."""
-    if cfg is None:
-        return None
-    direct = getattr(cfg, value_key, "") or ""
-    if direct:
-        return direct
-    env_name = getattr(cfg, env_key, "") or ""
-    if env_name:
-        v = os.environ.get(env_name, "") or ""
-        if v:
-            return v
+    """configs.yaml value -> monorepo config -> env var named by `env_key`.
+
+    `repo_section` is the monorepo config block to look `value_key` up in;
+    the key names match on both sides, so there is nothing to translate.
+    Returns None if no layer yields a non-empty string, so boto3 can fall
+    back to its default credential chain where the caller allows it.
+    """
+    if cfg is not None:
+        direct = getattr(cfg, value_key, "") or ""
+        if direct:
+            return direct
+
+    if repo_section:
+        from_repo = _repo_value(repo_section, value_key)
+        if from_repo:
+            return from_repo
+
+    if cfg is not None:
+        env_name = getattr(cfg, env_key, "") or ""
+        if env_name:
+            v = os.environ.get(env_name, "") or ""
+            if v:
+                return v
     return None
 
 
@@ -158,17 +291,18 @@ def build_source(cfg: SimpleNamespace) -> TaskSource:
             if schema == "bizbench"
             else MBABenchV2PostgresS3TaskSource
         )
-        db_url = _resolve_db_url(getattr(cfg, "database", None))
+        db_url = _resolve_db_url(cfg)
         scratch_dir = _resolve(cfg.paths.scratch_dir)
         filters = cfg.source.filters
         aws_cfg = getattr(cfg, "aws", None)
         region = getattr(aws_cfg, "region", None) if aws_cfg is not None else None
         access_key = _resolve_from_value_or_env(
-            aws_cfg, "access_key_id", "access_key_id_env"
+            aws_cfg, "access_key_id", "access_key_id_env", "aws"
         )
         secret_key = _resolve_from_value_or_env(
-            aws_cfg, "secret_access_key", "secret_access_key_env"
+            aws_cfg, "secret_access_key", "secret_access_key_env", "aws"
         )
+        # No session_token in the monorepo config — env-only by design.
         session_token = _resolve_from_value_or_env(
             aws_cfg, "session_token", "session_token_env"
         )
@@ -219,20 +353,27 @@ def build_sink(cfg: SimpleNamespace) -> AttemptSink:
             if schema == "bizbench"
             else MBABenchV2PostgresS3AttemptSink
         )
-        db_url = _resolve_db_url(getattr(cfg, "database", None))
+        db_url = _resolve_db_url(cfg)
         aws_cfg = getattr(cfg, "aws", None)
         region = getattr(aws_cfg, "region", None) if aws_cfg is not None else None
         access_key = _resolve_from_value_or_env(
-            aws_cfg, "access_key_id", "access_key_id_env"
+            aws_cfg, "access_key_id", "access_key_id_env", "aws"
         )
         secret_key = _resolve_from_value_or_env(
-            aws_cfg, "secret_access_key", "secret_access_key_env"
+            aws_cfg, "secret_access_key", "secret_access_key_env", "aws"
         )
+        # No session_token in the monorepo config — env-only by design.
         session_token = _resolve_from_value_or_env(
             aws_cfg, "session_token", "session_token_env"
         )
         default_bucket, default_prefix = _SCHEMA_S3_DEFAULTS[schema]
-        s3_bucket = getattr(aws_cfg, "s3_bucket", None) or default_bucket
+        # The prefix stays schema-derived — it encodes which experiment's
+        # attempts these are, so it must never come from a credentials file.
+        s3_bucket = (
+            getattr(aws_cfg, "s3_bucket", None)
+            or _repo_value("aws", "s3_bucket")
+            or default_bucket
+        )
         s3_prefix = getattr(aws_cfg, "s3_prefix", None) or default_prefix
         identity = resolve_agent_identity(cfg)
         return sink_cls(
