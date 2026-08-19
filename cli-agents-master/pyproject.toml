@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Excel automation agent for financial modeling benchmarks"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.0.0",
+    # Pinned below 2.0: mcp 2.x dropped `mcp.server.fastmcp` (renamed to
+    # `mcp.server.mcpserver`), which excel_mcp_server/core/shared_state.py imports.
+    "mcp>=1.0,<2",
     "openpyxl>=3.1.0",
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",

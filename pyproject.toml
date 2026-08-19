@@ -5,11 +5,59 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "MBABenchV2"
 version = "0.1.0"
-description = "MBABenchV2 task ingestion and Gemini-based time estimation scripts."
-requires-python = ">=3.10"
-# Runtime dependencies are tracked in setup/requirements.txt (flat list, so
-# `uv pip freeze > setup/requirements.txt` round-trips cleanly), not here.
-dependencies = []
+description = "MBABenchV2 benchmark harness: task ingestion, agent runners, judge, and analysis."
+# 3.12 matches the version the judge was pinned to (judge/setups/setup.sh) and
+# the version the unified env is tested against.
+requires-python = ">=3.12"
+
+# The workspace members below (judge, cli/gui/coding agents) each declare their
+# own dependencies; depending on them here pulls those in. Everything listed
+# after them is what the top-level scripts/ and operation/ directories need.
+dependencies = [
+    # Workspace members — see [tool.uv.sources].
+    "excel-judge",
+    "excel-cli-agent",
+    "coding-agents",
+    "gui-system",
+
+    # scripts/ — ingest_tasks.py, add_task.py, estimate_task_times.py
+    "boto3>=1.34",
+    "psycopg2-binary>=2.9",
+    "pandas>=2.0",
+    "google-genai",
+    "pyyaml>=6.0",
+
+    # operation/ — get_results.py and paper_scripts/ plots
+    "matplotlib>=3.8",
+    "numpy>=1.24",
+    "scipy>=1.11",
+]
+
+[dependency-groups]
+# Installed by `uv sync` by default; skip with `uv sync --no-dev`.
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "ruff",
+]
+
+[tool.uv.workspace]
+# judge/ and gui-agents-master/ are members so their dependencies stay declared
+# next to the code that imports them. Neither exposes importable modules through
+# the install (see the notes in their pyproject.toml files) — both are reached
+# via the sys.path handling their own entry points already do.
+members = [
+    "judge",
+    "cli-agents-master",
+    "coding-agents-master",
+    "gui-agents-master",
+]
+
+[tool.uv.sources]
+excel-judge = { workspace = true }
+excel-cli-agent = { workspace = true }
+coding-agents = { workspace = true }
+gui-system = { workspace = true }
 
 # Expose the vendored config system (config/python/config.py) as the importable
 # top-level `config` module. An editable install keeps config.py at its real

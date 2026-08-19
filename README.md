@@ -3,12 +3,12 @@
 The single repo for the MBABench experiments. It hosts every agent pipeline
 plus the judge, and each run declares which **benchmark** it belongs to:
 
-| | **v1** (BizbenchV1 wave) | **v2** (MBABenchV2 task set) |
-|---|---|---|
-| DB (Neon) | `BizbenchV1` | `MBABenchV2` |
-| S3 | `s3://mbabench/BizbenchV1/…` | `s3://mbabench/MBABenchV2/…` |
-| Agent prompts | single-prompt pv9 (`gui-agents-master/tasks_configs/prompts_pv9/`) | 3-step rubric prompts (`gui-agents-master/tasks_configs/prompts_v2/`) |
-| Grading rubric | 3 categories / 17 checks (`judge/prompts/rubrics/rubric_8.json`) | 12 categories / 132 checks (`judge/prompts/rubrics/rubric_9.json`, agentic judge only) |
+|                | **v1** (BizbenchV1 wave)                                           | **v2** (MBABenchV2 task set)                                                           |
+| -------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| DB (Neon)      | `BizbenchV1`                                                       | `MBABenchV2`                                                                           |
+| S3             | `s3://mbabench/BizbenchV1/…`                                       | `s3://mbabench/MBABenchV2/…`                                                           |
+| Agent prompts  | single-prompt pv9 (`gui-agents-master/tasks_configs/prompts_pv9/`) | 3-step rubric prompts (`gui-agents-master/tasks_configs/prompts_v2/`)                  |
+| Grading rubric | 3 categories / 17 checks (`judge/prompts/rubrics/rubric_8.json`)   | 12 categories / 132 checks (`judge/prompts/rubrics/rubric_9.json`, agentic judge only) |
 
 How each pipeline selects the benchmark at launch:
 
@@ -57,11 +57,9 @@ config/                    The two-tiered config system (ThomsonYen/config).
   config_default.yaml      Committed defaults (bucket, model, persona, ...).
   config.yaml              Local overrides (gitignored, auto-created).
   python/                  Upstream package; config.py is installed as `config`.
-setup/                     Environment setup.
-  requirements.txt         Flat dependency list; freeze target for
-                           `uv pip freeze > setup/requirements.txt`.
-  setup.sh                 Installs requirements.txt, then `pip install -e .`
-                           (uv if present, else pip).
+setup.sh                   Environment setup: reads venv_path from the config,
+                           then `uv sync` for the whole workspace.
+uv.lock                    The pinned resolution for every workspace member.
 ```
 
 [ThomsonYen/config](https://github.com/ThomsonYen/config) is the config system.
@@ -93,27 +91,20 @@ the standard locations (`~/.aws/credentials` or `AWS_*` env vars).
 
 ## Setup
 
-`setup/requirements.txt` is the runtime dependency list. `setup.sh` installs it
-and then runs `pip install -e .`, the editable install that exposes the `config`
-module.
+Dependencies are declared per component in each `pyproject.toml` and resolved
+together as a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/),
+pinned in the repo-root `uv.lock`. `setup.sh` creates the environment, installs
+that locked set, and installs every workspace member editable — including the
+`config` module.
 
 ```bash
-# 1. Create and activate a virtual environment
-python -m venv .venv
-source .venv/bin/activate
+#    Create the environment and install everything (needs uv).
+#    Location comes from venv_path in config/config.yaml; default is .venv.
+./setup.sh
 
-# 2. Install the project (editable) and its dependencies.
-#    This also makes the `config` module importable.
-bash setup/setup.sh          # or: pip install -r setup/requirements.txt
-
-# 3. Configure environment variables. These are referenced from
-#    config/config_default.yaml via ${env:VAR}; set them in your shell.
-export DATABASE_URL="postgresql://USER:PASSWORD@HOST/MBABenchV2?sslmode=require"
-export GEMINI_API_KEY="your-gemini-api-key"
-
-# 4. Confirm AWS access (credentials come from ~/.aws/credentials or AWS_* vars)
+# [Optional] Confirm AWS access (credentials come from ~/.aws/credentials or AWS_* vars)
 aws sts get-caller-identity
-aws s3 ls s3://mbabench/
+aws s3 ls s3://[bucket_name]/
 ```
 
 ## Adding a new task

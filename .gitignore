@@ -15,3 +15,5 @@ scratch/
 judge/project_configs.yaml
 judge/scratch/
 judge/judge_results/
+
+operation/results/
