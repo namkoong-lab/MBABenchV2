@@ -1,11 +1,16 @@
 # PIPELINE SMOKE TEST — benchmark v2, Claude Haiku 4.5, no extended reasoning.
 # DB identity resolves to: claude_haiku_4_5   (v2 identity is model-only)
 #
-# Purpose: exercise the full path end to end after the credential refactor —
-# monorepo config -> DB query -> S3 download -> browser run -> S3 upload ->
-# task_attempts insert. Haiku is the cheapest/fastest model that is a real
-# v2 identity, so the attempt this produces is legitimate benchmark data
-# rather than junk.
+# Purpose: exercise the full path end to end — monorepo config -> DB query ->
+# S3 download -> browser run -> S3 upload -> task_attempts insert. Haiku is
+# the cheapest/fastest model that is a real v2 identity.
+#
+# THIS PRODUCES THROWAWAY DATA, NOT BENCHMARK DATA. It runs prompt_version 0,
+# which asks for the workbook back unchanged plus one "TEST SHEET" — seconds
+# of agent time instead of a full model, and a solution file you can verify
+# by eye. Never grade the attempts it writes. For real benchmark data on this
+# identity, set prompt_version to 200 or 201 and move the config out of
+# test_configs/.
 
 benchmark: v2
 
@@ -31,7 +36,10 @@ sink:
 provider:
   kind: "claude"
 
-prompt_version: 201
+# 0 = the pipeline smoke-test prompt (tasks_configs/prompts/v000_test.txt):
+# copy the workbook, add a "TEST SHEET" with a large "TEST", download it.
+# No modeling, so this exercises the plumbing without paying for a real run.
+prompt_version: 0
 
 claude_web:
   mode: "chat"                       # v2 runs use the plain chat surface

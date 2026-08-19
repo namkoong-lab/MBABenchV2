@@ -268,6 +268,8 @@ prompts_file:
 # task_attempts.prompt_version — one key, so the DB label and the text the
 # agent receives cannot disagree. Registered versions:
 #
+#     0    000 pipeline smoke test   (no modeling — copy workbook + add a
+#                                    "TEST SHEET"; throwaway rows, never grade)
 #     9    pv9 single prompt         (17-check rubric, 1 turn)
 #   200    rubric-v9 3-step          (132-check rubric, 3 turns)
 #   201    rubric-v9 single-pass     (132-check rubric, 1 turn)

@@ -29,12 +29,31 @@
 # New text = new number.
 #
 # NUMBERING
+#   0        infrastructure smoke test — not a benchmark prompt. Rows it
+#            produces are throwaway.
 #   9        the number the earlier wave already carries in
 #            task_attempts.prompt_version, kept so that history and future
 #            runs on the same prompt name the same thing.
 #   2xx      the rubric-v9 (132-check) prompt sets.
 
 versions:
+
+  0:
+    label: "000 pipeline smoke test"
+    description: >
+      NOT a benchmark prompt. One turn asking the agent to return the
+      attached workbook unchanged plus a single extra sheet named
+      "TEST SHEET" holding a large bold "TEST" in A1.
+
+      Exists to exercise the whole path — upload, chat turn, download,
+      file validation, S3/DB write — in seconds and without spending
+      reasoning on a case, and to give a solution file whose correctness
+      is checkable by eye. Never grade a run recorded under this version.
+
+      Written `0` here; a run config may set `prompt_version: 000` or `0`
+      (YAML reads both as the integer 0).
+    files:
+      - "tasks_configs/prompts/v000_test.txt"
 
   9:
     label: "pv9 single prompt"

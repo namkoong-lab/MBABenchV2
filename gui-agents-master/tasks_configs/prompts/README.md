@@ -5,9 +5,17 @@
 
 | Version | Turns | Prompt set |
 | --- | --- | --- |
+| 0 | 1 | `v000_test.txt` — pipeline smoke test, **not** a benchmark prompt |
 | 9 | 1 | `prompts_pv9/SHARED_pv9_prompt.txt` — 17-check rubric |
 | 200 | 3 | `prompts_v2/step1_analyze` → `step2_build` → `step3_qa` — 132-check rubric |
 | 201 | 1 | `v2_1.txt` — same 132-check rubric, single pass |
+
+Version 0 asks the agent to return the attached workbook unchanged plus one
+extra sheet named `TEST SHEET` with a large bold `TEST` in A1. It exercises
+upload → chat turn → download → validation → S3/DB write in seconds, and the
+result is checkable by eye. Runs recorded under it are throwaway — never grade
+them. A run config may write `prompt_version: 000` or `0`; YAML reads both as
+the integer 0.
 
 ## Why
 
