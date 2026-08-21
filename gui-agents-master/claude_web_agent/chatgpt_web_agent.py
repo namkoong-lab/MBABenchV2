@@ -46,9 +46,6 @@ class ChatGPTWebAgent(WebAgent):
         "login_button": 'button:has-text("Log in")',
         "thinking_active": 'button:has-text("Pro thinking")',
         "thinking_complete": 'button:text-matches("Thought for \\d")',
-        # Response
-        "chatgpt_said": 'heading:has-text("ChatGPT said:")',
-        "user_said": 'heading:has-text("You said:")',
         # Model — pill in the composer toolbar that opens the dropdown
         "model_selector": 'button.__composer-pill[aria-haspopup="menu"]',
     }
@@ -553,16 +550,30 @@ class ChatGPTWebAgent(WebAgent):
     def _model_row_shows(row_text: str, model_label: str) -> bool:
         """True iff the submenu-parent row is showing model_label.
 
-        text_content() concatenates the row's caption and value.
-        Historically the row was just the value ('GPT-5.6 Sol…'); since
-        2026-08-12 (observed live on task 1 ApfelInc) it carries a
-        'Model' caption first ('ModelGPT-5.6 Sol'), which broke plain
-        startswith. Strip the caption, then match on the remainder.
+        Two things have to be normalized away before comparing.
+
+        The row's text_content() concatenates its caption and value, so it
+        reads 'ModelGPT-5.6 Sol' rather than the bare value (observed live
+        2026-08-12) — strip the caption.
+
+        The value is then written in EITHER form: the menu lists the option
+        as 'GPT-5.5', but once that option is selected the row and the pill
+        both shorten it to '5.5' ('Model5.5', pill '5.5Instant') — verified
+        live 2026-08-21. Selecting the model therefore made verification
+        fail against the very label that had just been clicked. Compare with
+        the 'GPT-' prefix dropped from both sides so either rendering
+        matches.
         """
+        def norm(s: str) -> str:
+            s = s.strip().lower()
+            if s.startswith("gpt-"):
+                s = s[len("gpt-"):]
+            return s.lstrip()
+
         t = row_text.strip()
         if t.lower().startswith("model"):
             t = t[len("model"):].lstrip()
-        return t.lower().startswith(model_label.lower())
+        return norm(t).startswith(norm(model_label))
 
     async def ensure_model_and_intelligence(self) -> bool:
         """Select the configured model (submenu) and intelligence (radios).
@@ -991,19 +1002,59 @@ class ChatGPTWebAgent(WebAgent):
                     direct_input = self.page.locator(
                         'input#upload-files[type="file"]')
                     if await direct_input.count() > 0:
-                        filename = Path(file_path).name
-                        await self._set_input_files_cdp_safe(
-                            direct_input.first, file_path)
+                        # Match the tile on the file's STEM, not its full
+                        # name: chatgpt.com de-duplicates an upload whose
+                        # name already exists in the account by appending a
+                        # counter, so ApfelInc.xlsx renders as
+                        # "ApfelInc(2).xlsx" on any run after the first. The
+                        # rename also lands ASYNCHRONOUSLY — the tile appears
+                        # under the local name and is relabelled when the
+                        # server answers — so an exact-name match was a race
+                        # that passed or failed on timing (observed live
+                        # 2026-08-21, task 1). The tile is a div[role=group]
+                        # carrying the displayed name as its aria-label;
+                        # it is NOT a <button>, so the old
+                        # button[aria-label=...] half never matched at all.
+                        stem = Path(file_path).stem.replace('"', '')
                         chip = self.page.locator(
-                            f'[role="group"]:has-text("{filename}"), '
-                            f'button[aria-label="{filename}"]'
-                        )
-                        await chip.first.wait_for(
-                            state="attached", timeout=10000)
-                        uploaded = True
+                            f'[role="group"][aria-label*="{stem}"]')
+                        before = await chip.count()
+
+                        # Retry the set: for the first ~3s after
+                        # navigate_to_new_chat returns, the composer accepts
+                        # the change event and DROPS it — no tile ever
+                        # appears, not even after 30s (measured live
+                        # 2026-08-21: at 0s delay the file is lost, at 3s it
+                        # attaches). navigate returns as soon as the chat
+                        # input is ATTACHED, which is earlier than whatever
+                        # the uploader is waiting on; React's own props are
+                        # on the input from the first millisecond, so they
+                        # are not a usable readiness signal. Because a
+                        # dropped set never materializes later, re-setting
+                        # cannot double-attach.
+                        for set_try in range(4):
+                            await self._set_input_files_cdp_safe(
+                                direct_input.first, file_path)
+                            try:
+                                await chip.nth(before).wait_for(
+                                    state="attached", timeout=6000)
+                                uploaded = True
+                                break
+                            except Exception:
+                                logger.info(
+                                    f"composer dropped the file — re-setting "
+                                    f"(try {set_try + 1}/4)"
+                                )
+                        if not uploaded:
+                            raise RuntimeError(
+                                "hidden input#upload-files accepted the file "
+                                "but no attachment tile appeared"
+                            )
+                        shown = await chip.nth(before).get_attribute(
+                            "aria-label")
                         logger.info(
-                            "Uploaded via hidden input#upload-files "
-                            "(direct set_input_files)")
+                            f"Uploaded via hidden input#upload-files "
+                            f"(direct set_input_files); tile shows {shown!r}")
                 except Exception as e_direct:
                     logger.info(
                         f"Direct input#upload-files upload failed — "
@@ -1130,14 +1181,25 @@ class ChatGPTWebAgent(WebAgent):
 
                 await self.page.wait_for_timeout(2000)
 
-                # Verify file appears as attachment
-                filename = Path(file_path).name
-                attachment = self.page.locator(f'[role="group"]:has-text("{filename}")')
+                # Verify the file appears as an attachment tile. Same stem
+                # match as approach 0 above (chatgpt.com may rename the
+                # upload to "<stem>(n).<ext>"), and .first because the
+                # composer holds one tile per uploaded file — a bare
+                # locator over several of them is a strict-mode violation,
+                # which surfaced as a spurious "not confirmed" warning on
+                # an upload that had in fact succeeded.
+                stem = Path(file_path).stem.replace('"', '')
+                attachment = self.page.locator(
+                    f'[role="group"][aria-label*="{stem}"]')
                 try:
-                    await attachment.wait_for(state="attached", timeout=5000)
-                    logger.info(f"File attached: {filename}")
+                    await attachment.first.wait_for(
+                        state="attached", timeout=5000)
+                    shown = await attachment.first.get_attribute("aria-label")
+                    logger.info(f"File attached: {shown!r}")
                 except Exception:
-                    logger.warning(f"File attachment not confirmed for: {filename}")
+                    logger.warning(
+                        f"File attachment not confirmed for: "
+                        f"{Path(file_path).name}")
 
             # The chip appearing only means the file was ACCEPTED, not that
             # ChatGPT finished processing the upload. When their file
@@ -1559,26 +1621,26 @@ class ChatGPTWebAgent(WebAgent):
             return ""
 
     async def _count_response_articles(self) -> int:
-        """Count ChatGPT response articles currently on the page.
+        """Count the assistant turns currently on the page.
 
-        Uses JS evaluate for CDP reliability. Counts
-        data-message-author-role='assistant'; the <article> + <h6> branch
-        fires only on a page that carries no such attribute anywhere.
-        NOT VERIFIED against chatgpt.com since 2026-08-12 — if a live check
-        shows the attribute on every assistant turn, the branch is dead and
-        should go.
+        Must match the tiers _extract_last_response reads, because only some
+        responses carry data-message-author-role: verified live 2026-08-20
+        across 14 conversations, short plain-text answers carried
+        role='assistant' (5/14) while longer agentic ones carried only
+        [data-turn]/.agent-turn (9/14). Counting the role attribute alone
+        returned 0 on those 9, which silently disabled both callers — the
+        "a new turn appeared" test for generation-started, and the
+        articles_changed liveness signal during generation.
         """
         try:
             return await self.page.evaluate(
                 """() => {
                 const assistants = document.querySelectorAll("[data-message-author-role='assistant']");
                 if (assistants.length > 0) return assistants.length;
-                // No author-role attribute anywhere on the page.
-                return Array.from(document.querySelectorAll('article'))
-                    .filter(a => {
-                        const h6 = a.querySelector('h6');
-                        return h6 && h6.textContent.includes('ChatGPT said:');
-                    }).length;
+                const turns = Array.from(document.querySelectorAll('[data-turn]'))
+                    .filter(el => el.getAttribute('data-turn') !== 'user');
+                if (turns.length > 0) return turns.length;
+                return document.querySelectorAll('.agent-turn').length;
             }"""
             )
         except Exception:
@@ -1931,14 +1993,15 @@ class ChatGPTWebAgent(WebAgent):
         """Extract text from the last ChatGPT response.
 
         Uses JS evaluate instead of Playwright locators for CDP reliability.
-        Three strategies, each firing only when the one above it matched
+        Two strategies, the second firing only when the first matched
         nothing on the page:
-        1. data-message-author-role='assistant' — chat mode
-        2. [data-turn] / .agent-turn — work mode, which carries no
-           author-role attribute
-        3. <article> with <h6> 'ChatGPT said:' — NOT VERIFIED against
-           chatgpt.com since 2026-08-12. If a live check shows every
-           assistant turn under strategy 1 or 2, this branch is dead.
+        1. data-message-author-role='assistant' — carried by short
+           plain-text answers
+        2. [data-turn] / .agent-turn — carried by longer agentic answers,
+           which have no author-role attribute at all
+
+        Both are needed: verified live 2026-08-20 over 14 conversations,
+        5 exposed only strategy 1 and 9 only strategy 2.
         """
         try:
             text = await self.page.evaluate(
@@ -1969,21 +2032,12 @@ class ChatGPTWebAgent(WebAgent):
                 if (agentTurns.length > 0) {
                     return Array.from(agentTurns).map(el => el.innerText || '').join('\\n\\n');
                 }
-                // Strategy 3: no author-role attribute and no [data-turn]
-                // anywhere — see the docstring's verification note.
-                const articles = Array.from(document.querySelectorAll('article'));
-                for (let i = articles.length - 1; i >= 0; i--) {
-                    const h6 = articles[i].querySelector('h6');
-                    if (h6 && h6.textContent.includes('ChatGPT said:')) {
-                        return articles[i].innerText;
-                    }
-                }
                 return null;
             }"""
             )
             if text:
-                text = text.replace("ChatGPT said:\n", "").strip()
-                return text if text else None
+                text = text.strip()
+                return text or None
             return None
         except Exception as e:
             logger.error(f"Response extraction failed: {e}")
@@ -2473,19 +2527,16 @@ class ChatGPTWebAgent(WebAgent):
                     }
                 }
 
-                // Find ChatGPT response containers. The <article> + <h6>
-                // branch fires only when no element carries
-                // data-message-author-role — see _extract_last_response's
-                // docstring for the verification note on it.
+                // Assistant turns, in the two shapes chatgpt.com serves:
+                // short plain-text answers carry the author-role attribute,
+                // longer agentic ones only [data-turn]. Same tiers as
+                // _extract_last_response / _count_response_articles.
                 let responseElements = Array.from(
                     document.querySelectorAll("[data-message-author-role='assistant']")
                 );
                 if (responseElements.length === 0) {
-                    responseElements = Array.from(document.querySelectorAll('article'))
-                        .filter(a => {
-                            const h6 = a.querySelector('h6');
-                            return h6 && h6.textContent.includes('ChatGPT said:');
-                        });
+                    responseElements = Array.from(document.querySelectorAll('[data-turn]'))
+                        .filter(el => el.getAttribute('data-turn') !== 'user');
                 }
                 const totalAssistant = responseElements.length;
                 const newArticles = responseElements.slice(baseline);
@@ -2737,18 +2788,20 @@ class ChatGPTWebAgent(WebAgent):
             if downloaded:
                 return downloaded
 
-            # Strategy 2: Fallback — look for sandbox download links in NEW articles only.
-            # ChatGPT agent mode sometimes produces download links for files
-            # saved to /mnt/data/ instead of inline preview cards.
+            # Strategy 2: Fallback — sandbox download links in NEW turns only.
+            # The model sometimes links a file saved to /mnt/data/ instead of
+            # rendering an inline preview card.
             logger.info("No preview cards found, trying sandbox download links...")
             download_links = await self.page.evaluate(
                 """(baseline) => {
-                const allArticles = Array.from(document.querySelectorAll('article'));
-                const chatgptArticles = allArticles.filter(a => {
-                    const h6 = a.querySelector('h6');
-                    return h6 && h6.textContent.includes('ChatGPT said:');
-                });
-                const newArticles = chatgptArticles.slice(baseline);
+                let assistantTurns = Array.from(
+                    document.querySelectorAll("[data-message-author-role='assistant']")
+                );
+                if (assistantTurns.length === 0) {
+                    assistantTurns = Array.from(document.querySelectorAll('[data-turn]'))
+                        .filter(el => el.getAttribute('data-turn') !== 'user');
+                }
+                const newArticles = assistantTurns.slice(baseline);
                 const links = [];
                 for (const article of newArticles) {
                     const articleLinks = Array.from(article.querySelectorAll('a[href*="sandbox"]'));
@@ -2824,34 +2877,38 @@ class ChatGPTWebAgent(WebAgent):
         return downloaded
 
     async def get_conversation_history(self) -> list[dict]:
-        """Extract conversation as list of message dicts."""
+        """Extract conversation as list of message dicts.
+
+        Reads [data-turn], whose attribute value IS the role, so both sides
+        of the conversation come from one query in document order.
+        [data-message-author-role] is the fallback for a page that renders
+        the attribute but not the turn wrapper.
+
+        Verified live 2026-08-20: chatgpt.com serves no <article> and no <h6>
+        elements at all (0 of each across 14 conversations), so the heading
+        walk this used to do returned an empty transcript on every run.
+        """
         messages = []
         try:
-            articles = self.page.locator("article")
-            count = await articles.count()
-
-            for i in range(count):
-                article = articles.nth(i)
-                text = await article.inner_text()
-
-                # Determine role from heading
-                user_heading = article.locator('h5:has-text("You said:")')
-                if await user_heading.count() > 0:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": text.replace("You said:\n", "").strip(),
-                        }
-                    )
-                else:
-                    assistant_heading = article.locator('h6:has-text("ChatGPT said:")')
-                    if await assistant_heading.count() > 0:
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": text.replace("ChatGPT said:\n", "").strip(),
-                            }
-                        )
+            messages = await self.page.evaluate(
+                """() => {
+                const read = (el, role) => ({
+                    role: role === 'user' ? 'user' : 'assistant',
+                    content: (el.innerText || '').trim(),
+                });
+                let turns = Array.from(document.querySelectorAll('[data-turn]'));
+                if (turns.length > 0) {
+                    return turns.map(el => read(el, el.getAttribute('data-turn')));
+                }
+                turns = Array.from(
+                    document.querySelectorAll('[data-message-author-role]')
+                );
+                return turns.map(
+                    el => read(el, el.getAttribute('data-message-author-role'))
+                );
+            }"""
+            )
+            messages = [m for m in messages if m.get("content")]
         except Exception as e:
             logger.error(f"Conversation history extraction failed: {e}")
 

@@ -1,0 +1,93 @@
+# PIPELINE SMOKE TEST — benchmark v2, ChatGPT GPT-5.5 in chat mode at Instant.
+# DB identity resolves to: chatgpt_gpt_5_5_instant
+# (v2 chat identity is mode + model + intelligence)
+#
+# The ChatGPT twin of v2_haiku45_smoke.yaml. Purpose is the same: exercise the
+# full path end to end — monorepo config -> DB query -> S3 download -> browser
+# run -> S3 upload -> task_attempts insert.
+#
+# "Cheapest" on a ChatGPT Plus/Pro subscription is not a per-token price —
+# there isn't one. What this minimizes is reasoning time and rate-limit
+# budget: an older model (GPT-5.5) at the floor of the chat-mode intelligence
+# axis (Instant < Medium < High < Extra High < Pro). Pair it with
+# prompt_version 0 and a run costs seconds of model time.
+#
+# NOTE ON "Instant speed": chat mode has no `speed` knob — that one is
+# work-mode only (standard|fast). Instant is a value on the `intelligence`
+# axis, which is what the composer pill's top-level radios select.
+#
+# THIS PRODUCES THROWAWAY DATA, NOT BENCHMARK DATA. prompt_version 0 asks for
+# the workbook back unchanged plus one "TEST SHEET" — a solution file you can
+# verify by eye. Never grade the attempts it writes — prompt_version 0 is
+# what marks them, so filter on it before grading. For real benchmark data,
+# set prompt_version to 200 or 201 and move this config out of test_configs/.
+
+benchmark: v2
+
+source:
+  kind: postgres_s3
+  schema: mbabenchv2                 # v2 = MBABenchV2 DB + s3://mbabench/MBABenchV2/
+  filters:
+    task_ids: [2]                    # BasicGrowth — small; same task the haiku smoke uses
+    task_sources: ["jp"]
+    skip_deprecated: true
+    # false so re-running the smoke test actually re-runs instead of exiting 3
+    # once the first attempt lands. Flip to true for real benchmark sweeps.
+    skip_already_attempted: false
+
+# SINK — swap these two lines to `kind: local` (and drop `schema`) for a
+# source-only smoke test that writes nothing to the DB or S3. Note that the
+# local sink exercises NEITHER the S3 upload nor the task_attempts insert,
+# which is most of what this test exists to cover.
+sink:
+  kind: postgres_s3
+  schema: mbabenchv2
+
+provider:
+  kind: "chatgpt"
+
+# 0 = the pipeline smoke-test prompt (tasks_configs/prompts/v000_test.txt):
+# copy the workbook, add a "TEST SHEET" with a large "TEST", download it.
+# No modeling, so this exercises the plumbing without paying for a real run.
+prompt_version: 0
+
+chatgpt_web:
+  # null = start at the chatgpt.com homepage, no project scope (the agent
+  # logs a warning and continues). The smoke test does not need a project,
+  # and a project id belongs to ONE account — the id in
+  # dispatcher/config_templates/chatgpt_pro.yaml is the EC2 boxes' account
+  # and silently redirects to the homepage in any other.
+  project_id: null
+  project_slug: null
+
+  mode: "chat"                       # chat surface: model + intelligence
+  # Selected from the pill's nested model submenu, by the visible label
+  # "GPT-5.5" (see MODEL_LABELS in chatgpt_web_agent.py).
+  model: "gpt_5_5"
+  # The cheap knob. Instant = no reasoning, answers in seconds. It is part
+  # of the v2 chat identity, so this run is labelled chatgpt_gpt_5_5_instant
+  # and never mixes with a GPT-5.5 cohort run at a different intelligence.
+  # (Do not write `model: "instant"` — that is a one-axis value kept only so
+  # the old chatgpt_instant cohort can be reproduced; it routes to this same
+  # axis, warns, and resolves to a different DB identity.)
+  intelligence: "instant"
+  # Work-mode knobs. Must stay null in chat mode or the agent warns.
+  effort: null
+  speed: null
+
+  # Smoke-test budgets: 30 min/task and 2 attempts, so a wedged run fails in
+  # ~1.5h instead of the 6h the 2h/10-attempt defaults would allow.
+  # run.py's deadman = max_sec_per_task * retry.max_total_attempts + 1800.
+  # (chatgpt_web.retry has no max_sec_per_task — that key is claude_web's.)
+  max_sec_per_task: 1800
+  max_wait_per_prompt_seconds: 1800
+  retry:
+    max_agent_attempts: 2
+    max_total_attempts: 2
+    max_sec_per_attempt: 1800
+
+  browser:
+    # The ChatGPT lane runs its own Chrome on its own port, so a Claude run
+    # on 9223 can continue alongside it.
+    cdp_port: 9333
+    profile_dir: "browser_profiles/chrome-chatgpt"

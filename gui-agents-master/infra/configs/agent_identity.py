@@ -137,17 +137,39 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
 }
 
 
-# Signature: (chatgpt_web.mode, chatgpt_web.model). model=None means "let
-# the session default win".
+# Signatures (mode defaults to "chat"):
+#   chat: (chatgpt_web.mode, chatgpt_web.model, chatgpt_web.intelligence)
+#   work: (chatgpt_web.mode, chatgpt_web.model)
+# model=None means "let the session default win". Intelligence is the
+# chat-mode reasoning axis and changes agent output, so it bifurcates the
+# label — a GPT-5.5 answer at Instant is not the same result as one at Pro.
+#
+# intelligence=None keeps the bare label: those are the runs that pinned no
+# intelligence and let the session default stand, which is every v2 chat
+# cohort recorded before this axis was added. Reading `None` as its own key
+# rather than folding it into a default is what keeps those rows meaning
+# what they meant.
+#
+# Work mode does not carry this axis (its pickers are effort + speed), so
+# its key is unchanged. If a v2 work cohort ever varies effort or speed,
+# extend the work key the same way rather than reusing these labels.
 _V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
-    ("chat", None): AgentIdentity("chatgpt_web", "chatgpt_web"),
-    ("chat", "instant"): AgentIdentity("chatgpt_instant", "chatgpt_instant"),
-    ("chat", "thinking"): AgentIdentity(
+    ("chat", None, None): AgentIdentity("chatgpt_web", "chatgpt_web"),
+    ("chat", "instant", None): AgentIdentity(
+        "chatgpt_instant", "chatgpt_instant"
+    ),
+    ("chat", "thinking", None): AgentIdentity(
         "chatgpt_thinking", "chatgpt_thinking"
     ),
-    ("chat", "pro"): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
-    ("chat", "gpt_5_6_sol"): AgentIdentity(
+    ("chat", "pro", None): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
+    ("chat", "gpt_5_6_sol", None): AgentIdentity(
         "chatgpt_gpt_5_6_sol", "chatgpt_gpt_5_6_sol"
+    ),
+    ("chat", "gpt_5_5", None): AgentIdentity(
+        "chatgpt_gpt_5_5", "chatgpt_gpt_5_5"
+    ),
+    ("chat", "gpt_5_5", "instant"): AgentIdentity(
+        "chatgpt_gpt_5_5_instant", "chatgpt_gpt_5_5_instant"
     ),
     ("work", "gpt_5_6_sol"): AgentIdentity(
         "chatgpt_gpt_5_6_sol_work", "chatgpt_gpt_5_6_sol_work"
@@ -258,13 +280,17 @@ def _resolve_chatgpt_v2(cfg: SimpleNamespace) -> AgentIdentity:
     block = _chatgpt_block(cfg)
     mode = (getattr(block, "mode", None) or "chat").lower()
     model = getattr(block, "model", None)
-    key = (mode, model)
+    if mode == "work":
+        key = (mode, model)
+        axes = "(mode, model)"
+    else:
+        key = (mode, model, getattr(block, "intelligence", None))
+        axes = "(mode, model, intelligence)"
     try:
         return _V2_CHATGPT_IDENTITIES[key]
     except KeyError:
         raise UnknownAgentCombination(
-            f"No v2 ChatGPT identity for "
-            f"(chatgpt_web.mode, chatgpt_web.model)={key!r}. "
+            f"No v2 ChatGPT identity for chatgpt_web {axes}={key!r}. "
             f"Known: {list(_V2_CHATGPT_IDENTITIES)}. "
             f"Add an entry in infra/configs/agent_identity.py "
             f"if this is a real combination."
