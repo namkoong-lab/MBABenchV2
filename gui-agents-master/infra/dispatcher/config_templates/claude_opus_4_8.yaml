@@ -2,7 +2,7 @@
 # Extended Thinking on.
 #
 # Pass to spinup.sh via:
-#   ./infra/dispatcher/spinup.sh \
+#   dispatch spinup \
 #       --alias claude-opus48-1 \
 #       --config-template infra/dispatcher/config_templates/claude_opus_4_8.yaml
 #

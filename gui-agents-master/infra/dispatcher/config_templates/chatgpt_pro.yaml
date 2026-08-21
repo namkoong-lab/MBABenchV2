@@ -1,7 +1,7 @@
 # Spin-up config template: ChatGPT provider, "pro" model.
 #
 # Pass to spinup.sh via:
-#   ./infra/dispatcher/spinup.sh \
+#   dispatch spinup \
 #       --alias chatgpt-pro-1 \
 #       --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
 #

@@ -15,7 +15,7 @@ reference docs worth keeping open:
 | [run.py](run.py) | Executes one task end-to-end. | Box (called by worker); also usable on laptop |
 | [configs/](configs/) | Layered config: defaults + your overrides + per-run profiles. | Both |
 | [worker/](worker/) | Box-side state.json, queue CLI, worker loop, systemd units. | Each EC2 box |
-| [dispatcher/](dispatcher/) | Laptop-side: `dispatch` CLI, box registry, `spinup.sh` / `teardown.sh`. | Laptop |
+| [dispatcher/](dispatcher/) | Laptop-side: `dispatch` CLI (box lifecycle + task dispatch), box registry. | Laptop |
 
 ---
 
@@ -37,34 +37,37 @@ reference docs worth keeping open:
 3. **AWS key pair + security group** — idempotent bootstrap:
 
    ```bash
-   ./infra/dispatcher/aws_bootstrap.sh --region us-east-1
+   dispatch bootstrap --region us-east-1
    ```
 
-   Creates `mbabenchv2-gui-agents` key (saved to `~/.ssh/mbabenchv2-gui-agents.pem`)
-   and `mbabenchv2-gui-agents-sg` authorized from your current IP. Writes
-   `dispatcher/.aws_defaults` so later scripts don't re-prompt.
+   Prompts for a key-pair and security-group name on first run, creates both,
+   and writes your answers to `aws.gui_key_name` / `aws.gui_sg_name` in
+   `<repo>/config/config.yaml` — so it only ever asks once, and everything
+   afterwards reads the names from there. The private key is saved to
+   `~/.ssh/<aws.gui_key_name>.pem`; the group allows SSH from your current IP.
+   Also writes `dispatcher/.aws_defaults` (region + the account id, used to
+   refuse work against the wrong AWS account).
 
 ### Per box
-
-> **`spinup.sh` is currently blocked.** It harvested credentials from the
-> laptop's `infra/configs/configs.yaml`, which no longer holds them. It exits
-> with instructions rather than provisioning a box against a guessed database
-> — it needs to be told which benchmark the box serves before it can pick
-> between `database.v1_url` and `database.v2_url`. **Existing boxes are
-> unaffected**: their `/etc/gui-agents/secrets.env` is already written, and
-> `dispatch config push` never touched credentials.
 
 1. **Spin up** — launches, installs, registers in
    [dispatcher/boxes.yaml](dispatcher/):
 
    ```bash
-   ./infra/dispatcher/spinup.sh --alias chatgpt-pro-1 \
+   dispatch spinup --alias chatgpt-pro-1 \
      --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
    ```
 
    Templates in [dispatcher/config_templates/](dispatcher/config_templates/)
-   pick provider/agent/model per box. Provider comes from the template's
-   `provider.kind` — no separate flag. Takes ~2 min.
+   pick provider/agent/model per box. Provider (`provider.kind`) and the
+   database (`benchmark`, selecting `database.v1_url` or `database.v2_url`)
+   both come from the template — no separate flags, so a box cannot be
+   pointed at one experiment's tasks and the other's database. Takes ~2 min.
+
+   Key pair and security group come from `aws.gui_key_name` / `aws.gui_sg_name`
+   in `<repo>/config/config.yaml`, which is also where the AWS credentials
+   live — so the fleet is always created in the same account that owns the S3
+   bucket the boxes write to. There is no `--key-name` / `--sg-id`.
 
 2. **Log in to the browser** — opens a VNC tunnel to the worker's Chrome:
 
@@ -123,22 +126,49 @@ python -m infra.dispatcher.dispatch probe --all
 table and prompts you to kick a fresh auth probe on those boxes — useful
 when the `checked_at` timestamp is stale but the cookie is still good.
 
-## Tearing down
+## Pausing vs tearing down
+
+Between runs you almost always want **stop**, not teardown:
 
 ```bash
-./infra/dispatcher/teardown.sh --alias claude-1    # one box
-./infra/dispatcher/teardown.sh --all               # every gui-agents box
+python -m infra.dispatcher.dispatch stop claude-1    # one box
+python -m infra.dispatcher.dispatch stop --all       # every registered box
 ```
 
-Terminates by the `Project=gui-agents` tag. The security group and key pair
-are preserved for reuse. EBS is wiped, so the Chrome profile (and login
-cookies) goes with it — you'll redo the browser login after a respin.
+Stopping halts the instance — compute billing ends — but keeps the EBS root
+volume, so the Chrome profile and its logged-in cookies are still there next
+time. Restart with the ordinary spinup command; on a stopped box it starts the
+instance again instead of launching a new one, and re-pushes the current code
+and config:
+
+```bash
+python -m infra.dispatcher.dispatch spinup --alias claude-1 \
+  --config-template infra/dispatcher/config_templates/claude_fable_5.yaml
+```
+
+A stopped box gets a **new public DNS** when it starts, so `boxes.yaml` is
+rewritten on both stop and start. Don't cache the hostname anywhere else.
+
+`stop` refuses while a task is in flight — stopping mid-task loses the attempt
+entirely, since it is neither recorded in `task_attempts` nor requeued. Pass
+`--force` if you mean it.
+
+```bash
+python -m infra.dispatcher.dispatch teardown claude-1   # one box
+python -m infra.dispatcher.dispatch teardown --all      # every gui-agents box
+```
+
+Teardown terminates, selecting by the `Project=gui-agents` tag. The security
+group and key pair are preserved for reuse, but EBS is wiped — the Chrome
+profile and login cookies go with it, so you redo the browser login after a
+respin. Use it when you want the storage cost to stop too; a stopped box's
+root volume still bills (~30 GiB gp3).
 
 ## Troubleshooting
 
 | Symptom | Next step |
 |---|---|
-| `dispatch status` shows `UNREACHABLE` | Check your public IP vs. the SG (try `./infra/dispatcher/aws_bootstrap.sh` again to re-authorize). |
+| `dispatch status` shows `UNREACHABLE` | Check your public IP vs. the SG (try `dispatch bootstrap` again to re-authorize). |
 | `status` login column shows `STALE` | Run `dispatch login <alias>` and re-login. |
 | `status` login column shows `old <email>` | Run `dispatch probe <alias>` (or just answer `y` at the status-table prompt) to re-verify the existing session. |
 | Assigned a task, nothing starts | `dispatch logs <alias> -f`; on the box, `sudo systemctl status gui-agents-worker`. |

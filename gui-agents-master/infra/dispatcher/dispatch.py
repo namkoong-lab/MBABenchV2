@@ -5,6 +5,10 @@ daemon, no DB-backed message queue — each invocation reads/writes box state
 over SSH and exits.
 
 Commands:
+    dispatch bootstrap [--region R] [--prune-ips]
+    dispatch spinup --alias A --config-template F [--instance-type T] [--ami ID]
+    dispatch stop (<alias> | --all) [--force]
+    dispatch teardown (<alias> | --all)
     dispatch status [--follow]
     dispatch show <alias>
     dispatch assign --n N [--agent X] [--task-source Y]
@@ -42,8 +46,8 @@ if str(_REPO_ROOT) not in sys.path:
 
 from infra.configs import load_configs  # noqa: E402
 from task_io.registry import _resolve_db_url_with_source  # noqa: E402
-from infra.dispatcher.boxes import Box, find_by_alias, load_boxes  # noqa: E402
-from infra.dispatcher.diagnostics import (  # noqa: E402
+from infra.dispatcher.helper.boxes import Box, find_by_alias, load_boxes  # noqa: E402
+from infra.dispatcher.helper.diagnostics import (  # noqa: E402
     ConnectivityVerdict,
     diagnose_connectivity,
 )
@@ -86,6 +90,12 @@ def _ssh_exec(
 def _fetch_state(box: Box) -> dict | None:
     """Run `gui-agents-queue show` on a box and parse the JSON. Returns
     None if SSH fails or the output isn't parseable."""
+    # A stopped box has no host to reach and no worker to answer. Skipping the
+    # SSH attempt keeps `dispatch status` from stalling on ConnectTimeout for
+    # every stopped box, and lets the table say STOPPED — which is actionable —
+    # rather than UNREACHABLE, which reads like a fault.
+    if box.is_stopped:
+        return None
     try:
         r = _ssh_exec(box, "gui-agents-queue show")
     except subprocess.TimeoutExpired:
@@ -213,9 +223,9 @@ def _fmt_auth(auth: dict | None, busy: bool = False) -> str:
     return _truncate(label, _AUTH_COL_WIDTH)
 
 
-def _fmt_row(alias: str, state: dict | None) -> str:
+def _fmt_row(alias: str, state: dict | None, stopped: bool = False) -> str:
     if state is None:
-        return f"  {alias:<18} UNREACHABLE"
+        return f"  {alias:<18} {'STOPPED (dispatch spinup to restart)' if stopped else 'UNREACHABLE'}"
     worker = state.get("worker") or {}
     current = state.get("current")
     queue = state.get("queue") or []
@@ -247,7 +257,7 @@ def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> Non
     print(header)
     print("  " + "-" * (len(header) - 2))
     for b in boxes:
-        print(_fmt_row(b.alias, states.get(b.alias)))
+        print(_fmt_row(b.alias, states.get(b.alias), stopped=b.is_stopped))
 
 
 # ---------------------------------------------------------------------------
@@ -1198,9 +1208,94 @@ def cmd_config_diff(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _default_region() -> str:
+    """Region for the EC2 lifecycle commands.
+
+    Precedence: $AWS_REGION, then $AWS_DEFAULT_REGION, then whatever
+    `dispatch bootstrap` recorded in .aws_defaults, then us-east-1.
+    """
+    for env in ("AWS_REGION", "AWS_DEFAULT_REGION"):
+        if os.environ.get(env):
+            return os.environ[env]
+    defaults = Path(__file__).resolve().parent / ".aws_defaults"
+    if defaults.is_file():
+        for line in defaults.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("GUI_AGENTS_REGION="):
+                value = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if value:
+                    return value
+    return "us-east-1"
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="dispatch")
     sub = p.add_subparsers(dest="cmd", required=True)
+    region_default = _default_region()
+
+    # ── EC2 lifecycle ──────────────────────────────────────────────────────
+    bs = sub.add_parser(
+        "bootstrap",
+        help="one-time: create the EC2 key pair + security group (idempotent)",
+    )
+    bs.add_argument("--region", default=region_default)
+    bs.add_argument(
+        "--prune-ips",
+        action="store_true",
+        help="drop existing SSH CIDRs before re-adding your current IP",
+    )
+    bs.add_argument(
+        "--ambient-creds",
+        action="store_true",
+        help="use the CLI's own credential chain instead of config.yaml "
+             "(for bootstrapping an account whose keys aren't in config.yaml yet)",
+    )
+    bs.add_argument("-y", "--yes", action="store_true")
+
+    sp = sub.add_parser(
+        "spinup",
+        help="launch a box, re-provision an existing one, or restart a stopped one",
+    )
+    sp.add_argument("--alias", required=True)
+    sp.add_argument(
+        "--config-template",
+        required=True,
+        help="config_templates/*.yaml — sets provider, agent identity and the "
+             "benchmark (which picks the box's database)",
+    )
+    sp.add_argument("--instance-type", default="t3.medium")
+    sp.add_argument("--region", default=region_default)
+    sp.add_argument(
+        "--ami",
+        help="override aws.gui_ami from config.yaml (region-specific)",
+    )
+    sp.add_argument("--volume-size", default="30", help="root volume GiB (gp3)")
+    sp.add_argument(
+        "-y", "--yes", action="store_true",
+        help="skip the worker-idle check when re-provisioning",
+    )
+
+    sto = sub.add_parser(
+        "stop",
+        help="stop a box without destroying it (keeps the volume + browser login)",
+    )
+    sto.add_argument("alias", nargs="?")
+    sto.add_argument("--all", action="store_true", help="every registered box")
+    sto.add_argument("--region", default=region_default)
+    sto.add_argument(
+        "--force", action="store_true",
+        help="stop even if a task is in flight (the task is lost)",
+    )
+    sto.add_argument("-y", "--yes", action="store_true")
+
+    td = sub.add_parser(
+        "teardown",
+        help="terminate a box — DESTROYS its volume and browser login",
+    )
+    td.add_argument("alias", nargs="?")
+    td.add_argument("--all", action="store_true", help="every gui-agents box")
+    td.add_argument("--region", default=region_default)
+    td.add_argument("-y", "--yes", action="store_true")
 
     st = sub.add_parser("status", help="print state of all boxes")
     st.add_argument("--follow", "-f", action="store_true")
@@ -1266,6 +1361,28 @@ def main(argv: list[str] | None = None) -> int:
     cpd.add_argument("aliasB")
 
     args = p.parse_args(argv)
+
+    if args.cmd == "bootstrap":
+        from infra.dispatcher.helper import bootstrap
+
+        return bootstrap.cmd_bootstrap(args)
+
+    if args.cmd in ("spinup", "stop", "teardown"):
+        # Imported lazily: it pulls in boto3, which the read-only commands
+        # (status/show/logs) have no reason to pay for.
+        from infra.dispatcher.helper import provision
+
+        if args.cmd == "spinup":
+            return provision.cmd_spinup(args)
+        if not args.all and not args.alias:
+            logger.error(f"pass an <alias> or --all (see `dispatch {args.cmd} -h`)")
+            return 2
+        if args.all and args.alias:
+            logger.error("pass either an <alias> or --all, not both")
+            return 2
+        if args.cmd == "stop":
+            return provision.cmd_stop(args)
+        return provision.cmd_teardown(args)
 
     if args.cmd == "status":
         return cmd_status(args)

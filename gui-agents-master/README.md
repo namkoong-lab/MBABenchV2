@@ -199,7 +199,7 @@ python -m infra.dispatcher.dispatch login <alias>         # re-login when sessio
 Per-box bring-up (spin up an EC2 instance, install the worker, register it in `dispatcher/boxes.yaml`):
 
 ```bash
-./infra/dispatcher/spinup.sh --alias chatgpt-pro-1 \
+dispatch spinup --alias chatgpt-pro-1 \
   --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
 ```
 

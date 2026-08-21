@@ -86,12 +86,31 @@ def _publish_worker_info() -> None:
             f"resolve_agent_identity failed; agent_model_name will be empty: {e}"
         )
         agent_model_name = ""
+
+    # Top-level `prompt_version` first. `agent.prompt_version` is DERIVED —
+    # configs.default.yaml documents it as "leave null", and run.py copies the
+    # top-level value into it while building the agent for a task. That copy
+    # has not happened yet here, so reading only the agent field published
+    # null on every box.
+    #
+    # This is load-bearing, not cosmetic. The dispatcher cohorts boxes by
+    # (agent_model_name, prompt_version) and its eligibility query filters
+    # `ta.prompt_version = %(prompt_version)s`. With null, that comparison is
+    # never true in SQL, so the NOT EXISTS anti-join always passes and
+    # `skip_already_attempted` silently stops filtering — `dispatch assign`
+    # would hand out tasks that were already completed.
+    #
+    # The agent fallback covers a configs.yaml that only sets the derived key.
+    prompt_version = getattr(cfg, "prompt_version", None)
+    if prompt_version is None and agent is not None:
+        prompt_version = getattr(agent, "prompt_version", None)
+
     info = S.WorkerInfo(
         worker_id=_worker_id(),
         hostname=socket.gethostname(),
         provider=provider,
         agent_model_name=agent_model_name,
-        prompt_version=getattr(agent, "prompt_version", None) if agent else None,
+        prompt_version=prompt_version,
     )
     S.set_worker_info(info)
     logger.info(

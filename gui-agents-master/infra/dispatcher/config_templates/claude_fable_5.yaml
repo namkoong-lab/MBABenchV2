@@ -1,7 +1,7 @@
 # Spin-up config template: Claude provider, Fable 5 at max effort.
 #
 # Pass to spinup.sh via:
-#   ./infra/dispatcher/spinup.sh \
+#   dispatch spinup \
 #       --alias claude-fable5-1 \
 #       --config-template infra/dispatcher/config_templates/claude_fable_5.yaml
 #

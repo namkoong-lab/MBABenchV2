@@ -2,8 +2,8 @@
 
 Runs before the SSH fan-out in `status` / `show` / `assign`. If the operator's
 current public IP is not in the dispatcher security group's port-22 allowlist,
-prints a warning pointing at aws_bootstrap.sh so they don't wait for SSH to
-time out to discover the cause.
+prints a warning pointing at `dispatch bootstrap` so they don't wait for SSH
+to time out to discover the cause.
 
 Never raises. Any failure (missing .aws_defaults, no AWS creds, offline, etc.)
 falls back to either a generic hint or silence — the caller's normal error
@@ -15,14 +15,14 @@ Disabled by `DISPATCH_NO_DIAGNOSE=1`.
 from __future__ import annotations
 
 import enum
-import json
 import logging
 import os
-import subprocess
+import subprocess  # only for the curl fallback in _current_public_ip
 import sys
-from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
+
+from infra.dispatcher.helper import aws_env
 
 
 class ConnectivityVerdict(enum.Enum):
@@ -42,40 +42,41 @@ class ConnectivityVerdict(enum.Enum):
 
 logger = logging.getLogger("dispatch.diagnostics")
 
-_DEFAULTS_PATH = Path(__file__).resolve().parent / ".aws_defaults"
-_BOOTSTRAP_REL = "./infra/dispatcher/aws_bootstrap.sh"
+_BOOTSTRAP_REL = "dispatch bootstrap"
 _CHECKIP_URL = "https://checkip.amazonaws.com"
 _HTTP_TIMEOUT = 3
-_AWS_TIMEOUT = 8
 
 
 def _read_aws_defaults() -> dict[str, str] | None:
-    """Source .aws_defaults via bash and return the exported vars.
+    """Region + security group to check, or None if we can't tell.
 
-    Matches how spinup.sh / teardown.sh consume the same file. Returns None
-    if the file is missing or bash fails."""
-    if not _DEFAULTS_PATH.exists():
-        return None
-    script = (
-        f'set -e; source "{_DEFAULTS_PATH}"; '
-        'printf "%s\\n%s\\n%s\\n" '
-        '"${GUI_AGENTS_REGION:-}" "${GUI_AGENTS_SG_ID:-}" "${GUI_AGENTS_SG_NAME:-}"'
-    )
+    The group NAME comes from config.yaml when it is set there, and is
+    resolved to an id live — that is what every other command does, and a
+    cached id in .aws_defaults goes stale the moment the group is recreated.
+    .aws_defaults supplies the region, and the id as a fallback for a checkout
+    bootstrapped before the names moved into config.yaml.
+    """
+    defaults = aws_env.read_aws_defaults()
+    region = defaults.get("GUI_AGENTS_REGION") or ""
+    sg_id = defaults.get("GUI_AGENTS_SG_ID") or ""
+    sg_name = defaults.get("GUI_AGENTS_SG_NAME") or ""
+
+    # Only resolve the name against AWS once the config.yaml credentials are in
+    # play; querying under the ambient profile would look up the group in some
+    # other account and silently fall back to the cached id.
+    if not aws_env.credentials_applied():
+        return {"region": region, "sg_id": sg_id, "sg_name": sg_name} \
+            if region and sg_id else None
     try:
-        r = subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if r.returncode != 0:
-        return None
-    lines = r.stdout.splitlines()
-    if len(lines) < 3:
-        return None
-    region, sg_id, sg_name = lines[0].strip(), lines[1].strip(), lines[2].strip()
+        cfg = aws_env.load_fleet_config()
+        if cfg.sg_name:
+            sg_name = cfg.sg_name
+            resolved = aws_env.lookup_sg_id(sg_name, region) if region else None
+            if resolved:
+                sg_id = resolved
+    except Exception as e:  # noqa: BLE001 — diagnostics never raises
+        logger.debug("could not resolve sg from config.yaml: %s", e)
+
     if not region or not sg_id:
         return None
     return {"region": region, "sg_id": sg_id, "sg_name": sg_name}
@@ -107,32 +108,30 @@ def _current_public_ip() -> str | None:
 
 
 def _sg_port22_cidrs(region: str, sg_id: str) -> list[str] | None:
-    """Return the list of IPv4 CIDRs allowed on port 22, or None on failure."""
+    """IPv4 CIDRs allowed on port 22, or None if we couldn't find out.
+
+    Goes through boto3 under the config.yaml credentials rather than shelling
+    out to `aws`, which would use whatever ambient profile happened to be
+    active. That is the same account mix-up the rest of the dispatcher exists
+    to prevent — and here it produced a false "could not verify" warning on
+    every run, because the ambient profile can't see the group at all.
+    """
     try:
-        r = subprocess.run(
-            [
-                "aws", "ec2", "describe-security-groups",
-                "--region", region,
-                "--group-ids", sg_id,
-                "--query",
-                "SecurityGroups[0].IpPermissions[?FromPort==`22` && ToPort==`22`].IpRanges[].CidrIp",
-                "--output", "json",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=_AWS_TIMEOUT,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        resp = aws_env.ec2(region).describe_security_groups(GroupIds=[sg_id])
+    except Exception as e:  # noqa: BLE001 — diagnostics never raises
+        logger.debug("describe_security_groups failed: %s", e)
         return None
-    if r.returncode != 0:
+    groups = resp.get("SecurityGroups") or []
+    if not groups:
         return None
-    try:
-        data = json.loads(r.stdout or "[]")
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, list):
-        return None
-    return [str(c) for c in data]
+    cidrs: list[str] = []
+    for perm in groups[0].get("IpPermissions") or []:
+        if perm.get("FromPort") != 22 or perm.get("ToPort") != 22:
+            continue
+        for rng in perm.get("IpRanges") or []:
+            if rng.get("CidrIp"):
+                cidrs.append(str(rng["CidrIp"]))
+    return cidrs
 
 
 def _print_generic_hint() -> None:
@@ -148,15 +147,25 @@ def diagnose_connectivity() -> ConnectivityVerdict:
     allowlist. Warns on stderr if it isn't, and returns a verdict the caller
     can use to decide whether to short-circuit the SSH fan-out.
 
-    The SG is shared across all boxes (written by aws_bootstrap.sh), so one
-    lookup covers the whole fleet."""
+    The SG is shared across all boxes (written by `dispatch bootstrap`), so
+    one lookup covers the whole fleet."""
     if os.environ.get("DISPATCH_NO_DIAGNOSE") == "1":
+        return ConnectivityVerdict.UNKNOWN
+
+    # Put the config.yaml credentials into the environment before any AWS call
+    # below, so this check runs against the same account the boxes live in.
+    # Failure is not fatal here: `status` and friends work fine over SSH alone,
+    # and this is only a courtesy warning.
+    try:
+        aws_env.apply_credentials(aws_env.load_fleet_config())
+    except Exception as e:  # noqa: BLE001 — diagnostics never raises
+        logger.debug("no config.yaml credentials for the SG check: %s", e)
         return ConnectivityVerdict.UNKNOWN
 
     defaults = _read_aws_defaults()
     if defaults is None:
-        # No .aws_defaults — operator may not have run aws_bootstrap.sh. Stay
-        # silent; the bootstrap script isn't mandatory in all deployments.
+        # No .aws_defaults — operator may not have run `dispatch bootstrap`.
+        # Stay silent; bootstrap isn't mandatory in all deployments.
         return ConnectivityVerdict.UNKNOWN
 
     ip = _current_public_ip()

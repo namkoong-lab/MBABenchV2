@@ -5,20 +5,20 @@ All commands run from the repo root as `python -m infra.dispatcher.dispatch <...
 
 `status` / `show` / `assign` check whether your current public IP is in the
 dispatcher security group before fanning out over SSH. If it isn't, they print
-a warning pointing at `aws_bootstrap.sh` — re-run that script (or set
+a warning pointing at `dispatch bootstrap` — re-run that (or set
 `DISPATCH_NO_DIAGNOSE=1` to suppress the check).
 
 ## Spin up / tear down
 
 ```bash
 # Launch (or re-provision) a box from a config template
-bash infra/dispatcher/spinup.sh --alias chatgpt-pro-1 --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+dispatch spinup --alias chatgpt-pro-1 --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
 
 # Terminate one box by alias
-bash infra/dispatcher/teardown.sh --alias chatgpt-pro-1
+dispatch teardown --alias chatgpt-pro-1
 
 # Terminate every gui-agents box in the region
-bash infra/dispatcher/teardown.sh --all
+dispatch teardown --all
 ```
 
 ## Inspect boxes

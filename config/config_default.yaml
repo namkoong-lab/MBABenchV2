@@ -19,6 +19,31 @@ aws:
   access_key_id: null
   secret_access_key: null
 
+  # EC2 fleet for the gui-agents boxes, used by
+  # gui-agents-master/infra/dispatcher/{aws_bootstrap,spinup,teardown}.sh.
+  #
+  # Both are per-person and, once chosen, never change: the key pair is the
+  # only way to SSH into a box (AWS cannot re-issue a lost private key), and
+  # the security group is the firewall those boxes sit behind. They live here
+  # rather than as script defaults or CLI flags so that everyone sharing this
+  # repo keeps a stable, non-colliding fleet name.
+  #
+  # Recommended form — prefix with who owns the boxes, so `aws ec2
+  # describe-instances` in a shared account says whose fleet is whose:
+  #
+  #   gui_key_name: "<you>-gui-agents"
+  #   gui_sg_name:  "<you>-gui-agents-sg"
+  #
+  # Allowed characters: letters, digits, dot, underscore, hyphen.
+  #
+  # Leave null — aws_bootstrap.sh prompts on first run and writes your answer
+  # back into config.yaml, so it only ever asks once.
+  gui_key_name: null
+  gui_sg_name: null
+
+  # The machine image every gui-agents box boots from.
+  gui_ami: "ami-06e78a71af43ef21a"   # ubuntu-jammy-22.04-amd64-server-20260731
+
 keys:
   gemini_api_key: "${env:GEMINI_API_KEY}"
 
