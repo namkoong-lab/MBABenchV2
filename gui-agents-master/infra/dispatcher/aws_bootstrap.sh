@@ -193,6 +193,6 @@ AWS bootstrap complete.
   your IP:  $MY_CIDR (allowed in $SG_NAME)
 
 Next — spinup.sh / teardown.sh now read these from .aws_defaults, so:
-  ./infra/dispatcher/spinup.sh --alias <name> --provider <claude|chatgpt>
+  ./infra/dispatcher/spinup.sh --alias <name>
 ========================================================
 EOF

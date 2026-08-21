@@ -1,7 +1,7 @@
 # Box setup — EC2 worker
 
 > **`spinup.sh` automates all of this.** Prefer
-> `./infra/dispatcher/spinup.sh --alias <name> --provider <claude|chatgpt> --config-template <path>`
+> `./infra/dispatcher/spinup.sh --alias <name> --config-template <path>`
 > and re-run it against an existing alias to push code/config updates.
 > This doc is the manual fallback — useful for diagnosis or when rebuilding
 > a box from scratch without the dispatcher.

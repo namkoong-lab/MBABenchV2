@@ -1,11 +1,11 @@
 # V2 benchmark prompts (rubric-v9)
 
 Single source of truth for the MBABenchV2 (benchmark: v2) prompt sequence.
-Extracted byte-exact from the committed EC2 dispatcher templates
-(`infra/dispatcher/config_templates/*.yaml`) on 2026-08-10 — those templates
-keep their inline copies as a frozen record of what production boxes send;
-local runs should reference these files via `prompts_file` so every config
-shares one copy (see `configs.default.yaml`).
+Every run reaches these files the same way: the run config sets
+`prompt_version`, and the registry in `tasks_configs/prompts/registry.yaml`
+maps it to the files below. That holds for local runs and for the EC2
+dispatcher templates in `infra/dispatcher/config_templates/`, which set
+`prompt_version: 200` and carry no prompt text of their own.
 
 ## 3-step set (the default)
 

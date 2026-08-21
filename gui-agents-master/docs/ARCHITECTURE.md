@@ -1,195 +1,191 @@
-# Playwright AI Agent — Architecture Guide
+# gui-agents-master — Architecture Guide
 
-> Composable framework for browser-automated AI research workflows.
+> How a task becomes a graded workbook, and where to cut in if you want to change something.
 
 ![Architecture Diagram](architecture_diagram.png)
 
+Setup, prerequisites, and troubleshooting live in the [README](../README.md). This file is about the seams.
+
 ---
 
-## Example: Running a Task End-to-End
+## The path of one task
 
-Suppose you want an AI agent to analyze a dataset and produce a summary spreadsheet.
-
-### Step 1 — Write your prompts
-
-The prompt template defines what instructions the AI receives, in order. You can write anything here — the framework just sends the strings sequentially and waits for each response.
-
-```yaml
-# tasks_configs/template_claude_web.yaml
-template:
-  agent_type: "claude_web"     # See agent_type table below
-
-  prompts:
-    - "Analyze the attached dataset. Identify the top 10 trends by revenue."
-    - "Create a sheet called 'Summary' with a pivot table of results."
-    - "Add a chart on a new sheet called 'Visualization'."
-
-  claude_web:
-    model: opus_4_6            # See model options table below
+```
+run config  ──▶  infra/run.py  ──▶  claude_web_engine.py  ──▶  WebAgent  ──▶  Chrome
+   +                  │              (one subprocess per task)      │
+configs.default       │                        │                    ▼
+   +                  │                        │              claude.ai /
+configs.yaml          │                        ▼               chatgpt.com
+                      │                  solutions/, json_logs/, logs/
+                      │                        │
+                      ▼                        ▼
+                 TaskSource               AttemptSink
+              (yaml | postgres_s3)     (local | postgres_s3)
 ```
 
-You can have 1 prompt or 20. Compare this to the default prompts that ship with the repo — those are multi-paragraph financial-modeling instructions with rubric criteria. Your prompts can be completely different.
+`infra/run.py` owns everything above the engine: the three-layer config merge, prompt resolution, agent identity, preflight, the per-task subprocess, and handing the result to the sink. The engine owns one task inside one browser. Neither imports the other's concepts — the engine sees only a plain dict.
 
-#### `agent_type` values
+### Layer by layer
 
-| Branch | Agent | `agent_type` |
-|--------|-------|-------------|
-| `gui-system-master` | Claude | `claude_web` |
-| `gui-system-master` | ChatGPT | `chatgpt_web` |
-| `excel-agents-master` | Claude | `claude_excel_agent` |
-| `excel-agents-master` | ChatGPT | `chatgpt_excel_agent` |
-| `excel-agents-master` | TabAI | `tabai` |
+| Layer | Where | What it decides |
+|---|---|---|
+| Config | `infra/configs/` | Every knob. `configs.default.yaml` is the schema; unknown keys are rejected |
+| Prompts | `tasks_configs/prompts/registry.yaml` | Which text `prompt_version` sends, as an ordered list of files |
+| Identity | `infra/configs/agent_identity.py` | `agent_model_name` + S3 folder, derived from the axes that change output |
+| Task source | `task_io/sources/` | Where tasks and their starting files come from |
+| Orchestration | `infra/run.py` | Preflight, subprocess, timeout, quality gate, custody of the staging dir |
+| Engine | `claude_web_agent/claude_web_engine.py` | Two-tier retry: pipeline phase (browser, auth, upload) vs agent phase (prompts, download, validate) |
+| Provider | `claude_web_agent/{claude,chatgpt}_web_agent.py` | Every selector and UI affordance for one provider |
+| Attempt sink | `task_io/sinks/` | Where the workbook, logs, and the DB row go |
 
-#### Model options
+The two-tier retry in the engine is the load-bearing distinction: a pipeline-phase failure is infrastructure (no completion JSON, no attempt counted), an agent-phase failure is the model's (JSON written, attempt counted). Getting a failure into the wrong tier either hides a broken box or poisons the benchmark with retries.
 
-| Branch | Agent | Config key | Options |
-|--------|-------|-----------|---------|
-| GUI | Claude | `claude_web.model` | `opus_4_6`, `sonnet_4_6`, `haiku_4_5`, `fable_5` |
-| GUI | ChatGPT | `chatgpt_web.model` | `instant`, `thinking`, `pro` |
-| Excel | Claude | `claude_excel_agent.model` | `opus_4_6`, `sonnet_4_6` |
-| Excel | ChatGPT | `chatgpt_excel_agent.model` | `fast`, `standard`, `heavy` |
+---
 
-Set to `null` or omit to use whatever model is currently active in your session.
+## Example: running your own tasks end-to-end
 
-### Step 2 — Define your task list
+### 1. Write the prompts
 
-All files are **local** — you list them and they get uploaded directly into the chat.
+Prompt text is not written in a run config. Add a file (or files) under `tasks_configs/prompts*/`, then add a **new** numbered entry in `tasks_configs/prompts/registry.yaml` naming them in send order — one chat turn per file:
 
 ```yaml
-tasks:
-  - task_name: "Q1-Revenue-Analysis"
-
-    # Local files to upload into the AI chat
-    upload_files:
-      - "tasks/Q1/q1_data.csv"
-      - "tasks/Q1/problem_statement.pdf"
-
-    # Custom output file name (optional)
-    solution_name: "Q1_Revenue_Solution"
-
-  - task_name: "Q2-Revenue-Analysis"
-    upload_files:
-      - "tasks/Q2/q2_data.csv"
+  300:
+    label: "my experiment"
+    description: >
+      What this asks for, and why it is not one of the existing versions.
+    files:
+      - "tasks_configs/prompts/my_step1.txt"
+      - "tasks_configs/prompts/my_step2.txt"
 ```
 
-**Excel add-in branch** — files live on OneDrive; the engine navigates there:
+Never edit an existing entry. Rows in `task_attempts` point at these numbers, so rewriting the text under a live number silently changes what that history means.
+
+### 2. Write a run config
+
+Anything from `configs.default.yaml` can be overridden here. A file with task fields at its top level *is* the task list:
+
 ```yaml
-tasks:
-  - task_name: "Q1-Revenue-Analysis"
-    onedrive_path: ["My files", "ProjectX", "Q1"]
-    template_file: "Q1_Template.xlsx"
-    upload_files:
-      - "problem_statement.pdf"
+# infra/configs/run_configs/local_run_examples/my_run.yaml
+task_name: "Q1-Revenue-Analysis"
+task_source: "my_tasks"
+upload_files:
+  - "data/Q1/q1_data.csv"
+  - "data/Q1/problem_statement.pdf"
+solution_name: "Q1_Revenue_Solution"    # optional
+
+benchmark: v2
+prompt_version: 300
+
+provider:
+  kind: "claude"
+
+sink:
+  kind: local
+  output_dir: "outputs/my_tasks"
+
+claude_web:
+  model: "opus_4_8"
+  effort: "max"
+  project_id: null
 ```
 
-### Step 3 — Run
+Use a top-level `tasks:` list instead of the single-task fields to bundle several tasks in one file.
+
+### 3. Run it
 
 ```bash
-# GUI branch
-python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/my_tasks.yaml \
-  --template tasks_configs/template_claude_web.yaml
-
-# Excel add-in branch
-python batch_automation_runner.py \
-  --tasks tasks_configs/examples/my_tasks.yaml \
-  --runner-config runner_configs/claude.yaml
+uv run python -m infra.run --dry-run --run-config infra/configs/run_configs/local_run_examples/my_run.yaml
+uv run python -m infra.run -y        --run-config infra/configs/run_configs/local_run_examples/my_run.yaml
 ```
 
-The system will: connect to the browser → navigate to the provider → upload files or open the workbook → send each prompt sequentially → download the resulting `.xlsx` → validate → log → move to the next task (retrying on failure).
+`--dry-run` performs the whole merge — config layers, prompt resolution, identity, preflight — and prints the engine config without opening a browser. Every class of config mistake surfaces there in about a second.
 
-### Step 4 — Swap anything
+### 4. Swap anything
 
-Switch agent: change `agent_type`. Switch model: change `model`. Different instructions: rewrite the `prompts` list. The framework, retry logic, and output pipeline stay the same.
+Change `provider.kind` to move to ChatGPT; change `model` to move models; change `prompt_version` to change what is asked. The orchestration, retry logic, and output pipeline stay the same.
 
 ---
 
-## Adding Your Own Agent
+## Adding your own provider
 
-Both branches use a base class + factory pattern.
-
-### GUI branch
-
-1. **Subclass `WebAgent`** (`claude_web_agent/web_agent.py`) — implement 9 abstract methods:
+1. **Subclass `WebAgent`** (`claude_web_agent/web_agent.py`) and implement its abstract methods:
 
    | Method | Purpose |
-   |--------|---------|
+   |---|---|
    | `navigate_to_new_chat()` | Open a fresh conversation |
-   | `get_state()` | Return current agent state (running, ready, error) |
+   | `get_state()` | Current agent state (running, ready, auth required, rate limited, error) |
    | `upload_files(file_paths)` | Upload local files into the chat |
    | `submit_prompt(prompt)` | Type and send a prompt |
-   | `wait_for_response()` | Wait for the AI to finish responding |
-   | `download_all_artifacts()` | Download files the AI produced |
-   | `get_conversation_history()` | Return conversation messages |
+   | `wait_for_response()` | Wait for the model to finish |
+   | `download_all_artifacts()` | Download the files it produced |
+   | `get_conversation_history()` | Return the conversation messages |
    | `process_all_prompts(files)` | Orchestrate the full prompt sequence |
-   | `ensure_features_enabled()` | Model selection, agent mode toggles |
+   | `ensure_features_enabled()` | Model selection, mode toggles, effort pickers |
 
-2. **Register** in `create_agent()` in `claude_web_engine.py`:
+2. **Register it** in `create_agent()` in `claude_web_engine.py`:
    ```python
-   elif provider_key == "my_agent":
+   if provider_key == "my_agent_web":
        return MyAgent(page, config, shutdown_event, completion_logger)
    ```
+   and add an entry to `PROVIDER_DEFAULTS` in the same file.
 
-3. **Create a template** with `agent_type: "my_agent"`.
+3. **Declare its config block** in `infra/configs/configs.default.yaml` (the loader rejects keys it doesn't declare) and add `my_agent` to `PROVIDER_AGENT_TYPE` in `infra/run.py`.
 
-### Excel add-in branch
+4. **Add its identity rows** to `infra/configs/agent_identity.py` for each axis combination you intend to run, plus a `_preflight_provider_*` branch in `infra/run.py` that rejects invalid axes before the browser opens.
 
-1. **Subclass `AIAgentCore`** (`excel_agent/core/ai_agent_base.py`) — implement 3 abstract methods:
+Steps 3 and 4 are not optional bookkeeping: without them a run either fails the unknown-key check or writes a DB row whose `agent_model_name` doesn't say what actually produced it.
 
-   | Method | Purpose |
-   |--------|---------|
-   | `get_agent_type()` | Return agent type string for logging |
-   | `get_addon_name()` | Add-in name as shown in Excel (e.g., "Claude by Anthropic") |
-   | `get_open_button_text()` | Button text to open the add-in panel |
+### Selectors
 
-   The base class handles ribbon navigation, prompt sending, response waiting, and model selection.
+Provider UIs change often. Two conventions keep that survivable:
 
-2. **Register** in `engine.py`:
-   ```python
-   elif agent_type == "my_addin":
-       ai_agent = MyAddinCore(excel_page, config, shutdown_event, completion_logger)
-   ```
+- A selector carries a `verified live <date>` note, so its age is visible.
+- A fallback branch states the condition under which it fires, not the era it came from — "no element carries `data-message-author-role`", not "legacy DOM".
 
-3. **Create a template** with `agent_type: "my_addin"`.
+`claude_web_agent/dom_diagnostics.py` dumps the final message's DOM when extraction fails, which is the fastest way to see what the provider is actually serving.
 
 ---
 
 ## Output
 
-Every run produces:
+One attempt = one working directory + one destination prefix:
 
 ```
-{YYYYMMDD}_{agentLabel}/
-├── solutions/          # Downloaded .xlsx files
-├── json_logs/          # Per-task completion JSONs
-└── batch_summary.txt   # Human-readable run report
+scratch/gui-agents/attempts/{ts}_{task}/
+├── solutions/                     # downloaded .xlsx
+├── json_logs/                     # one completion_*.json per agent attempt
+├── logs/                          # runtime log + chat transcript
+└── prompts_{task}_{ts}.json       # the prompt TEXT that was sent
 ```
 
-**JSON logs** include: `task_name`, `task_status` (`success` / `agent_failure` / `pipeline_failure`), `duration_seconds`, `attempt_number`, per-prompt timing, and model used.
+The prompts JSON records text, not paths — a path stops being evidence the moment the file changes.
 
-**Validation** checks each downloaded file: exists, non-empty, openable by `openpyxl`, and contains expected sheets. Edit `validate_excel_file()` in `file_organizer.py` (or `file_validator.py` on the GUI branch) to change which sheets are required.
+The working directory is deleted once the sink reports it has taken custody (`retains_files`). The `local` sink does not copy files elsewhere, so it leaves them in place.
 
-All output is local — no cloud uploads or database writes.
+**JSON logs** carry `task_name`, `task_status` (`success` / `agent_failure` / `pipeline_failure`), `duration_seconds`, `attempt_number`, per-prompt timing, the agent name, and the prompt version.
+
+**Validation** (`file_validator.validate_excel_file`) checks each downloaded file: exists, non-empty, openable by `openpyxl`. `infra/run.py` then applies a separate post-run quality gate (`check_output_quality`) that flags obviously-degraded workbooks — it runs *outside* the engine's retry loop, so it records a verdict and never triggers a re-run.
 
 ```python
 # Example: read logs programmatically
 import json
 from pathlib import Path
 
-for log in Path("20260327_claudeGUI/json_logs").glob("*.json"):
+for log in Path("scratch/gui-agents/attempts").glob("*/json_logs/*.json"):
     data = json.loads(log.read_text())
     print(f"{data['task_name']}: {data['task_status']} in {data['duration_seconds']:.0f}s")
 ```
 
 ---
 
-## What You Don't Need to Change
+## What you don't need to change
 
 | File | Role |
-|------|------|
-| `batch_automation_runner.py` / `claude_web_batch_runner.py` | Retry orchestration |
-| `engine.py` / `claude_web_engine.py` | Pipeline phases |
-| `browser_manager.py` | Playwright lifecycle |
-| `logging_setup.py`, `completion_logger.py` | Logging (automatic) |
+|---|---|
+| `infra/run.py` | Config merge, preflight, subprocess, custody |
+| `claude_web_agent/claude_web_engine.py` | Pipeline phases and the two-tier retry loop |
+| `claude_web_agent/browser_manager.py` | Chrome discovery, CDP connection, profile dirs |
+| `claude_web_agent/completion_logger.py` | Crash-safe JSON logging |
+| `task_io/` | The source/sink protocols and their reference implementations |
 
-> Full setup, prerequisites, and troubleshooting are in the [README](../README.md).
+> Full setup, prerequisites, and troubleshooting are in the [README](../README.md). The cloud/EC2 stack is documented in [`infra/plan.md`](../infra/plan.md).

@@ -442,9 +442,12 @@ chatgpt_web:
   # the current session default; benchmark-v1 runs must pin it).
   # v1 chat-mode values: gpt_5_6_sol | gpt_5_5 | gpt_5_4 | gpt_5_3 | o3
   # v1 work-mode values: gpt_5_6_sol | gpt_5_6_terra | gpt_5_6_luna | gpt_5_5
-  # legacy one-axis values (still valid): instant | thinking | pro
+  # One-axis values (instant | thinking | pro) name an intelligence level
+  # rather than a model; the agent routes them to `intelligence`. They stay
+  # valid so the cohorts already in task_attempts under those labels can be
+  # reproduced — a new run should name a model and set `intelligence`.
   model:
-    value: "pro"
+    value: "gpt_5_6_sol"
     required: false
   # Surface mode: "chat" | "work" (benchmark-v1 axis). Selection persists
   # across sessions; the agent asserts it every task. Bifurcates the v1 DB

@@ -42,8 +42,6 @@ class ChatGPTWebAgent(WebAgent):
         "answer_now_button": 'button:has-text("Answer now")',
         # File upload
         "add_files_menuitem": '[role="menuitem"]:has-text("Add photos & files")',
-        # Feature toggles
-        # Agent mode: + menu → hover "More" → click "Agent mode" (menuitemradio)
         # State detection
         "login_button": 'button:has-text("Log in")',
         "thinking_active": 'button:has-text("Pro thinking")',
@@ -267,9 +265,13 @@ class ChatGPTWebAgent(WebAgent):
         "pro": "Pro",
     }
 
-    # Legacy chatgpt_web.model values from the one-axis era, routed to the
-    # intelligence axis for backwards compatibility.
-    LEGACY_MODEL_TO_INTELLIGENCE = {
+    # One-axis chatgpt_web.model values. The UI has since split model and
+    # intelligence into separate pickers, but these three name whole cohorts
+    # in task_attempts (`chatgpt_instant`, `chatgpt_thinking`,
+    # `chatgpt_web_pro` — see infra/configs/agent_identity.py, whose tables
+    # are append-only), so a config must still be able to reproduce one.
+    # The value carries no model, only an intelligence level; route it there.
+    ONE_AXIS_MODEL_TO_INTELLIGENCE = {
         "instant": "instant",
         "thinking": "high",
         "pro": "pro",
@@ -331,9 +333,9 @@ class ChatGPTWebAgent(WebAgent):
     def _resolve_targets(self) -> tuple:
         """Resolve (model_label, intelligence_label) from config.
 
-        Handles the legacy one-axis ``model: pro|thinking|instant`` form by
-        routing it to the intelligence axis (with a warning) when no
-        explicit ``intelligence`` is set.
+        Handles the one-axis ``model: pro|thinking|instant`` form by routing
+        it to the intelligence axis (with a warning) when no explicit
+        ``intelligence`` is set.
         """
         model = self.agent_config.get("model")
         intelligence = self.agent_config.get("intelligence")
@@ -351,12 +353,13 @@ class ChatGPTWebAgent(WebAgent):
                 "chatgpt_web.intelligence (instant|medium|high|xhigh|pro)."
             )
 
-        if model and model.lower() in self.LEGACY_MODEL_TO_INTELLIGENCE:
-            routed = self.LEGACY_MODEL_TO_INTELLIGENCE[model.lower()]
+        if model and model.lower() in self.ONE_AXIS_MODEL_TO_INTELLIGENCE:
+            routed = self.ONE_AXIS_MODEL_TO_INTELLIGENCE[model.lower()]
             logger.warning(
-                "chatgpt_web.model=%r is a legacy value — the UI now splits "
-                "model and intelligence. Routing it to intelligence=%r; set "
-                "chatgpt_web.model to a real model (e.g. gpt_5_6_sol) and "
+                "chatgpt_web.model=%r names an intelligence level, not a "
+                "model — the UI splits the two. Routing it to "
+                "intelligence=%r; unless you are reproducing that cohort, "
+                "set chatgpt_web.model to a model (e.g. gpt_5_6_sol) and "
                 "chatgpt_web.intelligence explicitly.",
                 model,
                 routed,
@@ -1093,9 +1096,10 @@ class ChatGPTWebAgent(WebAgent):
                 except Exception as e0:
                     logger.info(f"+ menu approach failed, trying fallback ({e0!r:.200})")
 
-                # Approach 2: composer-level "Add files" button (legacy path
-                # visible in some agent-mode states). Anchor via aria-label
-                # where possible; text fallbacks are last-resort.
+                # Approach 2: the composer's own "Add files" button, for the
+                # composer states that expose it instead of routing uploads
+                # through the + menu. Anchor via aria-label where possible;
+                # text fallbacks are last-resort.
                 if not uploaded:
                     try:
                         # NOTE: no fuzzy aria-label*="file" match here — it
@@ -1331,7 +1335,9 @@ class ChatGPTWebAgent(WebAgent):
                 const hasAnswerNow = btns.some(b => b.textContent.trim() === 'Answer now');
                 const hasThinking = btns.some(b => b.textContent.includes('Pro thinking'));
                 const hasGenerating = !!document.querySelector('[class*="result-streaming"]');
-                // Agent mode indicators: only check within the conversation area
+                // Tool-use indicators (the model running code mid-answer):
+                // scoped to the conversation area so sidebar chat titles
+                // cannot match.
                 const mainText = mainArea.innerText || '';
                 const hasWritingCode = mainText.includes('Writing code');
                 const hasAnalyzing = /Analyz(ing|ed)/.test(mainText) && (hasStop || hasStopBtn);
@@ -1555,16 +1561,19 @@ class ChatGPTWebAgent(WebAgent):
     async def _count_response_articles(self) -> int:
         """Count ChatGPT response articles currently on the page.
 
-        Uses JS evaluate for CDP reliability. Tries current DOM structure
-        first (data-message-author-role), falls back to legacy <article>.
+        Uses JS evaluate for CDP reliability. Counts
+        data-message-author-role='assistant'; the <article> + <h6> branch
+        fires only on a page that carries no such attribute anywhere.
+        NOT VERIFIED against chatgpt.com since 2026-08-12 — if a live check
+        shows the attribute on every assistant turn, the branch is dead and
+        should go.
         """
         try:
             return await self.page.evaluate(
                 """() => {
-                // Current DOM: data-message-author-role='assistant'
                 const assistants = document.querySelectorAll("[data-message-author-role='assistant']");
                 if (assistants.length > 0) return assistants.length;
-                // Legacy: <article> with <h6> ChatGPT said
+                // No author-role attribute anywhere on the page.
                 return Array.from(document.querySelectorAll('article'))
                     .filter(a => {
                         const h6 = a.querySelector('h6');
@@ -1588,8 +1597,8 @@ class ChatGPTWebAgent(WebAgent):
 
         This prevents premature completion when:
         - Stale articles from prior conversations are on the page
-        - There's a gap between extended thinking and agent code execution
-        - Agent mode pauses between code execution steps
+        - There's a gap between extended thinking and code execution
+        - The model pauses between code execution steps
         """
         logger.info(f"Waiting for response to prompt {prompt_number}...")
 
@@ -1922,9 +1931,14 @@ class ChatGPTWebAgent(WebAgent):
         """Extract text from the last ChatGPT response.
 
         Uses JS evaluate instead of Playwright locators for CDP reliability.
-        Tries multiple DOM strategies since ChatGPT's structure changes:
-        1. data-message-author-role='assistant' (current, 2025+)
-        2. <article> with <h6> 'ChatGPT said:' (legacy)
+        Three strategies, each firing only when the one above it matched
+        nothing on the page:
+        1. data-message-author-role='assistant' — chat mode
+        2. [data-turn] / .agent-turn — work mode, which carries no
+           author-role attribute
+        3. <article> with <h6> 'ChatGPT said:' — NOT VERIFIED against
+           chatgpt.com since 2026-08-12. If a live check shows every
+           assistant turn under strategy 1 or 2, this branch is dead.
         """
         try:
             text = await self.page.evaluate(
@@ -1955,7 +1969,8 @@ class ChatGPTWebAgent(WebAgent):
                 if (agentTurns.length > 0) {
                     return Array.from(agentTurns).map(el => el.innerText || '').join('\\n\\n');
                 }
-                // Strategy 3: <article> with <h6> ChatGPT said (legacy)
+                // Strategy 3: no author-role attribute and no [data-turn]
+                // anywhere — see the docstring's verification note.
                 const articles = Array.from(document.querySelectorAll('article'));
                 for (let i = articles.length - 1; i >= 0; i--) {
                     const h6 = articles[i].querySelector('h6');
@@ -1995,9 +2010,9 @@ class ChatGPTWebAgent(WebAgent):
         no stable id in the DOM), and messages are walked oldest→newest so
         the last write of a filename wins (QA passes rewrite files).
 
-        Backwards-compatible by construction: bytes must validate (HTTP
-        200, len > 200, zip magic ``PK``); on ANY error or ambiguity this
-        returns [] and the caller falls through to the legacy DOM flow.
+        Safe by construction: bytes must validate (HTTP 200, len > 200, zip
+        magic ``PK``); on ANY error or ambiguity this returns [] and the
+        caller falls through to the DOM download flow.
         """
         saved: list[str] = []
         try:
@@ -2261,10 +2276,10 @@ class ChatGPTWebAgent(WebAgent):
         Strategy 0 pulls bytes straight from ChatGPT's backend API (see
         _download_via_backend_api); strategy 0.5 handles Work-mode file
         tiles (see _download_via_work_tiles); both silently defer to the
-        legacy DOM flow below on any failure.
+        DOM flow below on any failure.
 
-        ChatGPT agent mode produces file artifacts as inline preview cards
-        embedded in the response article. The DOM structure is:
+        The DOM flow clicks the inline preview card ChatGPT renders for a
+        produced file. Its structure is:
 
             paragraph
               └── generic (outer container)
@@ -2458,7 +2473,10 @@ class ChatGPTWebAgent(WebAgent):
                     }
                 }
 
-                // Find ChatGPT response containers (try current DOM, then legacy)
+                // Find ChatGPT response containers. The <article> + <h6>
+                // branch fires only when no element carries
+                // data-message-author-role — see _extract_last_response's
+                // docstring for the verification note on it.
                 let responseElements = Array.from(
                     document.querySelectorAll("[data-message-author-role='assistant']")
                 );

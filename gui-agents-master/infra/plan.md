@@ -6,7 +6,7 @@
 ## Goals
 
 1. Run the existing web-GUI automation (Claude.ai / ChatGPT) on AWS, unattended.
-2. Replace hand-written YAML task lists with a **pluggable task source** so the batch runner can be fed from any backend (local files, Postgres + S3, SQLite, a queue, ...).
+2. Replace hand-written YAML task lists with a **pluggable task source** so the runner can be fed from any backend (local files, Postgres + S3, SQLite, a queue, ...).
 3. Provide a **MBABenchV2-specific** source/sink implementation that reads `tasks` rows and writes `task_attempts` rows against the existing Neon Postgres DB + `mbabench` S3 bucket, matching the conventions already used in `cli-agents-master/excel_cli_agent/auto_batch_runner.py` and `judge/operation_scripts/get_tasks.py`.
 4. Touch the GUI engine as little as possible. The engine already accepts a task-config dict with `upload_files`, `solution_name`, etc. — keep that contract; only swap what produces those dicts and what consumes the resulting solution.
 
@@ -21,7 +21,7 @@ Non-goals: rewriting the engine, changing the prompt templates, or moving off Ch
 │  EC2 instance (Ubuntu, Xvfb + Chrome + systemd)                  │
 │                                                                  │
 │   ┌─────────────────────────────────────────────────┐            │
-│   │  claude_web_batch_runner.py --source <kind>     │            │
+│   │  infra/run.py --run-config <file>               │            │
 │   │                                                 │            │
 │   │   ┌──────────────┐    ┌──────────────────────┐  │            │
 │   │   │ TaskSource   │───▶│ claude_web_engine.py │  │            │
@@ -73,7 +73,8 @@ gui-agents-master/
 │       └── postgres_s3.py              # MBABenchV2 impl (see Part 2)
 └── infra/                              # orchestration layer
     ├── plan.md                         # this file
-    ├── run.py                          # task-io-driven CLI (reads ONLY infra/configs/)
+    ├── run.py                          # task-io-driven CLI (config from infra/configs/,
+    │                                   #   prompts from tasks_configs/prompts*/)
     └── configs/                        # single source of truth at runtime
         ├── __init__.py
         ├── loader.py
@@ -86,8 +87,8 @@ gui-agents-master/
             └── mbabenchv2_run_examples/
                 └── sample_mbabenchv2.yaml     # overlay-shaped: postgres_s3 + filters
 
-# Legacy, decoupled from infra/run.py but still used by claude_web_batch_runner.py:
-tasks_configs/                          # templates + example task lists — DO NOT edit for new runs
+tasks_configs/
+└── prompts{,_v2,_pv9}/                 # the prompt payloads + registry.yaml
 ```
 
 **What each top-level directory is for:**
@@ -98,7 +99,7 @@ tasks_configs/                          # templates + example task lists — DO 
 
 ### Configuration
 
-**One source of truth.** All runtime config lives under [infra/configs/](configs/). `infra/run.py` reads nothing outside that directory. The legacy [tasks_configs/](../tasks_configs/) templates and example task lists are decoupled — they're used only by the legacy `claude_web_batch_runner.py` and should not be edited for new runs.
+**One source of truth.** All runtime *config* lives under [infra/configs/](configs/). The one thing `infra/run.py` reads outside it is the prompt payloads: [tasks_configs/prompts/registry.yaml](../tasks_configs/prompts/registry.yaml) maps the run's `prompt_version` to files under `tasks_configs/prompts{,_v2,_pv9}/`, which the engine then sends verbatim. Prompts live there rather than in a config because they are the experimental control — one copy, referenced by version, so no run can quietly send different text.
 
 **Three files + one folder:**
 
@@ -116,11 +117,11 @@ tasks_configs/                          # templates + example task lists — DO 
 
 Deep-merge at each step; later wins. There is **no per-task override layer**: all 50 tasks in a batch get the same `provider`, `prompts`, `claude_web:`, etc. If you want per-task variation, run separate invocations.
 
-**`--run-config` routing.** When the file has any of `task_name`, `upload_files`, `files_to_upload`, `solution_name`, `skip`, `task_source`, `tasks` at its top level, it is treated as a *task-shaped* YAML: the runner strips those reserved keys, overlays the remaining keys as layer 3, and forces `source.kind='yaml'` with `source.yaml_path` pointing at the file so `YamlTaskSource` reads the reserved keys as the task definition. Otherwise it is a pure *overlay-shaped* YAML and is deep-merged at layer 3 as-is.
+**`--run-config` routing.** When the file has any of `task_name`, `upload_files`, `solution_name`, `skip`, `task_source`, `tasks` at its top level, it is treated as a *task-shaped* YAML: the runner strips those reserved keys, overlays the remaining keys as layer 3, and forces `source.kind='yaml'` with `source.yaml_path` pointing at the file so `YamlTaskSource` reads the reserved keys as the task definition. Otherwise it is a pure *overlay-shaped* YAML and is deep-merged at layer 3 as-is.
 
 **Task YAML schema.** Reserved keys define the task; everything else at top level is a project-wide override. When a task-shaped `--run-config` is loaded, the two sets are split — reserved keys go to `YamlTaskSource`, the rest overlay at layer 3 (run-scoped).
 
-| Reserved (task fields) | `task_name`, `upload_files`, `files_to_upload` (alias), `solution_name`, `skip`, `task_source` |
+| Reserved (task fields) | `task_name`, `upload_files`, `solution_name`, `skip`, `task_source` |
 |---|---|
 | Anything else | Overlaid at layer 3 — applies to every task in this run (e.g. `prompts:`, `claude_web:`, `chatgpt_web:`) |
 
@@ -222,7 +223,7 @@ class AttemptResult:
     logs: dict[str, Any]              # status, timings, errors, cost, etc.
     started_at: str                   # ISO-8601
     finished_at: str
-    agent_model_name: str             # "claude_web", "chatgpt_web_agent", ...
+    agent_model_name: str             # "claude_opus_4_8", "chatgpt_gpt_5_6_sol", ...
     prompt_version: int | str | None
 
 class TaskSource(Protocol):
@@ -300,7 +301,7 @@ Responsibilities:
 
 1. **Select** tasks from `tasks` with filters: `deprecated = false`, optional `task_source IN (...)`, optional explicit `id IN (...)`, optional "not yet attempted by this agent" join against `task_attempts`.
 2. **Download** each row's `task_starting_files` (list of `s3://...` URIs) to `$SCRATCH/gui/task_id={id}/starting_files/{basename}` using the existing `parse_s3_uri` / `boto3` helpers.
-3. **Yield** a `TaskSpec` with `upload_files` set to the downloaded paths and `metadata` carrying `task_source`, `old_id`, etc., for the sink to reference later.
+3. **Yield** a `TaskSpec` with `upload_files` set to the downloaded paths and `metadata` carrying `task_source` and `db_task_id`, for the sink to reference later.
 
 Construction-time contract (both source and sink):
 
@@ -714,7 +715,7 @@ DB still stores only the final `task_attempts` row per finished task, written by
 | Phase | Deliverable | Exit criteria | Status |
 |---|---|---|---|
 | **0a** | `task_io/` scaffold + `TaskSpec`/`AttemptResult` + `YamlTaskSource` + `LocalAttemptSink` + `infra/run.py` | Existing YAML tasks run through the new seam | ✅ shipped |
-| **0b** | Config consolidation: everything under `infra/configs/`, legacy `tasks_configs/` decoupled from `infra/run.py`, `task_configs/` folder for per-task YAMLs, permissive task-level merge | Running `python -m infra.run` reads zero files outside `infra/configs/`; a task YAML's top-level keys deep-merge onto global cfg for that task | ✅ shipped (superseded by 0c) |
+| **0b** | Config consolidation: every runtime knob under `infra/configs/`, `task_configs/` folder for per-task YAMLs, permissive task-level merge | Running `python -m infra.run` reads no config outside `infra/configs/`; a task YAML's top-level keys deep-merge onto global cfg for that task | ✅ shipped (superseded by 0c) |
 | **0c** | `--run-config PATH` CLI flag + `infra/configs/run_configs/` layout. Replaces `--yaml-path`. **Dropped the per-task override layer (layer 4)** — merge model collapses to 3 layers. Task-shaped run-configs split reserved keys (→ YamlTaskSource) from non-reserved keys (→ layer 3 overlay); overlay-shaped files are layer 3 as-is | `--run-config local_run_examples/sample_task.yaml` runs the local sample end-to-end; `--run-config mbabenchv2_run_examples/sample_mbabenchv2.yaml` drives `postgres_s3` | ✅ shipped |
 | **1** | `PostgresS3TaskSource` (read-only, no DB writes) + `LocalAttemptSink` already shipped | Can run a real MBABenchV2 task end-to-end locally, pulling from Neon+S3, writing solution to local disk | ✅ shipped |
 | **2** | `PostgresS3AttemptSink`. `agent_model_type` is always `"gui"`; `cost` is always `NULL` (GUI runs are subscription-based); failed/timeout runs still insert a row with `agent_failed=true` + `agent_failed_reason`. Per-task metadata from the source flows to the sink via `result.extra["task_metadata"]`. Strict AWS-credentials contract (no boto3 default chain) + construction-time preflight: `sts.get_caller_identity()` on both source/sink + `s3.head_bucket` on sink. `build_source`/`build_sink` ValueErrors are caught cleanly in `infra/run.py`. | Solutions land in S3 and new `task_attempts` rows appear, on laptop first | ✅ shipped |

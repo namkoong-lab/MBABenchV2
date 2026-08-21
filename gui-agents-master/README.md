@@ -1,6 +1,6 @@
 # Web Agent Automation
 
-Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT (Agent mode and Extended Pro). The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads any Excel artifacts the model produces.
+Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT. The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads the Excel workbooks the model produces.
 
 > **Looking at the MBABenchV2 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
 
@@ -21,45 +21,49 @@ The sibling repo, [`excel-agents-master/`](../excel-agents-master/), runs AI age
 
 ---
 
-## Two ways to run
+## One runner, two ways to feed it
 
-There are two runners in this repo. **External users should always use the local runner**; the EC2 dispatcher is for the internal MBABenchV2 team.
+`python -m infra.run` is the entry point for every run, local or cloud. What changes between them is the **run config** you hand it — specifically, where tasks come from and where results go.
 
-| Runner | Audience | Tasks come from | Where it executes |
+| `--run-config` names… | Audience | Tasks come from | Results go to |
 |---|---|---|---|
-| **`claude_web_batch_runner.py`** | **Default — everyone** | Local YAML files (`tasks_configs/examples/*.yaml`) | One Chrome browser on your laptop |
-| **`infra/run.py` + `infra/dispatcher/`** | **MBABenchV2 internal team only** | Internal Postgres + S3 | Many EC2 boxes, orchestrated from a `dispatch` CLI |
+| a **local** profile (`source.kind: yaml`, `sink.kind: local`) | **Default — everyone** | A YAML file you write | Local disk under `outputs/` |
+| a **cloud** profile (`source.kind: postgres_s3`) | **MBABenchV2 internal team** | Internal Postgres + S3 | S3 + a `task_attempts` row |
 
-If you're outside the MBABenchV2 team and want to scale across multiple boxes, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `mbabenchv2` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below for what you'd need to provision yourself. Not turnkey.
+Multi-box scaling adds `infra/dispatcher/`, which ssh's into EC2 boxes and invokes the same `infra.run` on each. If you're outside the MBABenchV2 team and want that, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `mbabench` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below. Not turnkey.
 
 ---
 
 ## Prerequisites
 
-- **Python 3.10+** (3.12 recommended)
+- **Python 3.12+**
 - **[uv](https://docs.astral.sh/uv/)** package manager
 - **Regular Google Chrome** (Chrome Canary v148+ has a CDP compatibility issue with Playwright — stick with the stable channel)
 - **Playwright Chromium browser** binaries (installed below via `playwright install chromium`)
 - **Web GUI login** to your provider — this system uses your existing Claude.ai or ChatGPT browser session, **not** API keys. There's nothing to configure with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
-- For ChatGPT runs: a paid **ChatGPT Plus or Pro subscription** is required (Agent mode and Extended Pro are paid features).
+- For ChatGPT runs: a paid **ChatGPT Plus or Pro subscription**.
 
 ---
 
 ## Install
 
+`gui-agents-master` is a member of the MBABenchV2 uv workspace, so dependencies install from the repo root:
+
 ```bash
 git clone <repo-url>
-cd gui-agents-master
+cd MBABenchV2
 uv sync
-.venv/bin/python -m playwright install chromium
-# On Linux only: .venv/bin/python -m playwright install-deps chromium
+uv run python -m playwright install chromium
+# On Linux only: uv run python -m playwright install-deps chromium
 ```
+
+Every command below runs from `gui-agents-master/`. Prefix them with `uv run` (or activate the workspace environment) so the interpreter is the one `uv sync` provisioned.
 
 ---
 
 ## Quickstart — local (default)
 
-This is the path everyone should start with. You launch a Chrome browser, log into your provider once, and the runner sends tasks through that browser one at a time.
+You launch a Chrome browser, log into your provider once, and the runner sends tasks through that browser one at a time.
 
 ### 1. Launch Chrome with CDP
 
@@ -118,69 +122,63 @@ Leave the browser open. The runner connects to it.
 
 ### 3. Configure the project ID (per provider)
 
-Both providers identify a "project" or "workspace" you want each task to start in. Set this once per template config — the automation uses it to keep all task conversations together and (for ChatGPT) to inherit project-level settings like the default model.
+Both providers identify a "project" or "workspace" you want each task to start in. Set it in your run config under `<provider>_web.project_id` — the automation uses it to keep all task conversations together and (for ChatGPT) to inherit project-level settings like the default model. Leave it `null` to start each chat outside any project.
 
-**For Claude.ai:**
+**For Claude.ai:** go to https://claude.ai/projects, open (or create) a project, and copy `{project_id}` out of the `https://claude.ai/project/{project_id}` URL.
 
-1. Go to https://claude.ai/projects and either pick an existing project or create a new one (any name works).
-2. Open the project. The URL looks like `https://claude.ai/project/{project_id}` — copy `{project_id}`.
-3. Paste it into `tasks_configs/template_claude_web.yaml` under `claude_web.project_id`. Leave `null` to use your default Claude.ai chat instead.
+**For ChatGPT:** open **Projects** in the left sidebar, open (or create) one, and copy the hex `{project_id}` from `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` (the part after `g-p-`). Newer projects have **no `-{slug}` suffix**; that's fine — `chatgpt_web.project_slug` is optional.
 
-**For ChatGPT:**
+### 4. Write a run config
 
-1. Go to https://chatgpt.com and click **Projects** in the left sidebar.
-2. Create a new project (e.g. `excel-tasks`).
-3. Open the project. The URL looks like `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` — copy the hex `{project_id}` (the part after `g-p-`). Newer projects have **no `-{slug}` suffix** (the URL is just `.../g-p-{project_id}/project`); that's fine.
-4. Paste the id into `tasks_configs/template_chatgpt_web.yaml` under `chatgpt_web.project_id`. `chatgpt_web.project_slug` is **optional** — set it if your URL has a slug, otherwise leave it `null`.
-
-**ChatGPT model / effort:** set the configured model via `chatgpt_web.model` (see [Model selection](#model-selection) — e.g. `instant` for fast runs, `pro` for Pro Extended). The runner selects it from the composer's Intelligence picker before the first prompt. As a safety net, also set the project's **default** model in project settings, since that's what a missed selection falls back to.
-
-**ChatGPT Agent mode:** the runner enables Agent mode automatically via the `+` menu before sending the first prompt. No project-level setting needed.
-
-### 4. Write a task list
-
-Copy `tasks_configs/examples/sample_tasks.yaml` and edit:
+A run config is a YAML file under `infra/configs/run_configs/`. If its top level contains task fields (`task_name`, `upload_files`, `tasks`, …) the runner treats the file itself as the task list; everything else in it is overlaid on the project-wide config for that run. Copy [`infra/configs/run_configs/local_run_examples/sample_task.yaml`](infra/configs/run_configs/local_run_examples/sample_task.yaml) and edit:
 
 ```yaml
+task_name: "My_Analysis"
 task_source: "my_tasks"
+upload_files:
+  - "data/My_Analysis/problem_statement.pdf"
+  - "data/My_Analysis/data.xlsx"
+solution_name: "My_Analysis_Solution"   # optional
 
-tasks:
-  - task_name: "My_Analysis"
-    upload_files:
-      - "tasks/My_Analysis/problem_statement.pdf"
-      - "tasks/My_Analysis/data.xlsx"
-    solution_name: "My_Analysis_Solution"   # optional
+# ── below: project-wide overrides for this run ──
+benchmark: v2
+prompt_version: 200          # see "Prompts and prompt_version"
+
+provider:
+  kind: "claude"
+
+sink:
+  kind: local
+  output_dir: "outputs/my_tasks"
+
+claude_web:
+  model: "opus_4_8"
+  project_id: "your-project-id-here"
 ```
 
-`upload_files` paths are relative to `local_files_base` from the template (or CWD if unset). `files_to_upload` is accepted as an alias.
+`upload_files` paths are relative to `local_files_base` if set, else to the working directory.
+
+To bundle several tasks in one file, use a `tasks:` list instead of top-level task fields — see [`sample_task.yaml`](infra/configs/run_configs/local_run_examples/sample_task.yaml) for the shape.
 
 ### 5. Run
 
 ```bash
-# Claude (default provider)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml
+# Preview — merges the config, resolves prompts and identity, runs no browser
+uv run python -m infra.run --dry-run \
+  --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
 
-# ChatGPT — Agent mode (uses Code Interpreter to build Excel)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --provider chatgpt
+# For real
+uv run python -m infra.run -y \
+  --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
 
-# ChatGPT — Extended Pro (extended thinking, no Code Interpreter)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --template tasks_configs/template_chatgpt_web.yaml \
-  --provider chatgpt
-
-# Dry-run — preview tasks without executing
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --dry-run
+# Slice the task list
+uv run python -m infra.run -y --start 0 --end 5 \
+  --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
 ```
 
 > **Laptop operators (macOS):** these runs drive a real browser for many minutes per task, and if the Mac sleeps it suspends Chrome and drops Wi-Fi mid-generation — the page closes, the run burns a retry, and the whole prompt sequence restarts. Wrap long runs in `caffeinate` so the machine stays awake:
 > ```bash
-> caffeinate -dimsu .venv/bin/python claude_web_batch_runner.py --tasks ...
+> caffeinate -dimsu uv run python -m infra.run -y --run-config ...
 > ```
 
 ---
@@ -215,153 +213,98 @@ To run the dispatcher against your own infrastructure rather than ours, you'd ne
 
 ## Configuration reference
 
-### Tasks YAML format
+Config merges in three layers, later winning, all of them project-wide (there is no per-task override layer):
 
-```yaml
-task_source: "my_tasks"
+1. [`infra/configs/configs.default.yaml`](infra/configs/configs.default.yaml) — every knob and its default. This is the canonical schema; a key it doesn't declare is rejected.
+2. `infra/configs/configs.yaml` — your long-lived local overrides (gitignored: DB url, project ids, ports).
+3. `--run-config <file>` — what to run this time.
 
-tasks:
-  - task_name: "My_Analysis"
-    upload_files:                         # files_to_upload is an accepted alias
-      - "tasks/My_Analysis/problem_statement.pdf"
-      - "tasks/My_Analysis/data.xlsx"
-    solution_name: "My_Analysis_Solution" # optional; default is {task_name}_Solution_{agent}_Model
-```
+### Prompts and `prompt_version`
 
-### Recommended directory layout
+The prompt text the agent receives is **not** written in the run config. A run sets `prompt_version`, and [`tasks_configs/prompts/registry.yaml`](tasks_configs/prompts/registry.yaml) maps that number to an ordered list of prompt files, each sent as one chat turn:
 
-```
-my_tasks/
-├── Task-Name-1/
-│   ├── problem_statement.pdf
-│   └── data.xlsx
-├── Task-Name-2/
-│   ├── problem_statement.pdf
-│   └── starting_model.xlsx
-```
+| Version | What it sends |
+|---|---|
+| `0` | Infrastructure smoke test — one turn, returns the workbook plus a `TEST SHEET`. Never grade its output. |
+| `9` | The BizbenchV1 (benchmark v1) single-turn payload with the 17-check rubric. |
+| `200` | The v2 3-step set: analyze → build (132-check rubric) → QA + download. |
+| `201` | The same v2 deliverables and rubric folded into one large turn. |
 
-### Template config
+The same number is written to `task_attempts.prompt_version`, so a row always names the text it was produced from. Registry entries are immutable — new text gets a new number, never an edit to an existing one. See [`tasks_configs/prompts/README.md`](tasks_configs/prompts/README.md).
 
-Templates live in `tasks_configs/`. The `prompts` list is what gets sent to the AI — replace with your own instructions:
+Setting `prompts_file` (or an inline `prompts:` list) in a run config bypasses the registry; the runner logs that it did, and `prompt_version` becomes a label only. Use it for one-off experiments, not benchmark runs.
 
-```yaml
-# tasks_configs/template_claude_web.yaml
-template:
-  agent_type: "claude_web"               # or "chatgpt_web"
+### `benchmark`
 
-  # Base directory for resolving relative paths in upload_files.
-  # local_files_base: "project_data/"
+`benchmark: v1 | v2` selects which experiment a run belongs to. It picks the database (BizbenchV1 vs MBABenchV2), the S3 prefix, and the identity namespace — see [Agent identity](#agent-identity). Set it explicitly in every run config.
 
-  prompts:
-    - "Analyze the attached files. Summarize the key data and questions."
-    - "Build an Excel solution on a new sheet."
-    - "Create a summary sheet with your conclusions. Download the workbook."
+### Agent identity
 
-  download_artifacts: true               # Download Excel files from chat
+`task_attempts.agent_model_name` and the S3 folder segment are derived from the config fields that change agent output, not written by hand — so a row cannot claim a model the run didn't use. The tables live in [`infra/configs/agent_identity.py`](infra/configs/agent_identity.py) and are **append-only**: existing rows point at existing labels. An axis combination with no entry is refused before the browser opens.
 
-  claude_web:
-    model: opus_4_8                      # opus_4_8 | sonnet_4_6 | haiku_4_5 | fable_5 | null
-    project_id: "your-project-id-here"
+- **v2** bifurcates on model (plus Claude's chat/cowork mode).
+- **v1** additionally bifurcates on every UI axis that wave pinned: Claude effort, ChatGPT mode/intelligence/effort/speed.
 
-    max_sec_per_task: 7200               # 120 min total timeout
+### Where output lands
 
-    browser:
-      type: "chrome"
-      headless: false
-      timeout: 30000
-      cdp_port: 9222                     # Match the Chrome --remote-debugging-port
-
-    retry:
-      max_agent_attempts: 3              # Retries for agent-phase failures
-      max_total_attempts: 10             # Hard cap including pipeline failures
-      max_sec_per_attempt: 7200
-      sleep_between_retries: 5
-
-    output:
-      folder_prefix: "claudeGUI"
-
-    logging:
-      level: "INFO"
-      save_to_file: true
-      log_directory: "claude_web_logs"
-```
+- `paths.scratch_dir` (default `scratch/gui-agents`) — the per-attempt working directory the engine writes into. Deleted once the sink has taken custody of its contents.
+- `paths.output_dir` (default `outputs`) — a **local mirror** of everything the `postgres_s3` sink uploads (workbook, completion JSONs, chat transcript, runtime log, prompts JSON), laid out under the same relative path as the S3 key:
+  ```
+  outputs/MBABenchV2/attempts/claude_haiku_4_5/BasicGrowth/{ts}_{run_id}/
+  ```
+  so the folder can be diffed against the bucket by eye. Mirroring is best-effort — a failure warns and the run continues, since S3 is the record of truth. Set to `""` to disable.
+- `sink.output_dir` — where the `local` sink writes instead. That sink keeps the working directory rather than deleting it, since nothing copied the files elsewhere.
 
 ### Model selection
 
-Both providers support configurable model selection via the provider's UI dropdown. If omitted or `null`, the runner uses whatever model is currently active in your session.
+Both providers support model selection through the provider's own UI picker. If omitted or `null`, the runner uses whatever is currently active in your session — benchmark runs must pin it, and v2 preflight refuses `null` for Claude.
 
-**Claude:**
+**Claude** (`claude_web.model`) — `opus_4_8`, `opus_4_6`, `sonnet_4_6`, `haiku_4_5`, `fable_5`. Selection matches on the base family name (`opus`, `sonnet`, `haiku`, `fable`) against the claude.ai dropdown, so the version suffix is for your reference — the runner picks whichever build of that family the UI currently offers.
 
-| Config value | Claude.ai model |
-|---|---|
-| `opus_4_8` | Opus 4.8 |
-| `sonnet_4_6` | Sonnet 4.6 |
-| `haiku_4_5` | Haiku 4.5 |
-| `fable_5` | Fable 5 |
-| `null` / omitted | Current session default |
+`claude_web.effort` (`low` | `medium` | `high` | `xhigh` | `max`) drives the reasoning-effort submenu; `claude_web.mode` (`chat` | `cowork`) drives the Chat/Cowork toggle, which persists across sessions and is therefore asserted on every task.
 
-Selection matches on the base model name (`opus`, `sonnet`, `haiku`, `fable`) against the Claude.ai dropdown, so the version suffix is for your reference — the runner picks whichever build of that family the UI currently offers.
+**ChatGPT** — the composer pill splits into two axes, and which one applies depends on `chatgpt_web.mode`:
 
-**ChatGPT:**
+| `mode` | Keys that apply | Values |
+|---|---|---|
+| `chat` | `model` + `intelligence` | `model`: `gpt_5_6_sol`, `gpt_5_5`, `gpt_5_4`, `gpt_5_3`, `o3` · `intelligence`: `instant`, `medium`, `high`, `xhigh`, `pro` |
+| `work` | `model` + `effort` + `speed` | `model`: `gpt_5_6_sol`, `gpt_5_6_terra`, `gpt_5_6_luna`, `gpt_5_5` · `effort`: `light`…`ultra` · `speed`: `standard`, `fast` |
 
-ChatGPT's composer now exposes an **"Intelligence" picker** (the pill next to the prompt box) rather than named GPT models. Config values map to the on-screen labels:
+Setting the other mode's key is a misconfiguration; preflight rejects it in `work` mode and the agent warns in `chat` mode.
 
-| Config value | ChatGPT picker label |
-|---|---|
-| `instant` | Instant (fastest, no reasoning) |
-| `medium` | Medium |
-| `high` | High |
-| `extra high` | Extra High |
-| `pro` | Pro Extended (research-grade, slowest) |
-| `gpt-5.5` | GPT-5.5 (legacy named model) |
-| `null` / omitted | Current session default |
+`chatgpt_web.model` also accepts three **one-axis** values — `instant`, `thinking`, `pro` — which name an intelligence level rather than a model. They exist so the cohorts already recorded under those labels can be reproduced; the agent routes them to `intelligence` and warns. New runs should name a model and set `intelligence`.
 
-Selection is **by visible label text**, not a fixed element id — OpenAI ships no stable `data-testid` on these rows, so if they relabel the picker the only thing to update is the `MODEL_LABELS` map in `claude_web_agent/chatgpt_web_agent.py`. If the configured label isn't found in the dropdown, the runner logs the available options and falls back to the current default.
+Selection is **by visible label text**, not a fixed element id — neither provider ships a stable `data-testid` on these rows, so if they relabel a picker the thing to update is the label maps in `claude_web_agent/chatgpt_web_agent.py` / `claude_web_agent/claude_web_agent.py`. If a configured label isn't found, the runner logs the available options and falls back to the current default.
 
-> **Heads-up:** if model selection silently fails, ChatGPT projects fall through to the project's **default** model. Set the project default to something cheap (e.g. Instant) so a missed selection doesn't strand you on Pro Extended, where a single prompt can take 10–50 minutes.
+> **Heads-up:** if ChatGPT model selection silently fails, a project falls through to its **default** model. Set the project default to something cheap so a missed selection doesn't strand you on Pro Extended, where a single prompt can take 10–50 minutes.
 
 ### "Continue" auto-retry
 
-If the model finishes responding but no Excel file appears, the engine can automatically send a "Continue" message asking the model to complete the task and provide the Excel file.
-
-- **ChatGPT Agent mode**: up to 5 continues.
-- **ChatGPT Extended Pro**: no continues — Extended Pro finishes end-to-end in one response.
-- **Claude**: up to 5 continues.
-
-### Provider comparison
-
-|  | Claude | ChatGPT Agent Mode | ChatGPT Extended Pro |
-|---|---|---|---|
-| Flag | `--provider claude` (default) | `--provider chatgpt` | `--provider chatgpt` |
-| Template setting | `agent_type: claude_web` | `agent_mode: true` | `agent_mode: false` |
-| Model selection | `model: opus_4_8` (configurable) | `model:` Intelligence picker (+ project default) | `model:` Intelligence picker (+ project default) |
-| How it works | Extended thinking | Code Interpreter builds Excel | Extended thinking builds Excel |
-| Typical task time | 5-15 min | 15-30 min | 15-45 min |
-| Log directory | `claude_web_logs/` | `chatgpt_web_logs/` | `chatgpt_web_logs/` |
-| Output prefix | `claudeGUI` | `chatgptGUI_agent` | `chatgptGUI_extended` |
+If the model finishes responding but no Excel file appears, the engine can automatically send a "Continue" message asking it to complete the task and provide the file. Both providers allow up to 5 continues.
 
 ---
 
-## CLI options (`claude_web_batch_runner.py`)
+## CLI options (`python -m infra.run`)
 
 | Flag | Default | Description |
 |---|---|---|
-| `--tasks FILE` | required | Path to task list YAML |
-| `--template FILE` | auto | Template config (auto-selects by provider if omitted) |
-| `--provider` | `claude` | `claude` or `chatgpt` |
+| `--run-config FILE` | none | Run profile: a task-shaped YAML, or an overlay merged as the 3rd config layer |
+| `--dry-run` | off | Merge the config and print the engine configs; touch no browser |
+| `-y`, `--yes` | off | Skip the interactive "proceed?" confirmation |
 | `--start N` | 0 | Start from task index N |
 | `--end N` | all | Stop at task index N (exclusive) |
-| `--stop-on-failure` | off | Abort on first failure |
-| `--dry-run` | off | Preview tasks without executing |
-| `--timeout` | none | Default timeout per task in seconds |
+| `--task-id N` | none | Run exactly one task by DB id, re-running it even if an attempt exists |
+| `--skip-if-attempted` | off | Force `skip_already_attempted`, making an already-attempted task a no-op |
+| `--timeout SEC` | none | Per-task timeout override |
+| `--auth-precheck` | off | Probe the provider session over CDP first; exit 4 if it's dead |
+
+Exit codes: `0` all attempts succeeded · `1` at least one failed · `2` config/preflight error, nothing attempted · `3` no tasks matched · `4` an environment gate blocked the run.
 
 ---
 
 ## Running Claude + ChatGPT in parallel
 
-You can run both providers simultaneously using two Chrome instances on different ports.
-
-### Launch two Chrome instances
+Run both providers simultaneously using two Chrome instances on different ports.
 
 ```bash
 # Browser A — port 9222 (Claude)
@@ -385,37 +328,45 @@ You can run both providers simultaneously using two Chrome instances on differen
   '--remote-allow-origins=*' &
 ```
 
-Log into each provider in its own browser, then run both runners in parallel:
+Log into each provider in its own browser, then run both configs in parallel. Each run config must set `<provider>_web.browser.cdp_port` to match its browser:
 
 ```bash
-# Claude (port 9222)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml &
-
-# ChatGPT (port 9333)
-.venv/bin/python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --template tasks_configs/template_chatgpt_web.yaml \
-  --provider chatgpt &
-
+uv run python -m infra.run -y --run-config infra/configs/run_configs/v2_fable5_claude.yaml &
+uv run python -m infra.run -y --run-config infra/configs/run_configs/v2_sol56_chatgpt.yaml &
 wait
 ```
 
-> The batch runner does **not** auto-launch Chrome on non-default ports (anything other than 9222). Start Chrome yourself on ports like 9333, 9334, etc., and set `cdp_port` to match in the template.
+> The runner does **not** auto-launch Chrome on non-default ports (anything other than 9222). Start Chrome yourself on ports like 9333, 9334, etc., and set `cdp_port` to match.
 
 ---
 
 ## Output structure
 
-Each run creates a date-prefixed output folder:
+Each attempt gets one working directory and — for the `postgres_s3` sink — one S3 prefix holding everything it produced:
 
 ```
-20260320_chatgptGUI_agent/
-  solutions/        # Downloaded Excel artifacts
-  json_logs/        # Per-task completion JSON logs
+scratch/gui-agents/attempts/{ts}_{task}/     # working dir, deleted after upload
+  solutions/                                 #   downloaded workbooks
+  json_logs/                                 #   one completion_*.json per agent attempt
+  logs/                                      #   runtime log + chat transcript
+  prompts_{task}_{ts}.json                   #   the prompt text actually sent
 
-chatgpt_web_logs/   # Detailed per-task log files
+outputs/MBABenchV2/attempts/{agent}/{task}/{ts}_{run_id}/   # local mirror of the S3 prefix
 ```
+
+---
+
+## Tests
+
+Offline checks — no DB, AWS, or browser:
+
+```bash
+uv run python -m pytest tests/
+```
+
+`tests/test_checked_in_configs.py` loads every run config and dispatcher template in the repo and asserts it still merges, resolves prompts, resolves an identity, and clears preflight. Run it after touching anything under `infra/configs/` or `infra/dispatcher/config_templates/`.
+
+Credential-resolution tests are skipped unless the workspace's monorepo `config` module is importable, since worker boxes deliberately run without it.
 
 ---
 
@@ -430,23 +381,23 @@ ps aux | grep remote-debugging-port  # all debugging Chrome instances
 ```
 
 **`Chrome not reachable on CDP port 9222` immediately after launching Chrome.** This is almost always a setup-vs-runtime mismatch — the launch flags and the runner's expectations have drifted. Check that:
-- The Chrome you launched uses `--remote-debugging-port=9222` (or whatever is in `template.<provider>.browser.cdp_port`).
+- The Chrome you launched uses `--remote-debugging-port=9222` (or whatever is in `<provider>_web.browser.cdp_port`).
 - The `--user-data-dir` matches what you used for login (sessions are scoped per profile dir).
 - The Chrome binary is regular Chrome, not Canary v148+ (which has a CDP incompatibility — see next entry).
-- For parallel runs, the runner's `cdp_port` matches the actual port the Chrome instance is on.
+- For parallel runs, the run config's `cdp_port` matches the actual port that browser is on.
 
 **`Protocol error (Browser.setDownloadBehavior): Browser context management is not supported`.** Chrome Canary v148+ incompatibility — switch to regular Chrome.
 
-**`Agent mode menu not found` (ChatGPT).** ChatGPT's UI changes frequently. The runner activates Agent mode by clicking the `+` menu (`[data-testid="composer-plus-btn"]`) and selecting "Agent mode". If selectors break, update `claude_web_agent/chatgpt_web_agent.py`.
+**`0 artifact preview cards found` (ChatGPT).** The model responded with text only and didn't produce an Excel file. Check the conversation in the browser; see [`docs/chatgpt_reliability_summary.md`](docs/chatgpt_reliability_summary.md) for why this happens more often on ChatGPT than on Claude.
 
-**`0 artifact preview cards found` (ChatGPT).** The model responded with text only and didn't produce an Excel file. Usually means Agent mode didn't engage or the prompt didn't trigger file creation. Check the conversation in the browser.
+**`You don't have access to this project` (ChatGPT).** The `project_id` in the run config doesn't match the ChatGPT account logged into that browser. Each account has its own project IDs — update the config with the correct ID from your account's project URL.
 
-**`You don't have access to this project` (ChatGPT).** The `project_id` in the template doesn't match the ChatGPT account logged into that browser. Each ChatGPT account has its own project IDs — update the template with the correct ID from your account's project URL.
+**Exit code 2 with a `PromptVersionError` or `UnknownAgentCombination`.** The run config's prompt version isn't in the registry, or its provider axes name no identity. Both fail before the browser opens, by design — `--dry-run` reproduces them in a second.
 
 **Playwright not installed.** If you see `playwright._impl._errors.Error: Executable doesn't exist`:
 ```bash
-.venv/bin/python -m playwright install chromium
-# Linux: also .venv/bin/python -m playwright install-deps chromium
+uv run python -m playwright install chromium
+# Linux: also uv run python -m playwright install-deps chromium
 ```
 
 ---
@@ -459,12 +410,12 @@ The system follows a composable six-layer pipeline. Green components are user-co
 
 | Layer | Role | Key files |
 |---|---|---|
-| **Input** | Task definitions, prompt templates, agent parameters | `tasks_configs/template_*.yaml`, `tasks_configs/examples/*.yaml` |
-| **Orchestration** | Batch retry logic, subprocess isolation | `claude_web_batch_runner.py` |
+| **Input** | Run configs, prompt registry, task source | `infra/configs/`, `tasks_configs/prompts/`, `task_io/sources/` |
+| **Orchestration** | Config merge, preflight, per-task subprocess, retry | `infra/run.py` |
 | **Engine** | Single-task pipeline (setup → navigate → AI → download) | `claude_web_agent/claude_web_engine.py` |
-| **Navigation** | Browser navigates to claude.ai or chatgpt.com | Engine config |
-| **AI Interaction** | Claude, ChatGPT, or your custom agent | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
-| **Output** | Downloaded Excel files, validation, JSON logs | `claude_web_agent/file_validator.py`, `completion_logger.py` |
+| **Navigation** | Browser connects to Chrome and navigates to the provider | `claude_web_agent/browser_manager.py` |
+| **AI Interaction** | Claude, ChatGPT, or your own agent | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
+| **Output** | Validation, JSON logs, upload + local mirror | `claude_web_agent/file_validator.py`, `completion_logger.py`, `task_io/sinks/` |
 
 > See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full architecture guide and instructions on adding your own provider.
 
@@ -474,26 +425,25 @@ The system follows a composable six-layer pipeline. Green components are user-co
 
 ```
 gui-agents-master/
-├── claude_web_batch_runner.py        # Local batch runner (default — both providers)
-├── infra/                            # EC2 dispatcher + worker (MBABenchV2 internal team)
-│   ├── README.md                     # Operator guide
-│   ├── run.py                        # DB-driven per-task runner
-│   ├── dispatcher/                   # Laptop-side dispatch CLI
-│   └── worker/                       # Box-side worker loop + systemd units
+├── infra/                            # the runner and its orchestration
+│   ├── run.py                        # entry point — one task per engine subprocess
+│   ├── configs/                      # configs.default.yaml + run_configs/
+│   ├── dispatcher/                   # laptop-side EC2 dispatch CLI + box templates
+│   └── worker/                       # box-side worker loop + systemd units
+├── task_io/                          # the source/sink seam
+│   ├── sources/                      # yaml_source.py, postgres_s3.py
+│   └── sinks/                        # local_sink.py, postgres_s3.py
 ├── claude_web_agent/
 │   ├── claude_web_agent.py           # Claude.ai provider
 │   ├── chatgpt_web_agent.py          # ChatGPT provider
-│   ├── claude_web_engine.py          # Shared per-task engine
+│   ├── claude_web_engine.py          # shared per-task engine
 │   ├── browser_manager.py            # Chrome CDP connection
-│   ├── completion_logger.py          # Crash-safe JSON logging
+│   ├── completion_logger.py          # crash-safe JSON logging
 │   ├── file_validator.py             # Excel file validation
-│   ├── task_status.py                # Status enums
-│   └── web_agent.py                  # Abstract base class
-├── tasks_configs/
-│   ├── template_claude_web.yaml
-│   ├── template_chatgpt_web.yaml
-│   └── examples/sample_tasks.yaml
-├── docs/                             # Architecture diagram + ARCHITECTURE.md
-├── pyproject.toml
-└── requirements.txt
+│   ├── task_status.py                # status enums
+│   └── web_agent.py                  # abstract base class
+├── tasks_configs/prompts{,_v2,_pv9}/ # prompt payloads + registry.yaml
+├── tests/                            # offline pytest checks
+├── docs/                             # architecture diagram + ARCHITECTURE.md
+└── pyproject.toml
 ```

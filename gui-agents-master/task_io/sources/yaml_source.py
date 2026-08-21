@@ -6,7 +6,7 @@
   * a single file — same two shapes are accepted.
 
 Reserved task fields (the only ones this source cares about):
-    task_name, upload_files, files_to_upload, solution_name, skip, task_source
+    task_name, upload_files, solution_name, skip, task_source
 
 Any non-reserved top-level keys are IGNORED here. The runner applies
 project-wide overrides at the --run-config layer; there is no per-task
@@ -87,9 +87,7 @@ class YamlTaskSource:
             if task.get("skip"):
                 return None
             task_name = task.get("task_name", f"task_{idx}")
-            upload_files_raw = (
-                task.get("upload_files") or task.get("files_to_upload") or []
-            )
+            upload_files_raw = task.get("upload_files") or []
             solution_name = task.get("solution_name")
             task_source = task.get("task_source", file_default_source or "yaml")
         else:

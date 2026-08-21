@@ -12,7 +12,6 @@
 # as overrides):
 #   task_name           — required
 #   upload_files        — list of local paths
-#   files_to_upload     — alias for upload_files
 #   solution_name       — base name for the output file
 #   skip                — true to skip this task
 #   task_source         — provenance string (used by sinks / DB)

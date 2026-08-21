@@ -2,12 +2,15 @@
 Claude Web Agent - Automate interactions with Claude.ai web interface.
 
 This agent handles:
-1. Navigating to claude.ai/new
-2. Handling authentication (if needed)
-3. Enabling Extended Thinking and Web Search (configurable)
-4. Submitting prompts and capturing responses
-5. File attachments
-6. Response extraction for grading
+1. Opening a fresh conversation — in the configured project, or on
+   claude.ai/new when no project_id is set
+2. Detecting an expired session (the engine surfaces it as a pipeline error)
+3. Asserting the surface: the Chat/Cowork toggle, the model, the reasoning
+   effort submenu, and the Extended Thinking / Web Search switches
+4. Uploading the task's files
+5. Submitting prompts and waiting out each response
+6. Downloading the workbooks Claude produces, and extracting the response
+   text for the transcript
 
 Configuration options (in claude_web section):
     mode: "chat" | "cowork" (default: "chat") - The Chat/Cowork toggle on
@@ -2260,7 +2263,3 @@ class ClaudeWebAgent(WebAgent):
             logger.error(f"Failed to download artifacts: {e}")
 
         return downloaded_files
-
-
-# Backward compatibility
-ClaudeWebState = WebAgentState

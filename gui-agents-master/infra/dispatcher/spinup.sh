@@ -106,7 +106,7 @@ fi
 
 # Resolve the agent identity the box will publish to state.json + DB.
 # Runs the real load_configs + resolver against the template so any missing
-# behavior fields (e.g. no chatgpt_web block, unknown model/agent_mode
+# behavior fields (e.g. no chatgpt_web block, an unknown model/mode/effort
 # combo) fail here instead of after we've launched an EC2 instance.
 AGENT_IDENTITY="$(PYTHONPATH="$REPO_ROOT" python3 - "$CONFIG_TEMPLATE" <<'PY'
 import sys
@@ -138,11 +138,11 @@ echo "  agent_model_type: $AGENT_MODEL_TYPE   (→ task_attempts.agent_model_typ
 #
 # Porting it is not just a path swap: a box is pinned to ONE experiment, so
 # spinup has to decide which url to bake into /etc/gui-agents/secrets.env.
-# That means reading `benchmark:` out of --config-template (none of the
-# templates in config_templates/ set it today, so they'd all silently take
-# the v2 default) or adding an explicit --benchmark flag. Provisioning a box
-# against the wrong database is exactly the failure this whole change set
-# exists to make impossible, so this stops rather than guesses.
+# Every template in config_templates/ now states `benchmark:`, so reading it
+# from --config-template is one option; an explicit --benchmark flag that
+# cannot be omitted is the other. Provisioning a box against the wrong
+# database is exactly the failure this whole change set exists to make
+# impossible, so this stops rather than guesses.
 #
 # TO PORT:
 #   1. add --benchmark {v1|v2} (required, no default) to the arg parser

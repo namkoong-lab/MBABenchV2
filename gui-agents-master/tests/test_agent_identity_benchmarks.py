@@ -1,11 +1,13 @@
 """Offline unit checks for dual-benchmark identity resolution.
 
-Run from gui-agents-master:  .venv/bin/python tests/test_agent_identity_benchmarks.py
+Run from gui-agents-master:  python -m pytest tests/test_agent_identity_benchmarks.py
 No browser, DB, or AWS involved.
 """
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -45,29 +47,21 @@ CASES = [
 ]
 
 
-def main() -> int:
-    for bench, prov, block, want in CASES:
-        got = resolve_agent_identity(cfg(bench, prov, block)).model_name
-        assert got == want, f"{bench}/{prov}/{block}: {got} != {want}"
-        print(f"OK  {bench} {prov:8s} -> {got}")
+@pytest.mark.parametrize("bench,prov,block,want", CASES)
+def test_identity_resolves(bench, prov, block, want):
+    got = resolve_agent_identity(cfg(bench, prov, block)).model_name
+    assert got == want, f"{bench}/{prov}/{block}: {got} != {want}"
 
-    try:
+
+def test_unknown_benchmark_refused():
+    with pytest.raises(UnknownAgentCombination):
         resolve_agent_identity(cfg("v3", "claude", dict(model="fable_5")))
-        raise AssertionError("benchmark v3 should be refused")
-    except UnknownAgentCombination:
-        print("OK  benchmark v3 refused")
 
-    try:
+
+def test_combination_without_a_table_entry_refused():
+    """An unlisted axis combination must force a naming decision, not
+    invent a label for the DB."""
+    with pytest.raises(UnknownAgentCombination):
         resolve_agent_identity(
             cfg("v2", "claude", dict(mode="cowork", model="opus_4_8"))
         )
-        raise AssertionError("v2 cowork opus_4_8 has no entry; should refuse")
-    except UnknownAgentCombination:
-        print("OK  v2 cowork without a table entry refused")
-
-    print("ALL IDENTITY CHECKS PASSED")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

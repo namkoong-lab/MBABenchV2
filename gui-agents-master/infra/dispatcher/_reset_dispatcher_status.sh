@@ -143,5 +143,5 @@ cat <<EOF
 
 Full reset complete. To re-run the setup from scratch:
   ./infra/dispatcher/aws_bootstrap.sh
-  ./infra/dispatcher/spinup.sh --alias <name> --provider <claude|chatgpt>
+  ./infra/dispatcher/spinup.sh --alias <name>
 EOF

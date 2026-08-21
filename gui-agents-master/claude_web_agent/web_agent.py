@@ -2,9 +2,9 @@
 WebAgent Abstract Base Class - Strategy Pattern for web-based AI agents.
 
 This module defines the common interface that all web-based AI agents
-(e.g., ClaudeWebAgent, ChatGPTWebAgent) must implement. The engine and
-batch runner operate against this base class type, allowing new agents
-to be added without modifying orchestration logic.
+(e.g., ClaudeWebAgent, ChatGPTWebAgent) must implement. The engine
+operates against this base class type, allowing new agents to be added
+without modifying orchestration logic.
 
 Classes:
     WebAgentState: Enum of possible agent states.
@@ -50,9 +50,8 @@ class WebAgent(ABC):
     the abstract methods with provider-specific Playwright selectors and
     interaction logic.
 
-    The engine and batch runner depend on this interface, enabling new
-    agents to be added via the Strategy Pattern without changes to
-    orchestration code.
+    The engine depends on this interface, enabling new agents to be added
+    via the Strategy Pattern without changes to orchestration code.
 
     Args:
         page: Playwright page instance connected to the browser.

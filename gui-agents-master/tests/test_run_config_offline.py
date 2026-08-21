@@ -1,15 +1,17 @@
 """Offline pipeline checks: config merge -> engine config -> preflight,
 for both benchmarks. No DB, AWS, or browser access.
 
-Run from gui-agents-master:  .venv/bin/python tests/test_run_config_offline.py
+Run from gui-agents-master:  python -m pytest tests/test_run_config_offline.py
 """
 import os
 import sys
 import tempfile
 from contextlib import contextmanager
+from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
@@ -32,7 +34,7 @@ def fake_spec(name="TestTask"):
     )
 
 
-def check_v1():
+def test_v1():
     # Same shape as the untracked prod_single_claude_*.yaml configs, minus
     # machine secrets — validates the merge path those configs rely on.
     cfg = load_configs(
@@ -70,11 +72,9 @@ def check_v1():
     resolved = resolve_prompts(dict(ec))
     assert len(resolved["prompts"]) == 1
     assert len(resolved["prompts"][0]) > 13000, len(resolved["prompts"][0])
-    print(f"OK  v1: identity={ident.model_name}, pv9 prompt "
-          f"{len(resolved['prompts'][0])} chars, preflight clean")
 
 
-def check_v2():
+def test_v2():
     cfg = load_configs(
         default_path=REPO / "infra/configs/configs.default.yaml",
         override_path=REPO / "infra/configs/does_not_exist.yaml",
@@ -96,11 +96,9 @@ def check_v2():
     resolved = resolve_prompts(dict(ec))
     assert len(resolved["prompts"]) == 3, len(resolved["prompts"])
     assert "132 checks" in resolved["prompts"][1]
-    print(f"OK  v2: identity={ident.model_name}, 3-step prompts "
-          f"({[len(p) for p in resolved['prompts']]}) , preflight clean")
 
 
-def check_v1_missing_axes_fails():
+def test_v1_missing_axes_fails():
     """A v1 run config that forgets the axes must fail preflight, not run."""
     cfg = load_configs(
         default_path=REPO / "infra/configs/configs.default.yaml",
@@ -122,7 +120,6 @@ def check_v1_missing_axes_fails():
     ec = build_engine_config(cfg, fake_spec())
     errors = preflight_check(ec, "chatgpt", cfg.benchmark)
     assert any("effort" in e for e in errors), errors
-    print("OK  v1 invalid work-effort rejected by preflight")
 
 
 # --- credential resolution (task_io/registry.py) ----------------------------
@@ -130,6 +127,18 @@ def check_v1_missing_axes_fails():
 # The database url is keyed by benchmark in the monorepo config, so a run
 # config cannot name one experiment and write to the other's DB. These checks
 # run against a temp config dir — never the operator's real credentials.
+#
+# They need the monorepo `config` module on the path, which comes from the
+# workspace install at the repo root. A worker box installs only
+# gui-agents-master's dependencies and reads credentials from
+# /etc/gui-agents/secrets.env instead, so `_repo_value` returning None there
+# is the designed behavior rather than a failure — skip instead of failing.
+
+needs_repo_config = pytest.mark.skipif(
+    find_spec("config") is None,
+    reason="monorepo `config` module not installed (run pytest from the "
+    "workspace environment to exercise credential resolution)",
+)
 
 TEMP_CONFIG = {
     "database": {
@@ -172,7 +181,8 @@ def _cfg(benchmark: str, **extra):
     )
 
 
-def check_db_url_follows_benchmark():
+@needs_repo_config
+def test_db_url_follows_benchmark():
     from task_io.registry import _resolve_db_url, describe_database_target
 
     with temp_repo_config(TEMP_CONFIG):
@@ -182,20 +192,20 @@ def check_db_url_follows_benchmark():
         desc = describe_database_target(_cfg("v2"))
         assert desc.startswith("MBABenchV2 "), desc
         assert "p@host" not in desc and ":p" not in desc, desc
-    print("OK  database url follows `benchmark` (v1 -> BizbenchV1, v2 -> MBABenchV2)")
 
 
-def check_explicit_url_wins():
+@needs_repo_config
+def test_explicit_url_wins():
     """A box's pushed configs.yaml must still be able to override."""
     from task_io.registry import _resolve_db_url
 
     with temp_repo_config(TEMP_CONFIG):
         cfg = _cfg("v2", database={"url": "postgresql://u:p@box/Explicit"})
         assert "Explicit" in _resolve_db_url(cfg), _resolve_db_url(cfg)
-    print("OK  explicit configs.yaml database.url still wins")
 
 
-def check_env_fallback_and_no_file_creation():
+@needs_repo_config
+def test_env_fallback_and_no_file_creation():
     """The box path: no monorepo config at all -> env var, nothing written."""
     from task_io.registry import _resolve_db_url
 
@@ -208,10 +218,10 @@ def check_env_fallback_and_no_file_creation():
         # Reading a config must never write one — Config.load defaults to
         # create_missing=True, which would seed a file on a worker box.
         assert not cfg_dir.exists(), f"reading a config created {cfg_dir}"
-    print("OK  missing monorepo config -> env var, and nothing is created")
 
 
-def check_aws_creds_resolve():
+@needs_repo_config
+def test_aws_creds_resolve():
     from task_io.registry import _repo_value
 
     with temp_repo_config(TEMP_CONFIG):
@@ -219,31 +229,13 @@ def check_aws_creds_resolve():
         assert _repo_value("aws", "secret_access_key") == "secretfake"
         # session_token has no monorepo equivalent — env-only by design.
         assert _repo_value("aws", "session_token") is None
-    print("OK  aws credentials resolve from the monorepo config")
 
 
-def check_null_creds_fall_through():
+@needs_repo_config
+def test_null_creds_fall_through():
     """`null` placeholders must behave like absent keys, not empty strings."""
     from task_io.registry import _repo_value
 
     blank = {"database": TEMP_CONFIG["database"], "aws": {"access_key_id": None}}
     with temp_repo_config(blank):
         assert _repo_value("aws", "access_key_id") is None
-    print("OK  null credentials fall through to the next layer")
-
-
-def main() -> int:
-    check_v1()
-    check_v2()
-    check_v1_missing_axes_fails()
-    check_db_url_follows_benchmark()
-    check_explicit_url_wins()
-    check_env_fallback_and_no_file_creation()
-    check_aws_creds_resolve()
-    check_null_creds_fall_through()
-    print("ALL OFFLINE RUN-CONFIG CHECKS PASSED")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

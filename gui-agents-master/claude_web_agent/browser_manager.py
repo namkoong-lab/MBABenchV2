@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 # Chrome CDP configuration
 CDP_PORT = 9222
-CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 

@@ -11,7 +11,6 @@ The Claude Web Agent allows you to:
 - Submit prompts and capture responses
 - Upload files to conversations
 - Download generated artifacts (Excel files, etc.)
-- Run tasks in batch (sequentially)
 
 ## Directory Structure
 
@@ -26,6 +25,7 @@ claude_web_agent/
 ├── completion_logger.py        # JSON crash-safe logging
 ├── file_validator.py           # Excel file validation
 ├── task_status.py              # Status enums
+├── dom_diagnostics.py          # Final-message DOM dumps for selector drift
 └── README.md                   # This file
 ```
 
@@ -33,18 +33,31 @@ claude_web_agent/
 
 ### 1. Install Dependencies
 
+From the repo root:
+
 ```bash
 uv sync
-.venv/bin/python -m playwright install chromium
+uv run python -m playwright install chromium
 ```
 
-### 2. Run a Single Task
+### 2. Run Tasks
 
-Create a config file (`my_task.yaml`):
+`python -m infra.run --run-config <file>` is the supported entry point — it
+merges the config layers, resolves the prompt version and agent identity,
+and invokes this engine once per task. See the [repo README](../README.md).
+
+### 3. Run the Engine Standalone
+
+For provider-level debugging you can drive the engine directly with a
+hand-written engine config. It skips the config loader, the prompt
+registry, agent identity, and the source/sink, so its output is **not**
+benchmark data.
 
 ```yaml
+# my_task.yaml
 task_name: "my-test-task"
 task_source: "test"
+prompt_version: 0
 
 prompts:
   - "Hello! Please confirm you're working."
@@ -57,19 +70,8 @@ claude_web:
   max_wait_per_prompt_seconds: 300
 ```
 
-Run:
-
 ```bash
-cd claude_web_agent
-python claude_web_engine.py --config my_task.yaml
-```
-
-### 3. Run Batch Tasks
-
-```bash
-python claude_web_batch_runner.py \
-  --tasks tasks_configs/examples/sample_tasks.yaml \
-  --template tasks_configs/template_claude_web.yaml
+uv run python claude_web_agent/claude_web_engine.py --config my_task.yaml --no-hold
 ```
 
 ## Browser Setup

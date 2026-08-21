@@ -103,7 +103,6 @@ ENGINE_RC_TIMEOUT = 124
 _RUN_CONFIG_TASK_KEYS = {
     "task_name",
     "upload_files",
-    "files_to_upload",
     "solution_name",
     "skip",
     "task_source",
@@ -282,20 +281,21 @@ def _preflight_provider_v1(
                     f"chatgpt_web.intelligence={intel!r} is not one of "
                     f"{', '.join(_INTELLIGENCE)} (or null)."
                 )
-            # Legacy one-axis values stay valid: identity has entries for
-            # them and the agent routes them to the intelligence axis (with
-            # a warning). Only genuinely unknown values are errors.
-            _LEGACY_CHATGPT_MODELS = ("instant", "thinking", "pro")
+            # One-axis values are valid: they name intelligence rather than a
+            # model, the identity tables have entries for them, and the agent
+            # routes them to the intelligence axis (with a warning). Only
+            # genuinely unknown values are errors.
+            _ONE_AXIS_CHATGPT_MODELS = ("instant", "thinking", "pro")
             model = section.get("model")
             if (
                 model is not None
                 and model not in _CHATGPT_MODELS
-                and model not in _LEGACY_CHATGPT_MODELS
+                and model not in _ONE_AXIS_CHATGPT_MODELS
             ):
                 errors.append(
                     f"chatgpt_web.model={model!r} is not one of "
                     f"{', '.join(_CHATGPT_MODELS)} "
-                    f"(legacy: {', '.join(_LEGACY_CHATGPT_MODELS)}) or null."
+                    f"(one-axis: {', '.join(_ONE_AXIS_CHATGPT_MODELS)}) or null."
                 )
 
 
@@ -332,6 +332,18 @@ def preflight_check(
     # project_id fallback. The agent logs a warning in that case.
     # project_slug is likewise optional — some ChatGPT project URLs have no
     # slug (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug}).
+
+    # prompt_version labels every completion JSON and the task_attempts row.
+    # The engine refuses a config without one; catch it here so --dry-run
+    # shows it rather than the browser opening first. Only reachable by
+    # nulling the key explicitly — configs.default.yaml supplies 200.
+    if engine_config.get("prompt_version") is None:
+        errors.append(
+            "prompt_version is null. It names the prompt the attempt was "
+            "run with, so a run cannot record one without it. Set it to a "
+            "version in tasks_configs/prompts/registry.yaml (it stays a "
+            "label even when prompts_file bypasses the registry)."
+        )
 
     # prompts_file must exist and be non-empty — a benchmark run with the
     # wrong (or empty) prompt is worse than one that never starts.

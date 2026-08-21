@@ -4,12 +4,14 @@ One attempt = one staging directory + one S3 prefix holding everything it
 produced. Getting the custody rule wrong deletes the only copy of a
 workbook, so it is pinned here.
 
-Run from gui-agents-master:  python tests/test_attempt_files_offline.py
+Run from gui-agents-master:  python -m pytest tests/test_attempt_files_offline.py
 """
 import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace as NS
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -41,6 +43,14 @@ def populate(run_dir: Path) -> None:
     (run_dir / "prompts_Task_20260820.json").write_text("{}")
 
 
+@pytest.fixture
+def run_dir(tmp_path: Path) -> Path:
+    """A populated attempt directory, one per test."""
+    d = tmp_path / "attempt"
+    populate(d)
+    return d
+
+
 def result_for(run_dir: Path) -> AttemptResult:
     return AttemptResult(
         task_id="2",
@@ -57,7 +67,7 @@ def result_for(run_dir: Path) -> AttemptResult:
     )
 
 
-def check_collect_log_files(run_dir: Path) -> None:
+def test_collect_log_files(run_dir: Path) -> None:
     got = [p.name for p in collect_log_files(run_dir)]
     want = [
         "completion_claude_web_1.json",  # one per agent attempt
@@ -66,10 +76,9 @@ def check_collect_log_files(run_dir: Path) -> None:
         "claude_web_20260820_Task.log",  # runtime log
     ]
     assert got == want, got
-    print(f"OK  collect_log_files -> {len(got)} logs, in upload order")
 
 
-def check_everything_uploads(run_dir: Path) -> None:
+def test_everything_uploads(run_dir: Path) -> None:
     """The workbook, every log, and the prompts JSON all reach S3."""
     sink = MBABenchV2PostgresS3AttemptSink.__new__(MBABenchV2PostgresS3AttemptSink)
     sink.s3_prefix = "MBABenchV2/attempts"
@@ -93,10 +102,9 @@ def check_everything_uploads(run_dir: Path) -> None:
     keys = [sink._file_key(base, p) for p in attempt + prompts]
     prefix = "MBABenchV2/attempts/claude_haiku_4_5/Task/20260820_120000_4aa375a5/"
     assert all(k.startswith(prefix) for k in keys), keys
-    print(f"OK  {len(keys)} files upload to one attempt prefix")
 
 
-def check_custody() -> None:
+def test_custody() -> None:
     """Staging is disposable only for a sink that copied the files away."""
     assert PostgresS3AttemptSink.retains_files is True
     assert LocalAttemptSink.retains_files is False
@@ -106,10 +114,9 @@ def check_custody() -> None:
         populate(run_dir)
         _clear_staging(run_dir, NS(retains_files=retains))
         assert run_dir.exists() is should_exist, (retains, should_exist)
-    print("OK  staging released after upload, kept when only paths were recorded")
 
 
-def check_log_dir_follows_run_dir() -> None:
+def test_log_dir_follows_run_dir() -> None:
     """Pinned run_dir keeps the logs with the attempt; standalone runs use
     the configured log_directory."""
     assert resolve_log_dir({"run_dir": "/x/y"}, {}, "claude_web_logs") == Path(
@@ -118,10 +125,9 @@ def check_log_dir_follows_run_dir() -> None:
     agent_cfg = {"logging": {"log_directory": "claude_web_logs"}}
     assert resolve_log_dir({}, agent_cfg, "claude_web_logs") == Path("claude_web_logs")
     assert str(default_run_dir(".", "claudeGUI")).endswith("_claudeGUI")
-    print("OK  engine log dir follows run_dir, falls back when standalone")
 
 
-def check_staging_dir_is_per_attempt() -> None:
+def test_staging_dir_is_per_attempt() -> None:
     cfg = NS(paths=NS(scratch_dir="scratch/gui-agents"))
     from datetime import datetime
 
@@ -130,20 +136,3 @@ def check_staging_dir_is_per_attempt() -> None:
     assert a != b, "two attempts must not share a directory"
     assert a.name == "20260820_120000_Grapes_of_Wrath", a
     assert a.parent == Path("scratch/gui-agents/attempts"), a
-    print(f"OK  staging dir per attempt -> {a}")
-
-
-def main() -> int:
-    run_dir = Path(tempfile.mkdtemp()) / "attempt"
-    populate(run_dir)
-    check_collect_log_files(run_dir)
-    check_everything_uploads(run_dir)
-    check_custody()
-    check_log_dir_follows_run_dir()
-    check_staging_dir_is_per_attempt()
-    print("\nALL ATTEMPT-FILE CHECKS PASSED")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

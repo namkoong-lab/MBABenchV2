@@ -251,23 +251,13 @@ class PostgresS3TaskSource:
 
 # ----- Benchmark-specific subclasses ----------------------------------------
 
-# v2 (MBABenchV2 DB): tasks table, no old_id column.
+# Shared by both benchmarks: the two DBs give the tasks table the same shape.
 MBABENCHV2_TASK_SCHEMA = TaskSchema(
     table="tasks",
     id_col="id",
     name_col="task_name",
     files_col="task_starting_files",
     extra_cols=("task_source",),
-)
-
-# v1 (BizbenchV1 DB): identical shape plus the `old_id` mapping column,
-# selected into spec.metadata.
-BIZBENCH_TASK_SCHEMA = TaskSchema(
-    table="tasks",
-    id_col="id",
-    name_col="task_name",
-    files_col="task_starting_files",
-    extra_cols=("task_source", "old_id"),
 )
 
 MBABENCHV2_ATTEMPTS_TABLE = "task_attempts"
@@ -384,8 +374,7 @@ class MBABenchV2PostgresS3TaskSource(PostgresS3TaskSource):
 class BizbenchPostgresS3TaskSource(MBABenchV2PostgresS3TaskSource):
     """Benchmark v1 source (BizbenchV1 DB).
 
-    Identical filter/query behavior; the only difference is the task schema
-    (carries the `old_id` column through spec.metadata).
+    Same schema, filters, and query behavior as the v2 source. It exists as
+    its own class so `task_io.registry` names one source per benchmark and
+    the v1 lane has a place to diverge if the BizbenchV1 tables ever do.
     """
-
-    TASK_SCHEMA = BIZBENCH_TASK_SCHEMA

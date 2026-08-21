@@ -220,12 +220,6 @@ def pop_head_as_current(unit: str) -> CurrentTask | None:
         return s.current
 
 
-def set_current_pid(pid: int) -> None:
-    with locked_state() as s:
-        if s.current is not None:
-            s.current.pid = pid
-
-
 def finish_current(status: str) -> CompletedTask | None:
     """Move current → completed. Returns the CompletedTask, or None if
     current was already unset."""

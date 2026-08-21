@@ -13,13 +13,13 @@ Workflow:
 3. Save results (JSON logs + solution files) in date-organized folders
 
 Usage:
-    # Standalone
-    python claude_web_engine.py --config config.yaml
+    # The supported entry point — infra/run.py assembles the engine config
+    # from infra/configs/ and one task, then invokes this module.
+    python -m infra.run --run-config <file>
 
-    # Batch automation
-    python claude_web_batch_runner.py --tasks tasks.yaml --template template_claude_web.yaml
-
-    # Non-interactive mode
+    # Standalone, against a hand-written engine config. Skips the config
+    # loader, the prompt registry, agent identity, and the task source/sink,
+    # so its output is not benchmark data.
     python claude_web_engine.py --config config.yaml --no-hold
 """
 
@@ -433,17 +433,27 @@ async def run_automation(config: dict) -> bool:
     )
 
     agent_name = session_config.get("agent_name", provider_defaults["agent_name"])
-    prompt_version = session_config.get(
-        "prompt_version", config.get("prompt_version", 1)
-    )
+    # Top-level key only — `prompt_version` selects the prompt files AND is
+    # the label written to task_attempts.prompt_version, so a run that cannot
+    # say which prompt it sent must not produce a completion JSON at all.
+    prompt_version = config.get("prompt_version")
+    if prompt_version is None:
+        raise ValueError(
+            "prompt_version is missing from the engine config. It labels every "
+            "completion JSON with the prompt the agent was sent; a run that "
+            "cannot name its prompt is not comparable to any other. Set "
+            "`prompt_version` at the top level of the config (see "
+            "tasks_configs/prompts/registry.yaml for the registered versions)."
+        )
 
     task_id = config.get("task_id")
     task_name = config.get("task_name", "unnamed_task")
-    task_source = config.get("task_source", "claude_web")
+    # Task provenance ("jp", "modeloff", "wsp", ...), supplied by the source.
+    # Unknown when the engine is invoked directly on a hand-written config.
+    task_source = config.get("task_source") or "unknown"
     solution_name = config.get("solution_name")
 
-    # File upload: prefer "upload_files"; "files_to_upload" is accepted as an alias
-    files_to_upload = config.get("upload_files", config.get("files_to_upload", []))
+    files_to_upload = config.get("upload_files") or []
 
     # Resolve relative paths using local_files_base if provided
     local_files_base = config.get("local_files_base")
@@ -601,9 +611,6 @@ async def run_automation(config: dict) -> bool:
                     raise PipelineError(
                         TaskStatus.RATE_LIMITED, "Rate limited before prompts"
                     )
-
-                # Agent mode is now enabled inside submit_prompt() —
-                # after files are attached and prompt is typed, before send.
 
                 # Upload files (in Phase 1 so they're ready for Phase 2)
                 if files_to_upload:
