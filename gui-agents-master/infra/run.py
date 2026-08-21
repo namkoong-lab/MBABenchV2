@@ -120,7 +120,9 @@ def _ns_to_dict(obj):
     return obj
 
 
-def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
+def build_engine_config(
+    cfg: SimpleNamespace, spec: TaskSpec, agent_folder: str | None = None
+) -> dict:
     """Assemble the full engine-input dict for one task.
 
     All overrides (defaults + configs.yaml + --run-config) are already
@@ -135,6 +137,16 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
     main() (tests, any future entrypoint) must not silently produce a config
     with no prompts. main() resolves first so it can log the choice once per
     run, in which case cfg.prompts_file is already set and this is a no-op.
+
+    *agent_folder* is the resolved `AgentIdentity.agent_folder`; it becomes
+    the engine's `session.agent_name`, which the engine stamps into solution
+    filenames and completion JSONs. main() passes it so the file says which
+    model produced it (`claude_haiku_4_5`) rather than which provider lane
+    (`claude_web`). Identity is resolved by the caller, not here, because an
+    unknown axis combination must surface as the resolver's error or a
+    preflight message — not as a build failure for a config that preflight
+    is about to reject anyway. Omitted, the engine falls back to its
+    per-provider default.
     """
     if not getattr(cfg, "prompts_file", None):
         cfg.prompts_file = resolve_prompt_files(cfg)
@@ -161,6 +173,10 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
         "upload_files": [str(p) for p in spec.upload_files],
         provider_block_key: copy.deepcopy(base.get(provider_block_key, {}) or {}),
     }
+
+    if agent_folder:
+        block = engine_config[provider_block_key]
+        block["session"] = (block.get("session") or {}) | {"agent_name": agent_folder}
 
     local_files_base = base.get("local_files_base")
     if local_files_base:
@@ -923,7 +939,7 @@ def main() -> int:
         prepared: list[tuple[TaskSpec, dict]] = []
         had_errors = False
         for spec in specs:
-            engine_config = build_engine_config(cfg, spec)
+            engine_config = build_engine_config(cfg, spec, identity.agent_folder)
             errors = preflight_check(engine_config, provider, benchmark)
             if errors:
                 had_errors = True

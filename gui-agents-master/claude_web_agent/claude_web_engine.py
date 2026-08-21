@@ -368,6 +368,10 @@ def create_agent(
     )
 
 
+# Fallbacks for a config that names no `session.agent_name` — i.e. the engine
+# invoked directly. `infra/run.py` supplies the resolved agent identity
+# (`claude_haiku_4_5`, …), so these provider-lane names only apply when the
+# model is unknown to the engine.
 PROVIDER_DEFAULTS = {
     "claude_web": {
         "folder_prefix": "claudeGUI",

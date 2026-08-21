@@ -58,7 +58,9 @@ def check_v1():
     assert cfg.source.schema == "bizbench"
     ident = resolve_agent_identity(cfg)
     assert ident.model_name == "claude_web_cowork_fable5_max", ident
-    ec = build_engine_config(cfg, fake_spec())
+    ec = build_engine_config(cfg, fake_spec(), ident.agent_folder)
+    # The identity, not the provider lane, names the solution file.
+    assert ec["claude_web"]["session"]["agent_name"] == ident.agent_folder, ec
     assert ec["prompts_file"] == [
         "tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"
     ], ec.get("prompts_file")
@@ -87,7 +89,8 @@ def check_v2():
     assert cfg.benchmark == "v2"
     ident = resolve_agent_identity(cfg)
     assert ident.model_name == "claude_fable_5", ident
-    ec = build_engine_config(cfg, fake_spec())
+    ec = build_engine_config(cfg, fake_spec(), ident.agent_folder)
+    assert ec["claude_web"]["session"]["agent_name"] == "claude_fable_5", ec
     errors = preflight_check(ec, "claude", cfg.benchmark)
     assert not errors, errors
     resolved = resolve_prompts(dict(ec))

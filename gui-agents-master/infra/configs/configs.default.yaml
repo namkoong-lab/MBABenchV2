@@ -525,10 +525,8 @@ chatgpt_web:
       value: "browser_profiles/chrome-chatgpt"
       required: false
 
-  session:
-    agent_name:
-      value: "chatgpt_web"
-      required: false
+  # `session.agent_name` is not a config key: run.py sets it from the resolved
+  # agent identity, so the solution filename names the model that produced it.
 
   logging:
     level:
