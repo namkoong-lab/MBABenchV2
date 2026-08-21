@@ -36,7 +36,6 @@ chatgpt_web:
   effort: "ultra"
   speed: "standard"
   intelligence: null
-  agent_mode: false
   browser:
     cdp_port: 9226
     profile_dir: "~/.chrome-web-agent"

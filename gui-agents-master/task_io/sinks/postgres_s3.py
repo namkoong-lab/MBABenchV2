@@ -23,7 +23,9 @@ Symmetric with `task_io/sources/postgres_s3.py`:
   Task-name-based S3 layout, one folder per attempt:
   `{prefix}/{agent_folder}/{task_name}/{ts}_{run_id}/{name}`.
 
-Every uploaded file is also copied to a local mirror directory
+An attempt's files are its solution workbook, every log it produced
+(`AttemptResult.log_files`), and the prompts JSON. All of them are
+uploaded, and each is also copied to a local mirror directory
 (`mirror_dir`, wired from `paths.output_dir`) under the SAME relative
 path as its S3 key, so the folder on disk can be diffed against the
 bucket by eye. The mirror is best-effort: S3 stays the record of truth.
@@ -78,6 +80,10 @@ class AttemptSchema:
 
 
 class PostgresS3AttemptSink:
+    # Every file handed to publish() is uploaded to S3 before the DB row is
+    # written, so the caller's copies are disposable.
+    retains_files = True
+
     def __init__(
         self,
         *,
@@ -199,7 +205,7 @@ class PostgresS3AttemptSink:
 
     def _attempt_files_to_upload(self, result: AttemptResult) -> list[Path]:
         out: list[Path] = []
-        for p in (result.solution_file, result.log_file):
+        for p in (result.solution_file, *result.log_files):
             if p is None:
                 continue
             p = Path(p)

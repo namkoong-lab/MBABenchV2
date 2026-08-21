@@ -72,25 +72,41 @@ def _handle_signal(signum, frame):
 # ---------------------------------------------------------------------------
 
 
-def create_run_directory(
-    base_dir: str | Path, folder_prefix: str = "claudeGUI"
-) -> Path:
-    """
-    Create date-organized output directory.
+def create_run_directory(run_dir: str | Path) -> Path:
+    """Create the working directory for one run.
 
     Structure:
-        {YYYYMMDD}_{folder_prefix}/
-        ├── solutions/
-        └── json_logs/
-
-    Returns the run_dir Path ({YYYYMMDD}_{folder_prefix}/).
+        <run_dir>/
+        ├── solutions/     downloaded workbooks
+        ├── json_logs/     completion_*.json, one per agent attempt
+        └── logs/          runtime .log + conversations/
     """
-    base_dir = Path(base_dir)
-    date_str = datetime.now().strftime("%Y%m%d")
-    run_dir = base_dir / f"{date_str}_{folder_prefix}"
+    run_dir = Path(run_dir)
     (run_dir / "solutions").mkdir(parents=True, exist_ok=True)
     (run_dir / "json_logs").mkdir(parents=True, exist_ok=True)
     return run_dir
+
+
+def default_run_dir(base_dir: str | Path, folder_prefix: str) -> Path:
+    """Date-stamped working directory for standalone `--config` runs.
+
+    infra/run.py passes `run_dir` in the config instead, one per attempt.
+    """
+    date_str = datetime.now().strftime("%Y%m%d")
+    return Path(base_dir) / f"{date_str}_{folder_prefix}"
+
+
+def resolve_log_dir(config: dict, agent_config: dict, default: str) -> Path:
+    """Where the runtime .log and the chat transcript go.
+
+    When the caller pins `run_dir`, every artifact of the run belongs to that
+    one directory and the logs go with it. Standalone runs fall back to the
+    configured `logging.log_directory`.
+    """
+    run_dir = config.get("run_dir")
+    if run_dir:
+        return Path(run_dir) / "logs"
+    return Path((agent_config.get("logging") or {}).get("log_directory", default))
 
 
 def _sanitize_name(name: str) -> str:
@@ -220,11 +236,11 @@ async def _cleanup_browser(browser_mgr, context, browser, page):
 
 def setup_logging(config: dict, name: str, task_name: str = None) -> tuple:
     """Setup logging with optional file output."""
-    _, agent_config = get_provider_config(config)
+    provider_key, agent_config = get_provider_config(config)
     log_config = agent_config.get("logging", {})
     log_level = getattr(logging, log_config.get("level", "INFO").upper())
     save_to_file = log_config.get("save_to_file", True)
-    log_directory = log_config.get("log_directory", "claude_web_logs")
+    log_dir = resolve_log_dir(config, agent_config, f"{provider_key}_logs")
 
     # Configure root logger
     root_logger = logging.getLogger()
@@ -241,8 +257,6 @@ def setup_logging(config: dict, name: str, task_name: str = None) -> tuple:
     log_file_path = None
 
     if save_to_file:
-        # Create log directory
-        log_dir = Path(log_directory)
         log_dir.mkdir(parents=True, exist_ok=True)
 
         # Create log file
@@ -250,7 +264,7 @@ def setup_logging(config: dict, name: str, task_name: str = None) -> tuple:
         safe_task_name = (
             task_name.replace("/", "_").replace("\\", "_") if task_name else "unknown"
         )
-        log_filename = f"claude_web_{timestamp}_{safe_task_name}.log"
+        log_filename = f"{provider_key}_{timestamp}_{safe_task_name}.log"
         log_file_path = log_dir / log_filename
 
         file_handler = logging.FileHandler(log_file_path)
@@ -450,11 +464,13 @@ async def run_automation(config: dict) -> bool:
         f"Retry config: max_agent={max_agent_attempts}, max_total={max_total_attempts}"
     )
 
-    # ---- Create date-organized output dirs ----
-    run_dir = create_run_directory(base_dir, folder_prefix)
+    # ---- Create the run's working dirs ----
+    run_dir = create_run_directory(
+        config.get("run_dir") or default_run_dir(base_dir, folder_prefix)
+    )
     solutions_dir = run_dir / "solutions"
     json_logs_dir = run_dir / "json_logs"
-    logger.info(f"Output directory: {run_dir}")
+    logger.info(f"Working directory: {run_dir}")
 
     # ---- Retry loop ----
     agent_attempts = 0
@@ -789,17 +805,10 @@ async def run_automation(config: dict) -> bool:
 
                 # Save conversation history
                 history = await agent.get_conversation_history()
-                default_log_dir = (
-                    "chatgpt_web_logs"
-                    if provider_key == "chatgpt_web"
-                    else "claude_web_logs"
+                history_dir = (
+                    resolve_log_dir(config, agent_config, f"{provider_key}_logs")
+                    / "conversations"
                 )
-                log_dir = Path(
-                    agent_config.get("logging", {}).get(
-                        "log_directory", default_log_dir
-                    )
-                )
-                history_dir = log_dir / "conversations"
                 history_dir.mkdir(parents=True, exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 history_file = (

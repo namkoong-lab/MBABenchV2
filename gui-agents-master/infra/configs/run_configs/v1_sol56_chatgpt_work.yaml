@@ -41,7 +41,6 @@ chatgpt_web:
   effort: "ultra"                    # work mode uses effort + speed
   speed: "standard"
   intelligence: null                 # chat-mode knob; unused in work mode
-  agent_mode: false
   browser:
     cdp_port: 9222                   # ChatGPT lane runs on its own Chrome + port
     profile_dir: "~/.chrome-web-agent"

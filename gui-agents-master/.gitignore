@@ -70,7 +70,10 @@ excel_agent/task_*.yaml
 excel_agent/debug_screenshots/
 excel_agent/logs/
 
-# Local run output (solutions, logs, artifacts)
+# Per-attempt working dirs + downloaded task inputs
+scratch/
+
+# Local mirror of the S3 attempt files
 outputs/
 claude_web_batch_results.json
 

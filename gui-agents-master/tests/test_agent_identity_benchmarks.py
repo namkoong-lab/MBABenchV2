@@ -29,22 +29,19 @@ CASES = [
     ("v1", "claude", dict(mode="chat", model="sonnet_4_6", effort=None),
      "claude_web"),
     ("v1", "chatgpt", dict(mode="work", model="gpt_5_6_sol", effort="ultra",
-                           speed="standard", agent_mode=False),
+                           speed="standard"),
      "chatgpt_web_work_gpt5.6_sol_ultra"),
-    ("v1", "chatgpt", dict(mode="chat", model="gpt_5_5", intelligence="pro",
-                           agent_mode=False),
+    ("v1", "chatgpt", dict(mode="chat", model="gpt_5_5", intelligence="pro"),
      "chatgpt_web_chat_gpt5.5_pro_var"),
     ("v2", "claude", dict(model="fable_5"), "claude_fable_5"),
     ("v2", "claude", dict(mode="chat", model="fable_5"), "claude_fable_5"),
     ("v2", "claude", dict(mode="cowork", model="fable_5"),
      "claude_fable_5_cowork"),
     ("v2", "claude", dict(model="opus_4_8"), "claude_opus_4_8"),
-    ("v2", "chatgpt", dict(model="pro", agent_mode=False), "chatgpt_web_pro"),
-    ("v2", "chatgpt", dict(model="gpt_5_6_sol", agent_mode=False),
-     "chatgpt_gpt_5_6_sol"),
-    ("v2", "chatgpt", dict(mode="work", model="gpt_5_6_sol", agent_mode=False),
+    ("v2", "chatgpt", dict(model="pro"), "chatgpt_web_pro"),
+    ("v2", "chatgpt", dict(model="gpt_5_6_sol"), "chatgpt_gpt_5_6_sol"),
+    ("v2", "chatgpt", dict(mode="work", model="gpt_5_6_sol"),
      "chatgpt_gpt_5_6_sol_work"),
-    ("v2", "chatgpt", dict(model="pro", agent_mode=True), "chatgpt_agent"),
 ]
 
 
@@ -53,12 +50,6 @@ def main() -> int:
         got = resolve_agent_identity(cfg(bench, prov, block)).model_name
         assert got == want, f"{bench}/{prov}/{block}: {got} != {want}"
         print(f"OK  {bench} {prov:8s} -> {got}")
-
-    try:
-        resolve_agent_identity(cfg("v1", "chatgpt", dict(agent_mode=True)))
-        raise AssertionError("v1 agent_mode=True should be refused")
-    except UnknownAgentCombination:
-        print("OK  v1 agent_mode refused")
 
     try:
         resolve_agent_identity(cfg("v3", "claude", dict(model="fable_5")))

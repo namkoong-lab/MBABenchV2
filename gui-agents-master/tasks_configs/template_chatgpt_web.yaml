@@ -30,7 +30,6 @@ template:
     project_slug: "your-project-slug"
 
     # Enable agent mode (uses Code Interpreter for Excel)
-    agent_mode: true
 
     # Model selection (optional). If null or omitted, uses the current
     # model in your ChatGPT session.

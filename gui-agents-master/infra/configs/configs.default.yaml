@@ -48,12 +48,10 @@ provider:
 
 
 # ---- Agent identity --------------------------------------------------------
-# `model_name`, `agent_folder`, and `agent_model_type` used to live here as
-# free-form yaml. They drifted from the actual behavior (e.g. chatgpt_web
-# running in agent_mode but labelled "chatgpt_web"), so they were moved to
-# infra/configs/agent_identity.py and are now derived from the provider
-# block below. `prompt_version` is still operator-controlled because it's
-# independent of any behavior field.
+# `model_name`, `agent_folder`, and `agent_model_type` are derived from the
+# provider block below by infra/configs/agent_identity.py, so the DB label
+# cannot disagree with what the run did. `prompt_version` stays
+# operator-controlled — it is independent of any behavior field.
 agent:
   # DERIVED — leave null. The run's prompt version is the top-level
   # `prompt_version`, which both selects the prompt files and is written to
@@ -68,11 +66,16 @@ agent:
 
 # ---- Where task files land on disk -----------------------------------------
 paths:
+  # Downloaded starting_files land here, as does `attempts/`, where each
+  # attempt gets a working directory for the engine's solutions/, json_logs/
+  # and logs/. That directory is deleted once the sink has uploaded its
+  # contents, so nothing under here is a lasting record.
   scratch_dir:
-    value: "scratch/gui-agents"   # downloaded starting_files land here
+    value: "scratch/gui-agents"
     required: true
-  # Local mirror of everything the postgres_s3 sink uploads, laid out under
-  # the same relative path as the S3 key, e.g.
+  # THE run output. Local mirror of everything the postgres_s3 sink uploads
+  # — workbook, completion JSONs, chat transcript, runtime log, prompts JSON
+  # — laid out under the same relative path as the S3 key, e.g.
   #   outputs/MBABenchV2/attempts/claude_haiku_4_5/BasicGrowth/{ts}_{run_id}/
   # so the folder on disk can be diffed against the bucket by eye. Copies are
   # best-effort — a mirror failure warns and the run continues, since S3 is
@@ -357,6 +360,10 @@ claude_web:
       value: 5
       required: false
 
+  # STANDALONE ONLY. `python -m infra.run` gives the engine one working
+  # directory per attempt under paths.scratch_dir and deletes it once the
+  # sink has the files, so these apply only to a direct
+  # `claude_web_engine.py --config` invocation.
   output:
     base_dir:
       value: "."
@@ -392,6 +399,8 @@ claude_web:
     save_to_file:
       value: true
       required: false
+    # STANDALONE ONLY — see `output` above. Under infra.run the runtime log
+    # and the chat transcript go to the attempt's own directory.
     log_directory:
       value: "claude_web_logs"
       required: false
@@ -441,12 +450,6 @@ chatgpt_web:
   intelligence:
     value: null                # instant | medium | high | xhigh | pro | null
     required: false
-  # benchmark v2: false = Extended Pro (no Code Interpreter); true = ChatGPT
-  # Agent (its own identity). benchmark v1 REFUSES agent_mode=true — the
-  # Agent surface was removed from the ChatGPT UI ~mid-2026.
-  agent_mode:
-    value: false
-    required: false
   max_sec_per_task:
     value: 7200                # 2h
     required: false
@@ -455,14 +458,6 @@ chatgpt_web:
     required: false
   max_wait_per_prompt_seconds:
     value: 7200                # 2h
-    required: false
-
-  # Where the downloaded .xlsx artifact is saved (relative to CWD).
-  download_artifacts:
-    value: true
-    required: false
-  artifact_download_dir:
-    value: "./artifacts"
     required: false
 
   retry:
@@ -483,6 +478,10 @@ chatgpt_web:
       value: 5
       required: false
 
+  # STANDALONE ONLY. `python -m infra.run` gives the engine one working
+  # directory per attempt under paths.scratch_dir and deletes it once the
+  # sink has the files, so these apply only to a direct
+  # `claude_web_engine.py --config` invocation.
   output:
     folder_prefix:
       value: "chatgptGUI"
@@ -520,6 +519,8 @@ chatgpt_web:
     save_to_file:
       value: true
       required: false
+    # STANDALONE ONLY — see `output` above. Under infra.run the runtime log
+    # and the chat transcript go to the attempt's own directory.
     log_directory:
       value: "chatgpt_web_logs"
       required: false

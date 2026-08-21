@@ -86,7 +86,6 @@ class ChatGPTWebAgent(WebAgent):
             "max_wait_per_prompt_seconds", 1800
         )
         self.check_interval = self.agent_config.get("check_interval_seconds", 3)
-        self.agent_mode = self.agent_config.get("agent_mode", True)
         # Tracks how many response articles existed BEFORE the first prompt,
         # so download_all_artifacts searches all articles from the conversation.
         # Set once before the first prompt; not overwritten by subsequent prompts.
@@ -951,18 +950,8 @@ class ChatGPTWebAgent(WebAgent):
 
         chat mode → model + intelligence via the flat pill menu.
         work mode → model + effort + speed via the Advanced rows.
-
-        Agent mode no longer exists in the ChatGPT UI (removed ~mid-2026).
-        The ``agent_mode`` config key is accepted but ignored, with a
-        warning, so legacy configs keep parsing.
         """
         await asyncio.sleep(2)
-        if self.agent_mode:
-            logger.warning(
-                "chatgpt_web.agent_mode is set but Agent mode no longer "
-                "exists in the ChatGPT UI — ignoring it. Set agent_mode: "
-                "false to silence this warning."
-            )
         # Re-assert mode (cheap when already correct — navigation set it
         # before files were uploaded; flipping HERE would risk dropping
         # attachments, so a flip at this point is logged by ensure_mode).

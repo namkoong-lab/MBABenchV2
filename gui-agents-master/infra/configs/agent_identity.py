@@ -1,11 +1,8 @@
 """Derive the agent identity from the behavior-determining fields in cfg.
 
-`agent.model_name` / `agent.agent_folder` used to be free-form yaml strings,
-which let operators flip `chatgpt_web.agent_mode` or `chatgpt_web.model`
-without updating the DB label — two functionally different runs ended up
-under the same `task_attempts.agent_model_name`. This module makes the
-identity a pure function of the fields that actually change agent output,
-so drift is impossible.
+The identity is a pure function of the config fields that change agent
+output, so `task_attempts.agent_model_name` cannot disagree with what the
+run actually did.
 
 BENCHMARK-AWARE: the repo runs two experiments with different DBs, prompt
 sets, and label conventions. `cfg.benchmark` ("v1" | "v2") selects the
@@ -14,15 +11,15 @@ identity namespace:
   v1 — the MBABench V1 wave (BizbenchV1 DB, pv9 prompts). Labels bifurcate
        on every UI axis that changes agent output: Claude mode (chat/cowork)
        + model + effort; ChatGPT mode (chat/work) + model + intelligence or
-       effort+speed. agent_mode is refused (removed from the ChatGPT UI
-       ~mid-2026; historical rows keep the old label).
+       effort+speed.
   v2 — the MBABenchV2 task set (MBABenchV2 DB, rubric-v9 3-step prompts).
-       Labels bifurcate on model only; agent_mode=True collapses to the
-       chatgpt_agent identity (that backend's model dropdown is cosmetic).
+       Labels bifurcate on model only.
 
-To add a new mode: add an entry to the relevant `_*_IDENTITIES` table.
-Unknown combinations raise `UnknownAgentCombination`, which forces a
-naming decision before an unclassified label reaches the DB.
+The tables below are APPEND-ONLY. Every label is referenced by rows already
+in `task_attempts`, so editing one silently rewrites what those rows mean.
+To add a mode, add an entry. Unknown combinations raise
+`UnknownAgentCombination`, which forces a naming decision before an
+unclassified label reaches the DB.
 """
 
 from __future__ import annotations
@@ -149,31 +146,18 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
 }
 
 
-# When agent_mode=True, ChatGPT Agent is its own routed backend — the
-# `model` dropdown becomes cosmetic, so agent-mode runs always collapse to
-# one identity regardless of chatgpt_web.model. Only non-agent runs
-# bifurcate by model.
-_V2_CHATGPT_AGENT_IDENTITY = AgentIdentity("chatgpt_agent", "chatgpt_agent")
-
-# Signature for non-agent-mode runs: (chatgpt_web.mode, chatgpt_web.model).
-# Mode joined the key 2026-08-12 (chat entries keep their original labels
-# for DB continuity). model=None means "let the session default win"; that
-# + agent_mode=False is the legacy `chatgpt_web` label, kept for DB
-# continuity with pre-refactor rows.
-_V2_CHATGPT_NON_AGENT_IDENTITIES: dict[tuple, AgentIdentity] = {
+# Signature: (chatgpt_web.mode, chatgpt_web.model). model=None means "let
+# the session default win".
+_V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", None): AgentIdentity("chatgpt_web", "chatgpt_web"),
     ("chat", "instant"): AgentIdentity("chatgpt_instant", "chatgpt_instant"),
     ("chat", "thinking"): AgentIdentity(
         "chatgpt_thinking", "chatgpt_thinking"
     ),
     ("chat", "pro"): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
-    # 2026-08-12: GPT-5.6 Sol for v2 runs (collision-checked against
-    # task_attempts.agent_model_name in both DBs — 0 rows). Mirrors the
-    # model-only v2 Claude naming (claude_fable_5 -> chatgpt_gpt_5_6_sol).
     ("chat", "gpt_5_6_sol"): AgentIdentity(
         "chatgpt_gpt_5_6_sol", "chatgpt_gpt_5_6_sol"
     ),
-    # 2026-08-12: work-mode cohort (collision-checked in both DBs — 0 rows).
     ("work", "gpt_5_6_sol"): AgentIdentity(
         "chatgpt_gpt_5_6_sol_work", "chatgpt_gpt_5_6_sol_work"
     ),
@@ -237,14 +221,6 @@ def _resolve_claude_v1(cfg: SimpleNamespace) -> AgentIdentity:
 
 def _resolve_chatgpt_v1(cfg: SimpleNamespace) -> AgentIdentity:
     block = _chatgpt_block(cfg)
-    if bool(getattr(block, "agent_mode", False)):
-        raise UnknownAgentCombination(
-            "chatgpt_web.agent_mode=true, but Agent mode no longer exists "
-            "in the ChatGPT UI (removed ~mid-2026) — the run would silently "
-            "execute as a non-agent chat under the wrong DB label. Set "
-            "agent_mode: false and pick chatgpt_web.model + "
-            "chatgpt_web.intelligence instead."
-        )
     mode = (getattr(block, "mode", None) or "chat").lower()
     model = getattr(block, "model", None)
     if mode == "work":
@@ -289,21 +265,16 @@ def _resolve_claude_v2(cfg: SimpleNamespace) -> AgentIdentity:
 
 def _resolve_chatgpt_v2(cfg: SimpleNamespace) -> AgentIdentity:
     block = _chatgpt_block(cfg)
-    agent_mode = bool(getattr(block, "agent_mode", True))
-    if agent_mode:
-        # ChatGPT Agent is its own backend; chatgpt_web.model is cosmetic.
-        return _V2_CHATGPT_AGENT_IDENTITY
     mode = (getattr(block, "mode", None) or "chat").lower()
     model = getattr(block, "model", None)
     key = (mode, model)
     try:
-        return _V2_CHATGPT_NON_AGENT_IDENTITIES[key]
+        return _V2_CHATGPT_IDENTITIES[key]
     except KeyError:
         raise UnknownAgentCombination(
             f"No v2 ChatGPT identity for "
-            f"(chatgpt_web.mode, chatgpt_web.model, agent_mode=False)"
-            f"={key!r}. "
-            f"Known (non-agent): {list(_V2_CHATGPT_NON_AGENT_IDENTITIES)}. "
+            f"(chatgpt_web.mode, chatgpt_web.model)={key!r}. "
+            f"Known: {list(_V2_CHATGPT_IDENTITIES)}. "
             f"Add an entry in infra/configs/agent_identity.py "
             f"if this is a real combination."
         )

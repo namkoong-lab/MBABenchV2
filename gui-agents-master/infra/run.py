@@ -45,6 +45,7 @@ import copy
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -175,16 +176,6 @@ def build_engine_config(cfg: SimpleNamespace, spec: TaskSpec) -> dict:
     if task_source:
         engine_config["task_source"] = task_source
 
-    # Legacy top-level fields some engine paths still look for.
-    if provider == "chatgpt":
-        section = engine_config[provider_block_key]
-        # download_artifacts / artifact_download_dir live at the top level
-        # in the legacy template. Mirror them there for the engine.
-        if "download_artifacts" in section:
-            engine_config["download_artifacts"] = section["download_artifacts"]
-        if "artifact_download_dir" in section:
-            engine_config["artifact_download_dir"] = section["artifact_download_dir"]
-
     return engine_config
 
 
@@ -241,12 +232,6 @@ def _preflight_provider_v1(
                 f"{', '.join(_EFFORTS)} (or null)."
             )
     elif provider == "chatgpt":
-        if section.get("agent_mode"):
-            errors.append(
-                "chatgpt_web.agent_mode=true, but Agent mode no longer "
-                "exists in the ChatGPT UI (removed ~mid-2026). Set it to "
-                "false and use chatgpt_web.model + chatgpt_web.intelligence."
-            )
         gmode = (section.get("mode") or "chat").lower()
         if gmode not in ("chat", "work"):
             errors.append(f"chatgpt_web.mode={gmode!r} is not 'chat' or 'work'.")
@@ -375,26 +360,18 @@ def preflight_check(
     return errors
 
 
-def find_completion_json(log_dir: Path, task_name: str, after: datetime) -> Path | None:
-    if not log_dir.exists():
-        return None
-    matches: list[tuple[float, Path]] = []
-    for p in log_dir.glob("completion_*.json"):
-        if p.stat().st_mtime < after.timestamp():
-            continue
-        try:
-            with open(p) as f:
-                data = json.load(f)
-        except Exception:
-            continue
-        for t in data.get("tasks", []):
-            if t.get("task_name") == task_name:
-                matches.append((p.stat().st_mtime, p))
-                break
-    if not matches:
-        return None
-    matches.sort(reverse=True)
-    return matches[0][1]
+def collect_log_files(run_dir: Path) -> list[Path]:
+    """Every log the attempt produced, in upload order.
+
+    json_logs/ holds one completion_*.json per agent attempt (the engine
+    retries internally); logs/ holds the chat transcript and the runtime
+    log. The staging directory belongs to this attempt alone, so everything
+    under it is in scope.
+    """
+    patterns = ("json_logs/*.json", "logs/conversations/*.json", "logs/*.log")
+    return [
+        p for pattern in patterns for p in sorted(run_dir.glob(pattern)) if p.is_file()
+    ]
 
 
 def _write_prompts_file(
@@ -703,23 +680,32 @@ def _default_deadman(engine_config: dict, provider: str) -> int | None:
     return per_task * attempts + 1800
 
 
-def _resolve_run_dir(engine_config: dict, provider: str) -> Path:
-    section = engine_config.get(f"{provider}_web", {}) or {}
-    out = section.get("output", {}) or {}
-    base = Path(out.get("base_dir", "."))
-    folder_prefix = out.get(
-        "folder_prefix",
-        {"claude": "claudeGUI", "chatgpt": "chatgptGUI"}.get(provider, "claudeGUI"),
+def _staging_dir(cfg: SimpleNamespace, task_name: str, started: datetime) -> Path:
+    """The working directory for one attempt.
+
+    Everything the run produces lands here — the engine's solutions/,
+    json_logs/ and logs/, plus the prompts JSON this module writes. The sink
+    uploads the lot and _clear_staging removes the directory afterwards, so
+    the only lasting copy is the one under paths.output_dir mirroring S3.
+    """
+    stem = _sanitize_name(task_name)
+    return (
+        Path(cfg.paths.scratch_dir)
+        / "attempts"
+        / f"{started.strftime('%Y%m%d_%H%M%S')}_{stem}"
     )
-    return base / f"{datetime.now().strftime('%Y%m%d')}_{folder_prefix}"
 
 
-def _resolve_log_dir(engine_config: dict, provider: str) -> Path:
-    section = engine_config.get(f"{provider}_web", {}) or {}
-    log_dir = (section.get("logging", {}) or {}).get(
-        "log_directory", f"{provider}_web_logs"
-    )
-    return Path(log_dir)
+def _clear_staging(run_dir: Path, sink) -> None:
+    """Delete the attempt's staging directory once the sink has the files.
+
+    Sinks that only record paths (the `local` sink) keep it — removing it
+    would destroy the only copy of the workbook.
+    """
+    if not getattr(sink, "retains_files", False):
+        logger.info(f"Run files kept at {run_dir} (sink records paths only)")
+        return
+    shutil.rmtree(run_dir, ignore_errors=True)
 
 
 def _confirm_tasks(specs: list[TaskSpec]) -> bool:
@@ -994,9 +980,9 @@ def main() -> int:
                 print(yaml.safe_dump(engine_config, default_flow_style=False))
                 continue
 
-            log_dir = _resolve_log_dir(engine_config, provider)
-            run_dir = _resolve_run_dir(engine_config, provider)
             started = datetime.now()
+            run_dir = _staging_dir(cfg, spec.task_name, started)
+            engine_config["run_dir"] = str(run_dir)
             prompts_file = _write_prompts_file(
                 run_dir, spec.task_name, engine_config, started
             )
@@ -1052,7 +1038,7 @@ def main() -> int:
                 prompt_version=cfg.agent.prompt_version,
                 status=status,
                 solution_file=solution_file,
-                log_file=find_completion_json(log_dir, spec.task_name, started),
+                log_files=collect_log_files(run_dir),
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
                 duration_seconds=round((finished - started).total_seconds(), 2),
@@ -1060,6 +1046,7 @@ def main() -> int:
                 extra=extra,
             )
             sink.publish(result)
+            _clear_staging(run_dir, sink)
 
         logger.info(f"\nDone. succeeded={succeeded} failed={failed}")
     finally:

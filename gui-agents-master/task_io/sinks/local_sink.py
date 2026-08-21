@@ -16,6 +16,9 @@ def _json_default(o):
 
 
 class LocalAttemptSink:
+    # Records paths; the files stay wherever the run left them.
+    retains_files = False
+
     def __init__(self, output_dir: str | Path, log_filename: str = "attempts.ndjson"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)

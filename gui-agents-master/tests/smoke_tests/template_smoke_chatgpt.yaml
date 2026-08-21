@@ -16,7 +16,6 @@ template:
     project_id: "your-project-id-here"
     project_slug: "your-project-slug"
 
-    agent_mode: true
     model: null
 
     max_sec_per_task: 600

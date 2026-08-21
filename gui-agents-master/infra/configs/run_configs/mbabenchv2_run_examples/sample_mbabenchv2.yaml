@@ -36,11 +36,10 @@ source:
 provider:
   kind: "chatgpt"
 
-# agent_model_name / agent_folder are derived from chatgpt_web (model,
-# agent_mode) via infra/configs/agent_identity.py — no yaml field.
+# agent_model_name / agent_folder are derived from chatgpt_web.model via
+# infra/configs/agent_identity.py — no yaml field.
 
 chatgpt_web:
-  agent_mode: false # control whether to use agentic mode
   model: "pro"
   # model: "thinking"
 

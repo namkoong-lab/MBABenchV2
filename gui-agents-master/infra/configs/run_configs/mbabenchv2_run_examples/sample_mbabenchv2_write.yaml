@@ -45,7 +45,6 @@ sink:
   # prompt_version comes from agent.prompt_version.
 
 chatgpt_web:
-  agent_mode: false  # control whether to use agentic mode
   model: "instant"
   # model: "pro"
 

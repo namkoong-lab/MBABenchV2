@@ -12,13 +12,10 @@ shares one copy (see `configs.default.yaml`).
 | File | Step | Used by |
 |---|---|---|
 | `step1_analyze.txt` | 1 — Analyze & plan (Summary sheet) | all providers |
-| `step2_build.txt` | 2 — Build (embeds the full 132-check rubric) | claude, chatgpt pro |
-| `step3_qa.txt` | 3 — QA + download | claude, chatgpt pro |
-| `agent_step2_build.txt` | 2 — Build (ChatGPT Agent wording) | chatgpt agent_mode |
-| `agent_step3_qa.txt` | 3 — QA (ChatGPT Agent wording) | chatgpt agent_mode |
+| `step2_build.txt` | 2 — Build (embeds the full 132-check rubric) | all providers |
+| `step3_qa.txt` | 3 — QA + download | all providers |
 
-Step 1 is byte-identical across all providers. The agent-mode variants differ
-only in harness wording (Agent sandbox vs chat code interpreter).
+All three files are sent verbatim to every provider.
 
 This set is **prompt_version 200** in `tasks_configs/prompts/registry.yaml`.
 

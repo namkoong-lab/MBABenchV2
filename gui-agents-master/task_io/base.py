@@ -32,7 +32,10 @@ class AttemptResult:
     prompt_version: int | str | None
     status: str  # "success" | "failed" | "timeout"
     solution_file: Path | None
-    log_file: Path | None
+    # Every log the attempt produced: the completion JSON(s), the chat
+    # transcript, and the runtime .log. Uploaded alongside the workbook so an
+    # attempt can be diagnosed from stored files alone.
+    log_files: list[Path]
     started_at: str  # ISO-8601
     finished_at: str
     duration_seconds: float
@@ -68,5 +71,10 @@ class TaskSource(Protocol):
 
 @runtime_checkable
 class AttemptSink(Protocol):
+    # True when publish() copies every file it is given somewhere durable, so
+    # the caller may delete the originals. False for sinks that only record
+    # paths — deleting would destroy the only copy.
+    retains_files: bool
+
     def publish(self, result: AttemptResult) -> None: ...
     def close(self) -> None: ...

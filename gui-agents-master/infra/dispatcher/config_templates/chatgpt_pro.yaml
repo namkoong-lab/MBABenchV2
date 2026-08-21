@@ -15,16 +15,14 @@ provider:
 
 # agent.model_name / agent.agent_folder are derived from the chatgpt_web
 # block below via infra/configs/agent_identity.py, so this template just
-# declares behavior. With (model=pro, agent_mode=false) the identity
-# resolves to "chatgpt_pro"; flipping agent_mode → true yields
-# "chatgpt_pro_agent". See agent_identity.py for the full table.
+# declares behavior. model=pro resolves to "chatgpt_web_pro". See
+# agent_identity.py for the full table.
 agent:
   prompt_version:
     value: 9
 
 chatgpt_web:
   model: "pro"
-  agent_mode: false  # control whether to use agentic mode
   # Paste from https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
   # Required — preflight exits if either is null/empty under provider=chatgpt.
   project_id: "6a3b10e3b0b08191813fc1a0dbd72cbd"

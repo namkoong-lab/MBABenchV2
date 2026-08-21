@@ -1,0 +1,50 @@
+# TUTORIAL EXAMPLE — benchmark v2, ChatGPT GPT-5.6 Sol at max reasoning.
+#
+# The two surfaces use DIFFERENT reasoning knobs, and this file pins BOTH
+# at their ceiling — the `mode:` line alone decides which one applies:
+#   work mode:  effort "ultra" + speed "standard"
+#               (tiers: light < medium < high < xhigh < max < ultra)
+#               -> DB identity chatgpt_gpt_5_6_sol_work
+#   chat mode:  intelligence "pro"
+#               (tiers: instant < medium < high < xhigh < pro)
+#               -> DB identity chatgpt_gpt_5_6_sol
+# The knob for the other mode is ignored (the agent logs a warning).
+#
+# Note: v2 needs NO prompts override — the repo default already is the v2
+# 3-step prompt set.
+#
+# Run (from gui-agents-master/, Chrome already running + logged in):
+#   python -m infra.run --run-config \
+#     infra/configs/run_configs/tutorial_examples/v2_sol56_chatgpt.yaml --dry-run
+# Then drop --dry-run and add -y to run for real.
+
+benchmark: v2
+
+source:
+  kind: postgres_s3
+  schema: mbabenchv2                 # v2 = MBABenchV2 DB + s3://mbabench/MBABenchV2/
+  filters:
+    task_ids: [1, 2]                 # two tasks, run one after the other — replace with yours
+    task_sources: ["jp"]             # the v2 task set
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: postgres_s3
+  schema: mbabenchv2
+
+provider:
+  kind: "chatgpt"
+
+chatgpt_web:
+  project_id: "6a765823969081919fcfdcf8df197953"
+  mode: "work"                       # "work" or "chat" — see header
+  model: "gpt_5_6_sol"
+  effort: "ultra"                    # work-mode max (ignored in chat)
+  speed: "standard"                  # work-mode knob (ignored in chat)
+  intelligence: "pro"                # chat-mode max (ignored in work)
+  # NOTE: these knobs are NOT part of the v2 DB identity — keep them the
+  # same for every run recorded under a given identity.
+  browser:
+    cdp_port: 9222
+    profile_dir: "~/.chrome-web-agent"
