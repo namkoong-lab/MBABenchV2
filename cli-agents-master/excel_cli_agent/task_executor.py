@@ -900,11 +900,28 @@ class ExcelTaskExecutor:
                             if hasattr(event, 'message') and hasattr(event.message, 'usage'):
                                 input_tokens = event.message.usage.input_tokens
 
+                stop_reason = getattr(stream.get_final_message(), "stop_reason", None)
+
             elapsed = time.time() - start_time
-            print(f"✅ Anthropic response received in {elapsed:.1f}s")
+            print(f"✅ Anthropic response received in {elapsed:.1f}s (stop_reason={stop_reason})")
 
             if thinking_text:
                 print(f"💭 Extended thinking: {len(thinking_text)} chars")
+
+            # max_tokens caps thinking + text together. At high effort the model
+            # can spend the entire budget thinking and get cut off before any
+            # text block, leaving response_text empty. The caller treats that as
+            # "no tool call" and refeeds the same context, so under
+            # fresh_context_mode the identical request repeats until
+            # max_iterations — burning the full per-iteration cost each time
+            # with no possibility of progress. Fail loudly instead.
+            if stop_reason == "max_tokens" and not response_text.strip():
+                raise RuntimeError(
+                    f"Model produced no text: all {output_tokens} output tokens went to "
+                    f"thinking and generation hit max_tokens={self.max_completion_tokens}. "
+                    f"Raise max_completion_tokens or lower reasoning_effort "
+                    f"(currently {self.reasoning_effort!r})."
+                )
 
             # Build usage info
             usage_info = {
