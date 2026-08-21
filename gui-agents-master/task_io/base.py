@@ -44,9 +44,8 @@ class AttemptResult:
 
 
 # Credential-failure messages, shared by the postgres_s3 source and sink so
-# both name the same file. These used to offer to scaffold null entries into
-# infra/configs/configs.yaml; that file no longer holds secrets, and the
-# prompt would have recreated it. Fail with directions instead.
+# both name the same file. Each names the file and key to set rather than
+# scaffolding one, since secrets live outside the repo.
 _MISSING_DB_URL_MSG = (
     "postgres_s3 {what}: no database url. Set database.v1_url / database.v2_url "
     "in <repo>/config/config.yaml (the run's `benchmark` picks which one), or "

@@ -55,7 +55,11 @@ def main() -> int:
     if block is None:
         raise SystemExit(f"configs has no {provider}_web block")
 
+    # Relative profile_dir is repo-root anchored, not cwd — systemd starts
+    # this unit from whatever WorkingDirectory it was given.
     profile_dir = os.path.expanduser(block.browser.profile_dir)
+    if not os.path.isabs(profile_dir):
+        profile_dir = str(_REPO_ROOT / profile_dir)
     cdp_port = int(block.browser.cdp_port)
     os.makedirs(profile_dir, exist_ok=True)
 

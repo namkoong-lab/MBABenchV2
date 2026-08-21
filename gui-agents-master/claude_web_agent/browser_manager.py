@@ -1,7 +1,9 @@
 """
 Browser management for Claude Web Agent.
 
-Uses Chrome Canary CDP mode by default to bypass Cloudflare detection.
+Drives a real Chrome over CDP, which is what gets past Cloudflare. The
+stable channel is the one to use: Canary v148+ rejects Playwright's CDP
+handshake, so it is searched only if no stable Chrome is installed.
 Adapted from adam_excel_opener/core/browser_manager.py
 """
 
@@ -16,36 +18,59 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Chrome Canary CDP Configuration
+# Chrome CDP configuration
 CDP_PORT = 9222
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
-CHROME_CANARY_PROFILE_DIR = os.path.expanduser("~/.chrome-canary-claude-web")
 
-# Chrome paths (tries Canary first, then regular Chrome)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Chrome --user-data-dir, one per provider lane so both can hold a login at
+# once. Kept inside the repo (gitignored) rather than the home directory.
+# Overridden by <provider>_web.browser.profile_dir; EC2 templates point it at
+# /var/lib/gui-agents/chrome-*.
+DEFAULT_PROFILE_DIRS = {
+    "claude": str(_REPO_ROOT / "browser_profiles" / "chrome-claude"),
+    "chatgpt": str(_REPO_ROOT / "browser_profiles" / "chrome-chatgpt"),
+}
+DEFAULT_PROFILE_DIR = DEFAULT_PROFILE_DIRS["claude"]
+
+# Stable Chrome first, matching infra/worker/chrome_launcher.py. Canary is
+# last-resort only — v148+ breaks the CDP handshake Playwright needs.
 CHROME_CDP_PATHS = [
-    # Chrome Canary (preferred)
-    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",  # macOS
-    os.path.expanduser(
-        "~/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
-    ),
-    "/usr/bin/google-chrome-canary",  # Linux
-    "/usr/bin/google-chrome-unstable",  # Linux alt
-    # Windows Chrome Canary
-    os.path.join(
-        os.environ.get("LOCALAPPDATA", ""),
-        "Google",
-        "Chrome SxS",
-        "Application",
-        "chrome.exe",
-    ),
-    # Regular Chrome (fallback)
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",  # macOS
     os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
     "/usr/bin/google-chrome",  # Linux
     "/usr/bin/google-chrome-stable",
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",  # Windows
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    # Chrome Canary
+    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",  # macOS
+    os.path.expanduser(
+        "~/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary"
+    ),
+    "/usr/bin/google-chrome-canary",  # Linux
+    "/usr/bin/google-chrome-unstable",  # Linux alt
+    os.path.join(  # Windows
+        os.environ.get("LOCALAPPDATA", ""),
+        "Google",
+        "Chrome SxS",
+        "Application",
+        "chrome.exe",
+    ),
 ]
+
+
+def resolve_profile_dir(path: str | os.PathLike) -> str:
+    """Absolute --user-data-dir for a configured `profile_dir`.
+
+    Relative paths are anchored to the repo root, not the cwd, so
+    "browser_profiles/chrome-claude" names the same profile however the
+    runner was invoked.
+    """
+    expanded = Path(os.path.expanduser(str(path)))
+    if not expanded.is_absolute():
+        expanded = _REPO_ROOT / expanded
+    return str(expanded)
 
 
 def kill_chrome_cdp(cdp_port: int | None = None) -> None:
@@ -106,11 +131,12 @@ def launch_chrome_cdp(
     chrome_path = find_chrome()
 
     if not chrome_path:
-        logger.error("Chrome not found! Please install Chrome or Chrome Canary")
+        logger.error("Chrome not found! Please install Google Chrome")
         return None
 
-    effective_profile = profile_dir or CHROME_CANARY_PROFILE_DIR
+    effective_profile = resolve_profile_dir(profile_dir or DEFAULT_PROFILE_DIR)
     effective_port = cdp_port or CDP_PORT
+    os.makedirs(effective_profile, exist_ok=True)
 
     args = [
         chrome_path,
@@ -172,21 +198,23 @@ class WebBrowserManager:
         """
         self.config = config
         # Support both claude_web and chatgpt_web config keys
-        browser_config = config.get("chatgpt_web", {}).get("browser", {}) or config.get(
-            "claude_web", {}
-        ).get("browser", {})
+        browser_config = config.get("chatgpt_web", {}).get("browser", {})
+        provider = "chatgpt"
+        if not browser_config:
+            browser_config = config.get("claude_web", {}).get("browser", {})
+            provider = "claude"
 
-        self.browser_type = browser_config.get("type", "chrome_canary").lower()
+        self.browser_type = browser_config.get("type", "chrome").lower()
         self.headless = browser_config.get("headless", False)
         self.timeout = browser_config.get("timeout", 30000)
         self.cdp_port = browser_config.get("cdp_port", CDP_PORT)
-        self.profile_dir = os.path.expanduser(
-            browser_config.get("profile_dir", CHROME_CANARY_PROFILE_DIR)
+        self.profile_dir = resolve_profile_dir(
+            browser_config.get("profile_dir", DEFAULT_PROFILE_DIRS[provider])
         )
 
     def is_cdp_mode(self) -> bool:
         """Check if using Chrome CDP mode."""
-        return self.browser_type in ("chrome_canary", "cdp", "chrome")
+        return self.browser_type in ("cdp", "chrome")
 
     async def launch_browser(self, playwright):
         """
@@ -250,9 +278,7 @@ class WebBrowserManager:
                 cdp_port=self.cdp_port,
             )
             if not process:
-                raise RuntimeError(
-                    "Chrome not found. Please install Chrome or Chrome Canary"
-                )
+                raise RuntimeError("Chrome not found. Please install Google Chrome")
 
             if not await wait_for_chrome_ready():
                 process.terminate()

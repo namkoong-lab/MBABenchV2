@@ -58,10 +58,10 @@ def _benchmark(cfg: SimpleNamespace) -> str:
 # =========================================================================
 
 # Signature: (claude_web.mode, claude_web.model, claude_web.effort). The
-# claude.ai UI (2026-07) exposes reasoning effort AND a Chat/Cowork mode
-# toggle as first-class controls that change agent output, so both
-# bifurcate the DB label. mode defaults to "chat"; effort=None entries are
-# the pre-effort-era runs, kept for DB continuity.
+# claude.ai UI exposes reasoning effort and a Chat/Cowork mode toggle as
+# first-class controls that change agent output, so both bifurcate the DB
+# label. mode defaults to "chat"; effort=None matches a run that pinned no
+# effort.
 _V1_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", "sonnet_4_6", None): AgentIdentity("claude_web", "claude_web"),
     ("chat", "opus_4_6", None): AgentIdentity(
@@ -70,18 +70,14 @@ _V1_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", "haiku_4_5", None): AgentIdentity(
         "claude_haiku_4_5", "claude_haiku_4_5"
     ),
-    # 2026-07 benchmark refresh (names collision-checked against
-    # mbabench/attempts/, mbabench/BizbenchV1/attempts/, and DB
-    # agent_model_name on 2026-07-21; signed off 2026-07-21):
     ("chat", "fable_5", "max"): AgentIdentity(
         "claude_web_chat_fable5_max", "claude_web_chat_fable5_max"
     ),
     ("cowork", "fable_5", "max"): AgentIdentity(
         "claude_web_cowork_fable5_max", "claude_web_cowork_fable5_max"
     ),
-    # 2026-07-24 grading-variance experiment (chat-mode Opus 4.8 at max
-    # effort; collision-checked against DB agent_model_name + S3 prefixes;
-    # _var suffix keeps it separate from any future production Opus 4.8 wave):
+    # _var: the grading-variance experiment, kept separate from a
+    # production Opus 4.8 wave.
     ("chat", "opus_4_8", "max"): AgentIdentity(
         "claude_web_chat_opus4.8_max_var", "claude_web_chat_opus4.8_max_var"
     ),
@@ -93,8 +89,8 @@ _V1_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
 #   work: ("work", chatgpt_web.model, chatgpt_web.effort, chatgpt_web.speed)
 # The chat picker is model (submenu) + intelligence (radios); the work
 # picker is model + effort + speed under the pill's Advanced section.
-# intelligence=None entries are the one-axis-era runs (model carried the
-# legacy instant/thinking/pro values), kept for DB continuity.
+# intelligence=None entries match the one-axis model values
+# (instant/thinking/pro), which carry no separate intelligence setting.
 _V1_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", None, None): AgentIdentity("chatgpt_web", "chatgpt_web"),
     ("chat", "instant", None): AgentIdentity(
@@ -104,16 +100,14 @@ _V1_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
         "chatgpt_thinking", "chatgpt_thinking"
     ),
     ("chat", "pro", None): AgentIdentity("chatgpt_web_pro", "chatgpt_web_pro"),
-    # 2026-07 benchmark refresh (collision-checked + signed off 2026-07-21):
     ("chat", "gpt_5_6_sol", "pro"): AgentIdentity(
         "chatgpt_web_chat_gpt5.6_sol_pro", "chatgpt_web_chat_gpt5.6_sol_pro"
     ),
     ("work", "gpt_5_6_sol", "ultra", "standard"): AgentIdentity(
         "chatgpt_web_work_gpt5.6_sol_ultra", "chatgpt_web_work_gpt5.6_sol_ultra"
     ),
-    # 2026-07-24 grading-variance experiment (chat-mode GPT-5.5 at Pro
-    # intelligence; collision-checked against DB agent_model_name + S3
-    # prefixes; _var suffix separates it from any future production wave):
+    # _var: the grading-variance experiment, kept separate from a
+    # production GPT-5.5 wave.
     ("chat", "gpt_5_5", "pro"): AgentIdentity(
         "chatgpt_web_chat_gpt5.5_pro_var", "chatgpt_web_chat_gpt5.5_pro_var"
     ),
@@ -124,12 +118,11 @@ _V1_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
 # V2 identity tables — MBABenchV2 task set (MBABenchV2 DB)
 # =========================================================================
 
-# Signature: (claude_web.mode, claude_web.model). Mode joined the key
-# 2026-08-12 so chat and cowork cohorts stay separable in the DB; the
-# chat entries keep the original model-only labels for continuity with
-# rows recorded before the change. Extend the tuple — and every entry —
-# when adding another Claude field that should bifurcate the DB label
-# (e.g. effort, once V2 runs start pinning it).
+# Signature: (claude_web.mode, claude_web.model). Mode is in the key so
+# chat and cowork cohorts stay separable in the DB; the chat labels carry
+# no mode segment. Extend the tuple — and every entry — when adding another
+# Claude field that should bifurcate the DB label (e.g. effort, once V2
+# runs start pinning it).
 _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", "sonnet_4_6"): AgentIdentity(
         "claude_sonnet_4_6", "claude_sonnet_4_6"
@@ -138,8 +131,6 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", "opus_4_8"): AgentIdentity("claude_opus_4_8", "claude_opus_4_8"),
     ("chat", "haiku_4_5"): AgentIdentity("claude_haiku_4_5", "claude_haiku_4_5"),
     ("chat", "fable_5"): AgentIdentity("claude_fable_5", "claude_fable_5"),
-    # 2026-08-12: cowork cohort (collision-checked against
-    # task_attempts.agent_model_name in both DBs — 0 rows).
     ("cowork", "fable_5"): AgentIdentity(
         "claude_fable_5_cowork", "claude_fable_5_cowork"
     ),

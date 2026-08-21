@@ -43,4 +43,4 @@ chatgpt_web:
   intelligence: null                 # chat-mode knob; unused in work mode
   browser:
     cdp_port: 9222                   # ChatGPT lane runs on its own Chrome + port
-    profile_dir: "~/.chrome-web-agent"
+    profile_dir: "browser_profiles/chrome-chatgpt"

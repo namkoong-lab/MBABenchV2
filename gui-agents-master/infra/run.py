@@ -32,8 +32,7 @@ Exit-code contract (consumed by infra/worker/worker_loop.py — keep in sync):
     2   config / preflight / CLI error — nothing was attempted
     3   the source yielded no tasks (filters excluded everything, empty
         slice, or --skip-if-attempted matched an existing attempt) —
-        nothing was attempted. Previously conflated with 0; callers could
-        misread a filtered no-op as success.
+        nothing was attempted.
     4   environment gate blocked the run before any task started (CDP
         lock held by another run, or --auth-precheck failed)
 """
@@ -312,9 +311,9 @@ def preflight_check(
     else:
         _preflight_provider_v2(provider, section, errors)
 
-    # chatgpt_web.project_id is optional since 2026-08-12: null/empty falls
-    # back to the chatgpt.com homepage (no project scope), mirroring the
-    # claude_web project_id fallback. The agent logs a warning in that case.
+    # chatgpt_web.project_id is optional: null/empty falls back to the
+    # chatgpt.com homepage (no project scope), mirroring the claude_web
+    # project_id fallback. The agent logs a warning in that case.
     # project_slug is likewise optional — some ChatGPT project URLs have no
     # slug (e.g. https://chatgpt.com/g/g-p-{id}/project with no -{slug}).
 
@@ -665,9 +664,9 @@ def _default_deadman(engine_config: dict, provider: str) -> int | None:
     """Conservative ceiling for the engine subprocess when --timeout is not
     given: every legitimate run — all retry attempts at their own per-task
     budget — fits under it with a wide grace margin, so it only fires on a
-    truly wedged engine (which previously hung run.py forever, since the
-    engine's internal guard cannot preempt a hung await). Returns None if
-    the config keys aren't available (old unlimited behavior)."""
+    truly wedged engine, whose internal guard cannot preempt a hung await.
+    Returns None if the config keys aren't available, leaving the subprocess
+    unlimited."""
     section = engine_config.get(f"{provider}_web", {}) or {}
     try:
         per_task = int(section.get("max_sec_per_task") or 0)
@@ -780,9 +779,9 @@ def main() -> int:
 
     # SIGTERM (systemctl stop, orchestrator kill) must run our finally
     # blocks — Python's default handler exits immediately, which would
-    # orphan the engine subprocess (it lives in its own process group and
-    # no longer receives the terminal's signals). SystemExit unwinds
-    # through run_engine's finally, reaping the engine tree.
+    # orphan the engine subprocess (it lives in its own process group, so
+    # the terminal's signals do not reach it). SystemExit unwinds through
+    # run_engine's finally, reaping the engine tree.
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
 
     run_config_path: Path | None = None
@@ -853,9 +852,8 @@ def main() -> int:
     logger.info(f"Benchmark: {benchmark}")
 
     # Prompt selection. An explicit prompts_file in the run config wins and
-    # skips the registry (this is what keeps pre-registry configs working);
-    # otherwise prompt_version picks the files, so the DB label and the text
-    # the agent receives are the same decision. See
+    # skips the registry; otherwise prompt_version picks the files, so the
+    # DB label and the text the agent receives are the same decision. See
     # tasks_configs/prompts/registry.yaml.
     if getattr(cfg, "prompts_file", None):
         logger.info(

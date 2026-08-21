@@ -56,9 +56,9 @@ agent:
   # DERIVED — leave null. The run's prompt version is the top-level
   # `prompt_version`, which both selects the prompt files and is written to
   # task_attempts.prompt_version; run.py copies it here before building the
-  # sink. This key survives only because run configs may still set it, in
-  # which case it must match the top-level value (a mismatch is refused —
-  # it would record a row under a version the agent was never sent).
+  # sink. A run config may set this key, in which case it must match the
+  # top-level value — a mismatch is refused, since it would record a row
+  # under a version the agent was never sent.
   prompt_version:
     value: null
     required: false
@@ -333,6 +333,18 @@ claude_web:
   effort:
     value: "max"
     required: false
+  # Desired state of the composer's thinking switch. Applied only for models
+  # that expose it (opus family); a successful no-op for models that don't
+  # (fable_5, haiku_4_5).
+  enable_extended_thinking:
+    value: true
+    required: false
+  # Web Search capability in the composer's tools menu. Off for benchmark
+  # runs — the tasks are self-contained and a search changes what the model
+  # sees between attempts.
+  enable_web_search:
+    value: false
+    required: false
   max_sec_per_task:
     value: 7200                # 2h
     required: false
@@ -385,11 +397,14 @@ claude_web:
     cdp_port:
       value: 9222
       required: false
-    # Chrome --user-data-dir. Must match the --user-data-dir flag used when
-    # launching Chrome manually (see README quickstart). EC2 templates override
-    # this to /var/lib/gui-agents/chrome-claude for the VNC-login step.
+    # Chrome --user-data-dir, holding the claude.ai login. A relative path is
+    # resolved against the repo root, so this lives under the (gitignored)
+    # browser_profiles/ tree.
+    # Must match the --user-data-dir flag used when launching Chrome manually
+    # (see README quickstart). EC2 templates override this to
+    # /var/lib/gui-agents/chrome-claude for the VNC-login step.
     profile_dir:
-      value: "~/.chrome-web-agent"
+      value: "browser_profiles/chrome-claude"
       required: false
 
   logging:
@@ -500,11 +515,14 @@ chatgpt_web:
     cdp_port:
       value: 9222
       required: false
-    # Chrome --user-data-dir. Must match the --user-data-dir flag used when
-    # launching Chrome manually (see README quickstart). EC2 templates override
-    # this to /var/lib/gui-agents/chrome-chatgpt for the VNC-login step.
+    # Chrome --user-data-dir, holding the chatgpt.com login. A relative path is
+    # resolved against the repo root, so this lives under the (gitignored)
+    # browser_profiles/ tree rather than in $HOME. Must match the
+    # --user-data-dir flag used when launching Chrome manually (see README
+    # quickstart). EC2 templates override this to
+    # /var/lib/gui-agents/chrome-chatgpt for the VNC-login step.
     profile_dir:
-      value: "~/.chrome-web-agent"
+      value: "browser_profiles/chrome-chatgpt"
       required: false
 
   session:

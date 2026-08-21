@@ -797,16 +797,13 @@ class ChatGPTWebAgent(WebAgent):
                 }"""
             )
 
-        # ROLE-BASED selection (2026-08-02 rewrite). The keyboard walk that
-        # used to live here relied on focus landing on `.__menu-item`
-        # elements. The 2026-08-02 UI rollout added a "power" slider that
-        # takes initial focus, and `.__menu-item` now also matches the LEFT
-        # SIDEBAR (New chat / Search / Library / conversation names), so the
-        # walk drifted into the sidebar and reported
-        # "Keyboard focus never reached the 'Effort' row (last focused: '')".
-        # The picker rows now carry proper roles — [role="menuitem"] with
-        # text "<Row>\n<Value>" — and a synthetic pointer-event click on
-        # them is stable (verified live: Effort -> Ultra, pill confirmed).
+        # ROLE-BASED selection. Focus-walking the picker is not viable: a
+        # "power" slider takes initial focus, and `.__menu-item` also
+        # matches the LEFT SIDEBAR (New chat / Search / Library /
+        # conversation names), so a walk drifts into the sidebar. The picker
+        # rows carry proper roles — [role="menuitem"] with text
+        # "<Row>\n<Value>" — and a synthetic pointer-event click on them is
+        # stable (verified live 2026-08-02: Effort -> Ultra, pill confirmed).
         async def _click_by_text(prefix: str, within_flyout: bool):
             handle = await self.page.evaluate_handle(
                 """(args) => {
@@ -1534,10 +1531,9 @@ class ChatGPTWebAgent(WebAgent):
         Work-mode Sol runs spreadsheet/PDF tools for many minutes while
         emitting assistant turns whose visible content is EMPTY. During
         those stretches `generating` can read False and the extracted
-        response text stays "", so the empty-idle watchdog used to declare
-        a healthy run dead (tasks 289/352/306 all killed mid-build
-        2026-08-09; their conversations show ~20 messages, every one with
-        end_turn=False, and no output file ever written).
+        response text stays "", which the empty-idle watchdog alone reads as
+        a dead run (observed 2026-08-09 on tasks 289/352/306: ~20 messages,
+        every one with end_turn=False, no output file yet).
 
         Turn/article COUNTS grow whenever the model emits anything at all,
         including empty progress turns. Deliberately excludes body text —
@@ -1621,7 +1617,7 @@ class ChatGPTWebAgent(WebAgent):
         # Minimum time before accepting completion (Pro tasks need
         # substantial time for Excel building). If a file card is detected
         # (Spreadsheet/.xlsx), accept sooner — the model may have finished
-        # quickly with just a file output. (Agent mode no longer exists.)
+        # quickly with just a file output.
         min_elapsed_sec = 120
         min_elapsed_sec_with_file = 30  # Accept quickly if file card present
 

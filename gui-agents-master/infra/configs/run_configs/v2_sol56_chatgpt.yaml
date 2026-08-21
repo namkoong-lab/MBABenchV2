@@ -47,4 +47,4 @@ chatgpt_web:
   # same for every run recorded under a given identity.
   browser:
     cdp_port: 9222
-    profile_dir: "~/.chrome-web-agent"
+    profile_dir: "browser_profiles/chrome-chatgpt"

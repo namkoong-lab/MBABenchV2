@@ -85,9 +85,10 @@ Chrome with Chrome DevTools Protocol is recommended because it:
 
 1. Start Chrome with debugging:
 ```bash
+# from the repo root; swap chrome-claude for chrome-chatgpt on ChatGPT runs
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.chrome-web-agent
+  --user-data-dir="$PWD/browser_profiles/chrome-claude"
 ```
 
 2. Log in to claude.ai or chatgpt.com manually in the browser

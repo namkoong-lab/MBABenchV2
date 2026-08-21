@@ -1,21 +1,14 @@
 """Resolve a run's `prompt_version` to the prompt file(s) it selects.
 
-`prompt_version` used to be a label nothing checked: the run config named a
-number for the DB and, separately, named `prompts_file` for the agent. The
-two could disagree, and did — the V1 and V2 waves both shipped as version 9
-against different rubrics, so a task_attempts row could not tell you what
-the agent was asked to do.
-
-This module makes the version the single key that picks the text. The map
-lives in tasks_configs/prompts/registry.yaml (data, not code, so adding a
-prompt set is a one-file change).
+The version is the single key that picks the text, so a task_attempts row
+tells you what the agent was asked to do. The map lives in
+tasks_configs/prompts/registry.yaml (data, not code, so adding a prompt set
+is a one-file change).
 
 Precedence, applied by infra/run.py:
 
   1. an explicit `prompts_file` in the run config — wins, registry skipped
   2. this registry, keyed by `prompt_version`
-
-Layer 1 is what keeps every pre-registry run config working unchanged.
 
 Typical usage:
 

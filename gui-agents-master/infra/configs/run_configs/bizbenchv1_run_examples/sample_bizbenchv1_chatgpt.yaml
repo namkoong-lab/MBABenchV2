@@ -38,4 +38,4 @@ chatgpt_web:
   intelligence: null
   browser:
     cdp_port: 9226
-    profile_dir: "~/.chrome-web-agent"
+    profile_dir: "browser_profiles/chrome-chatgpt"

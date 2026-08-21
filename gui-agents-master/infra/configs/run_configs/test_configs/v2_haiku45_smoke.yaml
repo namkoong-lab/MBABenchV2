@@ -63,6 +63,6 @@ claude_web:
     max_sec_per_attempt: 1800
 
   browser:
-    # Matches the Chrome launch command in CheatSheet.md.
+    # Matches the Chrome launch command in the README quickstart.
     cdp_port: 9223
-    profile_dir: "~/.chrome-web-agent-claude2"
+    profile_dir: "browser_profiles/chrome-claude"

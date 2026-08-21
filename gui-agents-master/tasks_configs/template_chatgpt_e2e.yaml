@@ -29,7 +29,7 @@ template:
     max_sec_per_task: 1800  # 30 min (shorter for test)
 
     browser:
-      type: "chrome_canary"
+      type: "chrome"
       headless: false
       timeout: 30000
 

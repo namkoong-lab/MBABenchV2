@@ -168,22 +168,13 @@ class ClaudeWebAgent(WebAgent):
         """
         Navigate to claude.ai/new or project chat to start a fresh conversation.
 
-        If project_id or project_url is configured, opens a new chat within that project.
+        If project_id is configured, opens a new chat within that project.
 
         Returns:
             True if navigation succeeded
         """
         try:
-            # Check for project URL or ID
-            project_url = self.agent_config.get("project_url")
             project_id = self.agent_config.get("project_id")
-
-            if project_url:
-                # Extract project ID from URL if full URL provided
-                if "/project/" in project_url:
-                    project_id = (
-                        project_url.split("/project/")[1].split("/")[0].split("?")[0]
-                    )
 
             if project_id:
                 # Navigate to project's new chat URL
@@ -215,7 +206,7 @@ class ClaudeWebAgent(WebAgent):
                 return False
 
             # Configure model + effort + thinking. model=None means "keep
-            # the session default" (no crash — this used to .lower() None).
+            # the session default".
             target_model = self.agent_config.get("model")
             target_effort = self.agent_config.get("effort")
             enable_et = self.agent_config.get("enable_extended_thinking", True)
@@ -1269,9 +1260,9 @@ class ClaudeWebAgent(WebAgent):
                 return False
 
             # Click "+" and wait for the menu to actually open.
-            # [role=menu][data-open] is the Base UI open signal; catches
-            # silent click failures that previously manifested as
-            # "could not find Add files or photos".
+            # [role=menu][data-open] is the Base UI open signal; without it
+            # a silent click failure surfaces later as "could not find Add
+            # files or photos".
             await attach_btn.click()
             try:
                 await self.page.wait_for_selector(

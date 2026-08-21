@@ -9,7 +9,9 @@ infra/configs/configs.yaml
 infra/dispatcher/.aws_defaults
 infra/dispatcher/boxes.yaml
 
-# Browser session data
+# Browser session data — browser_profiles/ holds the Chrome --user-data-dir
+# for each provider lane, i.e. the live claude.ai / chatgpt.com login cookies
+browser_profiles/
 browser_session_*/
 firefox_profile_for_playwright/
 

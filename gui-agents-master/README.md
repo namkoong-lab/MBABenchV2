@@ -65,11 +65,13 @@ This is the path everyone should start with. You launch a Chrome browser, log in
 
 The automation connects to a real Chrome browser via the Chrome DevTools Protocol. Launch Chrome with remote debugging enabled, on port 9222 with a dedicated profile directory.
 
+Run these **from the repo root** — the profile lives inside the repo, under the gitignored `browser_profiles/`. The commands below use the Claude lane's profile; for ChatGPT runs swap `chrome-claude` for `chrome-chatgpt`, so each provider keeps its own login. Use regular Chrome, not Canary (see [Troubleshooting](#troubleshooting)).
+
 **macOS:**
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.chrome-web-agent \
+  --user-data-dir="$PWD/browser_profiles/chrome-claude" \
   --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
@@ -81,7 +83,7 @@ The automation connects to a real Chrome browser via the Chrome DevTools Protoco
 ```bash
 google-chrome \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.chrome-web-agent \
+  --user-data-dir="$PWD/browser_profiles/chrome-claude" \
   --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
@@ -93,7 +95,7 @@ google-chrome \
 ```powershell
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" `
   --remote-debugging-port=9222 `
-  --user-data-dir="$env:USERPROFILE\.chrome-web-agent" `
+  --user-data-dir="$PWD\browser_profiles\chrome-claude" `
   --no-first-run --no-default-browser-check `
   --disable-background-timer-throttling `
   --disable-backgrounding-occluded-windows `
@@ -102,6 +104,8 @@ google-chrome \
 ```
 
 The `--user-data-dir` flag creates an isolated Chrome profile. Your login session persists across runs as long as you launch Chrome with the same directory — typically a few weeks until cookies expire. Each parallel browser instance needs its own profile dir (and its own port).
+
+This must agree with `<provider>_web.browser.profile_dir` in the run config, which defaults to `browser_profiles/chrome-claude` / `browser_profiles/chrome-chatgpt`. A relative value there is resolved against the repo root, so it names the same profile no matter where you invoke the runner from.
 
 ### 2. Log into the provider
 
@@ -363,7 +367,7 @@ You can run both providers simultaneously using two Chrome instances on differen
 # Browser A — port 9222 (Claude)
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
-  --user-data-dir=~/.chrome-web-agent-claude \
+  --user-data-dir="$PWD/browser_profiles/chrome-claude" \
   --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
@@ -373,7 +377,7 @@ You can run both providers simultaneously using two Chrome instances on differen
 # Browser B — port 9333 (ChatGPT)
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9333 \
-  --user-data-dir=~/.chrome-web-agent-chatgpt \
+  --user-data-dir="$PWD/browser_profiles/chrome-chatgpt" \
   --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \

@@ -251,7 +251,7 @@ class PostgresS3TaskSource:
 
 # ----- Benchmark-specific subclasses ----------------------------------------
 
-# v2 (MBABenchV2 DB): tasks table without the legacy old_id column.
+# v2 (MBABenchV2 DB): tasks table, no old_id column.
 MBABENCHV2_TASK_SCHEMA = TaskSchema(
     table="tasks",
     id_col="id",
@@ -260,9 +260,8 @@ MBABENCHV2_TASK_SCHEMA = TaskSchema(
     extra_cols=("task_source",),
 )
 
-# v1 (BizbenchV1 DB): identical shape plus the legacy `old_id` mapping
-# column carried through spec.metadata for cross-referencing pre-refresh
-# attempt rows.
+# v1 (BizbenchV1 DB): identical shape plus the `old_id` mapping column,
+# selected into spec.metadata.
 BIZBENCH_TASK_SCHEMA = TaskSchema(
     table="tasks",
     id_col="id",
@@ -386,7 +385,7 @@ class BizbenchPostgresS3TaskSource(MBABenchV2PostgresS3TaskSource):
     """Benchmark v1 source (BizbenchV1 DB).
 
     Identical filter/query behavior; the only difference is the task schema
-    (carries the legacy `old_id` column through spec.metadata).
+    (carries the `old_id` column through spec.metadata).
     """
 
     TASK_SCHEMA = BIZBENCH_TASK_SCHEMA

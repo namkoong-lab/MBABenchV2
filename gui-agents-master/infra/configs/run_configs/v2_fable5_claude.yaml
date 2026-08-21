@@ -40,4 +40,4 @@ claude_web:
   effort: "max"
   browser:
     cdp_port: 9223
-    profile_dir: "~/.chrome-web-agent-claude2"
+    profile_dir: "browser_profiles/chrome-claude"
