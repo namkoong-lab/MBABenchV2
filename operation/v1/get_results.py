@@ -9,11 +9,17 @@ needs_attempt (no valid attempt).
 Cohort means are imputed: every cell without a clean grading (needs_attempt or
 needs_grading) scores 0, and the denominator is at least the version's task count.
 
+Each cell also carries the attempt's task_attempts.time_taken_min, and every
+cohort reports mean/median attempt time. Time is NOT imputed: it is averaged over
+the attempts that recorded one (`timed`), because a missing attempt has no
+duration to speak of and zero-filling would reward cohorts that ran the least.
+
 A second file, <version>_results_difficulty_breakdown.json, holds the difficulty
 breakdown: per model_label, per tasks.human_difficulty_measure bucket, the task
 count and the mean accuracy / formula / format / composite, imputed the same way
-(ungraded cells score 0 over the full bucket). Each bucket names the tasks it had
-to impute under `missing`.
+(ungraded cells score 0 over the full bucket), plus the bucket's mean/median
+attempt time over its timed attempts. Each bucket names the tasks it had to
+impute under `missing`.
 
 Every run writes both files to its own directory,
 operation/results/<version>/<timestamp>/, so runs never overwrite each other;
@@ -42,6 +48,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 import psycopg2
 
@@ -132,10 +139,11 @@ SQL = """
         GROUP BY a.task_id
     )
     SELECT t.id, t.task_name, t.task_source, t.human_difficulty_measure,
-           l.attempt_id, g.id,
+           l.attempt_id, a.time_taken_min, g.id,
            g.accuracy_grade, g.formula_grade, g.format_grade
     FROM tasks t
     LEFT JOIN latest l ON l.task_id = t.id
+    LEFT JOIN task_attempts a ON a.id = l.attempt_id
     LEFT JOIN LATERAL (
         SELECT g.id, g.accuracy_grade, g.formula_grade, g.format_grade
         FROM gradings g
@@ -203,13 +211,14 @@ def build(conn, cohorts, grader: str, weights: dict, expected_tasks: int):
     cells, summary = [], {}
     for label, identity, prompt_version, pipeline in cohorts:
         counts = {"complete": 0, "needs_grading": 0, "needs_attempt": 0}
-        scores = []
+        scores, times = [], []
         for (
             task_id,
             task_name,
             task_source,
             difficulty,
             attempt_id,
+            time_taken_min,
             grading_id,
             acc,
             form,
@@ -217,6 +226,9 @@ def build(conn, cohorts, grader: str, weights: dict, expected_tasks: int):
         ) in fetch_cohort(conn, identity, prompt_version, grader):
             acc, form, fmt = (
                 float(x) if x is not None else None for x in (acc, form, fmt)
+            )
+            time_taken_min = (
+                float(time_taken_min) if time_taken_min is not None else None
             )
             if attempt_id is None:
                 status = "needs_attempt"
@@ -230,6 +242,8 @@ def build(conn, cohorts, grader: str, weights: dict, expected_tasks: int):
             )
             if total is not None:
                 scores.append(total)
+            if time_taken_min is not None:
+                times.append(time_taken_min)
             cells.append(
                 {
                     "cohort": label,
@@ -242,6 +256,7 @@ def build(conn, cohorts, grader: str, weights: dict, expected_tasks: int):
                     "task_source": task_source,
                     "difficulty": difficulty,
                     "attempt_id": attempt_id,
+                    "time_taken_min": time_taken_min,
                     "grading_id": grading_id,
                     "accuracy": acc,
                     "formula": form,
@@ -259,6 +274,13 @@ def build(conn, cohorts, grader: str, weights: dict, expected_tasks: int):
         counts["scored"] = len(scores)
         counts["imputed_zeros"] = denominator - len(scores)
         counts["mean_total"] = round(sum(scores) / denominator, 2)
+        # Time is never imputed: an absent attempt took no measurable time, and
+        # zero-filling would drag the mean toward the cohorts that ran least.
+        # `timed` is the real denominator here, and it is usually smaller than
+        # `scored` -- some attempts predate time_taken_min being recorded.
+        counts["timed"] = len(times)
+        counts["mean_time_min"] = round(sum(times) / len(times), 2) if times else None
+        counts["median_time_min"] = round(median(times), 2) if times else None
         summary[label] = counts
     return cells, summary
 
@@ -313,6 +335,9 @@ def difficulty_breakdown(cells) -> dict[str, dict[str, dict]]:
             for r in rows
             if r["status"] != "complete"
         ]
+        # Unlike the grades, times are averaged over the attempts that actually
+        # recorded one -- see the note on the cohort summary in build().
+        times = [r["time_taken_min"] for r in rows if r["time_taken_min"] is not None]
         out = {
             "n": len(rows),
             "graded": len(rows) - len(missing),
@@ -321,6 +346,9 @@ def difficulty_breakdown(cells) -> dict[str, dict[str, dict]]:
             "formula": mean(rows, "formula"),
             "format": mean(rows, "format"),
             "total": mean(rows, "total"),
+            "timed": len(times),
+            "mean_time_min": round(sum(times) / len(times), 2) if times else None,
+            "median_time_min": round(median(times), 2) if times else None,
         }
         if missing:
             out["missing"] = missing
@@ -441,6 +469,7 @@ def main() -> None:
         "mean_denominator": (
             f"max(cells, {version['expected_tasks']}); ungraded cells impute 0"
         ),
+        "time_denominator": "attempts with a recorded time_taken_min; never imputed",
         "task_sources": list(TASK_SOURCES),
         "cohorts": [
             {
@@ -467,6 +496,7 @@ def main() -> None:
         "version": args.database,
         "composite_formula": formula_text(version["weights"]),
         "bucket_denominator": "every task in the bucket; ungraded cells impute 0",
+        "time_denominator": "attempts with a recorded time_taken_min; never imputed",
         "results_file": pointer(args.out, args.difficulty_out),
         "difficulty_breakdown": by_difficulty,
     }
@@ -476,12 +506,15 @@ def main() -> None:
     print(f"wrote {args.out} ({len(cells)} cells, grader={args.grader})")
     print(f"wrote {args.difficulty_out} (difficulty breakdown)")
     for label, counts in summary.items():
+        mean_time = counts["mean_time_min"]
+        time_txt = f"{mean_time:6.1f}m" if mean_time is not None else f"{'-':>7}"
         print(
             f"  {label:22} complete={counts['complete']:3d} "
             f"needs_grading={counts['needs_grading']:3d} "
             f"needs_attempt={counts['needs_attempt']:3d} "
             f"zeros={counts['imputed_zeros']:3d} "
-            f"mean={counts['mean_total']:5.1f}"
+            f"mean={counts['mean_total']:5.1f} "
+            f"timed={counts['timed']:3d} mean_time={time_txt}"
         )
 
     print(
