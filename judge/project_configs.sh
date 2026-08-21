@@ -33,7 +33,10 @@ done
 # The judge always runs its Google-slug models through OpenRouter, never
 # direct-to-Gemini (no Gemini key on this setup). Without this override,
 # llm_utils routes google/* to Gemini's endpoint and auth fails.
-export JUDGE_OPENROUTER_MODELS="google/gemini-2.5-pro"
+# Exact-match set (no wildcards): every google/* slug reachable via
+# judge.openrouter_model or --model must be listed here, or that run dies
+# with "Missing or invalid Authorization header" from Google.
+export JUDGE_OPENROUTER_MODELS="google/gemini-2.5-pro,google/gemini-2.5-flash,google/gemini-2.5-flash-lite"
 
 # Repo-relative scratch; LibreOffice for recalc-before-extraction.
 export SCRATCH_PATH="$_judge_dir/scratch"
