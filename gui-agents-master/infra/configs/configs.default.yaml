@@ -248,31 +248,6 @@ poll:
 
 
 # ---- Shared (both providers) -----------------------------------------------
-# Prompts sent sequentially to the AI, one chat turn each. Leave `prompts`
-# empty: prompt selection is driven by `prompt_version` (below) through
-# tasks_configs/prompts/registry.yaml, so every config shares one copy of the
-# long benchmark prompts. Preflight fails if nothing resolves.
-prompts:
-  value: []                    # inline prompts; loses to prompts_file
-  required: false
-
-# ESCAPE HATCH — normally leave this null and let `prompt_version` (below)
-# select the prompts via tasks_configs/prompts/registry.yaml.
-#
-# Setting it pins the prompt files directly and BYPASSES the registry, which
-# means `prompt_version` becomes a label only: the run records one number
-# while sending whatever text you list here, with nothing checking that they
-# agree. That is exactly the drift the registry exists to prevent, so use
-# this only for one-off experiments with prompts not worth registering.
-#
-# One file per prompt, sent in order, one chat turn each. Paths resolve
-# relative to the repo root, then CWD. prompts_file wins over an inline
-# `prompts` list; a missing file is fatal (running the benchmark with the
-# wrong prompt is worse than not running it).
-prompts_file:
-  value: null
-  required: false
-
 # Selects the prompt file(s) for this run from
 # tasks_configs/prompts/registry.yaml, AND is written to
 # task_attempts.prompt_version — one key, so the DB label and the text the

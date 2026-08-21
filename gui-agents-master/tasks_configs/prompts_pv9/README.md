@@ -14,8 +14,10 @@ Every agent sent **exactly one prompt** per task. Each full text =
 | `claude_web_FULL.txt`    | `claude_web`      | 13,275 | B (byte-identical to chatgpt_agent) |
 
 DB labels these `prompt_version: 9`; the payloads carry `prompt_version: 8`
-internally (relabel, not rewrite). Both match the v1 dispatcher templates
-`infra/dispatcher/config_templates/{chatgpt_pro,chatgpt_agent}.yaml` byte-for-byte.
+internally (relabel, not rewrite). These files, reached through
+`prompt_version: 9` in `tasks_configs/prompts/registry.yaml`, are the record
+of what the v1 wave sent — the dispatcher templates carry no prompt text and
+provision v2 boxes only.
 
 **Claude caveat:** in-scope (Apr 19-23) claude prompt files are truncated to
 exactly 500 bytes in S3. The full text above comes from the `jp_final` batch

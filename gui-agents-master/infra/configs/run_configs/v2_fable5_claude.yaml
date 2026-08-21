@@ -3,12 +3,12 @@
 # Shape copied from mbabenchv2_run_examples/mbabenchv2_db_sink.yaml.
 #
 # Note: prompt_version 200 IS the v2 3-step set (prompts_v2/step1..step3) —
-# the version selects the files, so there is no prompts_file to keep in sync.
+# the version is the only thing that selects the text.
 # v2 runs use the plain "chat" surface (the repo default), not cowork.
 #
 # Run (from gui-agents-master/, Chrome already running + logged in):
 #   python -m infra.run --run-config \
-#     infra/configs/run_configs/tutorial_examples/v2_fable5_claude.yaml --dry-run
+#     infra/configs/run_configs/v2_fable5_claude.yaml --dry-run
 # Then drop --dry-run and add -y to run for real.
 
 benchmark: v2

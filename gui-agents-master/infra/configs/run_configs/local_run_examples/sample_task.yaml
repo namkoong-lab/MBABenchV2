@@ -24,11 +24,9 @@
 #       model: "opus_4_6"
 #       max_sec_per_task: 10800
 #
-# or override prompts just for this task:
+# or send a different registered prompt set for this task only:
 #
-#     prompts:
-#       - "Extract every financial metric into a table."
-#       - "Build a DCF on a new sheet using formulas only."
+#     prompt_version: 201
 
 task_name: "Sample_Task"
 task_source: "my_tasks"

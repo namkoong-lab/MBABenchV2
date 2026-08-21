@@ -42,7 +42,8 @@ sink:
   # S3 bucket + prefix come from aws.* in configs.default.yaml.
   # agent_folder / agent_model_name / agent_model_type are derived from
   # the provider block (see infra/configs/agent_identity.py).
-  # prompt_version comes from agent.prompt_version.
+  # prompt_version is the top-level key below; run.py copies it into
+  # agent.prompt_version, which is what the sink writes.
 
 chatgpt_web:
   model: "instant"
@@ -51,12 +52,15 @@ chatgpt_web:
 provider:
   kind: "chatgpt"
 
-# agent.prompt_version inherits from configs.default.yaml (8).
+# agent.prompt_version is derived — leave it unset and set prompt_version.
 # agent_model_name / agent_folder / agent_model_type are computed from the
 # chatgpt_web block — no yaml field for them.
 
-# This sample uses its own short inline prompt; null out the repo-default
-# prompts_file (v2 3-step benchmark prompts) so the inline list wins.
-prompts_file: null
-prompts:
-  - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."
+# Prompts come from `prompt_version` through
+# tasks_configs/prompts/registry.yaml. Unset, this inherits the repo default
+# 200 (the v2 3-step set). ChatGPT works better with one combined turn than a
+# sequence, so 201 (the same 132-check rubric folded into a single pass) is
+# the usual choice here. This config WRITES to task_attempts, so the version
+# set here is the version those rows will carry — use 0 if you want the run
+# marked as throwaway smoke-test data.
+prompt_version: 201

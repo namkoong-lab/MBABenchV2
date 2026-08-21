@@ -19,13 +19,10 @@ the integer 0.
 
 ## Why
 
-`prompt_version` used to be a label nothing checked. The run config named a
-number for the DB and, separately, named `prompts_file` for the agent, so the
-two could disagree — and did, leaving `task_attempts` rows that cannot tell
-you what the agent was asked to do.
-
-Now the version is the single key that selects the text: `prompt_version`
-alone determines what gets sent.
+The version is the single key that selects the text. A `task_attempts` row
+therefore tells you exactly what the agent was asked to do: `prompt_version`
+alone determines what gets sent, so the DB label and the prompt cannot drift
+apart.
 
 ## Using it
 
@@ -41,10 +38,11 @@ populates `prompts_file`, and writes the same number to
 unset; if you do set it, it must match, and a mismatch is refused rather than
 silently resolved.
 
-`prompts_file` in a run config still wins and bypasses the registry. That is
-an escape hatch for one-off experiments, and it reintroduces exactly the drift
-described above: `prompt_version` becomes a label only, with nothing checking
-that it describes the text being sent.
+There is no per-run prompt override. `prompts_file` and `prompts` are
+pre-registry keys, deprecated and no longer in the config schema: a config
+that still sets one loads with a deprecation warning from
+`infra/configs/loader.py`, and both are slated for removal. New text goes in
+`registry.yaml` under a new version.
 
 ## Adding a version
 

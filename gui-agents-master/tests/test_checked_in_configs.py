@@ -14,6 +14,7 @@ No DB, AWS, or browser access; the files are read off disk.
 
 Run from gui-agents-master:  python -m pytest tests/test_checked_in_configs.py
 """
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -25,6 +26,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from infra.configs import load_configs  # noqa: E402
+from infra.configs.loader import _DEPRECATED_KEYS  # noqa: E402
 from infra.configs.agent_identity import resolve_agent_identity  # noqa: E402
 from infra.configs.prompt_registry import resolve_prompt_files  # noqa: E402
 from infra.run import (  # noqa: E402
@@ -62,6 +64,40 @@ def fake_spec():
         metadata={"task_source": "wsp", "db_task_id": 7},
         overrides={},
     )
+
+
+@pytest.mark.parametrize("path", CONFIG_FILES, ids=_ids(CONFIG_FILES))
+def test_config_selects_prompts_by_version_only(path: Path):
+    """No checked-in config carries a deprecated prompt key.
+
+    `prompt_version` is the only supported selector. The two pre-registry
+    keys are out of the schema and gated in the loader; this keeps them out
+    of the repo as well, so no example teaches the deprecated shape.
+    """
+    data = yaml.safe_load(path.read_text()) or {}
+    stale = sorted(set(data) & set(_DEPRECATED_KEYS))
+    assert not stale, (
+        f"{stale} deprecated — register the prompt in "
+        f"tasks_configs/prompts/registry.yaml and set prompt_version instead"
+    )
+
+
+def test_deprecated_prompt_keys_load_with_a_warning(caplog):
+    """A stale config still loads, and says why it should not stay stale."""
+    with caplog.at_level(logging.WARNING, logger="infra.configs.loader"):
+        cfg = load_configs(
+            default_path=DEFAULT_PATH,
+            override_path=NO_OVERRIDES,
+            run_config_data={
+                "benchmark": "v2",
+                "prompts_file": ["tasks_configs/prompts/v000_test.txt"],
+            },
+        )
+    assert cfg.prompts_file == ["tasks_configs/prompts/v000_test.txt"]
+    assert any(
+        "DEPRECATED" in r.message and "prompts_file" in r.message
+        for r in caplog.records
+    ), caplog.text
 
 
 @pytest.mark.parametrize("path", CONFIG_FILES, ids=_ids(CONFIG_FILES))

@@ -21,13 +21,27 @@ provider:
 # instructions and rubric and the results are directly comparable.
 prompt_version: 200
 
+# Every axis a box's output depends on is pinned here rather than inherited.
+# The v2 ChatGPT identity keys on (mode, model, intelligence), so a default
+# that moves would change what these boxes send while the DB label stayed
+# chatgpt_web_pro.
 chatgpt_web:
+  mode: "chat"
   # "pro" is a one-axis value: it names an intelligence level, not a model,
   # and the agent routes it to chatgpt_web.intelligence. Boxes on this
   # template write the chatgpt_web_pro cohort (see agent_identity.py).
   model: "pro"
+  # MUST stay null. The identity key is ("chat", "pro", None); naming the
+  # level here too makes it ("chat", "pro", "pro"), which no identity covers,
+  # and spinup.sh would refuse the template.
+  intelligence: null
+  # Work-mode pickers. Null in chat mode, or preflight rejects the config.
+  effort: null
+  speed: null
   # Paste from https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
-  # Required — preflight exits if either is null/empty under provider=chatgpt.
+  # Optional — null starts at the chatgpt.com homepage with no project scope
+  # (the agent warns), so pin it or the box's chats land in the account's
+  # main history. project_slug may be null for project URLs that have none.
   project_id: "6a3b10e3b0b08191813fc1a0dbd72cbd"
   project_slug: "mbabenchv2"
   browser:

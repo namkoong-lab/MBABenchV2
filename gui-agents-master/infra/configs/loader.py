@@ -12,6 +12,9 @@ After merge:
   - the `required` metadata is dropped and the tree collapses to just values
   - the result is returned as a nested SimpleNamespace for dot access
 
+Keys not in configs.default.yaml are rejected as typos, except the deprecated
+ones in `_DEPRECATED_KEYS`, which are accepted with a warning.
+
 Typical usage:
 
     from infra.configs import load_configs, resolve_agent_identity
@@ -22,15 +25,40 @@ Typical usage:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 CONFIGS_DIR = Path(__file__).resolve().parent
 DEFAULT_PATH = CONFIGS_DIR / "configs.default.yaml"
 OVERRIDE_PATH = CONFIGS_DIR / "configs.yaml"
+
+# Deprecated top-level keys. They are not in configs.default.yaml, so the
+# unknown-key check would reject them as typos; they are intercepted here
+# instead so the message names the deprecation and says what to do. The
+# values still reach the namespace, so a config that predates the prompt
+# registry keeps working while it is being migrated.
+_DEPRECATED_KEYS: dict[str, str] = {
+    "prompts_file": (
+        "it pins prompt files directly and skips the registry, so the run "
+        "records a prompt_version that did not select the text it sent"
+    ),
+    "prompts": (
+        "an inline prompt list is never sent, because the runner fills "
+        "prompts_file from the registry on every run and that wins inside "
+        "the engine"
+    ),
+}
+_DEPRECATION_FIX = (
+    "Register the prompt under a new version in "
+    "tasks_configs/prompts/registry.yaml and set prompt_version instead. "
+    "The key is slated for removal."
+)
 
 
 class ConfigError(ValueError):
@@ -58,16 +86,27 @@ def load_configs(
     if not defaults:
         raise ConfigError(f"Default config is empty or missing: {default_path}")
 
-    overrides = _read_yaml(override_path) or {}
+    overrides = dict(_read_yaml(override_path) or {})
     if run_config_data is not None:
-        run_overrides: dict[str, Any] = run_config_data
+        # Copied, not aliased: _pop_deprecated strips keys from these layers
+        # and the caller's dict must not change under it.
+        run_overrides: dict[str, Any] = dict(run_config_data)
         run_src: Path | str | None = "run_config (in-memory)"
     elif run_config_path is not None:
-        run_overrides = _read_yaml(run_config_path) or {}
+        run_overrides = dict(_read_yaml(run_config_path) or {})
         run_src = run_config_path
     else:
         run_overrides = {}
         run_src = None
+
+    # Strip deprecated keys before the shape check, later source winning, so
+    # they are reported as deprecated rather than as unknown keys.
+    deprecated: dict[str, Any] = {}
+    for src, data in (
+        (override_path, overrides),
+        (run_src, run_overrides),
+    ):
+        deprecated |= _pop_deprecated(data, src)
 
     for src, data in (
         (override_path, overrides),
@@ -94,10 +133,38 @@ def load_configs(
             f"Set them in {override_path}."
         )
 
-    return _to_namespace(_extract_values(merged))
+    cfg = _to_namespace(_extract_values(merged))
+    for key, value in deprecated.items():
+        setattr(cfg, key, value)
+    return cfg
 
 
 # --- internals --------------------------------------------------------------
+
+
+def _pop_deprecated(data: Any, src: Path | str | None) -> dict[str, Any]:
+    """Remove deprecated keys from one override layer, warning about each."""
+    if not isinstance(data, dict):
+        return {}
+    found: dict[str, Any] = {}
+    for key, why in _DEPRECATED_KEYS.items():
+        if key not in data:
+            continue
+        value = data.pop(key)
+        found[key] = value
+        if value in (None, [], {}, ""):
+            # Explicitly nulled — nothing to honour, and the config reads as
+            # if it disabled the registry, which it does not.
+            logger.warning(
+                f"DEPRECATED: `{key}` in {src} is set to {value!r} and has no "
+                f"effect. {_DEPRECATION_FIX}"
+            )
+        else:
+            logger.warning(
+                f"DEPRECATED: `{key}` is set in {src} — {why}. "
+                f"{_DEPRECATION_FIX}"
+            )
+    return found
 
 
 def _read_yaml(path: Path) -> dict[str, Any] | None:

@@ -43,10 +43,10 @@ chatgpt_web:
   model: "pro"
   # model: "thinking"
 
-# ChatGPT agent mode works best with ONE combined prompt rather than a
-# sequence. Override the default Claude-style multi-prompt list.
-# This sample uses its own short inline prompt; null out the repo-default
-# prompts_file (v2 3-step benchmark prompts) so the inline list wins.
-prompts_file: null
-prompts:
-  - "Analyze the attached files. Summarize the key data, build an Excel solution with formulas (no hardcoded values), and create a summary sheet with your final answers. Download the workbook when done."
+# Prompts come from `prompt_version` through
+# tasks_configs/prompts/registry.yaml. Unset, this inherits the repo default
+# 200 (the v2 3-step set). ChatGPT works better with one combined turn than a
+# sequence, so 201 (the same 132-check rubric folded into a single pass) is
+# the usual choice here; 0 is the cheap smoke-test prompt if you only want to
+# exercise the plumbing.
+prompt_version: 201

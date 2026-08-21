@@ -1,21 +1,15 @@
 # Prompt-version registry — maps `prompt_version` to the prompt file(s) sent.
 #
 # WHY THIS EXISTS
-# `prompt_version` used to be a free-form label that nothing checked against
-# the prompt text actually sent: the run config named a number for the DB
-# and, separately, named `prompts_file` for the agent, so the two could
-# disagree. This file makes the version the single key that selects the text,
-# so the DB label and the prompt are the same decision.
+# The version is the single key that selects the text, so the number written
+# to task_attempts.prompt_version and the prompt the agent received are the
+# same decision and cannot disagree.
 #
 # HOW IT IS USED
 # infra/configs/prompt_registry.py reads this file; infra/run.py resolves the
-# run's `prompt_version` through it and populates `prompts_file`. Precedence:
-#
-#   1. an explicit `prompts_file` in the run config  — wins, registry skipped
-#   2. this registry, keyed by `prompt_version`
-#
-# Layer 1 keeps every pre-registry run config working unchanged. New configs
-# should set `prompt_version` only and let the registry pick the files.
+# run's `prompt_version` through it and hands the resulting files to the
+# engine. A run config sets `prompt_version` and nothing else — there is no
+# other way to choose the text. New text = a new entry here.
 #
 # ONE VERSION, ONE PROMPT SET. Every entry names exactly one `files` list.
 # Paths are repo-root-relative (repo root = gui-agents-master/) and are sent

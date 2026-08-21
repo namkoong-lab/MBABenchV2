@@ -61,6 +61,10 @@ _REPO_ROOT = _THIS_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from claude_web_agent.claude_web_engine import (  # noqa: E402
+    _sanitize_name,
+    resolve_prompts,
+)
 from infra.configs import (  # noqa: E402
     ConfigError,
     describe_prompt_version,
@@ -74,10 +78,6 @@ from task_io import (  # noqa: E402
     build_sink,
     build_source,
     describe_database_target,
-)
-from claude_web_agent.claude_web_engine import (  # noqa: E402
-    _sanitize_name,
-    resolve_prompts,
 )
 
 logging.basicConfig(
@@ -161,8 +161,9 @@ def build_engine_config(
         "prompt_version": base.get("prompt_version"),
     }
 
-    # prompts_file (single source of truth for the long benchmark prompts)
-    # is passed through; the engine expands it into `prompts`.
+    # prompts_file carries the registry's selection to the engine, which
+    # expands it into `prompts`. main() has already filled it from
+    # prompt_version.
     if base.get("prompts_file"):
         engine_config["prompts_file"] = base["prompts_file"]
 
@@ -202,21 +203,28 @@ def _resolve_upload_path(raw: str, local_files_base: str | None) -> Path:
     return p
 
 
-def _preflight_provider_v1(
-    provider: str, section: dict, errors: list[str]
-) -> None:
+def _preflight_provider_v1(provider: str, section: dict, errors: list[str]) -> None:
     """Benchmark-v1 provider checks: the UI axes the V1 wave pins (Claude
     chat/cowork mode + effort; ChatGPT chat/work mode + intelligence or
     effort+speed) all bifurcate the DB identity, so invalid values must
     fail before the browser is touched."""
     _CLAUDE_MODELS = (
-        "fable_5", "sonnet_5", "haiku_4_5", "opus_4_8",
-        "opus_4_7", "opus_4_6", "opus_3", "sonnet_4_6",
+        "fable_5",
+        "sonnet_5",
+        "haiku_4_5",
+        "opus_4_8",
+        "opus_4_7",
+        "opus_4_6",
+        "opus_3",
+        "sonnet_4_6",
     )
     _EFFORTS = ("low", "medium", "high", "xhigh", "max")
     _CHATGPT_MODELS = ("gpt_5_6_sol", "gpt_5_5", "gpt_5_4", "gpt_5_3", "o3")
     _CHATGPT_WORK_MODELS = (
-        "gpt_5_6_sol", "gpt_5_6_terra", "gpt_5_6_luna", "gpt_5_5",
+        "gpt_5_6_sol",
+        "gpt_5_6_terra",
+        "gpt_5_6_luna",
+        "gpt_5_5",
     )
     _INTELLIGENCE = ("instant", "medium", "high", "xhigh", "pro")
     _WORK_EFFORTS = ("light", "medium", "high", "xhigh", "max", "ultra")
@@ -224,9 +232,7 @@ def _preflight_provider_v1(
     if provider == "claude":
         mode = (section.get("mode") or "chat").lower()
         if mode not in ("chat", "cowork"):
-            errors.append(
-                f"claude_web.mode={mode!r} is not 'chat' or 'cowork'."
-            )
+            errors.append(f"claude_web.mode={mode!r} is not 'chat' or 'cowork'.")
         approval = section.get("cowork_approval")
         if approval is not None and approval not in ("manual", "auto", "skip"):
             errors.append(
@@ -299,9 +305,7 @@ def _preflight_provider_v1(
                 )
 
 
-def _preflight_provider_v2(
-    provider: str, section: dict, errors: list[str]
-) -> None:
+def _preflight_provider_v2(provider: str, section: dict, errors: list[str]) -> None:
     """Benchmark-v2 provider checks: identity bifurcates on model only."""
     if provider == "claude":
         if section.get("model") is None:
@@ -540,8 +544,12 @@ def _kill_engine_tree(proc: subprocess.Popen) -> None:
         logger.error(f"engine pid={proc.pid} survived SIGKILL (?)")
 
 
-def run_engine(engine_config: dict, engine_script: Path, timeout: int | None,
-               cdp_port: int | None = None) -> int:
+def run_engine(
+    engine_config: dict,
+    engine_script: Path,
+    timeout: int | None,
+    cdp_port: int | None = None,
+) -> int:
     """Run the engine subprocess, streaming its output. Returns its exit
     code, or ENGINE_RC_TIMEOUT if the deadman killed it.
 
@@ -601,9 +609,7 @@ def run_engine(engine_config: dict, engine_script: Path, timeout: int | None,
         try:
             rc = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            logger.error(
-                f"Engine exceeded {timeout}s deadman — killing process group"
-            )
+            logger.error(f"Engine exceeded {timeout}s deadman — killing process group")
             _kill_engine_tree(proc)
             rc = ENGINE_RC_TIMEOUT
         pump.join(timeout=5)  # flush whatever output remains
@@ -879,14 +885,19 @@ def main() -> int:
     benchmark = (getattr(cfg, "benchmark", None) or "v2").lower()
     logger.info(f"Benchmark: {benchmark}")
 
-    # Prompt selection. An explicit prompts_file in the run config wins and
-    # skips the registry; otherwise prompt_version picks the files, so the
-    # DB label and the text the agent receives are the same decision. See
-    # tasks_configs/prompts/registry.yaml.
+    # Prompt selection. `prompt_version` picks the files through
+    # tasks_configs/prompts/registry.yaml, so the DB label and the text the
+    # agent receives are the same decision.
+    #
+    # `prompts_file` is a deprecated config key, kept out of the schema and
+    # gated in infra/configs/loader.py, which warns when a config still sets
+    # it. It reaches cfg only in that case, and it still wins here so a
+    # config mid-migration sends what it says it sends.
     if getattr(cfg, "prompts_file", None):
         logger.info(
-            f"prompts_file set explicitly ({cfg.prompts_file}) — prompt "
-            f"registry bypassed; prompt_version is a label only for this run."
+            f"prompts_file={cfg.prompts_file} — prompt registry skipped; "
+            f"prompt_version={getattr(cfg, 'prompt_version', None)!r} is a "
+            f"label only for this run."
         )
     else:
         try:

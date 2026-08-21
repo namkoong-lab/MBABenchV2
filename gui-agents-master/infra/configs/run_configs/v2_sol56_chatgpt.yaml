@@ -15,7 +15,7 @@
 #
 # Run (from gui-agents-master/, Chrome already running + logged in):
 #   python -m infra.run --run-config \
-#     infra/configs/run_configs/tutorial_examples/v2_sol56_chatgpt.yaml --dry-run
+#     infra/configs/run_configs/v2_sol56_chatgpt.yaml --dry-run
 # Then drop --dry-run and add -y to run for real.
 
 benchmark: v2

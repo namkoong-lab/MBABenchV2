@@ -1,4 +1,4 @@
-# Spin-up config template: Claude provider, Fable 5 (Extended Thinking on).
+# Spin-up config template: Claude provider, Fable 5 at max effort.
 #
 # Pass to spinup.sh via:
 #   ./infra/dispatcher/spinup.sh \
@@ -22,8 +22,22 @@ provider:
 # providers' templates set the same version so results stay comparable.
 prompt_version: 200
 
+# Every axis a box's output depends on is pinned here rather than inherited.
+# The v2 Claude identity keys on (mode, model) alone, so effort and the two
+# capability toggles change what these boxes send without changing the DB
+# label — a moved default would silently redefine the claude_fable_5 cohort.
 claude_web:
+  mode: "chat"
   model: "fable_5"
+  # Highest tier (low < medium < high < xhigh < max). Fable's Effort submenu
+  # has no nested Thinking toggle, so effort is the whole reasoning axis here.
+  effort: "max"
+  # A successful no-op on Fable 5, which exposes no thinking switch. Stated
+  # so this template reads the same as claude_opus_4_8.yaml, where it bites.
+  enable_extended_thinking: true
+  # Off: the tasks are self-contained, and a search changes what the model
+  # sees between attempts.
+  enable_web_search: false
   # project_id must exist in the claude.ai account this box logs into (VNC step).
   # Paste from https://claude.ai/project/{project_id}. null = default chat.
   project_id: "019ef001-4c2c-76da-8c87-c94067ba216b"

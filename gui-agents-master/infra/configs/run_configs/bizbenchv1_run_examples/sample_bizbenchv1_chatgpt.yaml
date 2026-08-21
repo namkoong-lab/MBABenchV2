@@ -25,8 +25,8 @@ sink:
 provider:
   kind: "chatgpt"
 
-prompts_file:
-  - "tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"
+# 9 = the single pv9 payload used on the whole v1 wave. The registry resolves
+# it to tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt.
 prompt_version: 9
 
 chatgpt_web:

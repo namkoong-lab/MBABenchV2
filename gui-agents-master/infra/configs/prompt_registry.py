@@ -5,10 +5,9 @@ tells you what the agent was asked to do. The map lives in
 tasks_configs/prompts/registry.yaml (data, not code, so adding a prompt set
 is a one-file change).
 
-Precedence, applied by infra/run.py:
-
-  1. an explicit `prompts_file` in the run config — wins, registry skipped
-  2. this registry, keyed by `prompt_version`
+This registry, keyed by `prompt_version`, is the one way to choose prompts.
+The pre-registry keys that bypassed it are deprecated and gated in
+infra/configs/loader.py.
 
 Typical usage:
 
@@ -55,8 +54,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> dict[int, PromptVersion]:
     if not path.exists():
         raise PromptVersionError(
             f"Prompt registry not found: {path}. It maps prompt_version to "
-            f"prompt files; without it a run config must set prompts_file "
-            f"explicitly."
+            f"prompt files; without it no run can resolve a prompt_version."
         )
     try:
         with open(path) as f:
@@ -133,9 +131,9 @@ def resolve_prompt_files(
     version = _config_prompt_version(cfg)
     if version is None:
         raise PromptVersionError(
-            "No prompt_version set and no prompts_file given — nothing "
-            "identifies which prompt to send. Set prompt_version to an entry "
-            "in tasks_configs/prompts/registry.yaml."
+            "No prompt_version set — nothing identifies which prompt to "
+            "send. Set prompt_version to an entry in "
+            "tasks_configs/prompts/registry.yaml."
         )
 
     registry = load_registry(registry_path)
@@ -155,7 +153,7 @@ def resolve_prompt_files(
         raise PromptVersionError(
             f"prompt_version={version} is not in the prompt registry "
             f"({registry_path.name}). Known versions: {known}. Add an entry "
-            f"there, or set prompts_file explicitly to bypass the registry."
+            f"there for the prompt set this run should send."
         )
 
     return list(entry.files)

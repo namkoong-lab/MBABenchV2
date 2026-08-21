@@ -5,7 +5,7 @@
 #
 # The repo defaults (configs.default.yaml) are v2-flavored, so a v1 run
 # config must pin EVERY v1 axis explicitly — benchmark, schema, mode,
-# model, effort, and the pv9 prompts_file. With the values below the DB
+# model, effort, and prompt_version 9. With the values below the DB
 # identity resolves to claude_web_cowork_fable5_max and attempts are
 # written to BizbenchV1.task_attempts + s3://mbabench/BizbenchV1/attempts/.
 #
@@ -30,10 +30,9 @@ sink:
 provider:
   kind: "claude"
 
-# The single-prompt pv9 payload used on the 206-task V1 wave (byte-exact
-# recovery; see tasks_configs/prompts_pv9/README.md).
-prompts_file:
-  - "tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt"
+# 9 = the single-prompt pv9 payload used on the 206-task V1 wave (byte-exact
+# recovery; see tasks_configs/prompts_pv9/README.md). The registry resolves it
+# to tasks_configs/prompts_pv9/SHARED_pv9_prompt.txt.
 prompt_version: 9
 
 claude_web:

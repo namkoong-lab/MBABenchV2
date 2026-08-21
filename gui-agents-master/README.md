@@ -232,7 +232,9 @@ The prompt text the agent receives is **not** written in the run config. A run s
 
 The same number is written to `task_attempts.prompt_version`, so a row always names the text it was produced from. Registry entries are immutable — new text gets a new number, never an edit to an existing one. See [`tasks_configs/prompts/README.md`](tasks_configs/prompts/README.md).
 
-Setting `prompts_file` (or an inline `prompts:` list) in a run config bypasses the registry; the runner logs that it did, and `prompt_version` becomes a label only. Use it for one-off experiments, not benchmark runs.
+`prompt_version` is the only way to choose prompts. To send different text, add it to the registry under a new version — there is no per-run prompt override.
+
+The pre-registry keys `prompts_file` and `prompts` are **deprecated** and no longer part of the config schema. A config that still sets one loads with a deprecation warning from `infra/configs/loader.py`; both keys are slated for removal.
 
 ### `benchmark`
 

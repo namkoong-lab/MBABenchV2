@@ -12,7 +12,7 @@
 #
 # Usage:
 #   ./spinup.sh --alias claude-1 \
-#               --config-template ./templates/claude_sonnet46.yaml
+#               --config-template infra/dispatcher/config_templates/claude_fable_5.yaml
 #
 # Provider is read from `provider.kind` in the config template. Re-run
 # against an existing alias to update code + configs on the box.
