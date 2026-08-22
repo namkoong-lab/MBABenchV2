@@ -1,17 +1,19 @@
-# Spin-up config template: Claude provider, Opus 4.8 at max effort with
-# Extended Thinking on.
+# Spin-up config template: Claude provider, Opus 5 in cowork mode at max
+# effort with Extended Thinking on.
 #
 # Pass to spinup.sh via:
 #   dispatch spinup \
-#       --alias claude-opus48-1 \
-#       --config-template infra/dispatcher/config_templates/claude_opus_4_8.yaml
+#       --alias claude_opus5_work \
+#       --config-template infra/dispatcher/config_templates/claude_opus5_work.yaml
 #
 # Deep-merges on top of infra/configs/configs.default.yaml; every key here is an
 # override. DB URL and AWS creds intentionally absent - spinup.sh synthesizes
 # /etc/gui-agents/secrets.env from the operator's env, read by the worker via
 # the EnvironmentFile in gui-agents-worker.service.
 #
-# Identity resolves to claude_opus_4_8_max (see infra/configs/agent_identity.py).
+# Identity resolves to claude_opus_5_cowork_max (see infra/configs/agent_identity.py).
+# Same axes as claude_fable5_cowork.yaml except model, so the two cohorts differ
+# only by the model behind the same cowork surface.
 
 benchmark: v2
 
@@ -24,10 +26,13 @@ prompt_version: 201
 # Every axis a box's output depends on is pinned here rather than inherited.
 # The v2 Claude identity keys on (mode, model, effort); the two capability
 # toggles below change what these boxes send without changing the DB label —
-# a moved default would silently redefine the claude_opus_4_8_max cohort.
+# a moved default would silently redefine the claude_opus_5_cowork_max cohort.
 claude_web:
-  mode: "chat"
-  model: "opus_4_8"
+  mode: "cowork"
+  # Auto-approve cowork's actions: "manual" stalls an unattended run at the
+  # first approval prompt.
+  cowork_approval: "auto"
+  model: "opus_5"
   # Highest tier (low < medium < high < xhigh < max).
   effort: "max"
   # The composer's thinking switch, which the Opus family exposes.
@@ -37,7 +42,7 @@ claude_web:
   enable_web_search: false
   # project_id must exist in the claude.ai account this box logs into (VNC step).
   # Paste from https://claude.ai/project/{project_id}. null = default chat.
-  project_id: "019ef001-4c2c-76da-8c87-c94067ba216b"
+  project_id: null
   browser:
     # Matches the path the README's VNC-login step writes the Chrome profile to.
     profile_dir: "/var/lib/gui-agents/chrome-claude"

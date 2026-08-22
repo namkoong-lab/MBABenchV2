@@ -157,6 +157,9 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("cowork", "fable_5", "max"): AgentIdentity(
         "claude_fable_5_cowork_max", "claude_fable_5_cowork_max"
     ),
+    ("cowork", "opus_5", "max"): AgentIdentity(
+        "claude_opus_5_cowork_max", "claude_opus_5_cowork_max"
+    ),
 }
 
 

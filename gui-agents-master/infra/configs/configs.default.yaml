@@ -295,8 +295,9 @@ claude_web:
   # claude_web_agent.py). null crashes the agent at model-selector time —
   # DO NOT leave null; benchmark runs must pin it for the DB identity.
   model:
-    value: "opus_4_8"          # fable_5 | sonnet_5 | haiku_4_5 | opus_4_8 |
-                               # opus_4_7 | opus_4_6 | opus_3 | sonnet_4_6
+    value: "opus_4_8"          # opus_5 | fable_5 | sonnet_5 | haiku_4_5 |
+                               # opus_4_8 | opus_4_7 | opus_4_6 | opus_3 |
+                               # sonnet_4_6
     required: false
   # Reasoning effort via the model dropdown's Effort submenu
   # (low | medium | high | xhigh | max; xhigh renders as "Extra" in the UI).

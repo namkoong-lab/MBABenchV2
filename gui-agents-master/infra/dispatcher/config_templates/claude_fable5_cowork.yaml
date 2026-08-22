@@ -37,7 +37,7 @@ claude_web:
   # has no nested Thinking toggle, so effort is the whole reasoning axis here.
   effort: "max"
   # A successful no-op on Fable 5, which exposes no thinking switch. Stated
-  # so this template reads the same as claude_opus_4_8.yaml, where it bites.
+  # so this template reads the same as claude_opus5_work.yaml, where it bites.
   enable_extended_thinking: true
   # Off: the tasks are self-contained, and a search changes what the model
   # sees between attempts.

@@ -248,6 +248,7 @@ class ClaudeWebAgent(WebAgent):
     # others live under the "More models" submenu. Unknown config values
     # fall back to underscores→spaces so future models still have a chance.
     MODEL_LABELS = {
+        "opus_5": "Opus 5",
         "fable_5": "Fable 5",
         "sonnet_5": "Sonnet 5",
         "haiku_4_5": "Haiku 4.5",

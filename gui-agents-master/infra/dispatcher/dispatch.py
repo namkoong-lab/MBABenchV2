@@ -9,7 +9,7 @@ Commands:
     python -m infra.dispatcher.dispatch spinup --alias A --config-template F [--instance-type T] [--ami ID]
     python -m infra.dispatcher.dispatch stop (<alias> | --all) [--force]
     python -m infra.dispatcher.dispatch teardown (<alias> | --all)
-    python -m infra.dispatcher.dispatch status [--follow]
+    python -m infra.dispatcher.dispatch status [--follow] [--full]
     python -m infra.dispatcher.dispatch show <alias>
     python -m infra.dispatcher.dispatch assign --n N [--agent X] [--task-source Y]
     python -m infra.dispatcher.dispatch assign --tasks 42,43,44 [--box <alias>]
@@ -153,6 +153,23 @@ def _truncate(s: str, width: int) -> str:
     return s if len(s) <= width else s[: width - 1] + "…"
 
 
+def _truncate_mid(s: str, width: int) -> str:
+    """Drop the middle, not the tail.
+
+    Agent names and logins share long prefixes and differ at the end
+    (…_cowork_max vs …_chat_max, mbabench.02 vs .03). Tail truncation would
+    collapse those into identical cells; keeping both ends leaves every row
+    distinguishable.
+    """
+    if len(s) <= width:
+        return s
+    if width <= 1:
+        return s[:width]
+    keep = width - 1
+    head = (keep + 1) // 2
+    return s[:head] + "…" + s[len(s) - (keep - head) :]
+
+
 def _is_auth_old(auth: dict | None, busy: bool = False) -> bool:
     """True when the last probe succeeded but is older than _AUTH_STALE_AFTER_SEC.
 
@@ -227,53 +244,98 @@ def _fmt_auth(auth: dict | None, busy: bool = False) -> str:
         label = f"old {email}" if stale else email
     else:
         label = "old" if stale else "ok"
-    return _truncate(label, _AUTH_COL_WIDTH)
+    # Left full length — the table's login column caps it (mid-truncating, so
+    # the mailbox suffix that distinguishes two logins survives).
+    return label
 
 
-# (header, minimum width, hard cap). Columns are sized to their widest
-# cell, so a long agent name widens its own column instead of shoving every
-# later column out of line. The minimums keep the table from twitching under
-# `status --follow` as tasks start and finish; the caps stop one pathological
-# value from stretching the table past a terminal width — anything longer is
-# truncated with an ellipsis rather than silently sliced.
-_STATUS_COLUMNS: tuple[tuple[str, int, int], ...] = (
-    ("alias", 12, 24),
-    ("worker_id", 20, 20),
-    ("agent", 14, 28),
-    ("pv", 5, 8),
-    ("login", 10, _AUTH_COL_WIDTH),
-    ("current", 24, 32),
-    ("q", 4, 6),
-    ("last", 0, 40),
+_NO_CAP = 10**6  # column cap for values that must never be truncated
+
+# (key, header, minimum width, compact cap, full cap). Columns are sized to
+# their widest cell, so a long agent name widens its own column instead of
+# shoving every later column out of line. The minimums keep the table from
+# twitching under `status --follow` as tasks start and finish; the caps stop
+# one pathological value from stretching the table past a terminal width —
+# anything longer is truncated with an ellipsis rather than silently sliced.
+#
+# The default view is the narrow one: it drops worker_id (an opaque id nobody
+# reads off a status board) and tightens the caps on the identity columns so
+# the whole table fits an 80-column terminal. `status --full` restores the
+# dropped column and the generous caps.
+#
+# alias is the exception — it stays uncapped in both views because it's the
+# argument every other subcommand takes, so it has to survive a copy-paste.
+_STATUS_COLUMNS: tuple[tuple[str, str, int, int, int], ...] = (
+    ("alias", "alias", 10, _NO_CAP, _NO_CAP),
+    ("worker_id", "worker_id", 20, 0, 20),  # compact cap 0 → full only
+    ("agent", "agent", 12, 18, 28),
+    ("pv", "pv", 3, 5, 8),
+    ("login", "login", 8, 14, _AUTH_COL_WIDTH),
+    ("current", "current", 12, 20, 32),
+    ("q", "q", 2, 4, 6),
+    ("last", "last", 0, 22, 40),
 )
 
 
-def _row_cells(state: dict, alias: str) -> list[str]:
-    """One cell per _STATUS_COLUMNS entry, unpadded."""
+def _status_columns(full: bool) -> list[tuple[str, str, int, int]]:
+    """(key, header, minimum, cap) for the view being printed."""
+    return [
+        (key, head, minimum, (full_cap if full else cap))
+        for key, head, minimum, cap, full_cap in _STATUS_COLUMNS
+        if full or cap > 0
+    ]
+
+
+def _shorten_login(label: str, full: bool) -> str:
+    """Drop the mail domain in the compact view.
+
+    Boxes log in with plus-addressed variants of one mailbox, so the domain
+    is the same on every row while the local part is what identifies the
+    account — spending column width on "@gmail.com" only pushes the part
+    that matters into the ellipsis.
+    """
+    if full or "@" not in label:
+        return label
+    return label.rsplit("@", 1)[0]
+
+
+def _row_cells(state: dict, alias: str, full: bool) -> list[str]:
+    """One cell per _status_columns(full) entry, unpadded."""
     worker = state.get("worker") or {}
     current = state.get("current")
     queue = state.get("queue") or []
     completed = state.get("completed") or []
 
     if current:
-        cur_s = f"task={current.get('task_id')} ({_fmt_duration(current.get('started_at'))})"
+        dur = _fmt_duration(current.get("started_at"))
+        task = current.get("task_id")
+        cur_s = f"task={task} ({dur})" if full else f"task={task} {dur}".strip()
     else:
         cur_s = "idle"
     last = completed[-1] if completed else None
     pv = worker.get("prompt_version")
-    return [
-        alias,
-        worker.get("worker_id") or "-",
-        worker.get("agent_model_name") or "-",
-        f"(v{pv})" if pv is not None else "",
-        _fmt_auth(state.get("auth"), busy=bool(current)),
-        cur_s,
-        f"+{len(queue)}",
-        f"{last.get('task_id')} {last.get('status')}" if last else "-",
-    ]
+    cells = {
+        "alias": alias,
+        "worker_id": worker.get("worker_id") or "-",
+        "agent": worker.get("agent_model_name") or "-",
+        "pv": ("" if pv is None else (f"(v{pv})" if full else f"v{pv}")),
+        "login": _shorten_login(_fmt_auth(state.get("auth"), busy=bool(current)), full),
+        "current": cur_s,
+        "q": f"+{len(queue)}",
+        "last": f"{last.get('task_id')} {last.get('status')}" if last else "-",
+    }
+    return [cells[key] for key, _, _, _ in _status_columns(full)]
 
 
-def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> None:
+# Columns whose values differ at the tail — truncating them from the right
+# would make distinct cohorts/logins render identically.
+_MID_TRUNCATE_COLUMNS = frozenset({"agent", "login"})
+
+
+def _print_status_table(
+    boxes: list[Box], states: dict[str, dict | None], full: bool = False
+) -> None:
+    columns = _status_columns(full)
     # (alias, cells) — cells is None for a box with no state, which prints as
     # a single spanning note instead of a full row.
     rows: list[tuple[Box, list[str] | None]] = []
@@ -286,15 +348,19 @@ def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> Non
                 (
                     b,
                     [
-                        _truncate(c, cap)
-                        for c, (_, _, cap) in zip(
-                            _row_cells(state, b.alias), _STATUS_COLUMNS
+                        (
+                            _truncate_mid(c, cap)
+                            if key in _MID_TRUNCATE_COLUMNS
+                            else _truncate(c, cap)
+                        )
+                        for c, (key, _, _, cap) in zip(
+                            _row_cells(state, b.alias, full), columns
                         )
                     ],
                 )
             )
 
-    widths = [max(len(head), minimum) for head, minimum, _ in _STATUS_COLUMNS]
+    widths = [max(len(head), minimum) for _, head, minimum, _ in columns]
     for _, cells in rows:
         if cells is None:
             continue
@@ -306,7 +372,7 @@ def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> Non
         padded = [f"{c:<{w}}" for c, w in zip(cells[:-1], widths[:-1])]
         return "  " + " ".join([*padded, cells[-1]])
 
-    header = _line([head for head, _, _ in _STATUS_COLUMNS])
+    header = _line([head for _, head, _, _ in columns])
     print(header)
     print("  " + "-" * (len(header) - 2))
     for box, cells in rows:
@@ -556,13 +622,13 @@ def cmd_status(args: argparse.Namespace) -> int:
                 print(
                     f"dispatch status — {datetime.now().isoformat(timespec='seconds')}\n"
                 )
-                _print_status_table(boxes, states)
+                _print_status_table(boxes, states, full=args.full)
                 time.sleep(5)
         except KeyboardInterrupt:
             return 0
     else:
         states = _fetch_all_states(boxes)
-        _print_status_table(boxes, states)
+        _print_status_table(boxes, states, full=args.full)
         _prompt_probe_old(boxes, states)
     return 0
 
@@ -1478,6 +1544,11 @@ def main(argv: list[str] | None = None) -> int:
 
     st = sub.add_parser("status", help="print state of all boxes")
     st.add_argument("--follow", "-f", action="store_true")
+    st.add_argument(
+        "--full",
+        action="store_true",
+        help="wide table: adds worker_id and untruncated agent/login/task cells",
+    )
 
     sh = sub.add_parser("show", help="print full state.json for one box")
     sh.add_argument("alias")
