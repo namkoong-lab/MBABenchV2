@@ -280,6 +280,14 @@ class ChatGPTWebAgent(WebAgent):
     # both directions.
     MODE_VALUES = ("chat", "work")
 
+    # How long ensure_mode waits for that toggle to hydrate. The composer
+    # toolbar renders AFTER the ProseMirror input that navigate_to_new_chat
+    # waits on — measured ~1s behind it on a warm chatgpt.com homepage
+    # (2026-08-21), and the gap is invisible on a project URL only because
+    # its redirect burns that second first. A single read races it.
+    MODE_TOGGLE_WAIT_SEC = 8.0
+    MODE_TOGGLE_POLL_SEC = 0.5
+
     # Work-mode picker (pill menu → power slider + "Advanced" rows).
     # The rows (Model / Effort / Speed) and their options carry no
     # roles/testids — they're div.__menu-item, text-anchored. After picking
@@ -708,14 +716,30 @@ class ChatGPTWebAgent(WebAgent):
             )
             return h.as_element()
 
+        # Poll rather than read once: the toggle hydrates after the chat
+        # input. This matters in BOTH directions — a work run fails outright
+        # on a missed toggle, and a chat run silently keeps whatever the
+        # previous task left selected, since the selection persists.
         radio = await _find()
+        waited = 0.0
+        while radio is None and waited < self.MODE_TOGGLE_WAIT_SEC:
+            await asyncio.sleep(self.MODE_TOGGLE_POLL_SEC)
+            waited += self.MODE_TOGGLE_POLL_SEC
+            radio = await _find()
+        if radio is not None and waited:
+            logger.info(f"Chat/Work toggle appeared after {waited:.1f}s")
+
         if radio is None:
             if mode == "chat":
-                logger.info("Chat/Work toggle not present — chat-only surface")
+                logger.info(
+                    f"Chat/Work toggle not present after "
+                    f"{self.MODE_TOGGLE_WAIT_SEC:.0f}s — chat-only surface"
+                )
                 return True
             logger.error(
-                "chatgpt_web.mode=work but the Chat/Work toggle was not "
-                "found on this surface — UI drift, or not a home/project page."
+                f"chatgpt_web.mode=work but the Chat/Work toggle was not "
+                f"found after {self.MODE_TOGGLE_WAIT_SEC:.0f}s — UI drift, "
+                f"or not a home/project page."
             )
             return False
 

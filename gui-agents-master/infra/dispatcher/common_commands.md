@@ -12,7 +12,7 @@ a warning pointing at `dispatch bootstrap` — re-run that (or set
 
 ```bash
 # Launch (or re-provision) a box from a config template
-dispatch spinup --alias chatgpt-pro-1 --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+dispatch spinup --alias chatgpt-sol56-chat-1 --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
 
 # Terminate one box by alias
 dispatch teardown --alias chatgpt-pro-1

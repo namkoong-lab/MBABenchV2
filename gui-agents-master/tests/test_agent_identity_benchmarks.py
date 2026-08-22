@@ -42,6 +42,8 @@ CASES = [
     ("v2", "claude", dict(model="opus_4_8"), "claude_opus_4_8"),
     ("v2", "chatgpt", dict(model="pro"), "chatgpt_web_pro"),
     ("v2", "chatgpt", dict(model="gpt_5_6_sol"), "chatgpt_gpt_5_6_sol"),
+    ("v2", "chatgpt", dict(model="gpt_5_6_sol", intelligence="pro"),
+     "chatgpt_gpt_5_6_sol_pro"),
     # intelligence bifurcates the v2 chat label; None keeps the bare one, so
     # cohorts recorded before that axis existed still resolve to their label
     ("v2", "chatgpt", dict(model="gpt_5_5"), "chatgpt_gpt_5_5"),

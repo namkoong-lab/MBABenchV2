@@ -54,9 +54,9 @@ prompt_version: 0
 chatgpt_web:
   # null = start at the chatgpt.com homepage, no project scope (the agent
   # logs a warning and continues). The smoke test does not need a project,
-  # and a project id belongs to ONE account — the id in
-  # dispatcher/config_templates/chatgpt_pro.yaml is the EC2 boxes' account
-  # and silently redirects to the homepage in any other.
+  # and a project id belongs to ONE account — a pinned id in
+  # dispatcher/config_templates/ is the EC2 boxes' account and silently
+  # redirects to the homepage in any other (confirmed live 2026-08-21).
   project_id: null
   project_slug: null
 

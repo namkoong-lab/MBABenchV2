@@ -55,7 +55,7 @@ reference docs worth keeping open:
 
    ```bash
    dispatch spinup --alias chatgpt-pro-1 \
-     --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+     --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
    ```
 
    Templates in [dispatcher/config_templates/](dispatcher/config_templates/)

@@ -1,16 +1,14 @@
-# Spin-up config template: ChatGPT provider, GPT-5.6 Sol on the Work surface.
+# Spin-up config template: ChatGPT provider, GPT-5.6 Sol on the Chat surface.
 #
 # Pass to spinup.sh via:
 #   dispatch spinup \
-#       --alias chatgpt-sol56-work-1 \
-#       --config-template infra/dispatcher/config_templates/chatgpt_sol56_work.yaml
+#       --alias chatgpt-sol56-chat-1 \
+#       --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
 #
 # Deep-merges on top of infra/configs/configs.default.yaml; every key here
 # is an override. DB URL and AWS creds intentionally absent — spinup.sh
 # synthesizes /etc/gui-agents/secrets.env from the operator's env, and the
 # worker reads those via the EnvironmentFile in gui-agents-worker.service.
-#
-# Identity resolves to chatgpt_gpt_5_6_sol_work (see agent_identity.py).
 
 benchmark: v2
 
@@ -21,19 +19,21 @@ provider:
 prompt_version: 201
 
 # Every axis a box's output depends on is pinned here rather than inherited.
-# The v2 ChatGPT work identity keys on (mode, model) ALONE, so effort and
-# speed change what these boxes send without changing the DB label — a moved
-# default would silently redefine the chatgpt_gpt_5_6_sol_work cohort.
+# The v2 ChatGPT chat identity keys on (mode, model, intelligence), so all
+# three are named — a moved default would silently redefine the cohort.
 chatgpt_web:
-  mode: "work"
+  mode: "chat"
+  # The model itself, from the pill's nested submenu (label "GPT-5.6 Sol").
+  # NOT model: "pro" — that is a one-axis value naming an intelligence level,
+  # which the agent routes to `intelligence` and which leaves the model at
+  # whatever the session last used (verified live 2026-08-21).
   model: "gpt_5_6_sol"
-  # Work-mode pickers (pill menu > Advanced). "ultra" is the ceiling
-  # (light < medium < high < xhigh < max < ultra); matches the v1 Sol work wave.
-  effort: "ultra"
-  speed: "standard"
-  # MUST stay null: intelligence is the chat-mode radio set. Setting it here
-  # is a hard preflight error under benchmark v1 and a warning under v2.
-  intelligence: null
+  # Chat's reasoning tier, the pill's top-level radios (the UI renamed these
+  # "Effort" 2026-08-12). Ceiling: instant < medium < high < xhigh < pro.
+  intelligence: "pro"
+  # Work-mode pickers. Null in chat mode, or preflight rejects the config.
+  effort: null
+  speed: null
   # null = no project scope: the box starts at the chatgpt.com homepage and
   # its chats land in the account's main history. A project id belongs to ONE
   # account and silently redirects to the homepage in any other, so pin one

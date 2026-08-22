@@ -200,7 +200,7 @@ Per-box bring-up (spin up an EC2 instance, install the worker, register it in `d
 
 ```bash
 dispatch spinup --alias chatgpt-pro-1 \
-  --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+  --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
 ```
 
 See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md) for the full CLI reference and [`infra/plan.md`](infra/plan.md) for the architecture and config-layering details.

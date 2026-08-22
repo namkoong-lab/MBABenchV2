@@ -165,6 +165,12 @@ _V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", "gpt_5_6_sol", None): AgentIdentity(
         "chatgpt_gpt_5_6_sol", "chatgpt_gpt_5_6_sol"
     ),
+    # Sol with the chat tier actually pinned (dispatcher template
+    # chatgpt_sol56_chat.yaml). Distinct from the entry above, which is the
+    # cohort that let the session default stand.
+    ("chat", "gpt_5_6_sol", "pro"): AgentIdentity(
+        "chatgpt_gpt_5_6_sol_pro", "chatgpt_gpt_5_6_sol_pro"
+    ),
     ("chat", "gpt_5_5", None): AgentIdentity(
         "chatgpt_gpt_5_5", "chatgpt_gpt_5_5"
     ),
