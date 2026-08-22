@@ -983,6 +983,37 @@ def cmd_logs(args: argparse.Namespace) -> int:
     )
 
 
+def _pick_local_port(preferred: int, stride: int = 10, tries: int = 12) -> int:
+    """First free local port in preferred, preferred+stride, preferred+2*stride…
+
+    Watching two boxes at once used to need --local-port by hand: both runs
+    defaulted to the same port, the second ssh -L failed to bind, and the
+    viewer silently opened onto the *first* box's tunnel. Scanning keeps the
+    familiar 5901/5902 as the first pick while making a second concurrent
+    session just work.
+
+    stride=10 keeps the login family (5901, 5911, …) disjoint from the watch
+    family (5902, 5912, …), so the two never land on each other.
+    """
+    import socket
+
+    for i in range(tries):
+        port = preferred + i * stride
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # No SO_REUSEADDR: we want this to fail exactly when ssh -L would.
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        if i:
+            logger.info(f"local port {preferred} busy — using {port}")
+        return port
+    raise SystemExit(
+        f"no free local port in {preferred}..{preferred + (tries - 1) * stride}; "
+        f"close some VNC sessions or pass --local-port explicitly"
+    )
+
+
 def _open_vnc_viewer_async(local_port: int) -> None:
     """Open macOS Screen Sharing once the tunnelled VNC server answers.
 
@@ -1032,7 +1063,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     session (or vice versa).
     """
     box = find_by_alias(args.alias)
-    local_port = args.local_port
+    local_port = args.local_port or _pick_local_port(5902)
     remote_port = 5902
     import secrets
 
@@ -1067,6 +1098,11 @@ x11vnc -display :99 -localhost -viewonly -passwd '{vnc_pw}' \
     ssh_args = [
         "ssh",
         "-t",
+        # Without this, a taken local port is a warning and the session
+        # carries on with no tunnel — so the viewer opens onto whatever
+        # already owns the port, i.e. a different box.
+        "-o",
+        "ExitOnForwardFailure=yes",
         "-L",
         f"{local_port}:localhost:{remote_port}",
         *box.ssh_base_args(),
@@ -1112,7 +1148,7 @@ def cmd_login(args: argparse.Namespace) -> int:
             f"Cancel the task first or wait for it to finish."
         )
         return 2
-    local_port = args.local_port
+    local_port = args.local_port or _pick_local_port(5901)
     remote_port = 5901
     # macOS Screen Sharing refuses passwordless VNC even on localhost, so
     # mint a fresh random password per session. The tunnel is already
@@ -1208,6 +1244,10 @@ x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -foreve
     ssh_args = [
         "ssh",
         "-t",
+        # See cmd_watch: a silently-unforwarded port would drop the operator
+        # into another box's Chrome and let them log the wrong account in.
+        "-o",
+        "ExitOnForwardFailure=yes",
         "-L",
         f"{local_port}:localhost:{remote_port}",
         *box.ssh_base_args(),
@@ -1464,7 +1504,11 @@ def main(argv: list[str] | None = None) -> int:
         help="open a VNC tunnel to a box for first-time / expired browser login",
     )
     lo.add_argument("alias")
-    lo.add_argument("--local-port", type=int, default=5901)
+    lo.add_argument(
+        "--local-port",
+        type=int,
+        help="local end of the tunnel (default: first free of 5901, 5911, 5921…)",
+    )
     lo.add_argument(
         "--no-open",
         action="store_true",
@@ -1476,7 +1520,11 @@ def main(argv: list[str] | None = None) -> int:
         help="open a READ-ONLY VNC tunnel to a box — safe while a task runs",
     )
     wa.add_argument("alias")
-    wa.add_argument("--local-port", type=int, default=5902)
+    wa.add_argument(
+        "--local-port",
+        type=int,
+        help="local end of the tunnel (default: first free of 5902, 5912, 5922…)",
+    )
     wa.add_argument(
         "--no-open",
         action="store_true",
