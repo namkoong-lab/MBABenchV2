@@ -281,9 +281,8 @@ claude_web:
   project_id:
     value: null
     required: false
-  # Surface mode: "chat" | "cowork" (benchmark-v1 axis; v2 runs use chat).
-  # Selection persists across sessions; the agent asserts it every task.
-  # Bifurcates the v1 DB identity.
+  # Surface mode: "chat" | "cowork". Selection persists across sessions; the
+  # agent asserts it every task. Bifurcates the DB identity in both benchmarks.
   mode:
     value: "chat"
     required: false
@@ -304,7 +303,7 @@ claude_web:
   # Sonnet/opus also get the nested "Thinking" toggle enabled; fable's
   # Effort submenu has no Thinking toggle. Haiku has no effort control and
   # ignores this. null = keep the session's current level. Bifurcates the
-  # v1 DB identity.
+  # DB identity in both benchmarks (haiku's label omits it — no control).
   effort:
     value: "max"
     required: false
@@ -424,14 +423,14 @@ chatgpt_web:
   model:
     value: "gpt_5_6_sol"
     required: false
-  # Surface mode: "chat" | "work" (benchmark-v1 axis). Selection persists
-  # across sessions; the agent asserts it every task. Bifurcates the v1 DB
-  # identity.
+  # Surface mode: "chat" | "work". Selection persists across sessions; the
+  # agent asserts it every task. Bifurcates the DB identity in both benchmarks
+  # (it also picks which reasoning axes apply: intelligence vs effort+speed).
   mode:
     value: "chat"
     required: false
   # WORK-mode picker (pill menu > Advanced): effort + speed. Must be null
-  # in chat mode. Bifurcate the v1 DB identity.
+  # in chat mode. Bifurcate the work-mode DB identity in both benchmarks.
   effort:
     value: null                # light | medium | high | xhigh | max | ultra | null
     required: false
@@ -439,7 +438,8 @@ chatgpt_web:
     value: null                # standard | fast | null (null = standard)
     required: false
   # CHAT-mode intelligence axis (the pill's top-level radios). Must be
-  # null when mode == "work". Bifurcates the v1 DB identity.
+  # null when mode == "work". Bifurcates the chat-mode DB identity in both
+  # benchmarks.
   intelligence:
     value: null                # instant | medium | high | xhigh | pro | null
     required: false

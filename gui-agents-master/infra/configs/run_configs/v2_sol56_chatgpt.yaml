@@ -4,7 +4,7 @@
 # at their ceiling — the `mode:` line alone decides which one applies:
 #   work mode:  effort "ultra" + speed "standard"
 #               (tiers: light < medium < high < xhigh < max < ultra)
-#               -> DB identity chatgpt_gpt_5_6_sol_work
+#               -> DB identity chatgpt_gpt_5_6_sol_work_ultra
 #   chat mode:  intelligence "pro"
 #               (tiers: instant < medium < high < xhigh < pro)
 #               -> DB identity chatgpt_gpt_5_6_sol

@@ -10,7 +10,7 @@
 # synthesizes /etc/gui-agents/secrets.env from the operator's env, and the
 # worker reads those via the EnvironmentFile in gui-agents-worker.service.
 #
-# Identity resolves to chatgpt_gpt_5_6_sol_work (see agent_identity.py).
+# Identity resolves to chatgpt_gpt_5_6_sol_work_ultra (see agent_identity.py).
 
 benchmark: v2
 
@@ -21,9 +21,9 @@ provider:
 prompt_version: 201
 
 # Every axis a box's output depends on is pinned here rather than inherited.
-# The v2 ChatGPT work identity keys on (mode, model) ALONE, so effort and
-# speed change what these boxes send without changing the DB label — a moved
-# default would silently redefine the chatgpt_gpt_5_6_sol_work cohort.
+# The v2 ChatGPT work identity keys on (mode, model, effort, speed), so a
+# moved default here does not quietly redefine the
+# chatgpt_gpt_5_6_sol_work_ultra cohort — it fails to resolve instead.
 chatgpt_web:
   mode: "work"
   model: "gpt_5_6_sol"

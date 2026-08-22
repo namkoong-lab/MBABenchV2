@@ -17,7 +17,8 @@ Second, and more fundamental: the non-agentic web UI is **non-deterministic abou
 
 **The options that remain.** ChatGPT **Agent mode** — the Code Interpreter surface that deterministically built files — has been **removed from this repo** (`plan/code_to_update.md` §2) and is no longer on the table without reinstating that support. So:
 
-1. **Work mode at high effort** — already wired; the open question is whether its file-production rate is good enough at scale. That is an empirical question this memo cannot settle: pull the `agent_failed` and quality-verdict rates for `chatgpt_gpt_5_6_sol_work` out of `task_attempts`.
+1. **Work mode at high effort** — already wired; the open question is whether its file-production rate is good enough at scale. That is an empirical question this memo cannot settle: pull the `agent_failed` and quality-verdict rates for `chatgpt_gpt_5_6_sol_work_ultra` (labelled
+`chatgpt_gpt_5_6_sol_work` before the effort/speed rename) out of `task_attempts`.
 2. **The official ChatGPT API** — deterministic file output and the most defensible path for a full run, at the cost of a larger build and per-token pricing. Note it stops being a *GUI*-agent result, so it is not directly comparable to the Claude web numbers.
 3. **Cleaner network egress** (residential proxy / NAT) — would cut the "Content failed to load" errors, but does nothing for file-building non-determinism.
 4. **Reinstate Agent mode** — solves the core problem directly, but means restoring the code that was deliberately deleted, and the wave it produced would be a different cohort from the chat/work runs.

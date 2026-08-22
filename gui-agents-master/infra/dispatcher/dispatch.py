@@ -885,8 +885,13 @@ def cmd_backlog(args: argparse.Namespace) -> int:
 
     task_sources = [args.task_source] if args.task_source else None
 
+    # Agent model names run well past 20 chars (chatgpt_gpt_5_6_sol_work_ultra
+    # is 30), and a fixed width pushes every later column out of line on the
+    # rows that overflow. There are only a handful of cohorts, so widen the
+    # column to the longest name rather than truncating it.
+    agent_w = max(len("agent"), *(len(a) for a, _ in groups))
     header = (
-        f"  {'agent':<20} {'pv':<6} {'boxes':<6} "
+        f"  {'agent':<{agent_w}} {'pv':<6} {'boxes':<6} "
         f"{'in_flight':<10} {'unassigned':<11} {'remaining':<10} total"
     )
     print()
@@ -917,7 +922,7 @@ def cmd_backlog(args: argparse.Namespace) -> int:
         remaining = in_flight + unassigned
         pv_s = f"v{pv}" if pv != "None" else "-"
         print(
-            f"  {agent:<20} {pv_s:<6} {len(group_boxes):<6} "
+            f"  {agent:<{agent_w}} {pv_s:<6} {len(group_boxes):<6} "
             f"{in_flight:<10} {unassigned:<11} {remaining:<10} {total}"
         )
 
@@ -1429,7 +1434,12 @@ def main(argv: list[str] | None = None) -> int:
         help="config_templates/*.yaml — sets provider, agent identity and the "
         "benchmark (which picks the box's database)",
     )
-    sp.add_argument("--instance-type", default="t3.medium")
+    sp.add_argument(
+        "--instance-type",
+        help="EC2 type. Omit to be prompted (t3.medium / t3.large); -y or a "
+        "non-TTY takes t3.large. On an already-registered alias a different "
+        "type resizes the box in place, keeping its volume and browser login.",
+    )
     sp.add_argument("--region", default=region_default)
     sp.add_argument(
         "--ami",

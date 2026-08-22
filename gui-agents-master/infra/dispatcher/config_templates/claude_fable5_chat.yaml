@@ -10,7 +10,7 @@
 # /etc/gui-agents/secrets.env from the operator's env, read by the worker via
 # the EnvironmentFile in gui-agents-worker.service.
 #
-# Identity resolves to claude_fable_5 (see infra/configs/agent_identity.py).
+# Identity resolves to claude_fable_5_max (see infra/configs/agent_identity.py).
 
 benchmark: v2
 
@@ -21,9 +21,9 @@ provider:
 prompt_version: 201
 
 # Every axis a box's output depends on is pinned here rather than inherited.
-# The v2 Claude identity keys on (mode, model) alone, so effort and the two
-# capability toggles change what these boxes send without changing the DB
-# label — a moved default would silently redefine the claude_fable_5 cohort.
+# The v2 Claude identity keys on (mode, model, effort); the two capability
+# toggles below change what these boxes send without changing the DB label —
+# a moved default would silently redefine the claude_fable_5_max cohort.
 claude_web:
   mode: "chat"
   model: "fable_5"

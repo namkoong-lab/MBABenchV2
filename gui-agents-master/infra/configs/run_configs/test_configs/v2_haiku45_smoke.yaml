@@ -1,5 +1,5 @@
 # PIPELINE SMOKE TEST — benchmark v2, Claude Haiku 4.5, no extended reasoning.
-# DB identity resolves to: claude_haiku_4_5   (v2 identity is model-only)
+# DB identity resolves to: claude_haiku_4_5   (haiku has no effort axis)
 #
 # Purpose: exercise the full path end to end — monorepo config -> DB query ->
 # S3 download -> browser run -> S3 upload -> task_attempts insert. Haiku is
@@ -47,8 +47,8 @@ claude_web:
   # Haiku 4.5 has no Effort submenu in the claude.ai model dropdown — this is
   # the "non-extended reasoning" configuration. null = leave the session's
   # current state alone; the agent skips the effort selector entirely.
-  # (v2 identities key on model only, so effort would not affect the DB label
-  # even if the control existed.)
+  # (effort keys the v2 Claude identity, but haiku's label omits it — both
+  # null and the pinned default resolve to the one bare haiku cohort.)
   effort: null
 
   # Smoke-test budgets: 30 min/task and 2 attempts, so a wedged run fails in

@@ -42,6 +42,26 @@ SSH_OPTS = [
     "-o", "BatchMode=yes",
 ]
 
+# Sizes offered by the spinup prompt. Both are 2 vCPU burstable; they differ in
+# RAM and in burst baseline (t3.medium 20%, t3.large 30%).
+INSTANCE_TYPES = ("t3.medium", "t3.large")
+DEFAULT_INSTANCE_TYPE = "t3.large"
+INSTANCE_TYPE_SPECS = {
+    "t3.medium": "2 vCPU,  4 GiB RAM,  ~$0.042/hr  — see warning above",
+    "t3.large":  "2 vCPU,  8 GiB RAM,  ~$0.083/hr  — recommended",
+}
+# 2026-08-22: chatgpt-sol56-work-1 (t3.medium) wedged ~4h20m into a ChatGPT run.
+# The kernel OOM-killed Chrome at 3.2 GiB RSS, and the host then swap-thrashed
+# hard enough that sshd accepted TCP but never sent a banner — the box was
+# unreachable over SSH and had to be recovered through the EC2 API. It had also
+# been sitting at zero CPU credits, running on surplus. t3.large fixes both:
+# 8 GiB of RAM, and a 30% baseline that this workload stays under.
+OOM_WARNING = """\
+  ⚠  t3.medium OOMs on ChatGPT-in-Chrome runs (observed 2026-08-22)
+     Chrome reached 3.2 GiB RSS on a 4 GiB box; the OOM killer fired and the
+     host swap-thrashed until sshd stopped answering. Recovery needed an API
+     reboot. Pick t3.large for ChatGPT boxes."""
+
 # cloud-init installs the base packages so the box is usable the moment its
 # state goes to 'running'. Chrome is the heavyweight; the rest are small.
 USER_DATA = """#cloud-config
@@ -430,6 +450,41 @@ def _current_task(host: str, key_name: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_instance_type(args) -> str:
+    """Resolve --instance-type, prompting when it was omitted.
+
+    An explicit --instance-type is honoured as given (any type, not just the
+    two offered by the prompt) so the fleet can still be sized off-menu.
+    """
+    if args.instance_type:
+        if args.instance_type == "t3.medium":
+            print("\n" + OOM_WARNING)
+        return args.instance_type
+
+    if args.yes or not sys.stdin.isatty():
+        print(f"\ninstance type: {DEFAULT_INSTANCE_TYPE}  "
+              f"(not prompting: {'-y' if args.yes else 'no TTY'}; "
+              f"pass --instance-type to choose)")
+        return DEFAULT_INSTANCE_TYPE
+
+    print("\n" + OOM_WARNING)
+    print("\nInstance type:")
+    for i, t in enumerate(INSTANCE_TYPES, 1):
+        mark = " [default]" if t == DEFAULT_INSTANCE_TYPE else ""
+        print(f"  {i}) {t:<11}{INSTANCE_TYPE_SPECS[t]}{mark}")
+    default_idx = INSTANCE_TYPES.index(DEFAULT_INSTANCE_TYPE) + 1
+    while True:
+        choice = input(f"Choose [1-{len(INSTANCE_TYPES)}] "
+                       f"(default {default_idx}): ").strip()
+        if not choice:
+            return DEFAULT_INSTANCE_TYPE
+        if choice.isdigit() and 1 <= int(choice) <= len(INSTANCE_TYPES):
+            return INSTANCE_TYPES[int(choice) - 1]
+        if choice in INSTANCE_TYPES:
+            return choice
+        print(f"  not a choice: {choice!r}")
+
+
 def cmd_spinup(args) -> int:
     region = args.region
     template = Path(args.config_template)
@@ -502,6 +557,10 @@ def cmd_spinup(args) -> int:
     except (KeyError, FileNotFoundError):
         pass
 
+    # Prompt last: everything above can reject the run without costing money,
+    # and there is no point asking for a size before we know the run is valid.
+    args.instance_type = _resolve_instance_type(args)
+
     if existing is not None:
         return _respin(existing, args, cfg, account, template, db_url, region)
     return _launch(args, cfg, account, sg_id, template, db_url, info, region)
@@ -535,6 +594,46 @@ def _respin(box, args, cfg, account, template, db_url, region) -> int:
         client.get_waiter("instance_stopped").wait(InstanceIds=[box.instance_id])
         state = "stopped"
 
+    # Resizing is the whole reason to re-run spinup on some boxes, and AWS only
+    # accepts a type change while the instance is stopped. Doing it here keeps
+    # the root volume — and the browser login on it — that teardown would
+    # destroy. Without this the chosen type would be silently ignored on every
+    # already-registered alias.
+    current_type = instance.get("InstanceType")
+    if args.instance_type and args.instance_type != current_type:
+        print(f"\ninstance type: {current_type} → {args.instance_type}")
+        if state == "running":
+            if not args.yes:
+                # The idle check further down only runs after the restart, by
+                # which point a task would already have been killed. Ask the
+                # live box first.
+                print(f"  Checking worker idle state on {host}…")
+                if not _remote_is_idle(host, cfg.key_name):
+                    logger.error(
+                        "Refusing to resize: worker is not strictly idle (has "
+                        "a current task and/or a non-empty queue). Stopping it "
+                        "now would lose that work.\n"
+                        f"  Inspect with: dispatch show {box.alias}\n"
+                        f"  Resize anyway with -y."
+                    )
+                    return 1
+                print("  Resizing stops the instance first; the root volume "
+                      "and its browser login survive.")
+                answer = input("  Stop, resize and start again? [y/N]: ")
+                if answer.strip().lower() not in {"y", "yes"}:
+                    print("Left at the current size; nothing changed.")
+                    return 1
+            print(f"  stopping {box.instance_id}…")
+            client.stop_instances(InstanceIds=[box.instance_id])
+            client.get_waiter("instance_stopped").wait(
+                InstanceIds=[box.instance_id])
+            state = "stopped"
+        client.modify_instance_attribute(
+            InstanceId=box.instance_id,
+            InstanceType={"Value": args.instance_type},
+        )
+        print(f"  resized to {args.instance_type}")
+
     if state == "stopped":
         print(f"instance {box.instance_id} is stopped — starting it "
               f"(not launching a new one).")
@@ -564,6 +663,12 @@ def _respin(box, args, cfg, account, template, db_url, region) -> int:
         return 2
 
     boxes_mod.set_field(box.alias, "status", boxes_mod.STATUS_RUNNING)
+    # Write the type we just observed (or just applied), not only on a resize:
+    # EC2 is the authority and this is a cache, so every re-run is a chance to
+    # correct an entry that predates the field or was resized elsewhere.
+    effective_type = args.instance_type or current_type
+    if effective_type and effective_type != box.instance_type:
+        boxes_mod.set_field(box.alias, "instance_type", effective_type)
 
     if not args.yes:
         print(f"Checking worker idle state on {host}…")
@@ -659,6 +764,7 @@ def _launch(args, cfg, account, sg_id, template, db_url, info, region) -> int:
     boxes_mod.add_box(
         alias=args.alias,
         instance_id=instance_id,
+        instance_type=args.instance_type,
         ssh_host=host,
         ssh_key=f"~/.ssh/{cfg.key_name}.pem",
         status=boxes_mod.STATUS_RUNNING,

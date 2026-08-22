@@ -10,9 +10,23 @@ a warning pointing at `dispatch bootstrap` — re-run that (or set
 
 ## Spin up / tear down
 
+`spinup` prompts for the instance type unless `--instance-type` is given
+(`-y` or a non-TTY takes `t3.large`). **t3.medium OOMs on ChatGPT-in-Chrome
+runs** — observed 2026-08-22, when Chrome hit 3.2 GiB RSS on the 4 GiB box,
+the OOM killer fired and the host swap-thrashed until sshd stopped answering.
+Use `t3.large` for ChatGPT boxes.
+
+On an alias that is already in `boxes.yaml`, choosing a different type resizes
+the instance in place — it is stopped, retyped and started again, so the root
+volume and the browser login on it survive. The public DNS changes, and
+`boxes.yaml` is updated with it.
+
 ```bash
 # Launch (or re-provision) a box from a config template
 dispatch spinup --alias chatgpt-sol56-chat-1 --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
+
+# Skip the prompt
+dispatch spinup --alias chatgpt-sol56-chat-1 --config-template ... --instance-type t3.large
 
 # Terminate one box by alias
 dispatch teardown --alias chatgpt-pro-1
@@ -116,15 +130,21 @@ box's Chrome `--user-data-dir`, so the worker picks up the refreshed session.
 On macOS, the command auto-opens the built-in Screen Sharing viewer.
 
 ```bash
-# Default: forwards box:5901 -> localhost:5901, opens vnc://localhost:5901
+# Forwards box:5901 -> the first free local port of 5901, 5911, 5921, …
+# Run it again for a second box and it picks the next one automatically.
 python -m infra.dispatcher.dispatch login <alias>
 
-# Custom local port (e.g. running two logins in parallel)
+# Pin the local port instead of letting it scan
 python -m infra.dispatcher.dispatch login <alias> --local-port 5911
 
 # Don't auto-launch the VNC viewer
 python -m infra.dispatcher.dispatch login <alias> --no-open
 ```
+
+The chosen port is printed (`local port 5901 busy — using 5911`) and appears
+in the `vnc://localhost:<port>` line. A pinned `--local-port` that is already
+taken is a hard error rather than a tunnel-less session, so the viewer can
+never open onto another box's forward.
 
 In the VNC session: log in through the already-running Chrome window, then
 Ctrl-C the dispatcher terminal to tear down the tunnel.
@@ -144,14 +164,31 @@ It binds its own port on the box (5902 vs `login`'s 5901), so watching does
 not evict an in-flight login session and vice versa.
 
 ```bash
-# Default: forwards box:5902 -> localhost:5902, opens vnc://localhost:5902
+# Forwards box:5902 -> the first free local port of 5902, 5912, 5922, …
 python -m infra.dispatcher.dispatch watch <alias>
 
-# Custom local port / no auto-viewer
+# Pin the local port / no auto-viewer
 python -m infra.dispatcher.dispatch watch <alias> --local-port 5912 --no-open
 ```
 
 Ctrl-C tears down the tunnel and the x11vnc it started; the task keeps running.
+
+### Watching several boxes at once
+
+Just run `watch` in a second terminal — the local port scans 5902, 5912, 5922, …
+and takes the first free one, so concurrent sessions no longer collide. The
+`login` family scans 5901, 5911, 5921, …, which is why the stride is 10: the two
+never land on the same port.
+
+Each viewer is a separate `host:port`, so macOS opens a genuinely separate
+Screen Sharing window per box. Two things to keep straight:
+
+- **Every run mints a fresh one-shot VNC password.** Read each from its own
+  terminal — reusing the previous one looks exactly like a rejected password.
+- **A stale window blocks a new one.** `open vnc://localhost:<port>` re-activates
+  an existing Screen Sharing window for that same `host:port` instead of
+  connecting, and the password it holds is already dead. If no window appears,
+  quit Screen Sharing (`osascript -e 'quit app "Screen Sharing"'`) and re-run.
 
 ## Auth probe
 

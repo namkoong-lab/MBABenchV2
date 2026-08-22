@@ -9,6 +9,7 @@ Schema:
         ssh_user: ubuntu               # optional; defaults to 'ubuntu'
         ssh_key: ~/.ssh/<aws.gui_key_name>.pem # optional; ssh default resolution if omitted
         ssh_port: 22                   # optional; defaults to 22
+        instance_type: t3.large        # optional; informational, last observed
         status: running                # optional; running | stopped
 
 The file is gitignored (like configs.yaml) because entries are account- and
@@ -50,6 +51,7 @@ class Box:
     ssh_key: str | None = None
     ssh_port: int = 22
     instance_id: str | None = None
+    instance_type: str | None = None
     status: str | None = None
 
     @property
@@ -122,6 +124,7 @@ def load_boxes() -> list[Box]:
                 ssh_key=entry.get("ssh_key"),
                 ssh_port=int(entry.get("ssh_port", 22)),
                 instance_id=entry.get("instance_id"),
+                instance_type=entry.get("instance_type"),
                 status=entry.get("status"),
             )
         )
@@ -189,6 +192,7 @@ def add_box(
     instance_id: str,
     ssh_host: str,
     ssh_key: str,
+    instance_type: str | None = None,
     status: str = STATUS_RUNNING,
     ssh_user: str = "ubuntu",
 ) -> None:
@@ -201,6 +205,10 @@ def add_box(
     text += (
         f"  - alias: {alias}\n"
         f"    instance_id: {instance_id}\n"
+    )
+    if instance_type:
+        text += f"    instance_type: {instance_type}\n"
+    text += (
         f"    ssh_host: {ssh_host}\n"
         f"    ssh_user: {ssh_user}\n"
         f"    ssh_key: {ssh_key}\n"

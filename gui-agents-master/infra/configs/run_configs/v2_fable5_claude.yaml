@@ -1,5 +1,5 @@
 # TUTORIAL EXAMPLE — benchmark v2, Claude Fable 5.
-# DB identity resolves to: claude_fable_5  (v2 identity is model-only)
+# DB identity resolves to: claude_fable_5_max  (v2 keys on mode + model + effort)
 # Shape copied from mbabenchv2_run_examples/mbabenchv2_db_sink.yaml.
 #
 # Note: prompt_version 200 IS the v2 3-step set (prompts_v2/step1..step3) —
@@ -32,11 +32,11 @@ provider:
 prompt_version: 200
 
 claude_web:
-  mode: "chat"                       # "cowork" instead -> identity claude_fable_5_cowork
+  mode: "chat"                       # "cowork" instead -> identity claude_fable_5_cowork_max
   model: "fable_5"                   # required — v2 preflight refuses null
   # Highest effort tier (low < medium < high < xhigh < max); Fable has no
-  # separate Thinking toggle. NOTE: effort is NOT part of the v2 DB
-  # identity — keep it the same for every run recorded under claude_fable_5.
+  # separate Thinking toggle. Part of the v2 DB identity: another tier is a
+  # different cohort and needs its own entry in agent_identity.py.
   effort: "max"
   browser:
     cdp_port: 9223

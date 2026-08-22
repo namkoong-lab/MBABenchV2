@@ -88,9 +88,9 @@ def test_v2():
     )
     assert cfg.benchmark == "v2"
     ident = resolve_agent_identity(cfg)
-    assert ident.model_name == "claude_fable_5", ident
+    assert ident.model_name == "claude_fable_5_max", ident
     ec = build_engine_config(cfg, fake_spec(), ident.agent_folder)
-    assert ec["claude_web"]["session"]["agent_name"] == "claude_fable_5", ec
+    assert ec["claude_web"]["session"]["agent_name"] == "claude_fable_5_max", ec
     errors = preflight_check(ec, "claude", cfg.benchmark)
     assert not errors, errors
     resolved = resolve_prompts(dict(ec))

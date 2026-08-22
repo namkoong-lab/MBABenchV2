@@ -13,7 +13,9 @@ identity namespace:
        + model + effort; ChatGPT mode (chat/work) + model + intelligence or
        effort+speed.
   v2 — the MBABenchV2 task set (MBABenchV2 DB, rubric-v9 3-step prompts).
-       Labels bifurcate on model only.
+       Labels bifurcate on the same UI axes as v1: Claude mode + model +
+       effort; ChatGPT mode + model + intelligence (chat) or effort + speed
+       (work).
 
 The tables below are APPEND-ONLY. Every label is referenced by rows already
 in `task_attempts`, so editing one silently rewrites what those rows mean.
@@ -118,28 +120,50 @@ _V1_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
 # V2 identity tables — MBABenchV2 task set (MBABenchV2 DB)
 # =========================================================================
 
-# Signature: (claude_web.mode, claude_web.model). Mode is in the key so
-# chat and cowork cohorts stay separable in the DB; the chat labels carry
-# no mode segment. Extend the tuple — and every entry — when adding another
-# Claude field that should bifurcate the DB label (e.g. effort, once V2
-# runs start pinning it).
+# Signature: (claude_web.mode, claude_web.model, claude_web.effort). Mode is
+# in the key so chat and cowork cohorts stay separable in the DB; the chat
+# labels carry no mode segment.
+#
+# Effort joined the key (and the labels) after the cowork wave: it is a
+# reasoning axis that changes agent output, so a max-effort answer is not the
+# same result as a medium-effort one and the two must not share a label.
+# `claude_web.effort` has defaulted to "max" for the whole life of this repo
+# and every v2 template pins it, so keying the pre-existing cohorts at "max"
+# is what they always were — the DB rows they wrote need the matching rename
+# (see the backfill note in docs, scoped to prompt_version 201).
+#
+# Haiku is the exception: claude.ai exposes no Effort control for it, so the
+# config value is inert there and stays out of the label. Both the pinned
+# default and an explicit null map to the one bare haiku identity.
 _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
-    ("chat", "sonnet_4_6"): AgentIdentity(
-        "claude_sonnet_4_6", "claude_sonnet_4_6"
+    ("chat", "sonnet_4_6", "max"): AgentIdentity(
+        "claude_sonnet_4_6_max", "claude_sonnet_4_6_max"
     ),
-    ("chat", "opus_4_6"): AgentIdentity("claude_opus_4_6", "claude_opus_4_6"),
-    ("chat", "opus_4_8"): AgentIdentity("claude_opus_4_8", "claude_opus_4_8"),
-    ("chat", "haiku_4_5"): AgentIdentity("claude_haiku_4_5", "claude_haiku_4_5"),
-    ("chat", "fable_5"): AgentIdentity("claude_fable_5", "claude_fable_5"),
-    ("cowork", "fable_5"): AgentIdentity(
-        "claude_fable_5_cowork", "claude_fable_5_cowork"
+    ("chat", "opus_4_6", "max"): AgentIdentity(
+        "claude_opus_4_6_max", "claude_opus_4_6_max"
+    ),
+    ("chat", "opus_4_8", "max"): AgentIdentity(
+        "claude_opus_4_8_max", "claude_opus_4_8_max"
+    ),
+    ("chat", "haiku_4_5", "max"): AgentIdentity(
+        "claude_haiku_4_5", "claude_haiku_4_5"
+    ),
+    ("chat", "haiku_4_5", None): AgentIdentity(
+        "claude_haiku_4_5", "claude_haiku_4_5"
+    ),
+    ("chat", "fable_5", "max"): AgentIdentity(
+        "claude_fable_5_max", "claude_fable_5_max"
+    ),
+    ("cowork", "fable_5", "max"): AgentIdentity(
+        "claude_fable_5_cowork_max", "claude_fable_5_cowork_max"
     ),
 }
 
 
 # Signatures (mode defaults to "chat"):
 #   chat: (chatgpt_web.mode, chatgpt_web.model, chatgpt_web.intelligence)
-#   work: (chatgpt_web.mode, chatgpt_web.model)
+#   work: (chatgpt_web.mode, chatgpt_web.model, chatgpt_web.effort,
+#          chatgpt_web.speed)
 # model=None means "let the session default win". Intelligence is the
 # chat-mode reasoning axis and changes agent output, so it bifurcates the
 # label — a GPT-5.5 answer at Instant is not the same result as one at Pro.
@@ -150,9 +174,13 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
 # rather than folding it into a default is what keeps those rows meaning
 # what they meant.
 #
-# Work mode does not carry this axis (its pickers are effort + speed), so
-# its key is unchanged. If a v2 work cohort ever varies effort or speed,
-# extend the work key the same way rather than reusing these labels.
+# Work mode does not carry this axis — its pickers are effort + speed, which
+# are its own two reasoning knobs and now key its label the way v1 already
+# does. Every v2 work run has been ultra/standard since the cohort started,
+# so that entry is what the existing rows always were; they need the matching
+# rename (backfill scoped to prompt_version 201). Speed stays out of the
+# label while it is "standard" (the UI default), matching the v1 convention —
+# a fast cohort becomes chatgpt_gpt_5_6_sol_work_ultra_fast.
 _V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", None, None): AgentIdentity("chatgpt_web", "chatgpt_web"),
     ("chat", "instant", None): AgentIdentity(
@@ -177,8 +205,8 @@ _V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("chat", "gpt_5_5", "instant"): AgentIdentity(
         "chatgpt_gpt_5_5_instant", "chatgpt_gpt_5_5_instant"
     ),
-    ("work", "gpt_5_6_sol"): AgentIdentity(
-        "chatgpt_gpt_5_6_sol_work", "chatgpt_gpt_5_6_sol_work"
+    ("work", "gpt_5_6_sol", "ultra", "standard"): AgentIdentity(
+        "chatgpt_gpt_5_6_sol_work_ultra", "chatgpt_gpt_5_6_sol_work_ultra"
     ),
 }
 
@@ -269,13 +297,14 @@ def _resolve_claude_v2(cfg: SimpleNamespace) -> AgentIdentity:
     block = _claude_block(cfg)
     model = getattr(block, "model", None)
     mode = (getattr(block, "mode", None) or "chat").lower()
-    key = (mode, model)
+    effort = getattr(block, "effort", None)
+    key = (mode, model, effort)
     try:
         return _V2_CLAUDE_IDENTITIES[key]
     except KeyError:
         raise UnknownAgentCombination(
-            f"No v2 Claude identity for "
-            f"(claude_web.mode, claude_web.model)={key!r}. "
+            f"No v2 Claude identity for (claude_web.mode, claude_web.model, "
+            f"claude_web.effort)={key!r}. "
             f"Known: {list(_V2_CLAUDE_IDENTITIES)}. "
             f"Add an entry in infra/configs/agent_identity.py "
             f"if this is a real combination."
@@ -287,8 +316,11 @@ def _resolve_chatgpt_v2(cfg: SimpleNamespace) -> AgentIdentity:
     mode = (getattr(block, "mode", None) or "chat").lower()
     model = getattr(block, "model", None)
     if mode == "work":
-        key = (mode, model)
-        axes = "(mode, model)"
+        effort = getattr(block, "effort", None)
+        # null speed is the UI's "standard", so both spell the same cohort.
+        speed = getattr(block, "speed", None) or "standard"
+        key = (mode, model, effort, speed)
+        axes = "(mode, model, effort, speed)"
     else:
         key = (mode, model, getattr(block, "intelligence", None))
         axes = "(mode, model, intelligence)"
