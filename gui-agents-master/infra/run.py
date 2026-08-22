@@ -674,9 +674,9 @@ def _acquire_cdp_lock(port: int):
 
 
 def _auth_precheck(cfg: SimpleNamespace, provider: str) -> tuple[bool, str]:
-    """Verify the browser session is logged in (and, for chatgpt, on the
-    expected plan) before burning a task on a dead session. Reuses the
-    worker box's probe logic — same CDP-attach, same session checks."""
+    """Verify the browser session is logged in (and on the expected plan)
+    before burning a task on a dead session. Reuses the worker box's probe
+    logic — same CDP-attach, same session checks."""
     port = _resolve_cdp_port(cfg, provider)
     if port is None:
         return False, f"no browser.cdp_port configured for provider {provider!r}"

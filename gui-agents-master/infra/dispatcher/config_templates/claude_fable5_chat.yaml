@@ -1,17 +1,16 @@
-# Spin-up config template: Claude provider, Opus 4.8 at max effort with
-# Extended Thinking on.
+# Spin-up config template: Claude provider, Fable 5 in chat mode at max effort.
 #
 # Pass to spinup.sh via:
 #   dispatch spinup \
-#       --alias claude-opus48-1 \
-#       --config-template infra/dispatcher/config_templates/claude_opus_4_8.yaml
+#       --alias claude-fable5-chat-1 \
+#       --config-template infra/dispatcher/config_templates/claude_fable5_chat.yaml
 #
 # Deep-merges on top of infra/configs/configs.default.yaml; every key here is an
 # override. DB URL and AWS creds intentionally absent - spinup.sh synthesizes
 # /etc/gui-agents/secrets.env from the operator's env, read by the worker via
 # the EnvironmentFile in gui-agents-worker.service.
 #
-# Identity resolves to claude_opus_4_8 (see infra/configs/agent_identity.py).
+# Identity resolves to claude_fable_5 (see infra/configs/agent_identity.py).
 
 benchmark: v2
 
@@ -24,20 +23,22 @@ prompt_version: 201
 # Every axis a box's output depends on is pinned here rather than inherited.
 # The v2 Claude identity keys on (mode, model) alone, so effort and the two
 # capability toggles change what these boxes send without changing the DB
-# label — a moved default would silently redefine the claude_opus_4_8 cohort.
+# label — a moved default would silently redefine the claude_fable_5 cohort.
 claude_web:
   mode: "chat"
-  model: "opus_4_8"
-  # Highest tier (low < medium < high < xhigh < max).
+  model: "fable_5"
+  # Highest tier (low < medium < high < xhigh < max). Fable's Effort submenu
+  # has no nested Thinking toggle, so effort is the whole reasoning axis here.
   effort: "max"
-  # The composer's thinking switch, which the Opus family exposes.
+  # A successful no-op on Fable 5, which exposes no thinking switch. Stated
+  # so this template reads the same as claude_opus_4_8.yaml, where it bites.
   enable_extended_thinking: true
   # Off: the tasks are self-contained, and a search changes what the model
   # sees between attempts.
   enable_web_search: false
   # project_id must exist in the claude.ai account this box logs into (VNC step).
   # Paste from https://claude.ai/project/{project_id}. null = default chat.
-  project_id: "019ef001-4c2c-76da-8c87-c94067ba216b"
+  project_id: null
   browser:
     # Matches the path the README's VNC-login step writes the Chrome profile to.
     profile_dir: "/var/lib/gui-agents/chrome-claude"

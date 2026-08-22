@@ -143,7 +143,7 @@ and config:
 
 ```bash
 python -m infra.dispatcher.dispatch spinup --alias claude-1 \
-  --config-template infra/dispatcher/config_templates/claude_fable_5.yaml
+  --config-template infra/dispatcher/config_templates/claude_fable5_chat.yaml
 ```
 
 A stopped box gets a **new public DNS** when it starts, so `boxes.yaml` is

@@ -14,16 +14,26 @@ Per-provider strategy:
     account tier" before the worker wastes a task on it. NEVER persist
     the `accessToken` / `sessionToken` fields — `auth.json` is surfaced
     over SSH by `dispatch status`.
-  * claude — wait on the composer selector (unchanged). claude.ai still
-    gates the composer behind login, so the DOM signal is reliable.
+  * claude — hit https://claude.ai/api/account via the browser context's
+    cookie jar. Same trade as the chatgpt path: it yields `email_address`
+    (so `dispatch status` can name the account) plus the org's
+    `capabilities` / `rate_limit_tier`, which catch "logged into the wrong
+    tier" — e.g. a free account where a Max one was expected. Falls back
+    to the composer selector when that endpoint is unreachable or answers
+    something we can't read, so an API change degrades to the old DOM
+    signal rather than reporting a false logout. NEVER persist anything
+    beyond the whitelisted identity fields — `auth.json` is surfaced over
+    SSH by `dispatch status`. (/api/bootstrap carries the same email but
+    ships Intercom JWTs alongside it; /api/account does not.)
 
 Result is written to /var/lib/gui-agents/auth.json and surfaced by
 `gui-agents-queue show` so `dispatch status` can read it in one SSH hop.
 
 Skips silently when the worker has a current task — touching the shared
 browser mid-task could race with the agent. Next tick picks it up.
-(This is conservative; the ChatGPT path uses request.get rather than
-opening a page, so we could relax it later.)
+(This is conservative; both providers now take a request.get path in the
+common case rather than opening a page, so we could relax it later — but
+claude's composer fallback still opens one.)
 """
 
 from __future__ import annotations
@@ -49,6 +59,7 @@ AUTH_STATE_PATH = S.STATE_DIR / "auth.json"
 SUPPORTED_PROVIDERS = ("chatgpt", "claude")
 
 CHATGPT_SESSION_URL = "https://chatgpt.com/api/auth/session"
+CLAUDE_ACCOUNT_URL = "https://claude.ai/api/account"
 CLAUDE_HOME_URL = "https://claude.ai/"
 CLAUDE_COMPOSER_SELECTOR = 'fieldset div[contenteditable="true"]'
 
@@ -118,39 +129,127 @@ def _probe_chatgpt(cdp_port: int) -> tuple[bool, str | None, dict]:
             browser.close()
 
 
-def _probe_claude_composer(cdp_port: int) -> tuple[bool, str | None, dict]:
+def _claude_plan(account: dict) -> str | None:
+    """Human-readable tier from the account's first org membership.
+
+    `capabilities` looks like ["chat", "claude_max"] — "chat" is on every
+    account, so the tier is whatever else is there. A free account has only
+    ["chat"], which is itself the answer ("free").
+    """
+    memberships = account.get("memberships") or []
+    if not memberships:
+        return None
+    org = (memberships[0] or {}).get("organization") or {}
+    caps = [c for c in (org.get("capabilities") or []) if c != "chat"]
+    if caps:
+        return ",".join(caps)
+    return "free" if org.get("capabilities") else None
+
+
+def _claude_rate_limit_tier(account: dict) -> str | None:
+    memberships = account.get("memberships") or []
+    if not memberships:
+        return None
+    org = (memberships[0] or {}).get("organization") or {}
+    return org.get("rate_limit_tier")
+
+
+def _probe_claude_account(ctx) -> tuple[str, str | None, dict]:
+    """Query /api/account with the worker's cookies.
+
+    Returns (verdict, reason, extra) where verdict is one of:
+      "ok"           — authenticated; `extra` holds the identity fields
+      "logged_out"   — the endpoint says there is no session
+      "inconclusive" — we couldn't tell (transport error, unexpected shape);
+                       the caller should fall back to the DOM check
+    """
+    try:
+        resp = ctx.request.get(CLAUDE_ACCOUNT_URL, timeout=PROBE_REQUEST_TIMEOUT_MS)
+    except Exception as e:
+        return "inconclusive", f"request_error:{type(e).__name__}", {}
+    if resp.status in (401, 403):
+        return "logged_out", f"http_{resp.status}", {}
+    if resp.status != 200:
+        return "inconclusive", f"http_{resp.status}", {}
+    try:
+        data = json.loads(resp.text() or "{}")
+    except json.JSONDecodeError:
+        return "inconclusive", "non_json_response", {}
+    if not isinstance(data, dict):
+        return "inconclusive", "unexpected_response_shape", {}
+    if data.get("is_anonymous"):
+        return "logged_out", "anonymous_account", {}
+    email = data.get("email_address")
+    if not email:
+        # 200 without an identity is not proof of a logout — the shape may
+        # simply have moved. Let the composer check decide.
+        return "inconclusive", "no_email_in_response", {}
+    return (
+        "ok",
+        None,
+        {
+            "email": email,
+            "plan": _claude_plan(data),
+            "rate_limit_tier": _claude_rate_limit_tier(data),
+        },
+    )
+
+
+def _probe_claude_composer(ctx) -> tuple[bool, str | None]:
     """Open claude.ai, wait for the composer. No identity fields available."""
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
+    from playwright.sync_api import TimeoutError as PWTimeoutError
+
+    page = ctx.new_page()
+    try:
+        try:
+            page.goto(
+                CLAUDE_HOME_URL,
+                wait_until="domcontentloaded",
+                timeout=PROBE_NAV_TIMEOUT_MS,
+            )
+        except PWTimeoutError:
+            return False, "nav_timeout"
+        try:
+            page.wait_for_selector(
+                CLAUDE_COMPOSER_SELECTOR,
+                timeout=PROBE_SELECTOR_TIMEOUT_MS,
+            )
+            return True, None
+        except PWTimeoutError:
+            final_url = page.url or ""
+            if not final_url.startswith(CLAUDE_HOME_URL.split("?")[0]):
+                return False, f"redirected_to:{final_url[:120]}"
+            return False, "composer_not_found"
+    finally:
+        page.close()
+
+
+def _probe_claude(cdp_port: int) -> tuple[bool, str | None, dict]:
+    """Identity via /api/account, with the composer DOM check as fallback."""
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
         try:
             contexts = browser.contexts
-            context = contexts[0] if contexts else browser.new_context()
-            page = context.new_page()
-            try:
-                try:
-                    page.goto(
-                        CLAUDE_HOME_URL,
-                        wait_until="domcontentloaded",
-                        timeout=PROBE_NAV_TIMEOUT_MS,
-                    )
-                except PWTimeoutError:
-                    return False, "nav_timeout", {}
-                try:
-                    page.wait_for_selector(
-                        CLAUDE_COMPOSER_SELECTOR,
-                        timeout=PROBE_SELECTOR_TIMEOUT_MS,
-                    )
-                    return True, None, {}
-                except PWTimeoutError:
-                    final_url = page.url or ""
-                    if not final_url.startswith(CLAUDE_HOME_URL.split("?")[0]):
-                        return False, f"redirected_to:{final_url[:120]}", {}
-                    return False, "composer_not_found", {}
-            finally:
-                page.close()
+            if not contexts:
+                # A fresh browser.new_context() would carry no cookies, so it
+                # could never be logged in — reporting that as a logout would
+                # be misleading. Name the real problem instead.
+                return False, "no_browser_context", {}
+            ctx = contexts[0]
+            verdict, reason, extra = _probe_claude_account(ctx)
+            if verdict == "ok":
+                return True, None, extra
+            dom_ok, dom_reason = _probe_claude_composer(ctx)
+            if dom_ok:
+                # Logged in, but we have no identity to show. Keep the
+                # endpoint's reason so the operator can see why.
+                return True, None, {}
+            # Prefer the endpoint's reason when it was definitive.
+            return False, (reason if verdict == "logged_out" else dom_reason), {}
         finally:
+            # Do NOT close the browser — that'd tear down the shared Chrome.
             browser.close()
 
 
@@ -158,7 +257,7 @@ def _run_probe(provider: str, cdp_port: int) -> tuple[bool, str | None, dict]:
     if provider == "chatgpt":
         return _probe_chatgpt(cdp_port)
     if provider == "claude":
-        return _probe_claude_composer(cdp_port)
+        return _probe_claude(cdp_port)
     return False, "unsupported_provider", {}
 
 

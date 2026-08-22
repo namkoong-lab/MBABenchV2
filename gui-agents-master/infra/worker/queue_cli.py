@@ -97,17 +97,40 @@ def cmd_config_push() -> int:
         )
         return 2
 
-    CONFIGS_YAML.parent.mkdir(parents=True, exist_ok=True)
+    # The repo tree is root:root a+rX on a provisioned box, so the ubuntu ssh
+    # user can't create the staging file next to configs.yaml — stage it in
+    # /tmp instead and hand the install to sudo when the dir isn't writable.
+    writable = os.access(CONFIGS_YAML.parent, os.W_OK)
     with tempfile.NamedTemporaryFile(
         mode="w",
-        dir=str(CONFIGS_YAML.parent),
+        dir=str(CONFIGS_YAML.parent) if writable else None,
         prefix=".configs.yaml.",
         suffix=".new",
         delete=False,
     ) as tf:
         tf.write(new_content)
         tmp = Path(tf.name)
-    os.replace(tmp, CONFIGS_YAML)
+    try:
+        if writable:
+            CONFIGS_YAML.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, CONFIGS_YAML)
+        else:
+            inst = subprocess.run(
+                ["sudo", "-n", "install", "-m", "0644", "-o", "root", "-g", "root",
+                 str(tmp), str(CONFIGS_YAML)],
+                capture_output=True,
+                text=True,
+            )
+            if inst.returncode != 0:
+                print(
+                    f"config push failed: cannot write {CONFIGS_YAML} "
+                    f"(no write permission, and sudo install failed): "
+                    f"{inst.stderr.strip()}",
+                    file=sys.stderr,
+                )
+                return inst.returncode
+    finally:
+        tmp.unlink(missing_ok=True)
     print(f"wrote {CONFIGS_YAML}")
 
     if shutil.which("systemctl") is None:
@@ -117,8 +140,13 @@ def cmd_config_push() -> int:
             file=sys.stderr,
         )
         return 0
+    # Non-root over SSH: systemctl would prompt via polkit ("Interactive
+    # authentication required") and fail, so go through NOPASSWD sudo.
+    cmd = ["systemctl", "restart", WORKER_SERVICE]
+    if os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
     proc = subprocess.run(
-        ["systemctl", "restart", WORKER_SERVICE],
+        cmd,
         capture_output=True,
         text=True,
     )

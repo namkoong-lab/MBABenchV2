@@ -5,7 +5,7 @@ Every run reaches these files the same way: the run config sets
 `prompt_version`, and the registry in `tasks_configs/prompts/registry.yaml`
 maps it to the files below. That holds for local runs and for the EC2
 dispatcher templates in `infra/dispatcher/config_templates/`, which set
-`prompt_version: 200` and carry no prompt text of their own.
+`prompt_version: 201` and carry no prompt text of their own.
 
 ## 3-step set (the default)
 

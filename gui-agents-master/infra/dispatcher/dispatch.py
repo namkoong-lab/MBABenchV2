@@ -5,23 +5,23 @@ daemon, no DB-backed message queue — each invocation reads/writes box state
 over SSH and exits.
 
 Commands:
-    dispatch bootstrap [--region R] [--prune-ips]
-    dispatch spinup --alias A --config-template F [--instance-type T] [--ami ID]
-    dispatch stop (<alias> | --all) [--force]
-    dispatch teardown (<alias> | --all)
-    dispatch status [--follow]
-    dispatch show <alias>
-    dispatch assign --n N [--agent X] [--task-source Y]
-    dispatch assign --tasks 42,43,44 [--box <alias>]
-    dispatch backlog [--agent X] [--task-source Y]
-    dispatch cancel <alias> <task_id>
-    dispatch clear <alias>
-    dispatch logs <alias> [--task <id>] [-f]
-    dispatch login <alias> [--local-port N] [--no-open]
-    dispatch probe [<alias> | --all]
-    dispatch config pull <alias>
-    dispatch config push <alias> <localfile>
-    dispatch config diff <aliasA> <aliasB>
+    python -m infra.dispatcher.dispatch bootstrap [--region R] [--prune-ips]
+    python -m infra.dispatcher.dispatch spinup --alias A --config-template F [--instance-type T] [--ami ID]
+    python -m infra.dispatcher.dispatch stop (<alias> | --all) [--force]
+    python -m infra.dispatcher.dispatch teardown (<alias> | --all)
+    python -m infra.dispatcher.dispatch status [--follow]
+    python -m infra.dispatcher.dispatch show <alias>
+    python -m infra.dispatcher.dispatch assign --n N [--agent X] [--task-source Y]
+    python -m infra.dispatcher.dispatch assign --tasks 42,43,44 [--box <alias>]
+    python -m infra.dispatcher.dispatch backlog [--agent X] [--task-source Y]
+    python -m infra.dispatcher.dispatch cancel <alias> <task_id>
+    python -m infra.dispatcher.dispatch clear <alias>
+    python -m infra.dispatcher.dispatch logs <alias> [--task <id>] [-f]
+    python -m infra.dispatcher.dispatch login <alias> [--local-port N] [--no-open]
+    python -m infra.dispatcher.dispatch probe [<alias> | --all]
+    python -m infra.dispatcher.dispatch config pull <alias>
+    python -m infra.dispatcher.dispatch config push <alias> <localfile>
+    python -m infra.dispatcher.dispatch config diff <aliasA> <aliasB>
 """
 
 from __future__ import annotations
@@ -45,17 +45,22 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from infra.configs import load_configs  # noqa: E402
-from task_io.registry import _resolve_db_url_with_source  # noqa: E402
 from infra.dispatcher.helper.boxes import Box, find_by_alias, load_boxes  # noqa: E402
 from infra.dispatcher.helper.diagnostics import (  # noqa: E402
     ConnectivityVerdict,
     diagnose_connectivity,
 )
+from task_io.registry import _resolve_db_url_with_source  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("dispatch")
 
 SSH_TIMEOUT_SEC = 15
+
+# Where provision.py rsyncs the repo on a box; the worker's configs.yaml lives
+# under it (see helper/provision.py push_setup).
+REMOTE_REPO = "/opt/gui-agents-master"
+REMOTE_CONFIGS_YAML = f"{REMOTE_REPO}/infra/configs/configs.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +198,8 @@ def _kick_probe(box: Box) -> tuple[bool, str]:
 def _fmt_auth(auth: dict | None, busy: bool = False) -> str:
     """Render the auth-probe column. Values:
     <email>       — last probe succeeded and is fresh (shows user identity)
-    ok            — succeeded but no email available (e.g. claude)
+    ok            — succeeded but no email available (the probe fell back
+                    to a DOM check, or the box predates identity capture)
     STALE         — last probe failed (any reason) — needs re-login
     old <email>   — succeeded but last probe was too long ago
     ?             — no probe result on this box
@@ -223,41 +229,95 @@ def _fmt_auth(auth: dict | None, busy: bool = False) -> str:
     return _truncate(label, _AUTH_COL_WIDTH)
 
 
-def _fmt_row(alias: str, state: dict | None, stopped: bool = False) -> str:
-    if state is None:
-        return f"  {alias:<18} {'STOPPED (dispatch spinup to restart)' if stopped else 'UNREACHABLE'}"
+# (header, minimum width, hard cap). Columns are sized to their widest
+# cell, so a long agent name widens its own column instead of shoving every
+# later column out of line. The minimums keep the table from twitching under
+# `status --follow` as tasks start and finish; the caps stop one pathological
+# value from stretching the table past a terminal width — anything longer is
+# truncated with an ellipsis rather than silently sliced.
+_STATUS_COLUMNS: tuple[tuple[str, int, int], ...] = (
+    ("alias", 12, 24),
+    ("worker_id", 20, 20),
+    ("agent", 14, 28),
+    ("pv", 5, 8),
+    ("login", 10, _AUTH_COL_WIDTH),
+    ("current", 24, 32),
+    ("q", 4, 6),
+    ("last", 0, 40),
+)
+
+
+def _row_cells(state: dict, alias: str) -> list[str]:
+    """One cell per _STATUS_COLUMNS entry, unpadded."""
     worker = state.get("worker") or {}
     current = state.get("current")
     queue = state.get("queue") or []
     completed = state.get("completed") or []
-    auth = state.get("auth")
 
-    wid = (worker.get("worker_id") or "-")[:18]
-    agent = worker.get("agent_model_name") or "-"
-    pv = worker.get("prompt_version")
-    pv_s = f"(v{pv})" if pv is not None else ""
     if current:
         cur_s = f"task={current.get('task_id')} ({_fmt_duration(current.get('started_at'))})"
     else:
         cur_s = "idle"
     last = completed[-1] if completed else None
-    last_s = f"{last.get('task_id')} {last.get('status')}" if last else "-"
-    login_s = _fmt_auth(auth, busy=bool(current))
-    return (
-        f"  {alias:<12} {wid:<20} {agent:<14} {pv_s:<5} "
-        f"{login_s:<{_AUTH_COL_WIDTH}} {cur_s:<24} +{len(queue):<3} {last_s}"
-    )
+    pv = worker.get("prompt_version")
+    return [
+        alias,
+        worker.get("worker_id") or "-",
+        worker.get("agent_model_name") or "-",
+        f"(v{pv})" if pv is not None else "",
+        _fmt_auth(state.get("auth"), busy=bool(current)),
+        cur_s,
+        f"+{len(queue)}",
+        f"{last.get('task_id')} {last.get('status')}" if last else "-",
+    ]
 
 
 def _print_status_table(boxes: list[Box], states: dict[str, dict | None]) -> None:
-    header = (
-        f"  {'alias':<12} {'worker_id':<20} {'agent':<14} {'pv':<5} "
-        f"{'login':<{_AUTH_COL_WIDTH}} {'current':<24} {'q':<4} last"
-    )
+    # (alias, cells) — cells is None for a box with no state, which prints as
+    # a single spanning note instead of a full row.
+    rows: list[tuple[Box, list[str] | None]] = []
+    for b in boxes:
+        state = states.get(b.alias)
+        if state is None:
+            rows.append((b, None))
+        else:
+            rows.append(
+                (
+                    b,
+                    [
+                        _truncate(c, cap)
+                        for c, (_, _, cap) in zip(
+                            _row_cells(state, b.alias), _STATUS_COLUMNS
+                        )
+                    ],
+                )
+            )
+
+    widths = [max(len(head), minimum) for head, minimum, _ in _STATUS_COLUMNS]
+    for _, cells in rows:
+        if cells is None:
+            continue
+        for i, cell in enumerate(cells):
+            widths[i] = max(widths[i], len(cell))
+
+    def _line(cells: list[str]) -> str:
+        # The last column is left unpadded — trailing whitespace serves nothing.
+        padded = [f"{c:<{w}}" for c, w in zip(cells[:-1], widths[:-1])]
+        return "  " + " ".join([*padded, cells[-1]])
+
+    header = _line([head for head, _, _ in _STATUS_COLUMNS])
     print(header)
     print("  " + "-" * (len(header) - 2))
-    for b in boxes:
-        print(_fmt_row(b.alias, states.get(b.alias), stopped=b.is_stopped))
+    for box, cells in rows:
+        if cells is None:
+            note = (
+                "STOPPED (dispatch spinup to restart)"
+                if box.is_stopped
+                else "UNREACHABLE"
+            )
+            print(f"  {box.alias:<{widths[0]}} {note}")
+        else:
+            print(_line(cells))
 
 
 # ---------------------------------------------------------------------------
@@ -279,9 +339,7 @@ def _get_db_url() -> str:
     override = os.environ.get("MBABENCH_BENCHMARK", "").strip().lower()
     if override:
         if override not in ("v1", "v2"):
-            raise ValueError(
-                f"MBABENCH_BENCHMARK={override!r} is not 'v1' or 'v2'."
-            )
+            raise ValueError(f"MBABENCH_BENCHMARK={override!r} is not 'v1' or 'v2'.")
         cfg.benchmark = override
 
     url, source = _resolve_db_url_with_source(cfg)
@@ -316,8 +374,8 @@ def _list_eligible_tasks(
     pattern as `_count_eligible_tasks`, so `backlog` and `assign` agree
     on what 'unassigned' means."""
     import psycopg2
-    from psycopg2 import sql
     import psycopg2.extras
+    from psycopg2 import sql
 
     where = ["TRUE"]
     params: dict = {"limit": limit}
@@ -486,8 +544,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 2
     if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
         logger.error(
-            "skipping SSH fan-out (IP blocked). "
-            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+            "skipping SSH fan-out (IP blocked). " "Set DISPATCH_NO_DIAGNOSE=1 to force."
         )
         return 2
     if args.follow:
@@ -514,7 +571,8 @@ def _prompt_probe_old(boxes: list[Box], states: dict[str, dict | None]) -> None:
     login column showed 'old'. Skipped when stdin isn't a TTY so piped
     invocations (scripts, `watch`, etc.) don't stall on input."""
     old = [
-        b for b in boxes
+        b
+        for b in boxes
         if _is_auth_old(
             (states.get(b.alias) or {}).get("auth"),
             busy=bool((states.get(b.alias) or {}).get("current")),
@@ -526,10 +584,14 @@ def _prompt_probe_old(boxes: list[Box], states: dict[str, dict | None]) -> None:
         return
     aliases = ", ".join(b.alias for b in old)
     try:
-        resp = input(
-            f"\n{len(old)} box(es) show an 'old' login ({aliases}). "
-            f"Kick a fresh auth probe on them now? [y/N]: "
-        ).strip().lower()
+        resp = (
+            input(
+                f"\n{len(old)} box(es) show an 'old' login ({aliases}). "
+                f"Kick a fresh auth probe on them now? [y/N]: "
+            )
+            .strip()
+            .lower()
+        )
     except EOFError:
         return
     if resp not in {"y", "yes"}:
@@ -656,9 +718,7 @@ def cmd_assign(args: argparse.Namespace) -> int:
                 == args.agent
             ]
             if not candidates:
-                logger.error(
-                    f"no reachable boxes match --agent={args.agent}"
-                )
+                logger.error(f"no reachable boxes match --agent={args.agent}")
                 return 2
         assignments: list[tuple[Box, dict]] = []
         if args.box:
@@ -772,7 +832,9 @@ def cmd_assign(args: argparse.Namespace) -> int:
                     exclude_ids=sorted(exclude) or None,
                 )
             except Exception as e:
-                logger.warning(f"backlog count failed for agent={agent} pv={pv_val}: {e}")
+                logger.warning(
+                    f"backlog count failed for agent={agent} pv={pv_val}: {e}"
+                )
                 continue
             pv_s = f"v{pv_val}" if pv_val is not None else "-"
             print(
@@ -859,9 +921,7 @@ def cmd_backlog(args: argparse.Namespace) -> int:
         )
 
     print()
-    print(
-        "  note: snapshot — workers may finish tasks between state fetch and COUNT."
-    )
+    print("  note: snapshot — workers may finish tasks between state fetch and COUNT.")
     if unreachable:
         print(
             f"  note: {len(unreachable)} unreachable box(es) skipped; their "
@@ -880,7 +940,7 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     current = state.get("current") or {}
     if str(current.get("task_id")) == str(tid):
         unit = current.get("unit") or f"gui-agents-task-{tid}"
-        r = _ssh_exec(box, f"systemctl stop {unit}")
+        r = _ssh_exec(box, f"sudo -n systemctl stop {unit}")
         if r.returncode != 0:
             logger.error(f"stop {unit}: {r.stderr.strip()}")
             return r.returncode
@@ -1123,8 +1183,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     """
     if diagnose_connectivity() is ConnectivityVerdict.IP_BLOCKED:
         logger.error(
-            "skipping SSH fan-out (IP blocked). "
-            "Set DISPATCH_NO_DIAGNOSE=1 to force."
+            "skipping SSH fan-out (IP blocked). " "Set DISPATCH_NO_DIAGNOSE=1 to force."
         )
         return 2
     if args.all:
@@ -1148,15 +1207,18 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 1
 
 
+def _read_remote_configs(box: Box) -> SSHResult:
+    """cat the box's configs.yaml — the in-repo path the queue CLI writes,
+    falling back to the older /var/lib location."""
+    r = _ssh_exec(box, f"cat {REMOTE_CONFIGS_YAML}")
+    if r.returncode != 0:
+        r = _ssh_exec(box, "cat /var/lib/gui-agents/configs.yaml")
+    return r
+
+
 def cmd_config_pull(args: argparse.Namespace) -> int:
     box = find_by_alias(args.alias)
-    r = _ssh_exec(box, "cat /var/lib/gui-agents/configs.yaml")
-    if r.returncode != 0:
-        # Fallback: try the in-repo path the queue CLI writes to.
-        r = _ssh_exec(
-            box,
-            "cat \"$(python3 -c 'from infra.worker.queue_cli import CONFIGS_YAML; print(CONFIGS_YAML)')\"",
-        )
+    r = _read_remote_configs(box)
     if r.returncode != 0:
         logger.error(f"{box.alias} config pull: {r.stderr.strip()}")
         return r.returncode
@@ -1184,12 +1246,7 @@ def cmd_config_diff(args: argparse.Namespace) -> int:
     b = find_by_alias(args.aliasB)
 
     def _pull(box: Box) -> str:
-        r = _ssh_exec(box, "cat /var/lib/gui-agents/configs.yaml")
-        if r.returncode != 0:
-            r = _ssh_exec(
-                box,
-                "cat \"$(python3 -c 'from infra.worker.queue_cli import CONFIGS_YAML; print(CONFIGS_YAML)')\"",
-            )
+        r = _read_remote_configs(box)
         return r.stdout if r.returncode == 0 else ""
 
     ca, cb = _pull(a), _pull(b)
@@ -1248,7 +1305,7 @@ def main(argv: list[str] | None = None) -> int:
         "--ambient-creds",
         action="store_true",
         help="use the CLI's own credential chain instead of config.yaml "
-             "(for bootstrapping an account whose keys aren't in config.yaml yet)",
+        "(for bootstrapping an account whose keys aren't in config.yaml yet)",
     )
     bs.add_argument("-y", "--yes", action="store_true")
 
@@ -1261,7 +1318,7 @@ def main(argv: list[str] | None = None) -> int:
         "--config-template",
         required=True,
         help="config_templates/*.yaml — sets provider, agent identity and the "
-             "benchmark (which picks the box's database)",
+        "benchmark (which picks the box's database)",
     )
     sp.add_argument("--instance-type", default="t3.medium")
     sp.add_argument("--region", default=region_default)
@@ -1271,7 +1328,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     sp.add_argument("--volume-size", default="30", help="root volume GiB (gp3)")
     sp.add_argument(
-        "-y", "--yes", action="store_true",
+        "-y",
+        "--yes",
+        action="store_true",
         help="skip the worker-idle check when re-provisioning",
     )
 
@@ -1283,7 +1342,8 @@ def main(argv: list[str] | None = None) -> int:
     sto.add_argument("--all", action="store_true", help="every registered box")
     sto.add_argument("--region", default=region_default)
     sto.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="stop even if a task is in flight (the task is lost)",
     )
     sto.add_argument("-y", "--yes", action="store_true")

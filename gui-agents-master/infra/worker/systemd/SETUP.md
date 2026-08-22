@@ -75,14 +75,19 @@ python -m infra.dispatcher.dispatch logs <alias> --task <id> -f
 
 ## Sudoers note
 
-If the `gui-agents-queue config push` command needs to restart the service
-but is invoked by a non-root SSH user, add a sudoers rule for that user:
+`dispatch cancel` (`systemctl stop gui-agents-task-<id>`) and
+`gui-agents-queue config push` (worker restart) run as the SSH user and call
+`sudo -n systemctl ...`; without passwordless sudo systemd answers with
+"Interactive authentication required". The AWS Ubuntu AMI gives `ubuntu` full
+NOPASSWD sudo, so nothing extra is needed there. On a box where that was
+tightened, add a rule for the SSH user:
 
 ```
 ubuntu ALL=(root) NOPASSWD: /bin/systemctl restart gui-agents-worker.service, \
                             /bin/systemctl stop gui-agents-task-*, \
-                            /bin/systemctl is-active gui-agents-task-*
+                            /bin/systemctl start gui-agents-chrome.service, \
+                            /bin/systemctl start gui-agents-auth-probe.service
 ```
 
-Then wrap the `systemctl` calls in `queue_cli.py` and `worker_loop.py` with
-`sudo` — or simpler, run the whole worker as root and SSH in as root.
+(`systemctl is-active` needs no privileges, so `worker_loop.py` calls it
+directly.) Simpler alternative: run the worker as root and SSH in as root.

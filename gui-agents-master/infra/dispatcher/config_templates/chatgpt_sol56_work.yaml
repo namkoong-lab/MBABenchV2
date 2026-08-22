@@ -1,14 +1,16 @@
-# Spin-up config template: ChatGPT provider, "pro" model.
+# Spin-up config template: ChatGPT provider, GPT-5.6 Sol on the Work surface.
 #
 # Pass to spinup.sh via:
 #   dispatch spinup \
-#       --alias chatgpt-pro-1 \
-#       --config-template infra/dispatcher/config_templates/chatgpt_pro.yaml
+#       --alias chatgpt-sol56-work-1 \
+#       --config-template infra/dispatcher/config_templates/chatgpt_sol56_work.yaml
 #
 # Deep-merges on top of infra/configs/configs.default.yaml; every key here
 # is an override. DB URL and AWS creds intentionally absent — spinup.sh
 # synthesizes /etc/gui-agents/secrets.env from the operator's env, and the
 # worker reads those via the EnvironmentFile in gui-agents-worker.service.
+#
+# Identity resolves to chatgpt_gpt_5_6_sol_work (see agent_identity.py).
 
 benchmark: v2
 
@@ -19,22 +21,19 @@ provider:
 prompt_version: 201
 
 # Every axis a box's output depends on is pinned here rather than inherited.
-# The v2 ChatGPT identity keys on (mode, model, intelligence), so a default
-# that moves would change what these boxes send while the DB label stayed
-# chatgpt_web_pro.
+# The v2 ChatGPT work identity keys on (mode, model) ALONE, so effort and
+# speed change what these boxes send without changing the DB label — a moved
+# default would silently redefine the chatgpt_gpt_5_6_sol_work cohort.
 chatgpt_web:
-  mode: "chat"
-  # "pro" is a one-axis value: it names an intelligence level, not a model,
-  # and the agent routes it to chatgpt_web.intelligence. Boxes on this
-  # template write the chatgpt_web_pro cohort (see agent_identity.py).
-  model: "pro"
-  # MUST stay null. The identity key is ("chat", "pro", None); naming the
-  # level here too makes it ("chat", "pro", "pro"), which no identity covers,
-  # and spinup.sh would refuse the template.
+  mode: "work"
+  model: "gpt_5_6_sol"
+  # Work-mode pickers (pill menu > Advanced). "ultra" is the ceiling
+  # (light < medium < high < xhigh < max < ultra); matches the v1 Sol work wave.
+  effort: "ultra"
+  speed: "standard"
+  # MUST stay null: intelligence is the chat-mode radio set. Setting it here
+  # is a hard preflight error under benchmark v1 and a warning under v2.
   intelligence: null
-  # Work-mode pickers. Null in chat mode, or preflight rejects the config.
-  effort: null
-  speed: null
   # Paste from https://chatgpt.com/g/g-p-{project_id}-{slug}/project.
   # Optional — null starts at the chatgpt.com homepage with no project scope
   # (the agent warns), so pin it or the box's chats land in the account's
