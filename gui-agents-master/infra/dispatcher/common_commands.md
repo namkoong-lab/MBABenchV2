@@ -120,7 +120,7 @@ On macOS, the command auto-opens the built-in Screen Sharing viewer.
 python -m infra.dispatcher.dispatch login <alias>
 
 # Custom local port (e.g. running two logins in parallel)
-python -m infra.dispatcher.dispatch login <alias> --local-port 5902
+python -m infra.dispatcher.dispatch login <alias> --local-port 5911
 
 # Don't auto-launch the VNC viewer
 python -m infra.dispatcher.dispatch login <alias> --no-open
@@ -128,6 +128,30 @@ python -m infra.dispatcher.dispatch login <alias> --no-open
 
 In the VNC session: log in through the already-running Chrome window, then
 Ctrl-C the dispatcher terminal to tear down the tunnel.
+
+`login` refuses to run while a task is in flight — it opens a page in the
+worker's Chrome, which would collide with the agent. To just *look* at a
+running box, use `watch`.
+
+## Watch a running box (read-only VNC)
+
+Same VNC tunnel, no interference: `watch` never connects to Chrome over CDP,
+never opens a page, never kicks the auth probe, and runs x11vnc `-viewonly`,
+so clicks and keystrokes in your viewer are dropped instead of landing in the
+agent's browser. Safe to attach and detach mid-task.
+
+It binds its own port on the box (5902 vs `login`'s 5901), so watching does
+not evict an in-flight login session and vice versa.
+
+```bash
+# Default: forwards box:5902 -> localhost:5902, opens vnc://localhost:5902
+python -m infra.dispatcher.dispatch watch <alias>
+
+# Custom local port / no auto-viewer
+python -m infra.dispatcher.dispatch watch <alias> --local-port 5912 --no-open
+```
+
+Ctrl-C tears down the tunnel and the x11vnc it started; the task keeps running.
 
 ## Auth probe
 

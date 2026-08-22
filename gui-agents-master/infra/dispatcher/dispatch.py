@@ -18,6 +18,7 @@ Commands:
     python -m infra.dispatcher.dispatch clear <alias>
     python -m infra.dispatcher.dispatch logs <alias> [--task <id>] [-f]
     python -m infra.dispatcher.dispatch login <alias> [--local-port N] [--no-open]
+    python -m infra.dispatcher.dispatch watch <alias> [--local-port N] [--no-open]
     python -m infra.dispatcher.dispatch probe [<alias> | --all]
     python -m infra.dispatcher.dispatch config pull <alias>
     python -m infra.dispatcher.dispatch config push <alias> <localfile>
@@ -982,6 +983,110 @@ def cmd_logs(args: argparse.Namespace) -> int:
     )
 
 
+def _open_vnc_viewer_async(local_port: int) -> None:
+    """Open macOS Screen Sharing once the tunnelled VNC server answers.
+
+    Playwright's cold start on the box (~15–25s) means x11vnc doesn't bind
+    for a while after ssh connects. SSH -L's local port accepts connections
+    immediately so a plain socket-connect check isn't enough — we probe for
+    the RFB greeting, which only shows up once x11vnc is actually listening
+    end-to-end.
+    """
+    import socket
+    import threading
+
+    def _open_viewer() -> None:
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("localhost", local_port), timeout=2) as s:
+                    s.settimeout(3)
+                    if s.recv(4) == b"RFB ":
+                        break
+            except OSError:
+                pass
+            time.sleep(1)
+        else:
+            logger.warning(
+                f"VNC not ready on localhost:{local_port} after 90s; "
+                f"run `open vnc://localhost:{local_port}` manually."
+            )
+            return
+        # Give x11vnc a beat to finish closing the probe session before
+        # Screen Sharing's new connection lands — otherwise the viewer
+        # can race x11vnc's accept loop and hit "connection failed".
+        time.sleep(2)
+        logger.info(f"VNC ready; opening Screen Sharing at vnc://localhost:{local_port}")
+        subprocess.run(["open", f"vnc://localhost:{local_port}"], check=False)
+
+    threading.Thread(target=_open_viewer, daemon=True).start()
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Open a read-only VNC tunnel to a box — safe while a task is running.
+
+    Unlike `dispatch login`, this never touches the worker's Chrome: no CDP
+    connect, no new page, no auth-probe kick, and x11vnc runs `-viewonly` so
+    a stray click or keystroke in the viewer can't derail the agent. It also
+    binds its own rfbport, so watching doesn't evict an in-flight `login`
+    session (or vice versa).
+    """
+    box = find_by_alias(args.alias)
+    local_port = args.local_port
+    remote_port = 5902
+    import secrets
+
+    vnc_pw = secrets.token_urlsafe(9)[:8]
+    state = _fetch_state(box)
+    if state is None:
+        logger.warning(f"{box.alias}: could not read state.json — attaching anyway")
+    else:
+        current = state.get("current")
+        if current:
+            logger.info(f"{box.alias}: task {current.get('task_id')} in flight")
+        else:
+            logger.info(f"{box.alias}: idle")
+    # Recycle only the x11vnc bound to this port, so a `login` session on 5901
+    # survives. The port stays a shell variable on purpose: `pkill -f` matches
+    # against full command lines, and the remote shell's own cmdline is this
+    # whole script — spelling the port literally in both the pattern and the
+    # x11vnc line would make the script match its own pattern and kill itself.
+    remote_cmd = f"""\
+set -u
+PORT={remote_port}
+PAT="x11vnc.*-rfbport $PORT"
+pkill -f "$PAT" >/dev/null 2>&1 || true
+sleep 0.2
+cleanup() {{
+  pkill -f "$PAT" >/dev/null 2>&1 || true
+}}
+trap cleanup EXIT INT TERM HUP
+x11vnc -display :99 -localhost -viewonly -passwd '{vnc_pw}' \
+  -rfbport "$PORT" -forever -shared -quiet
+"""
+    ssh_args = [
+        "ssh",
+        "-t",
+        "-L",
+        f"{local_port}:localhost:{remote_port}",
+        *box.ssh_base_args(),
+        box.ssh_target(),
+        remote_cmd,
+    ]
+    logger.info(
+        f"{box.alias}: read-only x11vnc on :99 forwarded to localhost:{local_port} "
+        f"(input disabled — the worker is untouched)"
+    )
+    logger.info(
+        f"connect a VNC viewer to vnc://localhost:{local_port}, "
+        f"then Ctrl-C here to tear down."
+    )
+    logger.info(f"VNC password (one-shot): {vnc_pw}")
+    if sys.platform == "darwin" and not args.no_open:
+        _open_vnc_viewer_async(local_port)
+    return subprocess.call(ssh_args)
+
+
 def cmd_login(args: argparse.Namespace) -> int:
     """Open a VNC tunnel to a box so the operator can log in to
     claude.ai / chatgpt.com.
@@ -1120,43 +1225,7 @@ x11vnc -display :99 -localhost -passwd '{vnc_pw}' -rfbport {remote_port} -foreve
     )
     logger.info(f"VNC password (one-shot): {vnc_pw}")
     if sys.platform == "darwin" and not args.no_open:
-        # Playwright's cold start on the box (~15–25s) means x11vnc doesn't
-        # bind for a while after ssh connects. SSH -L's local port accepts
-        # connections immediately so a plain socket-connect check isn't
-        # enough — we probe for the RFB greeting, which only shows up once
-        # x11vnc is actually listening end-to-end.
-        import socket
-        import threading
-
-        def _open_viewer() -> None:
-            deadline = time.time() + 90
-            while time.time() < deadline:
-                try:
-                    with socket.create_connection(
-                        ("localhost", local_port), timeout=2
-                    ) as s:
-                        s.settimeout(3)
-                        if s.recv(4) == b"RFB ":
-                            break
-                except OSError:
-                    pass
-                time.sleep(1)
-            else:
-                logger.warning(
-                    f"VNC not ready on localhost:{local_port} after 90s; "
-                    f"run `open vnc://localhost:{local_port}` manually."
-                )
-                return
-            # Give x11vnc a beat to finish closing the probe session before
-            # Screen Sharing's new connection lands — otherwise the viewer
-            # can race x11vnc's accept loop and hit "connection failed".
-            time.sleep(2)
-            logger.info(
-                f"VNC ready; opening Screen Sharing at vnc://localhost:{local_port}"
-            )
-            subprocess.run(["open", f"vnc://localhost:{local_port}"], check=False)
-
-        threading.Thread(target=_open_viewer, daemon=True).start()
+        _open_vnc_viewer_async(local_port)
     rc = subprocess.call(ssh_args)
 
     # Kick a fresh probe so `dispatch status` reflects the new login
@@ -1402,6 +1471,18 @@ def main(argv: list[str] | None = None) -> int:
         help="don't auto-open the macOS VNC viewer",
     )
 
+    wa = sub.add_parser(
+        "watch",
+        help="open a READ-ONLY VNC tunnel to a box — safe while a task runs",
+    )
+    wa.add_argument("alias")
+    wa.add_argument("--local-port", type=int, default=5902)
+    wa.add_argument(
+        "--no-open",
+        action="store_true",
+        help="don't auto-open the macOS VNC viewer",
+    )
+
     pr = sub.add_parser(
         "probe",
         help="kick the auth-probe oneshot to refresh a box's login status",
@@ -1460,6 +1541,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_logs(args)
     if args.cmd == "login":
         return cmd_login(args)
+    if args.cmd == "watch":
+        return cmd_watch(args)
     if args.cmd == "probe":
         return cmd_probe(args)
     if args.cmd == "config":
