@@ -100,6 +100,27 @@ def test_successful_download_passes():
         assert (Path(workspace) / "a.xlsx").stat().st_size > 0
 
 
+def test_workspace_defaults_to_batch_logs_dir():
+    """Without workspace_base_dir, workspaces live under the batch's logs dir."""
+    with tempfile.TemporaryDirectory() as tmp:
+        runner = make_runner(tmp, GoodS3())
+        runner.config = {}
+        runner.batch_logs_dir = Path(tmp) / "batch_logs" / "batch_x"
+        task = make_task(["s3://mbabench/MBABenchV2/tasks/x/starting_files/a.xlsx"])
+        workspace = runner.setup_workspace(task)
+        assert Path(workspace).parent == runner.batch_logs_dir / "workspaces"
+        assert (Path(workspace) / "a.xlsx").stat().st_size > 0
+
+
+def test_no_workspace_location_raises():
+    with tempfile.TemporaryDirectory() as tmp:
+        runner = make_runner(tmp, GoodS3())
+        runner.config = {}
+        runner.batch_logs_dir = None
+        task = make_task(["s3://mbabench/MBABenchV2/tasks/x/starting_files/a.xlsx"])
+        expect_raises(lambda: runner.setup_workspace(task), "No workspace location")
+
+
 def test_s3_preflight_raises_without_credentials():
     with tempfile.TemporaryDirectory() as tmp:
         runner = make_runner(tmp, FailingS3())

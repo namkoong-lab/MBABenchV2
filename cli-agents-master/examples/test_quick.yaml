@@ -8,7 +8,7 @@
 #   base_url: "https://api.anthropic.com"      # Anthropic
 
 batch_name: "quick-test"
-model: "openai/gpt-4o-mini"
+model: "gpt-4o-mini"                # OpenAI direct id (endpoint from agent_identities.yaml)
 auto_mode: true
 benchmark: "v1"                   # BizbenchV1 DB + s3://mbabench/BizbenchV1/
 

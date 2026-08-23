@@ -21,12 +21,14 @@ auto_mode: true
 # forces a deliberate cross-benchmark run.
 benchmark: "v1"
 
-# Where to create workspaces (files downloaded from S3 here)
-workspace_base_dir: "~/auto_batch_MODEL_NAME"    # ~ is expanded automatically
+# Where to create workspaces (files downloaded from S3 here). Optional:
+# omit to use the batch's own logs dir, batch_logs/batch_{ts}/workspaces/
+# workspace_base_dir: "~/auto_batch_MODEL_NAME"  # ~ is expanded automatically
 
-# Agent folder for S3 paths + DB agent_model_name
-# Convention: "openpyxl_{provider}/{model}"
-agent_folder: "openpyxl_PROVIDER/MODEL_SLUG"
+# No agent_folder: the cohort label (DB agent_model_name) is resolved from
+# (model, reasoning_effort, thinking_budget_tokens, max_completion_tokens)
+# via excel_cli_agent/agent_identities.yaml. An unregistered combination
+# refuses to run and prints the registry stanza to add.
 
 # Pin the prompt set explicitly. One key selects BOTH files (registry:
 # excel_cli_agent/prompt_versions.py, files: excel_cli_agent/prompts/):

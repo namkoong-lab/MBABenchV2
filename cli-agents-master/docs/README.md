@@ -17,7 +17,6 @@ excel-agent --batch-config auto_config.yaml
 ```yaml
 auto_mode: true
 workspace_base_dir: "/path/to/workspaces"
-agent_folder: "openpyxl_PROVIDER/MODEL_SLUG"
 model: "openai/gpt-5.2"
 max_iterations: 30
 max_trials: 7

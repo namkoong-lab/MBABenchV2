@@ -12,9 +12,11 @@
 # is pinned explicitly below anyway; v12 is the only set embedding the v2
 # grading rubric, so v1..v11 would refuse to start.
 #
-# Identity (new cohort, no prior attempts under this agent_folder):
-#   DB agent_model_name = agent_folder = openpyxl_anthropic/claude-haiku-4-5-think16k
-#   S3 prefix           = {model}_openpyxl = claude-haiku-4-5_openpyxl
+# Identity — resolved from (model, effort, thinking budget, max tokens) via
+# excel_cli_agent/agent_identities.yaml, no agent_folder key:
+#   DB agent_model_name = openpyxl_anthropic/claude-haiku-4-5-think16k
+#   S3 (v2 layout)      = MBABenchV2/attempts/cli_agents/claude-haiku-4-5/task_id={id}/{ts}/
+#   Local record        = cli-agents-master/run_logs/attempt-claude-haiku-4-5-{ts}/
 #
 # Run (from cli-agents-master/, .env holding ANTHROPIC_API_KEY; the DB URL
 # and AWS creds come from <MBABenchV2>/config/config.yaml):
@@ -25,8 +27,8 @@ model: "claude-haiku-4-5"                     # Anthropic direct id (not the Ope
 auto_mode: true
 benchmark: "v2"                               # MBABenchV2 DB + s3://mbabench/MBABenchV2/
 
-workspace_base_dir: "~/auto_batch_haiku45_v2"
-agent_folder: "openpyxl_anthropic/claude-haiku-4-5-think16k"
+# workspace_base_dir omitted: workspaces are created under the batch's own
+# logs directory, batch_logs/batch_{ts}/workspaces/{task}_{run_id}/
 
 # One key pins BOTH prompt files (see excel_cli_agent/prompt_versions.py):
 #   v12 -> prompts/system_prompt_v12.txt (system v12)
@@ -59,7 +61,7 @@ verbose: true
 # agent_failed=false and reason "Max iterations (12) reached", and whatever
 # solution.xlsx exists at that point is still uploaded and gradeable. Raise
 # it for a quality run; keep it low for a cheap pipeline check.
-max_iterations: 12
+max_iterations: 1
 
 fresh_context_mode: true
 enhanced_excel_context: true

@@ -397,7 +397,11 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | **Trial management** | | | | |
 | `max_trials` | int | 7 | auto | Skip task after N attempts |
 | `trials_since` | string | today | auto | Only count attempts after this date |
-| `agent_folder` | string | from model | auto | S3 path + DB agent_model_name |
+
+The cohort label (DB `agent_model_name`) is not a config key: it is resolved
+from (model, reasoning_effort, thinking_budget_tokens, max_completion_tokens)
+via the `excel_cli_agent/agent_identities.yaml` registry. An unregistered
+combination refuses to run and prints the registry stanza to add.
 
 ### Local Mode Example
 

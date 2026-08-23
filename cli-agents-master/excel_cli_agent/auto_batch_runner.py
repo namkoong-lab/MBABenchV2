@@ -22,6 +22,7 @@ from datetime import datetime, date
 
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
 
+from .agent_identity import resolve_agent_identity
 from .db import database as db_config
 from .db.database import SessionLocal
 from .db.models import Task, TaskAttempt
@@ -37,6 +38,10 @@ from .prompt_versions import (
 SYSTEM_PROMPT_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERSION]["system"]
 TASK_TEMPLATE_FMWC_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERSION]["fmwc"]
 TASK_TEMPLATE_WSP_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERSION]["wsp"]
+
+# Local per-attempt record, kept even after the workspace is cleaned up:
+# run_logs/attempt-{model}-{timestamp}/ at the cli-agents-master root.
+RUN_LOGS_DIR: Path = Path(__file__).resolve().parents[1] / "run_logs"
 
 
 @dataclass
@@ -116,8 +121,9 @@ class AutoBatchRunner(BatchRunner):
         if not config.get('auto_mode'):
             raise ValueError("auto_mode must be true for AutoBatchRunner")
 
-        if not config.get('workspace_base_dir'):
-            raise ValueError("workspace_base_dir is required in auto_mode")
+        # workspace_base_dir is optional: unset, workspaces are created under
+        # the batch's own logs directory (batch_logs/batch_{ts}/workspaces/),
+        # keeping each batch's working files and logs in one place.
 
         # Must have either tasks, task_ids, or task_filter
         if 'tasks' not in config and 'task_ids' not in config and 'task_filter' not in config:
@@ -139,9 +145,25 @@ class AutoBatchRunner(BatchRunner):
         # the historical trial-count-only behavior.
         config.setdefault('skip_if_succeeded', False)
 
-        # Default agent_folder from model name
-        if 'agent_folder' not in config:
-            config['agent_folder'] = f"openpyxl_{config['model']}"
+        # Cohort identity comes from the agent_identities.yaml registry,
+        # resolved from (model, reasoning_effort, thinking_budget_tokens,
+        # max_completion_tokens). agent_folder is retired: a hand-typed label
+        # could drift from the settings and pollute another cohort's trial
+        # counts.
+        if 'agent_folder' in config:
+            raise ValueError(
+                "agent_folder is no longer supported. The cohort label is "
+                "resolved from the run's model settings via "
+                "excel_cli_agent/agent_identities.yaml — remove the key, and "
+                "add/edit a registry entry if this combination needs a new "
+                "or different label."
+            )
+        identity = resolve_agent_identity(config)
+        config['agent_model_name'] = identity.agent_model_name
+        # The registry pins the endpoint too — routing keys off base_url, so
+        # this is what keeps a Claude model off the OpenAI code path when a
+        # config forgets the key.
+        config['base_url'] = identity.base_url
 
         # Benchmark selection. Required so a config can never silently
         # target the wrong experiment; it selects the database URL
@@ -224,12 +246,13 @@ class AutoBatchRunner(BatchRunner):
         print(f"   Benchmark: {benchmark}")
         print(f"   Database: {describe_database_target(benchmark)}")
         print(f"   S3: s3://{self._s3_bucket}/{self._s3_root}/")
-        print(f"   Agent folder: {config['agent_folder']}")
+        print(f"   Agent model name: {config['agent_model_name']} (from agent_identities.yaml)")
+        print(f"   API endpoint: {config['base_url']}")
         print(f"   Prompt version: {prompt_ver}")
         print(f"   Max iterations: {config['max_iterations']}")
         print(f"   Max trials: {config['max_trials']}")
         print(f"   Trials since: {config['trials_since']}")
-        print(f"   Workspace base: {config['workspace_base_dir']}")
+        print(f"   Workspace base: {config.get('workspace_base_dir') or 'batch_logs/batch_<ts>/workspaces (default)'}")
 
         return config
 
@@ -301,12 +324,12 @@ class AutoBatchRunner(BatchRunner):
 
             # Filter for missing_for_model: only tasks where trial count < max_trials
             if tf.get('missing_for_model'):
-                agent_folder = self.config['agent_folder']
+                agent_model_name = self.config['agent_model_name']
                 trials_since = self.config['trials_since']
                 max_trials = self.config['max_trials']
 
                 for task in all_tasks:
-                    trial_count = self._get_trial_count(db, task.id, agent_folder, trials_since)
+                    trial_count = self._get_trial_count(db, task.id, agent_model_name, trials_since)
                     if trial_count < max_trials:
                         tasks_result.append(TaskInfo(
                             task_id=task.id,
@@ -367,12 +390,12 @@ class AutoBatchRunner(BatchRunner):
             task = db.query(Task).filter(Task.task_name == normalized).first()
         return task
 
-    def _get_trial_count(self, db, task_id: int, agent_folder: str, trials_since: str) -> int:
+    def _get_trial_count(self, db, task_id: int, agent_model_name: str, trials_since: str) -> int:
         """Count non-deprecated attempts for a task+model since a given date."""
         from sqlalchemy import func as sa_func
         count = db.query(sa_func.count(TaskAttempt.id)).filter(
             TaskAttempt.task_id == task_id,
-            TaskAttempt.agent_model_name == agent_folder,
+            TaskAttempt.agent_model_name == agent_model_name,
             TaskAttempt.deprecated == False,  # noqa: E712
             TaskAttempt.created_at >= trials_since,
         ).scalar()
@@ -384,7 +407,7 @@ class AutoBatchRunner(BatchRunner):
         try:
             return self._get_trial_count(
                 db, task_info.task_id,
-                self.config['agent_folder'],
+                self.config['agent_model_name'],
                 self.config['trials_since'],
             )
         finally:
@@ -397,7 +420,7 @@ class AutoBatchRunner(BatchRunner):
         try:
             row = db.query(TaskAttempt.id).filter(
                 TaskAttempt.task_id == task_info.task_id,
-                TaskAttempt.agent_model_name == self.config['agent_folder'],
+                TaskAttempt.agent_model_name == self.config['agent_model_name'],
                 TaskAttempt.deprecated == False,  # noqa: E712
                 TaskAttempt.agent_failed.isnot(True),
                 TaskAttempt.created_at >= self.config['trials_since'],
@@ -424,7 +447,16 @@ class AutoBatchRunner(BatchRunner):
 
     def setup_workspace(self, task_info: TaskInfo) -> str:
         """Create workspace directory and download S3 starting files."""
-        base_dir = Path(self.config['workspace_base_dir']).expanduser()
+        base_override = self.config.get('workspace_base_dir')
+        if base_override:
+            base_dir = Path(base_override).expanduser()
+        elif self.batch_logs_dir is not None:
+            base_dir = Path(self.batch_logs_dir) / "workspaces"
+        else:
+            raise RuntimeError(
+                "No workspace location: set workspace_base_dir in the config, "
+                "or run via run_batch so the batch_logs directory exists."
+            )
         # Use task_name with spaces replaced by underscores for folder names
         # Append timestamp+PID to avoid collisions when multiple processes run concurrently
         folder_name = task_info.task_name.replace(' ', '_')
@@ -569,45 +601,120 @@ class AutoBatchRunner(BatchRunner):
         self._prompt_s3_uris = uris
         return uris
 
-    def upload_result(self, task_info: TaskInfo, workspace_path: str, workspace_result: WorkspaceResult):
-        """Upload result files to S3 and create TaskAttempt in DB.
+    def _model_slug(self) -> str:
+        """Model name safe as one path segment ('openai/gpt-5.2' nests otherwise)."""
+        return self.config['model'].replace('/', '_')
 
-        Path: {root}/attempts/{model}_openpyxl/task_source={src}/task_id={id}/{ts}_file
+    def _v2_upload_files(self, package_dir: Path) -> List[Tuple[Path, str]]:
+        """(local_path, relative_key) pairs for the v2 per-attempt S3 folder.
+
+        solution.xlsx is the only workbook uploaded: starting files come from
+        the task's DB row (tasks.task_starting_files), and intermediate
+        workbook copies live in the local run_logs record — so the S3 attempt
+        record stays unambiguous about which workbook is the result, and a run
+        that produced no solution.xlsx uploads no workbook at all.
+        solution.xlsx sorts first so attempt_files leads with it.
         """
-        agent_folder = self.config['agent_folder']
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Hive-style path: {root}/attempts/{model}_openpyxl/task_source=X/task_id=Y
-        s3_base = f"{self._s3_task_prefix(task_info)}/{timestamp}"
+        def _include(p: Path) -> bool:
+            if p.name == "solution.xlsx":
+                return True
+            return not p.name.lower().endswith(('.xlsx', '.xlsm', '.xlsb', '.xls'))
 
-        workspace = Path(workspace_path)
-        attempt_files = []
+        return [
+            (p, p.relative_to(package_dir).as_posix())
+            for p in sorted(
+                (q for q in package_dir.rglob('*') if q.is_file() and _include(q)),
+                key=lambda q: (q.name != "solution.xlsx", str(q)),
+            )
+        ]
 
-        # Files to upload
-        files_to_upload = []
+    def _build_attempt_package(self, workspace: Path, timestamp: str) -> Path:
+        """Copy everything that reproduces this attempt into run_logs/.
 
-        # solution.xlsx
-        solution_path = workspace / "solution.xlsx"
-        if solution_path.exists():
-            files_to_upload.append((solution_path, f"{s3_base}_solution.xlsx"))
+        Layout of run_logs/attempt-{model}-{timestamp}/:
+          <workspace root files>   starting files + solution.xlsx
+          agent_logs/              requests csv, task.json, transcript.md, ...
+          prompts/                 the exact system prompt + task template(s)
+          config/                  the batch config this run was launched with
 
-        # Find agent_logs directory and its contents
+        Built before any upload, so the local record survives an S3 or DB
+        failure — and survives cleanup_workspace deleting the workspace.
+        """
+        package_dir = RUN_LOGS_DIR / f"attempt-{self._model_slug()}-{timestamp}"
+        package_dir.mkdir(parents=True, exist_ok=True)
+
+        for f in workspace.iterdir():
+            if f.is_file():
+                shutil.copy2(f, package_dir / f.name)
         agent_logs = workspace / "agent_logs"
         if agent_logs.exists():
-            # openai_requests.csv (always at agent_logs level)
-            csv_path = agent_logs / "openai_requests.csv"
-            if csv_path.exists():
-                files_to_upload.append((csv_path, f"{s3_base}_openai_requests.csv"))
+            shutil.copytree(agent_logs, package_dir / "agent_logs", dirs_exist_ok=True)
 
-            # task.json and transcript.md (inside task_id subdirectory)
-            for task_dir in sorted(agent_logs.iterdir()):
-                if task_dir.is_dir() and task_dir.name.startswith("task_"):
-                    task_json = task_dir / "task.json"
-                    if task_json.exists():
-                        files_to_upload.append((task_json, f"{s3_base}_task.json"))
+        prompts_dir = package_dir / "prompts"
+        prompts_dir.mkdir(exist_ok=True)
+        for p in dict.fromkeys([SYSTEM_PROMPT_PATH, TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH]):
+            if p.exists():
+                shutil.copy2(p, prompts_dir / p.name)
 
-                    transcript = task_dir / "transcript.md"
-                    if transcript.exists():
-                        files_to_upload.append((transcript, f"{s3_base}_transcript.md"))
+        config_dir = package_dir / "config"
+        config_dir.mkdir(exist_ok=True)
+        shutil.copy2(self.config_path, config_dir / Path(self.config_path).name)
+
+        return package_dir
+
+    def upload_result(self, task_info: TaskInfo, workspace_path: str, workspace_result: WorkspaceResult):
+        """Package the attempt, keep a local copy, upload to S3, insert the DB row.
+
+        Local (both benchmarks): run_logs/attempt-{model}-{ts}/ — see
+        _build_attempt_package.
+
+        S3, benchmark v2: the whole package mirrors to one folder per attempt,
+          {root}/attempts/cli_agents/{model}/task_id={id}/{ts}/...
+        S3, benchmark v1: the historical flat Hive-style keys are kept so the
+          existing v1 cohort's layout stays uniform,
+          {root}/attempts/{model}_openpyxl/task_source={src}/task_id={id}/{ts}_file
+        """
+        agent_model_name = self.config['agent_model_name']
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        workspace = Path(workspace_path)
+
+        package_dir = self._build_attempt_package(workspace, timestamp)
+        print(f"  📂 Local attempt record: {package_dir}")
+
+        attempt_files = []
+        files_to_upload = []
+
+        if str(self.config.get('benchmark', '')).lower() == 'v2':
+            s3_base = (f"{self._s3_root}/attempts/cli_agents/{self._model_slug()}"
+                       f"/task_id={task_info.task_id}/{timestamp}")
+            for local_path, rel in self._v2_upload_files(package_dir):
+                files_to_upload.append((local_path, f"{s3_base}/{rel}"))
+        else:
+            s3_base = f"{self._s3_task_prefix(task_info)}/{timestamp}"
+
+            # solution.xlsx
+            solution_path = workspace / "solution.xlsx"
+            if solution_path.exists():
+                files_to_upload.append((solution_path, f"{s3_base}_solution.xlsx"))
+
+            # Find agent_logs directory and its contents
+            agent_logs = workspace / "agent_logs"
+            if agent_logs.exists():
+                # openai_requests.csv (always at agent_logs level)
+                csv_path = agent_logs / "openai_requests.csv"
+                if csv_path.exists():
+                    files_to_upload.append((csv_path, f"{s3_base}_openai_requests.csv"))
+
+                # task.json and transcript.md (inside task_id subdirectory)
+                for task_dir in sorted(agent_logs.iterdir()):
+                    if task_dir.is_dir() and task_dir.name.startswith("task_"):
+                        task_json = task_dir / "task.json"
+                        if task_json.exists():
+                            files_to_upload.append((task_json, f"{s3_base}_task.json"))
+
+                        transcript = task_dir / "transcript.md"
+                        if transcript.exists():
+                            files_to_upload.append((transcript, f"{s3_base}_transcript.md"))
 
         # Upload files to S3
         for local_path, s3_key in files_to_upload:
@@ -649,7 +756,7 @@ class AutoBatchRunner(BatchRunner):
             prompt_files=prompt_files,
             start_time=start_time_dt,
             end_time=end_time_dt,
-            agent_model_name=agent_folder,
+            agent_model_name=agent_model_name,
             agent_model_type="api",
             attempt_files=attempt_files,
             time_taken_min=time_taken_min,

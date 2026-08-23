@@ -62,7 +62,6 @@ model: "openai/gpt-5.2"
 auto_mode: true
 
 workspace_base_dir: "./workspaces"
-agent_folder: "openpyxl_openai/gpt-5.2"
 
 max_trials: 7                       # Skip after 7 attempts per task
 trials_since: "2026-02-05"          # Ignore old attempts before this date

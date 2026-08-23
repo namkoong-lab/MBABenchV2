@@ -6,8 +6,9 @@
 # pipeline work end to end" (DB row + all four S3 artifacts), not "how good
 # is the model".
 #
-# Identity (new cohort, no prior attempts under this agent_folder):
-#   DB agent_model_name = agent_folder = openpyxl_anthropic/claude-haiku-4-5-think16k
+# Identity — resolved from the model settings via
+# excel_cli_agent/agent_identities.yaml, no agent_folder key:
+#   DB agent_model_name = openpyxl_anthropic/claude-haiku-4-5-think16k
 #   S3 prefix           = {model}_openpyxl = claude-haiku-4-5_openpyxl
 #
 # Run (from cli-agents-master/, .env holding ANTHROPIC_API_KEY; the DB URL
@@ -21,7 +22,6 @@ auto_mode: true
 benchmark: "v1"                               # BizbenchV1 DB + s3://mbabench/BizbenchV1/
 
 workspace_base_dir: "~/auto_batch_haiku45_v1"
-agent_folder: "openpyxl_anthropic/claude-haiku-4-5-think16k"
 
 # Must be set explicitly: benchmark v1 defaults to v10 (system v10 + fmwc v4
 # = prompt_version 1004), but the cohort this compares against ran v11
