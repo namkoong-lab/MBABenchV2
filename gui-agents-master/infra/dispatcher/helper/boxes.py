@@ -186,6 +186,15 @@ def set_field(alias: str, key: str, value: str) -> None:
     REGISTRY_PATH.write_text("".join(lines))
 
 
+def rename_box(old: str, new: str) -> None:
+    """Change one entry's alias, leaving every other line byte-identical."""
+    lines = REGISTRY_PATH.read_text().splitlines(keepends=True)
+    start, _, _ = _entry_span(lines, old)
+    indent = _ENTRY_RE.match(lines[start]).group(1)  # type: ignore[union-attr]
+    lines[start] = f"{indent}- alias: {new}\n"
+    REGISTRY_PATH.write_text("".join(lines))
+
+
 def add_box(
     *,
     alias: str,

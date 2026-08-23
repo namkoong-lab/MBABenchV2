@@ -9,6 +9,7 @@ Commands:
     python -m infra.dispatcher.dispatch spinup --alias A --config-template F [--instance-type T] [--ami ID]
     python -m infra.dispatcher.dispatch stop (<alias> | --all) [--force]
     python -m infra.dispatcher.dispatch teardown (<alias> | --all)
+    python -m infra.dispatcher.dispatch rename <old_alias> <new_alias> [--skip-tags]
     python -m infra.dispatcher.dispatch status [--follow] [--full]
     python -m infra.dispatcher.dispatch show <alias>
     python -m infra.dispatcher.dispatch assign --n N [--agent X] [--task-source Y]
@@ -1542,6 +1543,19 @@ def main(argv: list[str] | None = None) -> int:
     td.add_argument("--region", default=region_default)
     td.add_argument("-y", "--yes", action="store_true")
 
+    rn = sub.add_parser(
+        "rename",
+        help="change a box's alias in the registry and in its EC2 tags",
+    )
+    rn.add_argument("old_alias")
+    rn.add_argument("new_alias")
+    rn.add_argument("--region", default=region_default)
+    rn.add_argument(
+        "--skip-tags",
+        action="store_true",
+        help="rename the registry only — no AWS calls (leaves the tags stale)",
+    )
+
     st = sub.add_parser("status", help="print state of all boxes")
     st.add_argument("--follow", "-f", action="store_true")
     st.add_argument(
@@ -1636,6 +1650,11 @@ def main(argv: list[str] | None = None) -> int:
         from infra.dispatcher.helper import bootstrap
 
         return bootstrap.cmd_bootstrap(args)
+
+    if args.cmd == "rename":
+        from infra.dispatcher.helper import provision
+
+        return provision.cmd_rename(args)
 
     if args.cmd in ("spinup", "stop", "teardown"):
         # Imported lazily: it pulls in boto3, which the read-only commands

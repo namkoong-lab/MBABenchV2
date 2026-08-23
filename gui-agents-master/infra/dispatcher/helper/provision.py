@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -790,6 +791,85 @@ def _launch(args, cfg, account, sg_id, template, db_url, info, region) -> int:
     print(f"    dispatch login {args.alias}")
     print("    dispatch status")
     print("=" * 56)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# rename
+# ---------------------------------------------------------------------------
+
+# The registry is line-based YAML (see boxes.py) and an alias also lands in an
+# EC2 tag value. Anything outside this set would need quoting to survive the
+# round-trip, or reads as a comment / key separator.
+_ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def cmd_rename(args) -> int:
+    """Point a box at a new alias, in the registry and in its EC2 tags.
+
+    The alias is laptop-side only — nothing on the box records it, so this is
+    safe to run mid-task. What it has to keep in step is the `alias` tag:
+    `teardown --all` and spinup's recovery path filter on it, so a tag left at
+    the old name makes the box unfindable under the name the operator now uses.
+    """
+    old, new = args.old_alias, args.new_alias
+    if old == new:
+        logger.error("old and new alias are the same")
+        return 2
+    if not _ALIAS_RE.match(new):
+        logger.error(
+            f"invalid alias {new!r}: letters, digits, '.', '_' and '-' only, "
+            f"starting with a letter or digit"
+        )
+        return 2
+
+    try:
+        registry = boxes_mod.load_boxes()
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        return 2
+    box = next((b for b in registry if b.alias == old), None)
+    if box is None:
+        known = ", ".join(b.alias for b in registry) or "(none)"
+        logger.error(f"unknown alias {old!r}. Known: {known}")
+        return 2
+    if any(b.alias == new for b in registry):
+        logger.error(f"alias {new!r} is already registered")
+        return 2
+
+    # Tags first, registry second. Both writes can fail, and this is the order
+    # where a failure leaves nothing half-done: if the AWS call throws, the
+    # registry still names the box what every other command expects.
+    if not box.instance_id:
+        logger.warning(f"{old}: no instance_id — renaming the registry only")
+    elif args.skip_tags:
+        logger.warning("--skip-tags: EC2 tags will still say " f"{old!r}")
+    else:
+        try:
+            aws_env.connect(args.region, announce=False)
+        except FleetConfigError as e:
+            logger.error(
+                f"{e}\n  Re-run with --skip-tags to rename the registry alone."
+            )
+            return 2
+        try:
+            aws_env.ec2(args.region).create_tags(
+                Resources=[box.instance_id],
+                Tags=[
+                    {"Key": "alias", "Value": new},
+                    {"Key": "Name", "Value": f"gui-agents-{new}"},
+                ],
+            )
+        except Exception as e:  # noqa: BLE001 — botocore raises a wide family
+            logger.error(
+                f"tagging {box.instance_id} failed: {e}\n"
+                f"  Registry left unchanged — the box is still {old!r}."
+            )
+            return 1
+        print(f"tags:    alias={new}  Name=gui-agents-{new}  ({box.instance_id})")
+
+    boxes_mod.rename_box(old, new)
+    print(f"registry: {old} -> {new}  ({boxes_mod.REGISTRY_PATH})")
     return 0
 
 

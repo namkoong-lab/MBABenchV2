@@ -35,6 +35,30 @@ dispatch teardown --alias chatgpt-pro-1
 dispatch teardown --all
 ```
 
+## Rename a box
+
+Changes the alias in [boxes.yaml](boxes.yaml) **and** the instance's `alias` /
+`Name` EC2 tags, which is why it's a command rather than an edit: `teardown
+--all` and spinup's recovery path filter on `tag:alias`, so a hand-edited
+registry leaves the box unfindable under the name you now use.
+
+The alias is laptop-side only — nothing on the box records it — so renaming is
+safe while a task is in flight.
+
+```bash
+python -m infra.dispatcher.dispatch rename <old_alias> <new_alias>
+
+# Registry only, no AWS calls (leaves the tags stale — for a terminated box,
+# or when the config.yaml credentials aren't to hand)
+python -m infra.dispatcher.dispatch rename <old> <new> --skip-tags
+```
+
+Tags are written before the registry: if the AWS call fails, nothing has
+changed and the box still answers to its old name. It refuses a name that is
+already registered, and restricts the new alias to letters, digits, `.`, `_`
+and `-` — the registry is line-based YAML, and other characters would need
+quoting to survive the round-trip.
+
 ## Inspect boxes
 
 ```bash
