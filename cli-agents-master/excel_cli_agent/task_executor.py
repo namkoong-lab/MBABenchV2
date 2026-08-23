@@ -35,6 +35,7 @@ except ImportError:
 
 from .mcp_client import ExcelMCPClient
 from .models_config import MODEL_PRICING, calculate_cost, resolve_context_window
+from .repo_config import repo_value
 
 
 class TaskStatus(Enum):
@@ -103,15 +104,21 @@ class ExcelTaskExecutor:
             # The api_key argument may be a generic key resolved upstream (cli.py
             # prefers OPENAI_API_KEY when several are set in .env). Only use it
             # here if it is actually an Anthropic key; otherwise fall back to
-            # ANTHROPIC_API_KEY, then to the argument as a last resort.
+            # ANTHROPIC_API_KEY, then the monorepo config, then the argument as
+            # a last resort.
             _looks_anthropic = (api_key or "").startswith("sk-ant-")
             self.api_key = (
                 (api_key if _looks_anthropic else None)
                 or os.getenv("ANTHROPIC_API_KEY")
+                or repo_value("keys", "anthropic_api_key")
                 or api_key
             )
             if not self.api_key:
-                raise ValueError("API key required. Set ANTHROPIC_API_KEY in .env or pass --api-key")
+                raise ValueError(
+                    "API key required. Set ANTHROPIC_API_KEY in .env, "
+                    "keys.anthropic_api_key in <MBABenchV2>/config/config.yaml, "
+                    "or pass --api-key"
+                )
             if not ANTHROPIC_ENABLED:
                 raise ImportError("Anthropic SDK not installed. Run: pip install anthropic")
             self.anthropic_client = anthropic.Anthropic(
@@ -129,9 +136,11 @@ class ExcelTaskExecutor:
             # OpenAI-compatible endpoint (vLLM, SGLang, OpenRouter, etc.)
             # For OpenRouter URLs, prefer the OpenRouter key
             if "openrouter" in self.base_url.lower():
-                self.api_key = os.getenv("OPENROUTER_API_KEY") or api_key or os.getenv("OPENAI_API_KEY") or "no-key"
+                self.api_key = (os.getenv("OPENROUTER_API_KEY") or repo_value("keys", "openrouter_api_key")
+                                or api_key or os.getenv("OPENAI_API_KEY") or "no-key")
             else:
-                self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY") or "no-key"
+                self.api_key = (api_key or os.getenv("OPENAI_API_KEY") or repo_value("keys", "openai_api_key")
+                                or os.getenv("OPENROUTER_API_KEY") or "no-key")
                 self.use_openai_direct = True
         else:
             # No base_url: legacy behavior — sniff OpenRouter key, fall back to OpenAI
@@ -148,7 +157,8 @@ class ExcelTaskExecutor:
             # Legacy anthropic direct flag (for backward compat with existing configs)
             if use_anthropic_direct and ANTHROPIC_ENABLED:
                 self.use_anthropic_direct = True
-                self.api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY") or api_key
+                self.api_key = (anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
+                                or repo_value("keys", "anthropic_api_key") or api_key)
                 if not self.api_key:
                     raise ValueError("API key required for Anthropic direct access")
                 self.anthropic_client = anthropic.Anthropic(

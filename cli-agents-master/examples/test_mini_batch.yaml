@@ -6,6 +6,7 @@
 batch_name: "mini-batch-test"
 model: "openai/gpt-4o-mini"
 auto_mode: true
+benchmark: "v1"                   # BizbenchV1 DB + s3://mbabench/BizbenchV1/
 
 workspace_base_dir: "./workspaces"
 max_iterations: 3

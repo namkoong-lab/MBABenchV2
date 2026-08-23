@@ -1,0 +1,60 @@
+# v1 - task 64 (Order-It-07umtu) on Claude Haiku 4.5, iteration-capped.
+#
+# Cheapest of the three task-64 configs: Haiku 4.5 lists at $1/$5 per MTok
+# vs Sonnet 5's $2/$10 and Fable 5's $10/$50. Paired with a low
+# max_iterations, this is the config to run when the question is "does the
+# pipeline work end to end" (DB row + all four S3 artifacts), not "how good
+# is the model".
+#
+# Identity (new cohort, no prior attempts under this agent_folder):
+#   DB agent_model_name = agent_folder = openpyxl_anthropic/claude-haiku-4-5-think16k
+#   S3 prefix           = {model}_openpyxl = claude-haiku-4-5_openpyxl
+#
+# Run (from cli-agents-master/, .env holding ANTHROPIC_API_KEY; the DB URL
+# and AWS creds come from <MBABenchV2>/config/config.yaml, selected by the
+# benchmark key below):
+#   excel-agent --batch-config examples/v1_task64_haiku45.yaml
+
+batch_name: "v1 - Haiku 4.5 - task 64 (capped)"
+model: "claude-haiku-4-5"                     # Anthropic direct id (not the OpenRouter slug)
+auto_mode: true
+benchmark: "v1"                               # BizbenchV1 DB + s3://mbabench/BizbenchV1/
+
+workspace_base_dir: "~/auto_batch_haiku45_v1"
+agent_folder: "openpyxl_anthropic/claude-haiku-4-5-think16k"
+
+# Must be set explicitly: benchmark v1 defaults to v10 (system v10 + fmwc v4
+# = prompt_version 1004), but the cohort this compares against ran v11
+# (system v11 + fmwc v5 = 1105).
+prompt_version: "v11"
+
+max_trials: 7
+trials_since: "2020-01-01"
+
+tasks:
+  - "Order-It-07umtu"
+
+base_url: "https://api.anthropic.com"         # triggers the Anthropic-direct path
+
+# Haiku 4.5 is a BUDGET-based thinking model, not an effort-based one:
+# output_config={"effort": ...} is rejected with a 400, so this config sets
+# thinking_budget_tokens instead of reasoning_effort. The runner then sends
+# thinking={"type":"enabled","budget_tokens":N}. Constraint: budget_tokens
+# must be >= 1024 and strictly LESS than max_completion_tokens.
+# Do NOT add reasoning_effort here — it takes the effort branch and 400s.
+thinking_budget_tokens: 16000
+max_completion_tokens: 32000                  # Haiku 4.5 output ceiling is 64000
+
+verbose: true
+
+# Execution cap. Hitting it is NOT recorded as a failure: the row lands with
+# agent_failed=false and reason "Max iterations (12) reached", and whatever
+# solution.xlsx exists at that point is still uploaded and gradeable. Raise
+# toward the cohort's 30 for a quality comparison; keep it low for a cheap
+# pipeline check.
+max_iterations: 12
+
+fresh_context_mode: true
+enhanced_excel_context: true
+recent_history_count: 3
+cleanup_workspace: true

@@ -22,8 +22,12 @@ from datetime import datetime, date
 
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
 
+from .db import database as db_config
 from .db.database import SessionLocal
 from .db.models import Task, TaskAttempt
+from .repo_config import (
+    boto3_credentials, describe_database_target, repo_value, resolve_db_url,
+)
 from .prompt_versions import (
     PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, parse_prompt_version,
     rubric_for_prompt_version,
@@ -53,15 +57,17 @@ def _normalize_task_name(name: str) -> str:
 class AutoBatchRunner(BatchRunner):
     """Automated batch runner with DB-driven task discovery, S3 download/upload, and trial management."""
 
-    # Per-benchmark storage wiring. The benchmark also gates a DATABASE_URL
-    # sanity check (see load_config) so a v1 config can never write to the
-    # MBABenchV2 DB or vice versa. Prompts pair with the benchmark by default:
-    # `prompt_version` still picks the prompt set, but load_config defaults it
-    # from `benchmark` and refuses a prompt set embedding the other
-    # benchmark's rubric (EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 overrides).
+    # Per-benchmark storage wiring. The benchmark also selects the database
+    # URL (database.v1_url / v2_url in <repo>/config/config.yaml, see
+    # load_config) so a v1 config can never write to the MBABenchV2 DB or
+    # vice versa. The bucket comes from the same config (aws.s3_bucket).
+    # Prompts pair with the benchmark by default: `prompt_version` still
+    # picks the prompt set, but load_config defaults it from `benchmark` and
+    # refuses a prompt set embedding the other benchmark's rubric
+    # (EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 overrides).
     BENCHMARKS = {
-        "v1": {"bucket": "mbabench", "root": "BizbenchV1", "db_name": "BizbenchV1"},
-        "v2": {"bucket": "mbabench", "root": "MBABenchV2", "db_name": "MBABenchV2"},
+        "v1": {"root": "BizbenchV1", "db_name": "BizbenchV1"},
+        "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2"},
     }
 
     def __init__(self, config_path: str, server_path: str, api_key: str,
@@ -69,15 +75,17 @@ class AutoBatchRunner(BatchRunner):
         super().__init__(config_path, server_path, api_key, custom_reasoning, enable_langfuse)
         self._s3_client = None
         self._prompt_s3_uris: Optional[List[str]] = None
-        # Overwritten from config['benchmark'] in load_config; v1 defaults
-        # preserve the historical behavior of pre-benchmark-key configs.
+        # Placeholders until load_config resolves them from the benchmark
+        # key and the monorepo config.
         self._s3_bucket = "mbabench"
         self._s3_root = "BizbenchV1"
 
     @property
     def s3_client(self):
         if self._s3_client is None:
-            self._s3_client = boto3.client("s3")
+            # Credentials from <repo>/config/config.yaml aws.* when set;
+            # {} falls back to boto3's default chain (env, AWS_PROFILE).
+            self._s3_client = boto3.client("s3", **boto3_credentials())
         return self._s3_client
 
     def _s3_agent_prefix(self) -> str:
@@ -135,10 +143,18 @@ class AutoBatchRunner(BatchRunner):
         if 'agent_folder' not in config:
             config['agent_folder'] = f"openpyxl_{config['model']}"
 
-        # Benchmark selection (v1 default = historical behavior). Gates the
-        # S3 bucket/root and sanity-checks DATABASE_URL so attempts can
-        # never land in the other experiment's store.
-        benchmark = str(config.setdefault('benchmark', 'v1')).lower()
+        # Benchmark selection. Required so a config can never silently
+        # target the wrong experiment; it selects the database URL
+        # (database.v{1,2}_url in <repo>/config/config.yaml, falling back to
+        # DATABASE_URL for Docker/standalone runs) together with the S3 root,
+        # so a v1 run gets v1's store or nothing.
+        if 'benchmark' not in config:
+            raise ValueError(
+                "Missing required field in config: benchmark ('v1' = "
+                "BizbenchV1 wave, 'v2' = MBABenchV2 task set). It selects "
+                "the database, S3 root, and default prompt set together."
+            )
+        benchmark = str(config['benchmark']).lower()
         if benchmark not in self.BENCHMARKS:
             raise ValueError(
                 f"Unknown benchmark '{benchmark}'. Available: "
@@ -146,13 +162,22 @@ class AutoBatchRunner(BatchRunner):
                 f"v2 = MBABenchV2 task set)"
             )
         bench = self.BENCHMARKS[benchmark]
-        self._s3_bucket = bench["bucket"]
+        self._s3_bucket = repo_value("aws", "s3_bucket") or "mbabench"
         self._s3_root = bench["root"]
-        db_url = os.environ.get("DATABASE_URL", "")
-        if db_url and f"/{bench['db_name']}" not in db_url:
+        db_config.configure(benchmark)
+        db_url, db_source = resolve_db_url(benchmark)
+        if not db_url:
+            raise ValueError(
+                f"No database URL for benchmark={benchmark}. Set "
+                f"database.{benchmark}_url in <MBABenchV2>/config/config.yaml "
+                f"or export DATABASE_URL."
+            )
+        # The monorepo layer is selected by benchmark and can't mismatch;
+        # this guards the blind $DATABASE_URL fallback.
+        if f"/{bench['db_name']}" not in db_url:
             raise ValueError(
                 f"benchmark={benchmark} expects a {bench['db_name']} "
-                f"DATABASE_URL, but the configured URL points elsewhere. "
+                f"database, but the URL from {db_source} points elsewhere. "
                 f"Export the {bench['db_name']} connection string (or fix "
                 f"the config's benchmark key) before running."
             )
@@ -196,6 +221,9 @@ class AutoBatchRunner(BatchRunner):
 
         print(f"✅ Configuration loaded: {config['batch_name']}")
         print(f"   Model: {config['model']}")
+        print(f"   Benchmark: {benchmark}")
+        print(f"   Database: {describe_database_target(benchmark)}")
+        print(f"   S3: s3://{self._s3_bucket}/{self._s3_root}/")
         print(f"   Agent folder: {config['agent_folder']}")
         print(f"   Prompt version: {prompt_ver}")
         print(f"   Max iterations: {config['max_iterations']}")
@@ -473,7 +501,9 @@ class AutoBatchRunner(BatchRunner):
         except Exception as e:
             raise RuntimeError(
                 f"Cannot access s3://{self._s3_bucket} ({e}). Check AWS "
-                "credentials (e.g. export AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY). "
+                "credentials (aws.access_key_id / aws.secret_access_key in "
+                "<MBABenchV2>/config/config.yaml, or the boto3 default chain: "
+                "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE). "
                 "Refusing to start: without S3 the batch would run agents on "
                 "empty workspaces and record invalid attempts."
             ) from e
@@ -542,11 +572,11 @@ class AutoBatchRunner(BatchRunner):
     def upload_result(self, task_info: TaskInfo, workspace_path: str, workspace_result: WorkspaceResult):
         """Upload result files to S3 and create TaskAttempt in DB.
 
-        Path: BizbenchV1/attempts/{model}_openpyxl/task_source={src}/task_id={id}/{ts}_file
+        Path: {root}/attempts/{model}_openpyxl/task_source={src}/task_id={id}/{ts}_file
         """
         agent_folder = self.config['agent_folder']
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # New Hive-style path: BizbenchV1/attempts/{model}_openpyxl/task_source=X/task_id=Y
+        # Hive-style path: {root}/attempts/{model}_openpyxl/task_source=X/task_id=Y
         s3_base = f"{self._s3_task_prefix(task_info)}/{timestamp}"
 
         workspace = Path(workspace_path)

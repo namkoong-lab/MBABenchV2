@@ -107,15 +107,34 @@ excel-agent --batch-config batch_config.yaml
 
 ## Configuration
 
+### Database and AWS (monorepo config)
+
+Inside the MBABenchV2 monorepo, the auto pipeline reads infrastructure
+settings from `<MBABenchV2>/config/config.yaml` (via the shared `config`
+module installed by the workspace):
+
+- `database.v1_url` / `database.v2_url` — the batch config's `benchmark:`
+  key selects between them, so switching benchmarks never means editing
+  `.env`. The startup log prints which database was resolved and why.
+- `aws.access_key_id` / `aws.secret_access_key` — S3 credentials
+  (falls back to boto3's default chain: env vars, `AWS_PROFILE`, `~/.aws`).
+- `aws.s3_bucket` — bucket name (default `mbabench`).
+- `keys.anthropic_api_key` / `keys.openai_api_key` /
+  `keys.openrouter_api_key` — model API keys. Env vars (below) take
+  precedence when both are set.
+
 ### Environment Variables
 
-Set in `.env` file (loaded automatically from your working directory) or export in shell:
+API keys can also live in `.env` (loaded automatically from your working
+directory) or the shell, and win over the monorepo config when set.
+`DATABASE_URL` / `AWS_*` are only needed for Docker or standalone
+checkouts, where the monorepo config isn't installed:
 
 ```bash
 # Required
 OPENAI_API_KEY=sk-...
 
-# Required for auto pipeline (DB + S3)
+# Fallbacks for auto pipeline (DB + S3) outside the monorepo
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
 AWS_ACCESS_KEY_ID=AKIA...
 AWS_SECRET_ACCESS_KEY=...

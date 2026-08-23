@@ -8,15 +8,17 @@ batch_name: "Auto Batch - MODEL_DISPLAY_NAME"
 model: "PROVIDER/MODEL_SLUG"          # OpenRouter model slug (e.g., "openai/gpt-5.2", "qwen/qwen3-235b-a22b-thinking-2507")
 auto_mode: true
 
-# Which experiment this run belongs to (default v1 = historical behavior):
+# Which experiment this run belongs to (REQUIRED):
 #   v1 -> BizbenchV1 DB, s3://mbabench/BizbenchV1/..., v1-rubric prompts
 #   v2 -> MBABenchV2 DB, s3://mbabench/MBABenchV2/..., v2-rubric prompts (v12)
-# DATABASE_URL is sanity-checked against this at startup so a mismatched
-# config fails before writing anything. prompt_version (below) defaults from
-# the benchmark; an explicit value must embed the same benchmark's rubric
-# (v1..v11 = the 17-check v1 rubric, v12 = the 132-check v2 rubric) or the
-# run refuses to start. EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 forces a deliberate
-# cross-benchmark run.
+# This key selects the database on its own: database.v1_url / v2_url in
+# <MBABenchV2>/config/config.yaml — no DATABASE_URL swapping in .env.
+# (DATABASE_URL remains the fallback for Docker/standalone runs, and is
+# sanity-checked against the benchmark at startup.) prompt_version (below)
+# defaults from the benchmark; an explicit value must embed the same
+# benchmark's rubric (v1..v11 = the 17-check v1 rubric, v12 = the 132-check
+# v2 rubric) or the run refuses to start. EXCEL_AGENT_SKIP_RUBRIC_GUARD=1
+# forces a deliberate cross-benchmark run.
 benchmark: "v1"
 
 # Where to create workspaces (files downloaded from S3 here)
@@ -25,6 +27,15 @@ workspace_base_dir: "~/auto_batch_MODEL_NAME"    # ~ is expanded automatically
 # Agent folder for S3 paths + DB agent_model_name
 # Convention: "openpyxl_{provider}/{model}"
 agent_folder: "openpyxl_PROVIDER/MODEL_SLUG"
+
+# Pin the prompt set explicitly. One key selects BOTH files (registry:
+# excel_cli_agent/prompt_versions.py, files: excel_cli_agent/prompts/):
+#   v10 -> system_prompt_v10.txt + task_template_fmwc_v4.txt / _wsp_*  (v1 rubric)
+#   v11 -> system_prompt_v11.txt + task_template_fmwc_v5.txt / _wsp_*  (v1 rubric)
+#   v12 -> system_prompt_v12.txt + task_template_shared_v6.txt         (v2 rubric)
+# Omitting it defaults from the benchmark (v1 -> v10, v2 -> v12). Recorded in
+# the DB as system*100 + template (e.g. v11 = 1105).
+prompt_version: "v11"
 
 # Trials mode: max attempts per task+model combo
 max_trials: 7                         # Skip if >= 7 attempts exist (default: 7)

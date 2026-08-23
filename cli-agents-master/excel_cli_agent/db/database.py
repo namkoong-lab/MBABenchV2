@@ -1,39 +1,47 @@
-import os
-from pathlib import Path
-
-import yaml
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-
-def _get_database_url() -> str:
-    """Resolve DATABASE_URL from env var or configs.yaml fallback."""
-    url = os.environ.get("DATABASE_URL")
-    if url:
-        return url
-    # Fallback: look for configs.yaml in common locations
-    for candidate in [
-        Path(__file__).parent / "configs.yaml",
-        Path(__file__).parent.parent / "configs.yaml",
-        Path.cwd() / "configs.yaml",
-    ]:
-        if candidate.exists():
-            with open(candidate) as f:
-                configs = yaml.load(f, Loader=yaml.FullLoader)
-            return configs["DATABASE_URL"]
-    raise RuntimeError(
-        "DATABASE_URL not set. Either set the environment variable or "
-        "create a configs.yaml file."
-    )
-
+from ..repo_config import resolve_db_url
 
 # Base is always available (needed for model definitions)
 Base = declarative_base()
 
 # Engine and session are lazy — only created when first used
 _engine = None
-_SessionLocal = None
+
+# Set by configure() before first DB use so resolve_db_url can pick
+# database.v1_url vs database.v2_url from the monorepo config. None means
+# "no benchmark declared" (e.g. local/legacy modes), which resolves from
+# DATABASE_URL alone.
+_benchmark = None
+
+
+def configure(benchmark: str) -> None:
+    """Pin the benchmark that selects the database URL.
+
+    Must be called before the first session is opened; once the engine
+    exists the URL is baked in, so a benchmark change would silently keep
+    talking to the old database.
+    """
+    global _benchmark
+    if _engine is not None and benchmark != _benchmark:
+        raise RuntimeError(
+            f"Database already connected for benchmark={_benchmark!r}; "
+            f"cannot switch to {benchmark!r} in the same process."
+        )
+    _benchmark = benchmark
+
+
+def _get_database_url() -> str:
+    url, _source = resolve_db_url(_benchmark)
+    if not url:
+        raise RuntimeError(
+            "No database URL. Set database.v1_url / database.v2_url in "
+            "<MBABenchV2>/config/config.yaml (the batch config's `benchmark` "
+            "key selects between them), or export DATABASE_URL."
+        )
+    return url
 
 
 def _get_engine():
