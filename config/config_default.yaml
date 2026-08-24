@@ -52,3 +52,6 @@ keys:
 
 venv_path: null
 
+# cli-agents: which python runs the LibreOffice recalculation helper. See cli-agents-master/plan/libreoffice_recalc.md.
+uno_python: "/usr/bin/python3"
+

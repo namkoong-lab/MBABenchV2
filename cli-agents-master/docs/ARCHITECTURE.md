@@ -140,9 +140,9 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 
 **Batch config YAML** — All runtime parameters: mode selection, cohort (`agent_model_name`), benchmark, iterations, prompt version, task filtering, output paths. See the Config Reference table below for all parameters.
 
-**`<MBABenchV2>/config/config.yaml`** — Monorepo config: model API keys (`keys.*`), database URLs (`database.v1_url` / `v2_url`, selected by the batch config's `benchmark` key) and S3 credentials (`aws.*`).
+**`<MBABenchV2>/config/config.yaml`** — Monorepo config: model API keys (`keys.*`), database URLs (`database.v1_url` / `v2_url`, selected by the batch config's `benchmark` key), S3 credentials (`aws.*`) and the LibreOffice UNO probe interpreter (`uno_python`; on macOS point it at a non-UNO python such as `/usr/bin/python3` so the bundled LibreOffice python's launch-constraint hang doesn't blow the 60s MCP connect timeout).
 
-**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout); `UNO_PYTHON` points UNO probing at a specific interpreter.
+**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `UNO_PYTHON` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
 
 **prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
 
@@ -450,9 +450,9 @@ max_iterations: 30
 ### Credentials
 
 Inside the monorepo, everything is read from `<MBABenchV2>/config/config.yaml`
-(`keys.*`, `database.v1_url` / `v2_url`, `aws.*`). A `.env` in the working
+(`keys.*`, `database.v1_url` / `v2_url`, `aws.*`, `uno_python`). A `.env` in the working
 directory can override the model API key (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) and supply `DATABASE_URL` / `AWS_*`
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or `UNO_PYTHON`, and supply `DATABASE_URL` / `AWS_*`
 for standalone runs where the monorepo config isn't installed.
 
 ## Key Design Patterns

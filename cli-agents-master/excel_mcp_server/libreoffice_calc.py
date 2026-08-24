@@ -25,17 +25,28 @@ _UNO_HELPER_SCRIPT = Path(__file__).parent / "uno_recalc_helper.py"
 
 # Python interpreter with UNO bindings. Resolution order:
 #   1. UNO_PYTHON env var (explicit override)
-#   2. macOS: LibreOffice.app's bundled interpreter (the only UNO-capable
+#   2. `uno_python` in <MBABenchV2>/config/config.yaml (monorepo installs)
+#   3. macOS: LibreOffice.app's bundled interpreter (the only UNO-capable
 #      python on macOS; note its parent launch constraint must be stripped
 #      via ad-hoc codesign before it can be spawned from outside the app)
-#   3. /usr/bin/python3 (Linux default — python3-uno apt package)
+#   4. /usr/bin/python3 (Linux default — python3-uno apt package)
 import os as _os
 import sys as _sys
+
+
+def _repo_uno_python() -> Optional[str]:
+    """`uno_python` from the monorepo config, or None (standalone checkout)."""
+    try:
+        from excel_cli_agent.repo_config import repo_value
+    except ImportError:
+        return None
+    return repo_value("uno_python")
+
 
 # The Resources/python wrapper sets PYTHONPATH/URE bootstrap vars before
 # exec'ing the framework interpreter — required for `import uno` to resolve.
 _MACOS_LO_PYTHON = "/Applications/LibreOffice.app/Contents/Resources/python"
-_SYSTEM_PYTHON = _os.environ.get("UNO_PYTHON") or (
+_SYSTEM_PYTHON = _os.environ.get("UNO_PYTHON") or _repo_uno_python() or (
     _MACOS_LO_PYTHON
     if _sys.platform == "darwin" and _os.path.exists(_MACOS_LO_PYTHON)
     else "/usr/bin/python3"
