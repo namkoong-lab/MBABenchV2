@@ -1,10 +1,16 @@
 """Run configuration: one YAML file fully describes a run.
 
-Secrets are never stored in configs — they come from the environment (or a
-local .env next to this package, loaded if present). Required env vars depend
-on the mode:
-  internal mode: DATABASE_URL, AWS creds (env or ~/.aws), + the agent's API key
-  external mode: only the agent's API key
+The config names its cohort with `agent_model_name`; the entry in
+agent_identities.yaml supplies cli/model/effort/extra_args/env (see
+agent_identity.py). `benchmark: v1|v2` selects the database, the S3 root and
+the prompt-template default together.
+
+Secrets are never stored in run configs:
+  * DB URL and AWS creds come from <MBABenchV2>/config/config.yaml
+    (database.{v1,v2}_url, aws.*) — falling back to DATABASE_URL / boto3's
+    default chain on a standalone checkout (see repo_config.py).
+  * The agent's API key comes from the environment (or a local .env next to
+    this package), falling back to config/config.yaml keys.*.
 """
 import os
 from dataclasses import dataclass, field
@@ -12,10 +18,15 @@ from pathlib import Path
 
 import yaml
 
+from . import repo_config
+from .agent_identity import AgentIdentity, resolve_agent_identity
+
 PACKAGE_DIR = Path(__file__).resolve().parent
 PROMPTS_DIR = PACKAGE_DIR / "prompts"
 
+# Env var name, and the config/config.yaml keys.* fallback, per agent CLI.
 AGENT_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
+AGENT_KEY_CONFIG = {"claude": "anthropic_api_key", "codex": "openai_api_key"}
 
 # Egress allowlist per agent CLI: the model API only — CLI telemetry is
 # disabled via env, and the firewall fails closed on unresolvable domains.
@@ -23,6 +34,14 @@ AGENT_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
 DEFAULT_ALLOWED_DOMAINS = {
     "claude": ["api.anthropic.com"],
     "codex": ["api.openai.com"],
+}
+
+# Keys older run configs carried that now live elsewhere. Refused (not
+# ignored) so a stale prod config gets migrated deliberately.
+STALE_KEYS = {
+    "identity": "renamed to agent_model_name (a label registered in agent_identities.yaml)",
+    "agent": "pinned by the agent_model_name entry in agent_identities.yaml",
+    "internal": "s3 bucket comes from config/config.yaml aws.s3_bucket; the root follows `benchmark`",
 }
 
 
@@ -49,6 +68,11 @@ class AgentConfig:
     extra_args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 
+    @classmethod
+    def from_identity(cls, identity: AgentIdentity) -> "AgentConfig":
+        return cls(cli=identity.cli, model=identity.model, effort=identity.effort,
+                   extra_args=list(identity.extra_args), env=dict(identity.env))
+
 
 @dataclass
 class SandboxConfig:
@@ -65,28 +89,21 @@ class LimitsConfig:
     junk_seconds: int = 180
 
 
-# Per-benchmark storage + DB wiring. `benchmark` in the run config selects
-# the experiment; internal.s3_bucket/s3_root default from it (explicit
-# values in the YAML still win), and require_env() sanity-checks
-# DATABASE_URL against the expected DB name so a mismatched config fails
-# before any attempt runs.
+# Per-benchmark wiring. `benchmark` in the run config selects the experiment:
+# the DB URL (config/config.yaml database.{v1,v2}_url), the S3 root under
+# aws.s3_bucket, and the prompt-template default.
 BENCHMARKS = {
-    "v1": {"bucket": "mbabench", "root": "BizbenchV1", "db_name": "BizbenchV1"},
-    "v2": {"bucket": "mbabench", "root": "MBABenchV2", "db_name": "MBABenchV2"},
+    "v1": {"root": "BizbenchV1", "db_name": "BizbenchV1", "template": "v7"},
+    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v8"},
 }
-
-
-@dataclass
-class InternalConfig:
-    s3_bucket: str = "mbabench"
-    s3_root: str = "BizbenchV1"
+DEFAULT_S3_BUCKET = "mbabench"
 
 
 @dataclass
 class RunConfig:
-    run_name: str
+    agent_model_name: str  # cohort label (task_attempts.agent_model_name, S3 prefix)
+    identity: AgentIdentity
     agent: AgentConfig
-    identity: str
     mode: str  # "internal" | "external"
     benchmark: str = "v1"  # "v1" (BizbenchV1 wave) | "v2" (MBABenchV2 task set)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
@@ -94,8 +111,11 @@ class RunConfig:
     template_version: str = "v7"  # v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
-    internal: InternalConfig = field(default_factory=InternalConfig)
     workspaces_dir: Path = PACKAGE_DIR.parent / "workspaces"
+    config_path: Path | None = None  # the YAML this was loaded from (copied into the attempt dir)
+    # Filled by resolve_secrets() (internal mode only).
+    db_url: str = ""
+    db_source: str = "unresolved"
 
     @property
     def api_key_env(self) -> str:
@@ -105,12 +125,29 @@ class RunConfig:
     def allowed_domains(self) -> list[str]:
         return DEFAULT_ALLOWED_DOMAINS[self.agent.cli] + self.sandbox.network_allow
 
+    @property
+    def s3_bucket(self) -> str:
+        return repo_config.repo_value("aws", "s3_bucket") or DEFAULT_S3_BUCKET
+
+    @property
+    def s3_root(self) -> str:
+        return BENCHMARKS[self.benchmark]["root"]
+
+    def extra_configs(self) -> dict:
+        """What task_attempts.extra_configs records: the identity's pinned
+        settings plus the sandbox image (it pins the CLI version)."""
+        return {**self.identity.extra_configs(), "sandbox_image": self.sandbox.image}
+
 
 def load_config(path: str | Path) -> RunConfig:
-    raw = yaml.safe_load(Path(path).read_text())
-    agent_raw = raw.get("agent") or {}
-    if agent_raw.get("cli") not in AGENT_KEY_ENV:
-        raise ValueError(f"agent.cli must be one of {sorted(AGENT_KEY_ENV)}")
+    path = Path(path)
+    raw = yaml.safe_load(path.read_text()) or {}
+    stale = [k for k in STALE_KEYS if k in raw]
+    if stale:
+        raise ValueError(
+            "run config carries key(s) that no longer belong there:\n"
+            + "\n".join(f"  - {k}: {STALE_KEYS[k]}" for k in stale)
+        )
     if raw.get("mode") not in ("internal", "external"):
         raise ValueError('mode must be "internal" or "external"')
 
@@ -120,31 +157,20 @@ def load_config(path: str | Path) -> RunConfig:
             f'benchmark must be one of {sorted(BENCHMARKS)} '
             f'(v1 = BizbenchV1 wave, v2 = MBABenchV2 task set)'
         )
-    # internal S3 defaults follow the benchmark; explicit YAML values win.
-    internal_raw = dict(raw.get("internal") or {})
-    internal_raw.setdefault("s3_bucket", BENCHMARKS[benchmark]["bucket"])
-    internal_raw.setdefault("s3_root", BENCHMARKS[benchmark]["root"])
 
+    identity = resolve_agent_identity(raw)
     cfg = RunConfig(
-        run_name=raw["run_name"],
-        agent=AgentConfig(
-            cli=agent_raw["cli"],
-            model=agent_raw["model"],
-            effort=agent_raw.get("effort"),
-            extra_args=list(agent_raw.get("extra_args") or []),
-            env=dict(agent_raw.get("env") or {}),
-        ),
-        identity=raw["identity"],
+        agent_model_name=identity.agent_model_name,
+        identity=identity,
+        agent=AgentConfig.from_identity(identity),
         mode=raw["mode"],
         benchmark=benchmark,
         record_trajectory=bool(raw.get("record_trajectory", True)),
         system_prompt=raw.get("system_prompt", "system_prompt_coding_v1.txt"),
-        template_version=raw.get(
-            "template_version", "v8" if benchmark == "v2" else "v7"
-        ),
+        template_version=raw.get("template_version", BENCHMARKS[benchmark]["template"]),
         sandbox=SandboxConfig(**(raw.get("sandbox") or {})),
         limits=LimitsConfig(**(raw.get("limits") or {})),
-        internal=InternalConfig(**internal_raw),
+        config_path=path.resolve(),
     )
     if raw.get("workspaces_dir"):
         cfg.workspaces_dir = Path(raw["workspaces_dir"]).expanduser()
@@ -155,26 +181,43 @@ def load_config(path: str | Path) -> RunConfig:
     return cfg
 
 
-def require_env(cfg: RunConfig) -> None:
-    """Fail fast on missing secrets, before any work is done."""
-    missing = []
-    if not os.environ.get(cfg.api_key_env):
-        missing.append(cfg.api_key_env)
-    if cfg.mode == "internal" and not os.environ.get("DATABASE_URL"):
-        missing.append("DATABASE_URL")
-    if missing:
+def resolve_api_key(cfg: RunConfig) -> str:
+    """The agent's API key: environment first, then config/config.yaml keys.*."""
+    return (os.environ.get(cfg.api_key_env)
+            or repo_config.repo_value("keys", AGENT_KEY_CONFIG[cfg.agent.cli])
+            or "")
+
+
+def resolve_secrets(cfg: RunConfig) -> str:
+    """Fail fast on missing secrets, before any work is done.
+
+    Returns the agent API key and, in internal mode, fills cfg.db_url /
+    cfg.db_source from the benchmark-keyed ladder in repo_config.
+    """
+    api_key = resolve_api_key(cfg)
+    if not api_key:
         raise SystemExit(
-            f"Missing required environment variables: {', '.join(missing)} "
-            f"(set them in the environment or a .env next to coding_agent/)"
+            f"Missing {cfg.api_key_env}: set it in the environment, a .env next "
+            f"to coding_agent/, or <MBABenchV2>/config/config.yaml "
+            f"keys.{AGENT_KEY_CONFIG[cfg.agent.cli]}"
         )
-    # A v1 config writing to the MBABenchV2 DB (or vice versa) would record
-    # attempts against the wrong experiment — refuse before any work runs.
     if cfg.mode == "internal":
-        expected_db = BENCHMARKS[cfg.benchmark]["db_name"]
-        if f"/{expected_db}" not in os.environ.get("DATABASE_URL", ""):
+        cfg.db_url, cfg.db_source = repo_config.resolve_db_url(cfg.benchmark)
+        if not cfg.db_url:
             raise SystemExit(
-                f"benchmark={cfg.benchmark} expects a {expected_db} "
-                f"DATABASE_URL, but the configured URL points elsewhere. "
-                f"Export the {expected_db} connection string or fix the "
-                f"config's benchmark key."
+                f"No database URL for benchmark={cfg.benchmark}: set "
+                f"database.{cfg.benchmark}_url in <MBABenchV2>/config/config.yaml "
+                f"(or DATABASE_URL on a standalone checkout)"
             )
+        # The $DATABASE_URL fallback is benchmark-blind: a v1 config writing
+        # to the MBABenchV2 DB (or vice versa) would record attempts against
+        # the wrong experiment — refuse before any work runs.
+        expected_db = BENCHMARKS[cfg.benchmark]["db_name"]
+        if repo_config.database_name(cfg.db_url) != expected_db:
+            raise SystemExit(
+                f"benchmark={cfg.benchmark} expects the {expected_db} database, "
+                f"but the URL from {cfg.db_source} points at "
+                f"{repo_config.database_name(cfg.db_url)}. Fix the config's "
+                f"benchmark key or the connection string."
+            )
+    return api_key

@@ -18,4 +18,4 @@ dependencies = [
 include = ["coding_agent*"]
 
 [tool.setuptools.package-data]
-coding_agent = ["prompts/*.txt"]
+coding_agent = ["prompts/*.txt", "agent_identities.yaml"]

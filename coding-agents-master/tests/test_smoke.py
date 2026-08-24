@@ -43,6 +43,8 @@ def sandbox_result(tmp: Path, exit_code=0, duration=600.0, timed_out=False) -> S
 def test_config_and_prompt_versions():
     cfg = load_config(ROOT / "run_configs" / "example_fable.yaml")
     assert cfg.agent.cli == "claude" and cfg.mode == "internal"
+    assert cfg.agent.model == "claude-fable-5" and cfg.agent.effort == "max"  # from agent_identities.yaml
+    assert cfg.agent_model_name == "claudecode_anthropic/claude-fable-5-max"
     assert cfg.api_key_env == "ANTHROPIC_API_KEY"
     assert "api.anthropic.com" in cfg.allowed_domains
     assert template_name("modeloff", "v6") == "task_template_fmwc_v6.txt"

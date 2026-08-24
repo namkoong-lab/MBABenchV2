@@ -1,24 +1,25 @@
-# Internal-mode example: Claude Code on Fable 5, one MBABench V1 task.
-# Usage: python -m coding_agent.run_task --config run_configs/example_fable.yaml --task-id 83
-# Secrets from env/.env: ANTHROPIC_API_KEY, DATABASE_URL (+ AWS creds via env or ~/.aws).
-run_name: fable_example
+# v1 - Claude Code on Fable 5 (max effort), one BizbenchV1 task.
+#
+#   python -m coding_agent.run_task --config run_configs/example_fable.yaml --task-id 83
+#
+# Identity — agent_model_name is the ONLY agent key. Its entry in
+# coding_agent/agent_identities.yaml supplies cli (claude), model
+# (claude-fable-5), effort (max), extra_args and env; setting an `agent:`
+# block here refuses to run.
+#   S3     = s3://mbabench/BizbenchV1/attempts/claudecode_anthropic/claude-fable-5-max/...
+#   Local  = workspaces/task{id}_{ts}_{pid}/ (run_config.yaml + prompts/ copied in)
+#
+# Secrets: ANTHROPIC_API_KEY from env/.env (or config/config.yaml keys.*);
+# the DB URL and AWS creds come from <MBABenchV2>/config/config.yaml.
 mode: internal
-identity: claudecode_anthropic/claude-fable-5-max
-agent:
-  cli: claude
-  model: claude-fable-5
-  effort: max            # NOTE: effort pinning flag verified at rung 0; add to extra_args/env as needed
-  extra_args: []
-  env: {}
-template_version: v7     # v7 = GUI-pv9 mirror (default); v6 = CLI adaptation; v5 = byte-exact pv1105
+benchmark: v1                   # BizbenchV1 DB + s3://mbabench/BizbenchV1/ + v7 template
+agent_model_name: claudecode_anthropic/claude-fable-5-max
+
+# Everything below is a run setting, not part of the identity; the values
+# shown are the defaults and may be omitted.
 sandbox:
-  mode: docker           # "host" = UNSANDBOXED (rung-0 debugging only)
+  mode: docker                  # "host" = UNSANDBOXED (rung-0 debugging only)
   image: mbabench-coding-agent:v1
-  cpus: 4
-  memory: 8g
 limits:
-  wall_clock_seconds: 14400   # 4h hard kill
-  junk_seconds: 180           # sub-3-min "successes" go to needs_review
-internal:
-  s3_bucket: mbabench
-  s3_root: BizbenchV1
+  wall_clock_seconds: 14400     # 4h hard kill
+  junk_seconds: 180             # sub-3-min "successes" go to needs_review

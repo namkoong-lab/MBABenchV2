@@ -1,10 +1,14 @@
 """Recorder: persist a validated attempt.
 
-Internal mode — MBABench V1 conventions (same as the CLI wave):
-  S3:  s3://<bucket>/BizbenchV1/attempts/<identity>/task_source=<src>/task_id=<id>/<ts>_<file>
-       s3://<bucket>/BizbenchV1/prompts/<identity>/<ts>_<promptfile>
+Internal mode — same conventions as the CLI wave, root chosen by `benchmark`:
+  S3:  s3://<bucket>/<root>/attempts/<agent_model_name>/task_source=<src>/task_id=<id>/<ts>_<file>
+       s3://<bucket>/<root>/prompts/<agent_model_name>/<ts>_<promptfile>
+       (<root> = BizbenchV1 for v1, MBABenchV2 for v2)
   DB:  INSERT INTO task_attempts (...)  — solution.xlsx is listed FIRST in
-       attempt_files (the judge grades the first xlsx in the list).
+       attempt_files (the judge grades the first xlsx in the list). On
+       MBABenchV2 the row's extra_configs (JSONB) then records the settings
+       the attempt ran under (RunConfig.extra_configs()); BizbenchV1 has no
+       such column, so it is probed and skipped there.
   Verdicts infra_failure / needs_review write NO row (no trial burned; held
   locally); success / timeout / agent_failure write a row.
 
@@ -15,8 +19,9 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from .config import PROMPTS_DIR, RunConfig
+from .config import RunConfig
 from .prompt_builder import prompt_file_paths
+from .repo_config import s3_client
 from .sandbox import SandboxResult
 from .task_source import TaskSpec
 from .validate import Verdict
@@ -25,11 +30,27 @@ from .workspace import Attempt
 RECORDABLE = {"success", "timeout", "agent_failure"}
 
 
+def has_extra_configs_column(db_url: str) -> bool:
+    """True if task_attempts.extra_configs exists (MBABenchV2 only)."""
+    import psycopg2
+
+    conn = psycopg2.connect(db_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'task_attempts' AND column_name = 'extra_configs'"
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
 def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxResult,
            verdict: Verdict, telemetry: dict, prompt_version: int,
            results_dir: Path | None = None) -> dict:
     summary = {
-        "identity": cfg.identity,
+        "agent_model_name": cfg.agent_model_name,
         "task_id": spec.task_id,
         "task_name": spec.task_name,
         "status": verdict.status,
@@ -38,6 +59,7 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
         "prompt_version": prompt_version,
         "cost_usd": telemetry.get("cost_usd"),
         "tokens": telemetry.get("totals"),
+        "extra_configs": cfg.extra_configs(),
         "recorded": False,
     }
 
@@ -45,7 +67,7 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
         dest = (results_dir or Path("results")) / attempt.attempt_dir.name
         dest.mkdir(parents=True, exist_ok=True)
         for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "manifest.json",
-                     "trajectory.jsonl.gz"):
+                     "trajectory.jsonl.gz", "run_config.yaml"):
             src = attempt.attempt_dir / name
             if src.exists():
                 shutil.copy2(src, dest / name)
@@ -62,28 +84,28 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
         (attempt.attempt_dir / "summary.json").write_text(json.dumps(summary, indent=2))
         return summary
 
-    import boto3
     import psycopg2
     from psycopg2.extras import Json
 
-    s3 = boto3.client("s3")
-    bucket, root = cfg.internal.s3_bucket, cfg.internal.s3_root
+    s3 = s3_client()
+    bucket, root = cfg.s3_bucket, cfg.s3_root
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Prompt snapshot (system + the template actually used).
     prompt_uris = []
     for path in prompt_file_paths(cfg, spec.task_source):
-        key = f"{root}/prompts/{cfg.identity}/{ts}_{path.name}"
+        key = f"{root}/prompts/{cfg.agent_model_name}/{ts}_{path.name}"
         s3.upload_file(str(path), bucket, key)
         prompt_uris.append(f"s3://{bucket}/{key}")
 
     # Attempt artifacts — solution first (the judge takes the first xlsx).
-    base = f"{root}/attempts/{cfg.identity}/task_source={spec.task_source}/task_id={spec.task_id}/{ts}"
+    base = f"{root}/attempts/{cfg.agent_model_name}/task_source={spec.task_source}/task_id={spec.task_id}/{ts}"
     uploads = []
     if verdict.solution_path and verdict.solution_path.exists():
         uploads.append((verdict.solution_path, f"{base}_solution.xlsx"))
     uploads.append((attempt.workspace / "PROMPT.md", f"{base}_PROMPT.md"))
-    for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "trajectory.jsonl.gz"):
+    for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "trajectory.jsonl.gz",
+                 "run_config.yaml"):
         path = attempt.attempt_dir / name
         if path.exists():
             uploads.append((path, f"{base}_{name}"))
@@ -94,7 +116,8 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
         attempt_files.append(f"s3://{bucket}/{key}")
 
     agent_failed = verdict.status != "success"
-    conn = psycopg2.connect(__import__("os").environ["DATABASE_URL"])
+    extra_supported = has_extra_configs_column(cfg.db_url)
+    conn = psycopg2.connect(cfg.db_url)
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -111,7 +134,7 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
                     Json(prompt_uris),
                     attempt.started_at,
                     datetime.now(),
-                    cfg.identity,
+                    cfg.agent_model_name,
                     "coding_cli",
                     Json(attempt_files),
                     round(sandbox.duration_seconds / 60.0, 2),
@@ -122,12 +145,19 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
                     prompt_version,
                 ),
             )
-            summary["attempt_id"] = cur.fetchone()[0]
+            attempt_id = cur.fetchone()[0]
+            if extra_supported:
+                cur.execute(
+                    "UPDATE task_attempts SET extra_configs = %s WHERE id = %s",
+                    (Json(cfg.extra_configs()), attempt_id),
+                )
         conn.commit()
     finally:
         conn.close()
 
+    summary["attempt_id"] = attempt_id
     summary["recorded"] = True
+    summary["extra_configs_recorded"] = extra_supported
     summary["attempt_files"] = attempt_files
     (attempt.attempt_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary

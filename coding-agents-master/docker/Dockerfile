@@ -19,10 +19,11 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
 
 RUN useradd -m -u 1001 -s /bin/bash agent
 
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY traj_relay.py /usr/local/bin/traj_relay.py
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh /usr/local/bin/traj_relay.py
+# --chmod: COPY otherwise keeps the host's file mode, and a 640 checkout left
+# traj_relay.py unreadable by the unprivileged agent user that runs it.
+COPY --chmod=755 init-firewall.sh /usr/local/bin/init-firewall.sh
+COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chmod=755 traj_relay.py /usr/local/bin/traj_relay.py
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

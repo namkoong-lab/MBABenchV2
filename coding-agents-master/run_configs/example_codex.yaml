@@ -1,25 +1,11 @@
-# Internal-mode example: Codex on GPT-5.6 Sol at xhigh (the API maximum —
-# the ChatGPT UI's "Ultra" label does not exist as an API value).
-# Usage: python -m coding_agent.run_task --config run_configs/example_codex.yaml --task-id 83
-# Secrets from env/.env: OPENAI_API_KEY, DATABASE_URL (+ AWS creds via env or ~/.aws).
-run_name: codex_example
+# v1 - Codex on GPT-5.6 Sol at xhigh (the API maximum — the ChatGPT UI's
+# "Ultra" label does not exist as an API value), one BizbenchV1 task.
+#
+#   python -m coding_agent.run_task --config run_configs/example_codex.yaml --task-id 83
+#
+# Identity: see coding_agent/agent_identities.yaml (cli codex, model
+# gpt-5.6-sol, effort xhigh). Secrets: OPENAI_API_KEY from env/.env (or
+# config/config.yaml keys.*); DB URL + AWS creds from config/config.yaml.
 mode: internal
-identity: codex_openai/gpt-5.6-sol-xhigh
-agent:
-  cli: codex
-  model: gpt-5.6-sol
-  effort: xhigh
-  extra_args: []
-  env: {}
-template_version: v7
-sandbox:
-  mode: docker
-  image: mbabench-coding-agent:v1
-  cpus: 4
-  memory: 8g
-limits:
-  wall_clock_seconds: 14400
-  junk_seconds: 180
-internal:
-  s3_bucket: mbabench
-  s3_root: BizbenchV1
+benchmark: v1
+agent_model_name: codex_openai/gpt-5.6-sol-xhigh

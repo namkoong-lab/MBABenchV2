@@ -3,28 +3,17 @@
 #
 # Task folder layout:
 #   my_task/
-#     task.yaml            (task_name: ...; task_source: fmwc|modeloff|wsp)
+#     task.yaml            (task_name: ...; task_source: fmwc|modeloff|wsp|jp)
 #     starting_files/      (your input .xlsx/.pdf files)
 #
 # Usage:
-#   export ANTHROPIC_API_KEY=...   (or OPENAI_API_KEY for codex)
+#   export ANTHROPIC_API_KEY=...   (or OPENAI_API_KEY for a codex identity)
 #   python -m coding_agent.run_task --config run_configs/example_external.yaml \
 #       --task-dir ./my_task --results-dir ./results
-run_name: external_example
+#
+# agent_model_name still comes from coding_agent/agent_identities.yaml (it
+# only names the results folder here — no DB row is written); register a
+# new entry there to run a different cli/model/effort.
 mode: external
-identity: external/claude-code
-agent:
-  cli: claude
-  model: claude-fable-5
-  effort: max
-  extra_args: []
-  env: {}
-template_version: v7
-sandbox:
-  mode: docker
-  image: mbabench-coding-agent:v1
-  cpus: 4
-  memory: 8g
-limits:
-  wall_clock_seconds: 14400
-  junk_seconds: 180
+agent_model_name: claudecode_anthropic/claude-fable-5-max
+template_version: v7            # v7 = GUI-pv9 mirror; v8 = v2 rubric mirror; v6/v5 = CLI-wave templates

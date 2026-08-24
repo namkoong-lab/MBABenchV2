@@ -10,9 +10,10 @@ container, producing one Excel workbook per task for the standard MBABench judge
 > pv9-mirror v7 template, the 3-category rubric). v2 targets the
 > MBABenchV2 task set (`MBABenchV2`, `s3://mbabench/MBABenchV2/…`, the
 > v8 template mirroring the 132-check rubric — graded by the agentic
-> judge). DATABASE_URL is checked against the benchmark at startup. It is
-> the third agent surface alongside the GUI pipeline (vendor chat
-> products) and CLI pipeline (raw model APIs in our own harness).
+> judge). The benchmark key picks the database URL, the S3 root and the
+> template together. It is the third agent surface alongside the GUI
+> pipeline (vendor chat products) and CLI pipeline (raw model APIs in our
+> own harness).
 
 ## How it differs from the CLI pipeline
 
@@ -33,7 +34,10 @@ task store -> workspace prep -> sandboxed agent attempt -> validation -> record 
 ```
 coding_agent/            The single-task runner package
   run_task.py            Entry point: one invocation = one attempt of one task
-  config.py              YAML run config + env secrets (fail-fast validation)
+  config.py              YAML run config + secrets resolution (fail-fast validation)
+  repo_config.py         Reads <MBABenchV2>/config/config.yaml (DB URLs, AWS, keys)
+  agent_identity.py      agent_model_name -> pinned cli/model/effort (registry below)
+  agent_identities.yaml  THE registry of cohort labels and what each one runs
   task_source.py         internal (Neon+S3, read-only on tasks) / external (local folder)
   workspace.py           Per-attempt workspace + seeded-file sha256 manifest
   prompt_builder.py      PROMPT.md assembly + prompt_version accounting
@@ -45,13 +49,16 @@ coding_agent/            The single-task runner package
   prompts/               System wrapper + task templates (see Prompts)
 docker/                  Sandbox image: pinned CLIs + default-deny egress firewall
 run_configs/             Example YAML configs (prod configs are untracked)
-tests/test_smoke.py      Offline smoke tests (no Docker/DB/keys needed)
+tools/                   build_v8_template.py (v2 template generator), validate_trajectory.py
+tests/                   Offline tests (no Docker/DB/keys needed)
 ```
 
 ## Setup
 
 1. **Docker** (Docker Desktop on macOS) — the sandbox runtime.
-2. Python deps: `pip install -r requirements.txt` (or `pip install -e .`).
+2. Python deps: `pip install -e .` — or, from the MBABenchV2 root, the
+   workspace install (`setup.sh`), which also makes the shared `config`
+   module importable.
 3. Build the sandbox image (pin CLI versions for a wave):
 
 ```bash
@@ -59,26 +66,61 @@ cd docker && docker build -t mbabench-coding-agent:v1 \
   --build-arg CLAUDE_CODE_VERSION=latest --build-arg CODEX_VERSION=latest .
 ```
 
-4. Secrets — environment only (or a `.env` next to `coding_agent/`; never
-   committed, never written into workspaces):
-   - `ANTHROPIC_API_KEY` (claude) / `OPENAI_API_KEY` (codex)
-   - internal mode additionally: `DATABASE_URL` + AWS credentials (env or `~/.aws`)
+4. Secrets — never in run configs, never written into workspaces:
+   - **DB URLs + AWS creds**: `<MBABenchV2>/config/config.yaml`
+     (`database.v1_url` / `database.v2_url`, `aws.access_key_id` /
+     `aws.secret_access_key`, `aws.s3_bucket`). The run config's `benchmark`
+     picks the URL; nothing to swap between v1 and v2 runs. On a standalone
+     checkout (no `config` module) `DATABASE_URL` and boto3's default chain
+     are the fallback, and the URL is checked against the benchmark.
+   - **Agent API key**: `ANTHROPIC_API_KEY` (claude) / `OPENAI_API_KEY`
+     (codex) from the environment or a `.env` next to `coding_agent/`,
+     falling back to `keys.anthropic_api_key` / `keys.openai_api_key` in
+     `config/config.yaml`.
+
+## Run configs and agent identities
+
+A run config names its cohort with **one** key, `agent_model_name`, and says
+nothing else about the agent:
+
+```yaml
+mode: internal
+benchmark: v2
+agent_model_name: claudecode_anthropic/claude-haiku-4-5
+```
+
+The entry for that label in `coding_agent/agent_identities.yaml` pins `cli`,
+`model`, `effort`, `extra_args` and `env`. The runner refuses to start if the
+config carries an `agent:` block (or the old `identity:` / `internal:` keys),
+if the label is unregistered (it prints the stanza to add), or if two
+registry entries share a label or a `(cli, model, effort)` combination. The
+label is what the judge, `get_results` and the paper tables group rows by, so
+every row under one label is guaranteed to have run the same way. To run
+different settings, add a new entry with a new label — don't edit an existing
+one.
+
+Everything else in a run config is a run setting with a default:
+`template_version` (v7 for v1, v8 for v2), `sandbox` (mode/image/cpus/memory),
+`limits` (wall clock, junk guard), `record_trajectory`, `workspaces_dir`.
 
 ## Running
 
 **Internal (benchmark task by id):**
 ```bash
-python -m coding_agent.run_task --config run_configs/example_fable.yaml --task-id 83
+python -m coding_agent.run_task --config run_configs/example_v2_claude.yaml --task-id 11
 ```
+Startup prints the database it will write to and where that URL came from
+(never the password), the identity's pinned settings, and whether the DB has
+the `extra_configs` column.
 
 **External (your own task, your own key — no MBABench access needed):**
 ```bash
 python -m coding_agent.run_task --config run_configs/example_external.yaml \
     --task-dir ./my_task --results-dir ./results
 ```
-External task folder: `task.yaml` (`task_name`, `task_source: fmwc|modeloff|wsp`)
+External task folder: `task.yaml` (`task_name`, `task_source: fmwc|modeloff|wsp|jp`)
 plus a `starting_files/` directory. Results (workbook, transcript, telemetry,
-verdict, summary) land in the results folder.
+verdict, summary, the run config) land in the results folder.
 
 One invocation runs **one task**. Batch sweeps are driven by a separate
 orchestrator script that calls this in a loop; orchestrators are operational
@@ -106,27 +148,30 @@ One container per attempt, from a pinned image:
 - **System wrapper** `system_prompt_coding_v1.txt` — minimal proctor
   instructions (workspace rules, `solution.xlsx` requirement, no internet,
   work autonomously). New for this pipeline; versioned.
-- **Task templates** — three variants, chosen by `template_version`:
-  - `v7` (default): mirror of the **GUI wave's pv9 prompt** — the byte-exact
+- **Task templates**, chosen by `template_version` (default follows `benchmark`):
+  - `v8` (v2 default): mirror of the **v2 GUI prompt** with the 132-check
+    rubric embedded byte-exact (checksum-guarded). Generated from
+    `gui-agents-master/tasks_configs/prompts_v2/step2_build.txt` by
+    `tools/build_v8_template.py` — regenerate, never hand-edit.
+  - `v7` (v1 default): mirror of the **GUI wave's pv9 prompt** — the byte-exact
     pv9 rubric preamble (all 17 grading criteria with good/bad standards,
     checksum-guarded) + the pv9 three-step closing (`Summary` sheet → model →
     `Answers` sheet), with only harness-necessitated edits: workspace /
     solution.xlsx wording, and pv9's "no code interpreter" ban translated to
     its intent — code may build the workbook, but every calculated value must
     be a live Excel formula. Task-invariant (one template for fmwc/modeloff/
-    wsp), exactly like the GUI wave. Chosen because the GUI, like this
-    pipeline, is a non-proprietary harness. One addendum beyond pv9: a short
-    Excel mechanical-validity section (sheet-name rules, no formulas-as-text,
-    no circular refs, no undefined names) — rules the Excel UI enforced for
-    free for GUI agents but nothing enforces when writing files with code.
+    wsp), exactly like the GUI wave. One addendum beyond pv9: a short Excel
+    mechanical-validity section (sheet-name rules, no formulas-as-text, no
+    circular refs, no undefined names) — rules the Excel UI enforced for free
+    for GUI agents but nothing enforces when writing files with code.
   - `v6`: the pv1105 CLI-wave template structure adapted for coding agents
     (rubric-blind, like the CLI task templates alone).
   - `v5`: **byte-exact** copies of the pv1105 CLI-wave templates, frozen and
     checksum-guarded. They reference harness tools that don't exist here —
     kept only for strict prompt-comparability experiments.
 - `prompt_version` recorded per attempt = system version × 100 + template
-  version (v1 wrapper + v7 → **107**; + v6 → 106; + v5 → 105), continuing the
-  CLI pipeline's numbering scheme (its wave was 1105; GUI was 9).
+  version (v1 wrapper + v8 → **108**; + v7 → 107; + v6 → 106; + v5 → 105),
+  continuing the CLI pipeline's numbering scheme (its wave was 1105; GUI was 9).
 
 ## Trajectory recording
 
@@ -163,40 +208,55 @@ untouched/renamed input can never be banked) · ran longer than the junk guard
 
 ## Recording (internal mode)
 
-Same conventions as the CLI wave — `task_attempts` row (identity, prompt
-version, timing, `agent_failed`, cost) + S3 artifacts under
-`s3://mbabench/BizbenchV1/attempts/<identity>/task_source=<src>/task_id=<id>/`,
+Same conventions as the CLI wave — `task_attempts` row (`agent_model_name`,
+prompt version, timing, `agent_failed`, cost, `agent_model_type =
+"coding_cli"`) + S3 artifacts under
+`s3://mbabench/<BizbenchV1|MBABenchV2>/attempts/<agent_model_name>/task_source=<src>/task_id=<id>/`,
 with `solution.xlsx` first in `attempt_files` (the judge grades the first
-xlsx). New artifacts per attempt: the full agent transcript
-(`transcript.jsonl`), `telemetry.json` (per-turn token usage), and
-`verdict.json`. Cost comes from the CLI's own usage report (Claude Code
-reports `total_cost_usd`; Codex reports tokens only, so cost is null there) —
-there is deliberately no hand-maintained price table.
+xlsx). Artifacts per attempt: the full agent transcript (`transcript.jsonl`),
+`telemetry.json` (per-turn token usage), `verdict.json`, the trajectory
+capture, and `run_config.yaml` (the config the attempt ran with). Cost comes
+from the CLI's own usage report (Claude Code reports `total_cost_usd`; Codex
+reports tokens only, so cost is null there) — there is deliberately no
+hand-maintained price table.
 
-First-wave identities:
+On MBABenchV2 the row's `extra_configs` (JSONB) additionally records the
+identity's pinned settings plus the sandbox image, so a row can be audited
+without trusting the registry file. BizbenchV1 has no such column; it is
+probed at startup and skipped.
+
+Locally, every attempt dir (`workspaces/task{id}_{ts}_{pid}/`) also holds
+`run_config.yaml` and `prompts/` (the exact system prompt + template), written
+before the agent starts — the record survives an upload failure.
+
+Registered cohorts:
 `claudecode_anthropic/claude-fable-5-max` · `codex_openai/gpt-5.6-sol-xhigh`
-(`agent_model_type = "coding_cli"`).
+(v1 wave) · `claudecode_anthropic/claude-haiku-4-5` (pipeline shakeout only).
 
 ## Judging
 
-Unchanged: the existing `judge/` pipeline, V1 rubric and weights, grades these
-attempts exactly like any others.
+Unchanged: the existing `judge/` pipeline grades these attempts exactly like
+any others (V1 rubric for v1 rows; the agentic judge + rubric_9 for v2 — see
+`judge/project_configs.yaml`).
 
 ## Rollout ladder (spend nothing until each rung passes)
 
 1. **Rung 0** — one cheap task, `sandbox.mode: host`: verify the CLI bills the
    **API key** (not a logged-in subscription) and that model/effort settings
    are actually applied (check the transcript's model/usage fields). Adjust
-   `agent.extra_args`/`agent.env` as needed — no code changes.
-2. **Ladder** — two known tasks under throwaway identities, full Docker path:
+   the identity's `extra_args`/`env` as needed — no code changes.
+2. **Ladder** — two known tasks under a throwaway identity, full Docker path:
    verify DB row, S3 artifacts, judgeability. Discard rows after.
 3. **Pilot** — small graded batch; calibrate cost/task and the wall-clock cap.
-4. **Wave** — full 206 × 2 agents via the orchestrator, with monitoring.
+4. **Wave** — the full task set × agents via the orchestrator, with monitoring.
 
 ## Tests
 
 ```bash
-python3 tests/test_smoke.py
+python3 tests/test_smoke.py             # config, prompts, validation verdicts, telemetry
+python3 tests/test_benchmark_config.py  # v1/v2 switch + v8 template guard
+python3 tests/test_agent_identity.py    # identity registry rules
+python3 tests/test_repo_config.py       # config/config.yaml resolution ladder
+python3 -m pytest tests/test_relay.py   # trajectory relay
 ```
-Offline: config loading, prompt assembly + version math, all validation
-verdicts, telemetry parsers. No Docker, DB, S3, or keys required.
+Offline. No Docker, DB, S3, or keys required.

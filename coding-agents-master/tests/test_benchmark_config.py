@@ -20,12 +20,8 @@ from coding_agent.prompt_builder import (  # noqa: E402
 
 def _cfg(extra: str) -> str:
     base = """
-run_name: t
 mode: internal
-identity: test_identity
-agent:
-  cli: claude
-  model: claude-haiku-4-5
+agent_model_name: claudecode_anthropic/claude-haiku-4-5
 """
     with tempfile.NamedTemporaryFile(
         "w", suffix=".yaml", delete=False
@@ -39,21 +35,24 @@ def main() -> int:
     v1 = load_config(_cfg(""))
     assert v1.benchmark == "v1"
     assert v1.template_version == "v7"
-    assert (v1.internal.s3_bucket, v1.internal.s3_root) == ("mbabench", "BizbenchV1")
-    print("OK  default config -> v1, v7, mbabench/BizbenchV1")
+    assert v1.s3_root == "BizbenchV1"
+    print("OK  default config -> v1, v7, BizbenchV1 root")
 
-    # v2: bucket/root/template flip together.
+    # v2: root/template flip together.
     v2 = load_config(_cfg("benchmark: v2\n"))
     assert v2.benchmark == "v2"
     assert v2.template_version == "v8"
-    assert (v2.internal.s3_bucket, v2.internal.s3_root) == ("mbabench", "MBABenchV2")
-    print("OK  benchmark v2 -> v8, mbabench/MBABenchV2")
+    assert v2.s3_root == "MBABenchV2"
+    assert v2.s3_bucket  # from config/config.yaml aws.s3_bucket or the default
+    print("OK  benchmark v2 -> v8, MBABenchV2 root")
 
-    # explicit internal overrides still win.
-    v2b = load_config(_cfg("benchmark: v2\ninternal:\n  s3_bucket: custom\n"))
-    assert v2b.internal.s3_bucket == "custom"
-    assert v2b.internal.s3_root == "MBABenchV2"
-    print("OK  explicit internal.s3_bucket override wins")
+    # the old internal: stanza is refused, not silently honoured.
+    try:
+        load_config(_cfg("benchmark: v2\ninternal:\n  s3_root: BizbenchV1\n"))
+        raise AssertionError("internal: should be refused")
+    except ValueError as e:
+        assert "internal" in str(e)
+        print("OK  stale internal: stanza refused")
 
     # bad benchmark refused.
     try:
