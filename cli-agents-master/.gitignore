@@ -46,7 +46,6 @@ htmlcov/
 .env.local
 .env.*.local
 .env.*
-!.env.example
 
 # Local workspaces and generated Excel artifacts
 excel_workspace/

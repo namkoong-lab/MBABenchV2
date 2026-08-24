@@ -8,7 +8,7 @@ import yaml
 from excel_cli_agent import agent_identity as ai
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
-TEMPLATE = EXAMPLES_DIR.parent / "batch_config_template_auto.yaml"
+TEMPLATE = EXAMPLES_DIR / "batch_config_template_auto.yaml"
 
 HAIKU = "openpyxl_anthropic/claude-haiku-4-5-think16k"
 

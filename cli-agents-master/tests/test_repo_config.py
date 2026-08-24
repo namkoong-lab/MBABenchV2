@@ -59,7 +59,7 @@ def test_repo_config_beats_env(config_dir, monkeypatch):
 
 def test_env_fallback_when_no_repo_config(tmp_path, monkeypatch):
     # Empty directory: Config.load fails (no config_default.yaml), so the
-    # ladder must fall through to $DATABASE_URL — the Docker/standalone path.
+    # ladder must fall through to $DATABASE_URL — the standalone path.
     monkeypatch.setenv(repo_config.REPO_CONFIG_DIR_ENV, str(tmp_path))
     monkeypatch.setenv("DATABASE_URL", V1_URL)
     assert repo_config.resolve_db_url("v1") == (V1_URL, "$DATABASE_URL")

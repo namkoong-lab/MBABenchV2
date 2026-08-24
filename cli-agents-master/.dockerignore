@@ -1,8 +1,0 @@
-.git
-.env
-*.egg-info
-__pycache__
-workspaces
-batch_logs
-*.log
-.venv

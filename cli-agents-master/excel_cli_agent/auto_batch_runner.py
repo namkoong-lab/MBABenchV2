@@ -172,7 +172,7 @@ class AutoBatchRunner(BatchRunner):
         # Benchmark selection. Required so a config can never silently
         # target the wrong experiment; it selects the database URL
         # (database.v{1,2}_url in <repo>/config/config.yaml, falling back to
-        # DATABASE_URL for Docker/standalone runs) together with the S3 root,
+        # DATABASE_URL for standalone runs) together with the S3 root,
         # so a v1 run gets v1's store or nothing.
         if 'benchmark' not in config:
             raise ValueError(

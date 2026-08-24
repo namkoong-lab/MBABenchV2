@@ -40,7 +40,7 @@ To use this framework for a different benchmark:
 1. **Input layer**: Point `workspaces[].path` to your task folders (local mode), or populate the `tasks` DB table (auto mode)
 2. **Agent core**: Customize prompts in `excel_cli_agent/prompts/` — the system prompt and task template control agent behavior
 3. **Output layer**: Local mode writes to `results_dir/` with `attempts.jsonl` — no infrastructure setup needed
-4. **MCP tools**: Add domain-specific tools in `excel_mcp_server/tools/` (see `docs/EXTENDING.md`)
+4. **MCP tools**: Add domain-specific tools in `excel_mcp_server/tools/`
 
 ## Component Guide
 
@@ -50,7 +50,7 @@ Each component below corresponds to a box in the system architecture diagram. Co
 
 The input layer determines where tasks come from and how workspaces are set up. You choose one by setting `auto_mode` or `local_mode` in your config YAML.
 
-**AutoBatchRunner** (`auto_batch_runner.py`) — Queries the PostgreSQL `tasks` table for work, downloads starting files from S3, and after execution uploads results back to S3 and writes a `task_attempts` row. Used for production benchmarking at scale. Requires DB and S3 credentials in `.env`.
+**AutoBatchRunner** (`auto_batch_runner.py`) — Queries the PostgreSQL `tasks` table for work, downloads starting files from S3, and after execution uploads results back to S3 and writes a `task_attempts` row. Used for production benchmarking at scale. DB and S3 settings come from `<MBABenchV2>/config/config.yaml` (`DATABASE_URL` / `AWS_*` env vars are the fallback for standalone checkouts).
 
 **LocalBatchRunner** (`local_batch_runner.py`) — Reads task files from local folders you specify in `workspaces[].path`. No database, no S3, no cloud credentials needed. Results are saved to `results_dir/` with an `attempts.jsonl` log. Best for development, testing new prompts, or running on a single machine.
 
@@ -98,7 +98,7 @@ The MCP server provides the agent's capabilities — everything the model can ac
 - **Formatting tools** (3) — `format_cells`, `freeze_panes`, `set_column_width`. Applied in later iterations, after calculation work is done.
 - **Meta tools** (2) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check).
 
-> **To customize:** Add new tools for your domain in `excel_mcp_server/tools/`. Each tool is an async function decorated with `@mcp.tool()` that returns a JSON string. See `docs/EXTENDING.md` for the template. Common extensions: adding chart generation, pivot table creation, or domain-specific validation rules.
+> **To customize:** Add new tools for your domain in `excel_mcp_server/tools/`. Each tool is an async function decorated with `@mcp.tool()` that returns a JSON string; follow the existing tools in the same module. Common extensions: adding chart generation, pivot table creation, or domain-specific validation rules.
 
 **Formula Validator** (`formula_validator.py`) — Seven rejection gates that every formula passes through before being written: placeholder check, constant check, string check, worksheet existence, reference validation, syntax check, and circular reference detection. Rejects invalid formulas with helpful error messages that teach the agent to self-correct.
 
@@ -134,13 +134,15 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 - **OpenRouter** (`"openrouter"` in URL) — Prefers OpenRouter API key. Supports `reasoning_effort` parameter.
 - **OpenAI-compatible** (anything else) — Standard chat completions. Works with OpenAI, vLLM, SGLang, or any compatible endpoint.
 
-> **To customize:** Set `base_url` in your config YAML or `.env`. Add new model configurations (pricing, token limits) in `models_config.py`.
+> **To customize:** `base_url` is pinned by the `agent_model_name` entry in `excel_cli_agent/agent_identities.yaml`. Add a new entry there for a new model cohort; static pricing fallbacks live in `models_config.py`.
 
 ### Configuration
 
-**config.yaml** — All runtime parameters: mode selection, model, iterations, prompt version, task filtering, output paths. See the Config Reference table below for all parameters.
+**Batch config YAML** — All runtime parameters: mode selection, cohort (`agent_model_name`), benchmark, iterations, prompt version, task filtering, output paths. See the Config Reference table below for all parameters.
 
-**.env** — API keys and infrastructure credentials. Loaded from the working directory. Only `OPENAI_API_KEY` (or one alternative) is required for local mode.
+**`<MBABenchV2>/config/config.yaml`** — Monorepo config: model API keys (`keys.*`), database URLs (`database.v1_url` / `v2_url`, selected by the batch config's `benchmark` key) and S3 credentials (`aws.*`).
+
+**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout); `UNO_PYTHON` points UNO probing at a specific interpreter.
 
 **prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
 
@@ -189,8 +191,8 @@ excel-cli-agent/
 │       └── type_inference.py     # Cell type detection
 │
 ├── pyproject.toml                # Package config, deps, entry point
-├── Dockerfile                    # Containerized deployment
 └── examples/
+    ├── batch_config_template_auto.yaml  # Auto mode template, all options
     ├── local/
     │   └── test_local.yaml       # Local mode (no DB/S3 needed)
     ├── v1/                       # benchmark: v1 configs
@@ -378,12 +380,13 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `auto_mode` | bool | false | auto | Enable auto mode (DB + S3 pipeline) |
 | `batch_name` | string | required | both | Run identifier |
 | **Model** | | | | |
-| `agent_model_name` | string | required | auto | Cohort label; an entry in `excel_cli_agent/agent_identities.yaml` that supplies all of the keys below. Setting any of them in an auto-mode config refuses to run |
-| `model` | string | required | local only | Model slug (e.g. `openai/gpt-4o-mini`). Auto mode: pinned by the agent identity |
-| `base_url` | string | auto-detected | local only | API endpoint. Omit for default (OpenRouter if key set, else OpenAI). Auto mode: pinned by the agent identity |
-| `max_completion_tokens` | int | 16000 | local only | Max tokens for model output. Auto mode: pinned by the agent identity |
-| `reasoning_effort` | string | null | local only | `none`, `low`, `medium`, `high`, `xhigh`. Auto mode: pinned by the agent identity |
-| `thinking_budget_tokens` | int | null | local only | For Anthropic extended thinking. Auto mode: pinned by the agent identity |
+| `agent_model_name` | string | required | both | Cohort label; an entry in `excel_cli_agent/agent_identities.yaml` that supplies all of the keys below. Setting any of them in the config refuses to run |
+| `model` | string | — | registry | Model slug (e.g. `openai/gpt-4o-mini`). Pinned by the agent identity |
+| `base_url` | string | — | registry | API endpoint. Pinned by the agent identity |
+| `max_completion_tokens` | int | — | registry | Max tokens for model output. Pinned by the agent identity |
+| `reasoning_effort` | string | — | registry | `none`, `low`, `medium`, `high`, `xhigh`. Pinned by the agent identity |
+| `thinking_budget_tokens` | int | — | registry | For Anthropic extended thinking. Pinned by the agent identity |
+| `benchmark` | string | required | auto | `v1` (BizbenchV1 DB/S3) or `v2` (MBABenchV2 DB/S3); also picks the default `prompt_version` |
 | **Task input** | | | | |
 | `workspaces` | list | required | local | `[{path: "./folder/"}]` — folders with task files |
 | `tasks` | list | — | auto | Explicit task names from DB |
@@ -391,10 +394,10 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `task_type` | string | `fmwc` | local | Template selection: `fmwc` or `wsp` |
 | **Execution** | | | | |
 | `max_iterations` | int | 30 | both | Max agent iterations per task |
-| `prompt_version` | string | `v10` | both | Prompt version (see `prompt_versions.py`) |
-| `fresh_context_mode` | bool | false | local only | Reload xlsx each iteration. Auto mode: pinned by the agent identity, refused in the config |
-| `enhanced_excel_context` | bool | true | local only | Grid format for Excel context. Auto mode: pinned by the agent identity |
-| `recent_history_count` | int | 5 | local only | Recent tool calls replayed in fresh context. Auto mode: pinned by the agent identity |
+| `prompt_version` | string | `v10` (v1) / `v12` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric |
+| `fresh_context_mode` | bool | — | registry | Reload xlsx each iteration. Pinned by the agent identity |
+| `enhanced_excel_context` | bool | — | registry | Grid format for Excel context. Pinned by the agent identity |
+| `recent_history_count` | int | — | registry | Recent tool calls replayed in fresh context. Pinned by the agent identity |
 | `api_timeout_seconds` | int | 180 | both | API call timeout |
 | **Output** | | | | |
 | `workspace_base_dir` | string | required | both | Where fresh workspaces are created |
@@ -404,7 +407,7 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `max_trials` | int | 7 | auto | Skip task after N attempts |
 | `trials_since` | string | today | auto | Only count attempts after this date |
 
-In auto mode the cohort label (DB `agent_model_name`) is the only model key
+In both modes the cohort label (DB `agent_model_name`) is the only model key
 in the config. Its entry in `excel_cli_agent/agent_identities.yaml` supplies
 `model`, `reasoning_effort`, `thinking_budget_tokens`, `max_completion_tokens`,
 `base_url`, `fresh_context_mode`, `enhanced_excel_context` and
@@ -421,14 +424,13 @@ otherwise add a new entry with a new label.
 ```yaml
 local_mode: true
 batch_name: "my-run"
-model: "openai/gpt-4o-mini"
+agent_model_name: "openpyxl_openai/gpt-4o-mini"   # entry in agent_identities.yaml
 workspaces:
   - path: "./my_task_files/"
 workspace_base_dir: "./workspaces"
 results_dir: "./results"
 max_iterations: 30
 prompt_version: "v10"
-# base_url: "http://localhost:8000/v1"  # vLLM/SGLang
 ```
 
 ### Auto Mode Example
@@ -436,34 +438,22 @@ prompt_version: "v10"
 ```yaml
 auto_mode: true
 batch_name: "my-run"
-model: "openai/gpt-5.2"
+benchmark: "v2"
+agent_model_name: "openpyxl_openai/gpt-5.2-none"  # entry in agent_identities.yaml
 workspace_base_dir: "./workspaces"
 tasks: ["Task-Name"]
 max_trials: 7
 trials_since: "2026-02-05"
 max_iterations: 30
-prompt_version: "v10"
-# base_url: "https://openrouter.ai/api/v1"
 ```
 
-### Credentials (.env)
+### Credentials
 
-```bash
-# API key (at least one; auto-selected based on base_url)
-OPENAI_API_KEY=sk-...
-OPENROUTER_API_KEY=sk-or-...       # Optional
-ANTHROPIC_API_KEY=sk-ant-...       # Optional
-
-# API endpoint (optional; auto-detects provider)
-# BASE_URL=http://localhost:8000/v1
-
-# Required for auto mode only
-DATABASE_URL=postgresql://...
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
-```
-
-The `.env` file is loaded from the working directory where `excel-agent` is run.
+Inside the monorepo, everything is read from `<MBABenchV2>/config/config.yaml`
+(`keys.*`, `database.v1_url` / `v2_url`, `aws.*`). A `.env` in the working
+directory can override the model API key (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) and supply `DATABASE_URL` / `AWS_*`
+for standalone runs where the monorepo config isn't installed.
 
 ## Key Design Patterns
 
@@ -478,7 +468,7 @@ The `.env` file is loaded from the working directory where `excel-agent` is run.
 ## Deployment Notes
 
 - **Max 4 concurrent processes per machine** — each runs its own LibreOffice instance. More causes memory pressure and crashes.
-- **Credentials**: `.env` at repo root with API keys, `DATABASE_URL`, AWS keys.
+- **Credentials**: `<MBABenchV2>/config/config.yaml`; `.env` only for overrides / standalone runs (see Credentials above).
 - **After code changes**: always `pip install .` to update the installed package.
 - **Killing a stuck run**: `kill <PID>`. LibreOffice subprocesses may linger — clean with `pkill -f soffice`.
 - **Logs**: `batch_logs/batch_<timestamp>/` (per-batch reports).

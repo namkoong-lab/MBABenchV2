@@ -16,8 +16,10 @@ excel-agent --batch-config auto_config.yaml
 #### Auto Configuration Example
 ```yaml
 auto_mode: true
+batch_name: "my-run"
+benchmark: "v2"                          # v1 (BizbenchV1) or v2 (MBABenchV2)
+agent_model_name: "openpyxl_openai/gpt-5.2-none"  # entry in agent_identities.yaml
 workspace_base_dir: "/path/to/workspaces"
-model: "openai/gpt-5.2"
 max_iterations: 30
 max_trials: 7
 trials_since: "2026-02-05"
@@ -79,7 +81,6 @@ config verbose true
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) - System architecture, modular layers, data flow
 - [`DEVELOPMENT_HISTORY.md`](./DEVELOPMENT_HISTORY.md) - Complete evolution timeline
-- [`EXTENDING.md`](./EXTENDING.md) - How to add tools, prompts, and models
 
 ## Current Status
 
@@ -88,4 +89,4 @@ config verbose true
 - Auto pipeline with DB + S3 integration
 - 206 tasks (148 FMWC + 60 ModelOff + 47 WSP, minus deprecated)
 - Multiple models benchmarked via OpenRouter + Anthropic direct
-- v10 prompt as current default
+- v10 prompt as default for v1 tasks, v12 for v2 tasks

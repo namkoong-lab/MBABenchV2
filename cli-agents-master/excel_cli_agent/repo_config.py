@@ -11,7 +11,7 @@ RESOLUTION ORDER (database url and AWS keys alike), first hit wins:
 
   1. the monorepo config — the only benchmark-aware layer.
   2. the environment (DATABASE_URL / boto3's default chain). This is the
-     Docker and standalone-checkout path, where the `config` module does
+     standalone-checkout path, where the `config` module does
      not exist and the env var is all there is.
 
 Model API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) stay in .env — the
@@ -39,7 +39,7 @@ def repo_value(*path: str) -> Optional[str]:
     resolves it from any cwd. This wrapper adds the three things that import
     does not give you:
 
-    * It never raises. A Docker image or standalone checkout has no config/
+    * It never raises. A standalone checkout has no config/
       directory, so the import fails there — and that failure IS the signal
       to fall through to the environment, not an error.
     * It never writes. Config.load() defaults to create_missing=True, which

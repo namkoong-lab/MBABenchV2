@@ -25,7 +25,7 @@ agent_model_name: "openpyxl_openai/gpt-5.2-none"
 #   v2 -> MBABenchV2 DB, s3://mbabench/MBABenchV2/..., v2-rubric prompts (v12)
 # This key selects the database on its own: database.v1_url / v2_url in
 # <MBABenchV2>/config/config.yaml — no DATABASE_URL swapping in .env.
-# (DATABASE_URL remains the fallback for Docker/standalone runs, and is
+# (DATABASE_URL remains the fallback for standalone runs, and is
 # sanity-checked against the benchmark at startup.) prompt_version (below)
 # defaults from the benchmark; an explicit value must embed the same
 # benchmark's rubric (v1..v11 = the 17-check v1 rubric, v12 = the 132-check
@@ -70,7 +70,6 @@ max_iterations: 10
 api_timeout_seconds: 600
 cleanup_workspace: true                   # Delete workspace after S3 upload (default: true)
 
-# task_template is AUTO-SELECTED per task based on task_source:
-#   fmwc/modeloff -> batch_config_template.yaml
-#   wsp -> batch_config_template_wsp.yaml
-# Override by setting task_template: here (rarely needed)
+# The task template is auto-selected per task from its task_source (fmwc/
+# modeloff vs wsp) via PROMPT_VERSIONS in excel_cli_agent/prompt_versions.py;
+# there is no per-config override.

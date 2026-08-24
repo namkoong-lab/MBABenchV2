@@ -54,7 +54,7 @@ excel-agent \
 
 The auto pipeline handles everything: DB task lookup, S3 file download, task execution, result upload, and trial management.
 
-Copy `batch_config_template_auto.yaml` and customize:
+Copy `examples/batch_config_template_auto.yaml` and customize:
 
 ```yaml
 batch_name: "Auto Batch - My Model"
@@ -126,7 +126,7 @@ module installed by the workspace):
 
 API keys can also live in `.env` (loaded automatically from your working
 directory) or the shell, and win over the monorepo config when set.
-`DATABASE_URL` / `AWS_*` are only needed for Docker or standalone
+`DATABASE_URL` / `AWS_*` are only needed for standalone
 checkouts, where the monorepo config isn't installed:
 
 ```bash
@@ -179,7 +179,7 @@ excel_cli_agent/prompts/
 ├── task_template_fmwc_v4.txt      # Task-specific template (FMWC/ModelOff)
 └── task_template_wsp_v1.txt       # Task-specific template (WSP)
 ```
-Create a new `_v{N+1}.txt` file and set `prompt_version` in your config. See `docs/EXTENDING.md`.
+Create a new `_v{N+1}.txt` file, register it in `PROMPT_VERSIONS` in `excel_cli_agent/prompt_versions.py`, and set `prompt_version` in your config. Never edit a versioned file in place once it has been used in a run — results must stay reproducible against the exact prompt text that produced them.
 
 ### Add Domain-Specific Tools
 ```
@@ -189,11 +189,12 @@ excel_mcp_server/tools/
 ├── analysis_tools.py              # scan_structure, search, summarize
 └── formatting_tools.py            # format_cells, freeze_panes, ...
 ```
-Add a new `@mcp.tool()` function. See `docs/EXTENDING.md` for template.
+Add a new `@mcp.tool()` async function that returns a JSON string, following the existing tools in the same module.
 
 ### Configure Runs
 ```
 examples/
+├── batch_config_template_auto.yaml  # Full auto mode template with all options
 ├── local/
 │   └── test_local.yaml            # Local mode template (no DB/S3)
 ├── v1/                            # benchmark: v1 (BizbenchV1 DB/S3)
@@ -201,7 +202,6 @@ examples/
 │   └── test_mini_batch.yaml       # Auto mode, 3 tasks
 └── v2/                            # benchmark: v2 (MBABenchV2 DB/S3)
     └── v2_task_corpbond_haiku45.yaml  # Single v2 task end-to-end check
-batch_config_template_auto.yaml    # Full auto mode template with all options
 ```
 
 ### Output Format
@@ -212,10 +212,9 @@ batch_config_template_auto.yaml    # Full auto mode template with all options
 
 For detailed information, see:
 
-- **docs/ARCHITECTURE.md** - System architecture, modular layers, data flow
-- **docs/EXTENDING.md** - Adding tools, prompts, and models
-- **CONTRIBUTING.md** - Dev setup and code style
-- **docs/ARCHITECTURE.md** - Full reference (DB schema, config, design patterns)
+- **docs/ARCHITECTURE.md** - System architecture, data flow, DB schema, config reference
+- **excel_cli_agent/agent_identities.yaml** - Adding a model cohort (`agent_model_name`)
+- **pyproject.toml** - Dev extras (`pip install -e ".[dev]"`), ruff and pytest settings
 
 ## Troubleshooting
 
