@@ -2,34 +2,28 @@
 Get all modeloff tasks and download their files from S3.
 
 Usage:
-    source judge/project_configs.sh
     python judge/operation_scripts/get_modeloff.py [--output-dir DIR]
 """
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
 
-import boto3
 import psycopg2
 import psycopg2.extras
 
 # Add judge/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from utils.misc_utils import load_project_configs
+from utils import repo_config
+from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 
 # Load configs into env vars
 load_project_configs()
 
 
 def get_db_connection():
-    db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        print("Error: BIZBENCHJUDGE_KEYS_DATABASE_URL not set.")
-        sys.exit(1)
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(get_db_url())
 
 
 def get_default_output_dir():
@@ -101,12 +95,14 @@ def download_task_files(s3_client, task, task_dir):
 def main():
     default_dir = get_default_output_dir()
     parser = argparse.ArgumentParser(description="Download modeloff task files from S3")
+    add_benchmark_arg(parser)
     parser.add_argument(
         "--output-dir",
         default=str(default_dir),
         help=f"Root output directory (default: {default_dir})",
     )
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
     output_dir = Path(args.output_dir)
 
     conn = get_db_connection()
@@ -143,7 +139,7 @@ def main():
         print(f"  [{t['id']}] {t['task_name']} — {reason}")
 
     # Download files
-    s3_client = boto3.client("s3")
+    s3_client = repo_config.s3_client()
 
     for label, task_list in [("with_solutions", with_solutions), ("without_solutions", without_solutions)]:
         for task in task_list:

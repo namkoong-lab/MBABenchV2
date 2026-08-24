@@ -25,9 +25,7 @@ is true are excluded from averages by default and counted in ``ctx_red``;
 pass ``--include-context-reduced`` to fold them in.
 
 Usage:
-    source judge/project_configs.sh
-
-    python judge/main_scripts/report_grading_coverage.py \\
+    python judge/main_scripts/report_grading_coverage.py --benchmark v2 \\
         --plan judge/operation_scripts/judge_plan/0007_.../plan.yaml
 
     # Different reasoning effort, dump per-attempt CSV.
@@ -58,7 +56,7 @@ _judge_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_judge_root))
 
 from utils.logger import logger
-from utils.misc_utils import load_project_configs
+from utils.misc_utils import add_benchmark_arg, load_project_configs
 
 load_project_configs()
 
@@ -796,6 +794,7 @@ def main() -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    add_benchmark_arg(parser)
     parser.add_argument(
         "--plan",
         type=Path,
@@ -865,6 +864,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
 
     weights = {
         "accuracy": args.w_accuracy,

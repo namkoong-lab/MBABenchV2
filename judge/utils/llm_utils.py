@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from .logger import logger
 from .misc_utils import load_env_var
+from .repo_config import resolve_api_key
 
 # Retry constants
 BASE_DELAY = 1
@@ -35,11 +36,13 @@ _clients_lock = threading.Lock()
 
 
 def _openrouter_override() -> set:
-    """Model slugs forced through OpenRouter via env JUDGE_OPENROUTER_MODELS
-    (comma-separated). Lets capped/retired Google models (e.g. the 250-req/day
-    gemini-3.1-pro preview) run through OpenRouter without touching configs.
-    The OpenRouter key is read from env OPENROUTER_API_KEY (never persisted)."""
-    v = os.environ.get("JUDGE_OPENROUTER_MODELS", "")
+    """Model slugs forced through OpenRouter (comma-separated): env
+    JUDGE_OPENROUTER_MODELS overrides judge.openrouter_models in
+    project_configs.yaml. Lets capped/retired Google models run through
+    OpenRouter without touching configs."""
+    v = os.environ.get("JUDGE_OPENROUTER_MODELS") or str(
+        load_env_var("JUDGE_OPENROUTER_MODELS", default="")
+    )
     return {s.strip() for s in v.split(",") if s.strip()}
 
 
@@ -144,27 +147,23 @@ def get_client(model: str) -> OpenAI:
         client = _clients.get(provider)
         if client is not None:
             return client
+        # Keys: environment first, then <MBABenchV2>/config/config.yaml keys.*
         if provider == "gemini":
             client = OpenAI(
                 base_url=_GEMINI_BASE_URL,
-                api_key=load_env_var("KEYS_GEMINI_KEY", required=True),
+                api_key=resolve_api_key("gemini"),
             )
         elif provider == "anthropic":
             client = OpenAI(
                 base_url=_ANTHROPIC_BASE_URL,
-                api_key=load_env_var("KEYS_ANTHROPIC_KEY", required=True),
+                api_key=resolve_api_key("anthropic"),
             )
         elif provider == "openai":
-            client = OpenAI(
-                # default OpenAI base URL; key is env-only (never persisted)
-                api_key=os.environ["OPENAI_API_KEY"],
-            )
+            client = OpenAI(api_key=resolve_api_key("openai"))
         else:
             client = OpenAI(
                 base_url=_OPENROUTER_BASE_URL,
-                # Env key first (session-scoped, never persisted); config key as fallback.
-                api_key=os.environ.get("OPENROUTER_API_KEY")
-                or load_env_var("KEYS_OPEN_ROUTER_API_KEY", required=True),
+                api_key=resolve_api_key("openrouter"),
             )
         _clients[provider] = client
         return client

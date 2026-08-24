@@ -16,8 +16,7 @@ Parallelism model:
       logger is a module-level singleton and concurrent handlers would cross
       contaminate log files.
 
-Usage:
-    source judge/project_configs.sh
+Usage (--benchmark v1|v2 selects DB, S3 root and rubric):
 
     # Use in-file defaults (DEFAULT_MODELS, DEFAULT_MODELS_PROMPT_VERSION, DEFAULT_TASK_IDS)
     python judge/main_scripts/grade_with_orchestration.py
@@ -59,6 +58,7 @@ sys.path.insert(0, str(_judge_root))
 from utils.llm_utils import get_client
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
+    add_benchmark_arg,
     load_env_var,
     load_project_configs,
     relative_path_from_project_root,
@@ -807,6 +807,7 @@ def main():
         description="Grade attempts filtered by model+prompt_version+task, in parallel.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    add_benchmark_arg(parser)
 
     # Task selection
     task_group = parser.add_mutually_exclusive_group()
@@ -945,6 +946,7 @@ def main():
     )
 
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
 
     # Resolve paths
     rubric_path = str(
@@ -968,14 +970,14 @@ def main():
             )
         )
     )
-    scratch_base = os.environ.get("SCRATCH_PATH") or str(
+    scratch_base = str(
         relative_path_from_project_root(
             load_env_var("PATHS_SCRATCH_PATH", default="./scratch")
         )
     )
 
-    # Refuse to start if rubric, check_order, DATABASE_URL, and the S3
-    # grading tree don't all belong to the same benchmark (v1 vs v2).
+    # Refuse to start if rubric, check_order and judge mode don't all belong
+    # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
 
     run_id = time.strftime("%Y%m%d_%H%M%S")

@@ -5,27 +5,27 @@ Usage:
     python judge/operation_scripts/list_agent_models.py
 """
 
-import os
+import argparse
 import sys
 from pathlib import Path
 
 import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from utils.misc_utils import load_project_configs
+from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 
 load_project_configs()
 
 
 def get_db_connection():
-    db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        print("Error: BIZBENCHJUDGE_KEYS_DATABASE_URL not set.")
-        sys.exit(1)
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(get_db_url())
 
 
 def main():
+    parser = argparse.ArgumentParser(description="List distinct agent_model_name values")
+    add_benchmark_arg(parser)
+    args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:

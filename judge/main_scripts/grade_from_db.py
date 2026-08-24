@@ -5,11 +5,11 @@ Fetches attempt records from the DB, downloads the required files
 from tasks.task_solution_files), sets up task folders under the scratch path,
 runs judge_case() for each attempt, and writes grading results back to the DB.
 
-Usage:
-    source judge/project_configs.sh
-    python judge/main_scripts/grade_from_db.py --attempt-ids 1 2 3
-    python judge/main_scripts/grade_from_db.py --task-ids 4 5
-    python judge/main_scripts/grade_from_db.py --attempt-ids 1 --dry-run
+Usage (--benchmark selects the DB, S3 grading root and rubric pair; DB URL,
+AWS creds and API keys come from <MBABenchV2>/config/config.yaml):
+    python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 2 3
+    python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --task-ids 4 5
+    python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 --dry-run
     python judge/main_scripts/grade_from_db.py --attempt-ids 1 --no-db-write
 """
 
@@ -31,12 +31,16 @@ from urllib.parse import urlparse
 _judge_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_judge_root))
 
-import boto3
 import psycopg2
 import psycopg2.extras
 from utils.llm_utils import get_client
 from utils.logger import add_log_file, logger, remove_log_file
+from utils import repo_config
 from utils.misc_utils import (
+    BENCHMARKS,
+    add_benchmark_arg,
+    current_benchmark,
+    get_db_url,
     load_env_var,
     load_project_configs,
     relative_path_from_project_root,
@@ -152,20 +156,8 @@ def add_agentic_cli_args(parser):
 # ---------------------------------------------------------------------------
 
 
-def get_db_url():
-    """Return the Postgres URL from DATABASE_URL (or the config-derived var)."""
-    db_url = os.environ.get("DATABASE_URL")
-    if not db_url:
-        db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        raise EnvironmentError(
-            "DATABASE_URL not set. Run: source judge/project_configs.sh"
-        )
-    return db_url
-
-
 def get_db_connection():
-    """Create a PostgreSQL connection using DATABASE_URL env var."""
+    """Create a PostgreSQL connection to the selected benchmark's database."""
     return psycopg2.connect(get_db_url())
 
 
@@ -183,32 +175,17 @@ def cache_namespace() -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", db_name) or "default"
 
 
-# Documented rubric <-> store pairings (README + project_configs.example.yaml):
-# rubric_version 8 grades the BizbenchV1 wave, rubric_version 9 the MBABenchV2
-# task set. Legacy rubric versions have no preset and skip the pairing check.
-BENCHMARK_PRESETS = {
-    "8": {
-        "db_name": "BizbenchV1",
-        "s3_bucket": "mbabench",
-        "s3_prefix_root": "BizbenchV1",
-    },
-    "9": {
-        "db_name": "MBABenchV2",
-        "s3_bucket": "mbabench",
-        "s3_prefix_root": "MBABenchV2",
-    },
-}
-
 V1_CATEGORY_SET = {"Accuracy", "Formula", "Formatting"}
 
 
 def validate_benchmark_coherence(rubric_path, force_agentic, force_no_agentic):
     """Fail fast when a run mixes v1 and v2 benchmark settings.
 
-    Mirrors the startup guards in the agent pipelines: a grading run must not
-    read attempts from one benchmark's DB while grading with the other's
-    rubric, check_order, or S3 grading tree. Called before any DB or S3 work
-    so a misconfigured run dies without side effects. Set
+    --benchmark pins the rubric pair, check_order and S3 root together
+    (utils.misc_utils.BENCHMARKS) and get_db_url() refuses a URL naming the
+    other database, so what is left to check is that the rubric file on disk
+    still matches its check_order and that a non-v1 rubric goes through the
+    agentic judge. Called before any DB or S3 work. Set
     JUDGE_SKIP_BENCHMARK_GUARD=1 to bypass for one-off cross-benchmark
     experiments (logged loudly).
     """
@@ -223,11 +200,10 @@ def validate_benchmark_coherence(rubric_path, force_agentic, force_no_agentic):
     ]
     if set(check_order) != rubric_categories:
         sys.exit(
-            f"Benchmark config error: judge.check_order {sorted(set(check_order))} "
+            f"Benchmark config error: check_order {sorted(set(check_order))} "
             f"does not match the categories of {rubric_path} "
-            f"{sorted(rubric_categories)}. Update judge.check_order in "
-            f"project_configs.yaml to the rubric's category list (both presets "
-            f"are documented in project_configs.example.yaml)."
+            f"{sorted(rubric_categories)}. Update BENCHMARKS in "
+            f"utils/misc_utils.py to the rubric's category list."
         )
 
     if os.environ.get("JUDGE_SKIP_BENCHMARK_GUARD") == "1":
@@ -237,53 +213,20 @@ def validate_benchmark_coherence(rubric_path, force_agentic, force_no_agentic):
         )
         return
 
-    if rubric_categories != V1_CATEGORY_SET:
+    benchmark = current_benchmark()
+    if BENCHMARKS[benchmark]["agentic_required"] or rubric_categories != V1_CATEGORY_SET:
+        why = (
+            f"The standard judge is blocked on {Path(rubric_path).name} because "
+            f"judge_template_7_0.yaml hardcodes one stage per v1 category. "
+            f"TODO: a template whose stages are generated from JUDGE_CHECK_ORDER "
+            f"would lift this. Until then, grade {benchmark} with --agentic."
+        )
         if force_no_agentic:
-            sys.exit(
-                f"Benchmark config error: --no-agentic forces the standard "
-                f"judge, but {rubric_path} is not the 3-category v1 rubric. "
-                f"Non-v1 rubrics (e.g. the v2 rubric_9) must be graded with "
-                f"the agentic judge."
-            )
+            sys.exit(f"Benchmark config error: --no-agentic forces the standard judge. {why}")
         if not force_agentic:
-            sys.exit(
-                f"Benchmark config error: {rubric_path} is not the 3-category "
-                f"v1 rubric, so every attempt must go through the agentic "
-                f"judge. Re-run with --agentic."
-            )
+            sys.exit(f"Benchmark config error: {why}")
 
-    preset = BENCHMARK_PRESETS.get(
-        str(load_env_var("JUDGE_RUBRIC_VERSION", default=""))
-    )
-    if not preset:
-        return
-
-    db_name = urlparse(get_db_url()).path.lstrip("/").rsplit("/", 1)[-1]
-    if db_name != preset["db_name"]:
-        sys.exit(
-            f"Benchmark config error: rubric_version "
-            f"{load_env_var('JUDGE_RUBRIC_VERSION')} grades the "
-            f"{preset['db_name']} database, but DATABASE_URL points at "
-            f"{db_name!r}. Point DATABASE_URL at {preset['db_name']} or "
-            f"switch the judge config to the other benchmark preset."
-        )
-
-    s3_bucket = load_env_var("S3_RAW_FILES_BUCKET", default=None)
-    s3_prefix = load_env_var("S3_RAW_FILES_PREFIX", default=None)
-    if s3_bucket and s3_bucket != preset["s3_bucket"]:
-        sys.exit(
-            f"Benchmark config error: rubric_version "
-            f"{load_env_var('JUDGE_RUBRIC_VERSION')} uploads gradings to "
-            f"bucket {preset['s3_bucket']!r}, but s3.raw_files_bucket is "
-            f"{s3_bucket!r}."
-        )
-    if s3_prefix and not s3_prefix.startswith(preset["s3_prefix_root"]):
-        sys.exit(
-            f"Benchmark config error: rubric_version "
-            f"{load_env_var('JUDGE_RUBRIC_VERSION')} uploads gradings under "
-            f"{preset['s3_prefix_root']}/..., but s3.raw_files_prefix is "
-            f"{s3_prefix!r}."
-        )
+    logger.info(f"Database: {repo_config.describe_database_target(benchmark)}")
 
 
 def fetch_attempts_by_ids(conn, attempt_ids):
@@ -444,7 +387,7 @@ _s3_client = None
 def _get_s3_client():
     global _s3_client
     if _s3_client is None:
-        _s3_client = boto3.client("s3")
+        _s3_client = repo_config.s3_client()
     return _s3_client
 
 
@@ -984,7 +927,7 @@ def write_grading_to_db(conn, attempt, result, model, agentic=False):
 
 def main(args):
     """Fetch attempts from DB, grade each, and optionally store results."""
-    load_project_configs()
+    load_project_configs(benchmark=args.benchmark)
 
     # Resolve config paths
     rubric_path = str(
@@ -1010,18 +953,15 @@ def main(args):
     )
     model = args.model
 
-    # Refuse to start if rubric, check_order, DATABASE_URL, and the S3
-    # grading tree don't all belong to the same benchmark (v1 vs v2).
+    # Refuse to start if rubric, check_order and judge mode don't all belong
+    # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
 
-    # Resolve scratch path
-    scratch_base = os.environ.get("SCRATCH_PATH")
-    if not scratch_base:
-        scratch_base = str(
-            relative_path_from_project_root(
-                load_env_var("PATHS_SCRATCH_PATH", default="./scratch")
-            )
+    scratch_base = str(
+        relative_path_from_project_root(
+            load_env_var("PATHS_SCRATCH_PATH", default="./scratch")
         )
+    )
 
     run_id = time.strftime("%Y%m%d_%H%M%S")
     scratch_run_dir = Path(scratch_base) / "grade_runs" / run_id
@@ -1377,25 +1317,26 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Grade specific attempts
-  python judge/main_scripts/grade_from_db.py --attempt-ids 1 2 3
+  # Grade specific v1 attempts
+  python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 2 3
 
-  # Grade all attempts for given tasks
-  python judge/main_scripts/grade_from_db.py --task-ids 4 5
+  # Grade all v2 attempts for given tasks (v2 requires the agentic judge)
+  python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --task-ids 4 5
 
   # Preview without grading
-  python judge/main_scripts/grade_from_db.py --attempt-ids 1 --dry-run
+  python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 --dry-run
 
   # Grade without writing to DB
-  python judge/main_scripts/grade_from_db.py --attempt-ids 1 --no-db-write
+  python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 --no-db-write
 
   # Test file preparation only (no API calls)
-  python judge/main_scripts/grade_from_db.py --attempt-ids 1 --nocall
+  python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 --nocall
 
   # Resolve relative DB paths against a local directory
-  python judge/main_scripts/grade_from_db.py --attempt-ids 1 --files-base-dir /data
+  python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 --files-base-dir /data
 """,
     )
+    add_benchmark_arg(parser)
 
     # ID selection (mutually exclusive)
     id_group = parser.add_mutually_exclusive_group(required=True)

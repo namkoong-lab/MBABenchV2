@@ -2,7 +2,6 @@
 Download task files from S3 for specific task IDs.
 
 Usage:
-    source judge/project_configs.sh
     python judge/operation_scripts/get_tasks.py TASK_ID [TASK_ID ...]
     python judge/operation_scripts/get_tasks.py 1 2 3
 """
@@ -11,13 +10,13 @@ import argparse
 import sys
 from pathlib import Path
 
-import boto3
 import psycopg2
 import psycopg2.extras
 
 # Add judge/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from utils.misc_utils import load_project_configs
+from utils import repo_config
+from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 
 import os
 
@@ -26,11 +25,7 @@ load_project_configs()
 
 
 def get_db_connection():
-    db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        print("Error: BIZBENCHJUDGE_KEYS_DATABASE_URL not set.")
-        sys.exit(1)
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(get_db_url())
 
 
 def get_scratch_path():
@@ -89,8 +84,10 @@ def download_task_files(s3_client, task, task_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="Download task files from S3 by task ID")
+    add_benchmark_arg(parser)
     parser.add_argument("task_ids", nargs="+", type=int, help="Task IDs to download")
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
 
     conn = get_db_connection()
     try:
@@ -109,7 +106,7 @@ def main():
 
     scratch = get_scratch_path()
     output_dir = scratch / "tasks"
-    s3_client = boto3.client("s3")
+    s3_client = repo_config.s3_client()
 
     for task in tasks:
         task_dir = output_dir / f"task_id={task['id']}"

@@ -21,8 +21,7 @@ Outputs two files under
   - ``report.yaml``  Selection echo, counts, and gap analysis (which agent x task
                      cells are missing, and why).
 
-Usage:
-    source judge/project_configs.sh
+Usage (--benchmark v1|v2 selects DB, S3 root and rubric):
 
     # By default uses DEFAULT_TASK_IDS / DEFAULT_AGENTS at the top of this file.
     python judge/operation_scripts/generate_judge_plan.py
@@ -42,8 +41,6 @@ Usage:
 
 import argparse
 import importlib.util
-import json
-import os
 import re
 import sys
 import time
@@ -62,6 +59,7 @@ sys.path.insert(0, str(_judge_root))
 from utils.excel_utils import calculate_message_size_for_files
 from utils.logger import logger, remove_log_file
 from utils.misc_utils import (
+    add_benchmark_arg,
     load_env_var,
     load_project_configs,
     relative_path_from_project_root,
@@ -795,6 +793,7 @@ def main():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    add_benchmark_arg(parser)
 
     # Task selection
     parser.add_argument("--task-ids", type=int, nargs="+", default=None)
@@ -928,6 +927,7 @@ def main():
     )
 
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
 
     # Resolve env-driven config
     judge_model = load_env_var("JUDGE_OPENROUTER_MODEL", required=True)
@@ -955,11 +955,8 @@ def main():
     )
 
     scratch_base = Path(
-        os.environ.get("SCRATCH_PATH")
-        or str(
-            relative_path_from_project_root(
-                load_env_var("PATHS_SCRATCH_PATH", default="./scratch")
-            )
+        relative_path_from_project_root(
+            load_env_var("PATHS_SCRATCH_PATH", default="./scratch")
         )
     )
 

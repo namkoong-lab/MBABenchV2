@@ -1,0 +1,57 @@
+# Judge settings that do NOT depend on the benchmark. Tracked; no secrets.
+#
+# What is deliberately absent, and where it lives instead:
+#   database URL, AWS creds, API keys  -> <MBABenchV2>/config/config.yaml
+#                                          (database.{v1,v2}_url, aws.*, keys.*)
+#   rubric pair, check_order, S3 root  -> utils/misc_utils.py BENCHMARKS,
+#                                          selected per run by --benchmark v1|v2
+#
+# Every key is exported as {project.name}_{SECTION}_{KEY} by
+# utils/misc_utils.load_project_configs().
+
+project:
+  name: "BizbenchJudge" # env-var prefix (BIZBENCHJUDGE_*)
+
+paths:
+  scratch_path: "scratch"   # relative to judge/
+  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation
+
+miscs:
+  logger_name: "bizbench_judge"
+  log_to_terminal: true
+
+judge:
+  # Increment on significant changes to prompt template, rubric, or grading logic.
+  version: 5
+
+  prompt_template: "prompts/judge_template_7_0.yaml"
+  prompt_version: "7.0"
+
+  rubric_max_mistakes: 1
+
+  do_rounding: true
+  float_rounding: 6
+  percentage_rounding: 8
+  fast_cell_extract: true
+
+  # Per-call trajectory recording (utils/trajectory.py), uploaded with the grading.
+  record_trajectory: true
+
+  # Default grader model (override with --model).
+  openrouter_model: "google/gemini-2.5-pro"
+
+  # google/* slugs forced through OpenRouter instead of Gemini-direct (comma-separated,
+  # exact match). Add any google/* slug you pass to --model, or it hits Google's endpoint.
+  openrouter_models: "google/gemini-2.5-pro,google/gemini-2.5-flash,google/gemini-2.5-flash-lite,google/gemini-3.5-flash"
+
+  default_total_character_limit: 2_000_000
+  default_solution_context_char_limit: 1_000_000
+  default_attempt_context_char_limit: 1_000_000
+
+agentic_judge:
+  version: 2
+  prompt_template: "prompts/agentic_judge_template_4.yaml"
+  prompt_version: "4"
+  context_token_limit: 850000   # below GPT-5.6 Sol's 922k input cap so eviction fires before a 400
+  max_rounds: 50
+  read_file_max_cells: 2500     # drop to ~1200 for stubborn overflow cells

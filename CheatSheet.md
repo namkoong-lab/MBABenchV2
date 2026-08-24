@@ -3,9 +3,12 @@
 
 ## Running judges
 
-Decide V1 or V2. Use project_configs_v2.yaml or project_configs_v1.yaml
+`--benchmark` picks the DB, S3 root and rubric; DB URL, AWS creds and API keys come from config/config.yaml.
 
-Then run AWS_PROFILE=mbabench JUDGE_OPENROUTER_MODELS=google/gemini-2.5-pro python judge/main_scripts/grade_from_db.py --attempt-ids x
+```bash
+python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids x
+python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --attempt-ids x
+```
 
 ## Running Claude GUI
 

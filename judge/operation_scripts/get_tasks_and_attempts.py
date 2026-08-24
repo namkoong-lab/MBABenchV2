@@ -3,7 +3,6 @@ Download task files and associated attempt files from S3 for specific task IDs.
 Only downloads attempts from specified models, excluding failed/deprecated attempts.
 
 Usage:
-    source judge/project_configs.sh
     python judge/operation_scripts/get_tasks_and_attempts.py TASK_ID [TASK_ID ...] --models MODEL [MODEL ...]
     python judge/operation_scripts/get_tasks_and_attempts.py 1 2 3 --models "gpt-4o" "claude-sonnet-4-20250514"
 """
@@ -12,7 +11,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import boto3
 import psycopg2
 import psycopg2.extras
 
@@ -20,7 +18,8 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
 
-from utils.misc_utils import load_project_configs
+from utils import repo_config
+from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 
 # Load configs into env vars
 load_project_configs()
@@ -50,11 +49,7 @@ DEFAULT_MODELS_PROMPT_VERSION: dict[str, int] = {
 
 
 def get_db_connection():
-    db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        print("Error: BIZBENCHJUDGE_KEYS_DATABASE_URL not set.")
-        sys.exit(1)
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(get_db_url())
 
 
 def get_scratch_path():
@@ -233,6 +228,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Download task files and associated attempts from S3"
     )
+    add_benchmark_arg(parser)
     parser.add_argument("task_ids", nargs="*", type=int, help="Task IDs to download")
     parser.add_argument(
         "--all",
@@ -252,6 +248,7 @@ def main():
         help="Output directory for downloaded files (default: $SCRATCH/tasks).",
     )
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
 
     if not args.all and not args.task_ids:
         parser.error("either provide task_ids or use --all")
@@ -292,7 +289,7 @@ def main():
         output_dir = args.output_dir
     else:
         output_dir = get_scratch_path() / "tasks"
-    s3_client = boto3.client("s3")
+    s3_client = repo_config.s3_client()
 
     skipped_tasks = 0
     skipped_attempts = 0

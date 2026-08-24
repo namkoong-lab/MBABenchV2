@@ -1,93 +1,88 @@
 # Judge — Quickstart
 
-LLM-based grader for Excel-task attempts. This README covers the minimum setup
-to run a single local grading on `judge/scratch/test_cases/Bread_And_Butter`.
-For deeper internals see [CLAUDE.md](CLAUDE.md).
+LLM-based grader for Excel-task attempts. Runs against either benchmark;
+`--benchmark v1|v2` is the only switch.
 
-## Prerequisites
+## Configuration
 
-- Python 3.12.12
-- [uv](https://docs.astral.sh/uv/) (`pipx install uv` or `brew install uv`)
-- LibreOffice (only if you pass `--run-calculation`). On macOS the default
-  install path is `/Applications/LibreOffice.app/Contents/MacOS/soffice`,
-  which matches `paths.libreoffice_path` in
-  [project_configs.yaml](project_configs.yaml).
+Two files, nothing to copy or edit per run:
 
-## 1. Install
+- **`<MBABenchV2>/config/config.yaml`** (gitignored, shared by every harness):
+  `database.v1_url` / `database.v2_url`, `aws.*` (S3 bucket + credentials),
+  `keys.openrouter_api_key` / `gemini_api_key` / `anthropic_api_key` /
+  `openai_api_key`. Environment variables (`OPENROUTER_API_KEY`, …) win
+  over `keys.*`; `DATABASE_URL` is only a fallback when the config has no
+  URL for the benchmark.
+- **[project_configs.yaml](project_configs.yaml)** (tracked, secret-free):
+  benchmark-agnostic judge settings — model, prompt template, char limits,
+  agentic limits, LibreOffice path. Loaded into `BIZBENCHJUDGE_*` env vars
+  by `utils/misc_utils.load_project_configs()`.
 
-From the repo root:
+`--benchmark` selects the rest from `BENCHMARKS` in
+[utils/misc_utils.py](utils/misc_utils.py): the database, the S3 grading
+root (`BizbenchV1/grading` vs `MBABenchV2/grading`), and the rubric pair +
+category order (v1 = rubric_8 / rubric_6_weights, 3 categories; v2 =
+rubric_9 / rubric_9_weights, 12 categories). A URL naming the other
+benchmark's database is refused at startup (`JUDGE_SKIP_BENCHMARK_GUARD=1`
+bypasses, for one-off experiments only).
 
-```bash
-bash judge/setups/setup.sh
-```
+## Install
 
-This creates `.venv/` at the project root with Python 3.12.12, installs the
-local `excel_judge` package (editable), and pulls
-[setups/requirements.txt](setups/requirements.txt).
+From the repo root, `./setup.sh` (uv workspace; installs `excel_judge`
+editable and the `config` module). LibreOffice is only needed for
+`--run-calculation`.
 
-Activate it:
-
-```bash
-source .venv/bin/activate
-```
-
-## 2. Configure environment
-
-[project_configs.sh](project_configs.sh) exports the API keys, DB URL,
-`SCRATCH_PATH`, and `LIBREOFFICE_PATH` that the judge reads. Source it once
-per shell (every CLI script assumes these are set):
+## Grade attempts from the database
 
 ```bash
-source judge/project_configs.sh
+python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 2 3
+python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --task-ids 4 5
 ```
 
-Defaults like the model, prompt template, rubric, and char limits live in
-[project_configs.yaml](project_configs.yaml) and are loaded into env vars by
-`utils/misc_utils.load_project_configs()` at import time.
+v2 must be graded with `--agentic`: the standard judge's
+`prompts/judge_template_7_0.yaml` hardcodes one stage per v1 category.
+(TODO: a template whose stages are generated from `JUDGE_CHECK_ORDER`
+would lift this.)
 
-## 3. Verify the task folder
+Useful flags: `--dry-run`, `--no-db-write`, `--no-s3-upload`, `--nocall`,
+`--model <slug>`, `--reasoning-effort {none,minimal,low,medium,high}`.
+Any `google/*` slug passed to `--model` must be listed in
+`judge.openrouter_models` (project_configs.yaml) or it is routed
+Gemini-direct.
 
-The judge expects this layout (already present in the sample case):
+## Grade a local task folder
 
+```bash
+python judge/main_scripts/judge.py --benchmark v1 -f judge/scratch/test_cases/Bread_And_Butter
 ```
-judge/scratch/test_cases/Bread_And_Butter/
+
+Expected layout:
+
+```text
+<folder>/
   ai_attempt.xlsx
   solution/<solution>.xlsx
-  context.pdf | context.txt        # optional
-  rubric.json | rubric_weights.json # optional, falls back to defaults
+  context.pdf | context.txt         # optional
+  rubric.json | rubric_weights.json # optional, falls back to the benchmark's pair
 ```
 
-Quick check:
+Results land in `<folder>/judge_results/`: extracted CSVs, per-category
+`judgement_*.json`, `scores.json`, and the run log.
+
+## Operation scripts
+
+Every script under `operation_scripts/` that touches the DB or S3 takes
+`--benchmark` too, e.g.
 
 ```bash
-ls judge/scratch/test_cases/Bread_And_Butter
+python judge/operation_scripts/get_tasks.py --benchmark v2 11 12
+python judge/operation_scripts/list_agent_models.py --benchmark v1
 ```
 
-## 4. Run the judge
+## Offline tests
 
 ```bash
-python judge/main_scripts/judge.py -f judge/scratch/test_cases/Bread_And_Butter
+cd judge
+python tests_offline/test_benchmark_presets.py
+python tests_offline/test_rubric9_consistency.py
 ```
-
-Relative paths are resolved from the project root (see
-[main_scripts/judge.py:3201](main_scripts/judge.py#L3201)).
-
-Useful flags:
-
-- `--agentic` — multi-turn tool-calling judge instead of the staged single-shot
-- `--nocall` — skip the LLM call (file extraction only; good for a smoke test)
-- `--run-calculation` — recalc formulas with LibreOffice before CSV extraction
-- `--model <openrouter-model>` — override `JUDGE_MODEL`
-- `--reasoning-effort {none,minimal,low,medium,high}` — thinking budget
-
-Run `python judge/main_scripts/judge.py --help` for the full list.
-
-## 5. Output
-
-Results land in `judge/scratch/test_cases/Bread_And_Butter/judge_results/`:
-
-- `<workbook_stem>/<sheet>_full.csv` + `<sheet>_additional_format.txt` —
-  extracted CSVs the judge actually saw
-- `judgement_*.json` — raw model judgement per category
-- `scores.json` — weighted per-category and final 0–100 score
-- run log (also streamed to terminal because `miscs.log_to_terminal: true`)

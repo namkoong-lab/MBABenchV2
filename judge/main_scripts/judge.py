@@ -29,6 +29,7 @@ from utils.llm_utils import (
 )
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
+    add_benchmark_arg,
     dump_messages_yaml,
     get_absolute_path,
     load_env_var,
@@ -911,8 +912,8 @@ def judge_case(
             f"The standard (non-agentic) judge only supports the 3-category "
             f"Accuracy/Formula/Formatting rubric, but {rubric_json_path} "
             f"defines {sorted(_rubric_categories)}. Grade this rubric with "
-            f"the agentic judge (--agentic) and set JUDGE_CHECK_ORDER to "
-            f"its category list (see project_configs.yaml)."
+            f"the agentic judge (--agentic); judge_template_7_0.yaml hardcodes "
+            f"one stage per v1 category (TODO: a check_order-driven template)."
         )
     accuracy_checks = render_rubric_checks(str(rubric_json_path), "Accuracy")
     formula_checks = render_rubric_checks(str(rubric_json_path), "Formula")
@@ -3453,7 +3454,7 @@ def agentic_judge_case(
 
 def main(args):
     """Main entry point that wires CLI args to judge_case or agentic_judge_case."""
-    load_project_configs(verbose=True)
+    load_project_configs(verbose=True, benchmark=args.benchmark)
 
     # Resolve paths from config
     rubric_path = str(
@@ -3536,6 +3537,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run local judge on specified attempt and solution files."
     )
+    add_benchmark_arg(parser)
     parser.add_argument(
         "-f",
         "--folder-to-grade",

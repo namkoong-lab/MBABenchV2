@@ -13,7 +13,6 @@ Attempts that fail any of the above are reported as "invalid" with a reason
 N, prompt_v mismatch) so missing tasks can be distinguished from broken ones.
 
 Usage:
-    source judge/project_configs.sh
 
     # No task flag - use DEFAULT_TASK_IDS, or all non-deprecated tasks if empty
     python judge/operation_scripts/check_attempt_completion.py
@@ -34,7 +33,6 @@ TODO: Add default filtering for specific models' prompt version. For example, on
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -43,7 +41,7 @@ import psycopg2.extras
 
 # Add judge/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from utils.misc_utils import load_project_configs
+from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 
 # Load configs into env vars
 load_project_configs()
@@ -100,11 +98,7 @@ DEFAULT_TASK_IDS: list[int] = [
 
 
 def get_db_connection():
-    db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        print("Error: BIZBENCHJUDGE_KEYS_DATABASE_URL not set.")
-        sys.exit(1)
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(get_db_url())
 
 
 def classify_attempt(row, prompt_versions=None):
@@ -433,6 +427,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Check valid attempt completion per agent model."
     )
+    add_benchmark_arg(parser)
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument(
         "--task-id",
@@ -464,6 +459,7 @@ def main():
         help="Ignore DEFAULT_MODELS and consider every model in the database.",
     )
     args = parser.parse_args()
+    load_project_configs(benchmark=args.benchmark)
 
     models, prompt_versions = resolve_models(args.models, args.all_models)
 

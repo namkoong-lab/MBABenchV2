@@ -13,9 +13,8 @@ For each valid task the script:
     a list of task IDs whose solution CSVs exceed 2 million characters.
 
 Usage:
-    source judge/project_configs.sh
-    python judge/operation_scripts/cache_solution_csvs.py
-    python judge/operation_scripts/cache_solution_csvs.py --force   # re-extract even if cached
+    python judge/operation_scripts/cache_solution_csvs.py --benchmark v2
+    python judge/operation_scripts/cache_solution_csvs.py --benchmark v2 --force   # re-extract even if cached
 """
 
 import argparse
@@ -33,12 +32,12 @@ import numpy as np
 _judge_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_judge_root))
 
-import boto3
 import psycopg2
 import psycopg2.extras
 from utils.excel_utils import process_all_worksheets
 from utils.logger import logger
-from utils.misc_utils import load_project_configs
+from utils import repo_config
+from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 
 _EXCEL_EXTS = frozenset({".xlsx", ".xlsm", ".xls"})
 CHAR_LIMIT = 2_000_000
@@ -50,14 +49,7 @@ CHAR_LIMIT = 2_000_000
 
 
 def get_db_connection():
-    db_url = os.environ.get("DATABASE_URL")
-    if not db_url:
-        db_url = os.environ.get("BIZBENCHJUDGE_KEYS_DATABASE_URL")
-    if not db_url:
-        raise EnvironmentError(
-            "DATABASE_URL not set. Run: source judge/project_configs.sh"
-        )
-    return psycopg2.connect(db_url)
+    return psycopg2.connect(get_db_url())
 
 
 def fetch_valid_tasks(conn):
@@ -117,7 +109,7 @@ _s3_client = None
 def _get_s3_client():
     global _s3_client
     if _s3_client is None:
-        _s3_client = boto3.client("s3")
+        _s3_client = repo_config.s3_client()
     return _s3_client
 
 
@@ -255,6 +247,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Pre-cache solution CSVs for all valid tasks in the database."
     )
+    add_benchmark_arg(parser)
     parser.add_argument(
         "--force",
         action="store_true",
@@ -262,7 +255,7 @@ def main():
     )
     args = parser.parse_args()
 
-    load_project_configs()
+    load_project_configs(benchmark=args.benchmark)
 
     scratch_base = os.environ.get("BIZBENCHJUDGE_PATHS_SCRATCH_PATH")
     if not scratch_base:
