@@ -1,27 +1,42 @@
-# Agent identity registry — THE place that defines cohort names.
+# Agent identity registry — THE place that defines what a cohort name means.
 #
-# An attempt's DB label (task_attempts.agent_model_name) is resolved from the
-# four axes that define a cohort:
+# A batch config names its cohort with ONE key, agent_model_name (the value
+# written to task_attempts.agent_model_name), and nothing else about the
+# model. The entry here for that label supplies every setting that changes
+# what the agent does; the runner copies them into the config and refuses to
+# start if the config carries any of them itself (even with the same value —
+# one source of truth):
 #
-#   model                   the API model id from the batch config
+#   model                   provider model id (Anthropic/OpenAI direct id)
 #   reasoning_effort        null for models that don't take it
-#   thinking_budget_tokens  null for models that don't take it
-#   max_completion_tokens   as the executor applies it (config value, or the
-#                           8000 default when the config omits the key)
+#   thinking_budget_tokens  null for models that don't take it; otherwise an
+#                           int >= 1024 and < max_completion_tokens
+#   max_completion_tokens   output ceiling the executor sends
+#   base_url                provider routing keys off base_url, not the model
+#                           name, so pinning it is what stops a Claude model
+#                           from silently taking the OpenAI code path
+#   fresh_context_mode      true = re-read solution.xlsx every iteration
+#                           instead of accumulating tool-call history
+#   enhanced_excel_context  true = grid-format sheet rendering in the prompt
+#   recent_history_count    recent tool calls replayed in fresh context mode
 #
-# A batch config no longer names its cohort (agent_folder is retired): the
-# runner looks up the exact axis combination here. No entry -> the run
-# refuses to start and prints a ready-to-paste stanza for the new combo, so
-# a settings change can never silently reuse an old cohort's label.
+# An unknown label refuses to run and prints a ready-to-paste stanza. All
+# eight settings are written to task_attempts.extra_configs (JSONB,
+# MBABenchV2 only; the BizbenchV1 table has no such column) on every upload,
+# so a row records the exact settings it ran under and can be audited later
+# without trusting this file.
 #
-# Each entry also carries the base_url the agent runs against — provider
-# routing keys off base_url, not the model name, so pinning it here is what
-# stops a Claude model from silently taking the OpenAI code path. The runner
-# applies the registry's base_url; a batch config may repeat it, but a
-# conflicting value refuses to run.
+# Existing entries should normally not change. agent_model_name is what
+# identifies a group of runs: trial counting, missing_for_model, the judge,
+# and the paper tables all group rows by it and assume every row under a
+# label ran with the same settings. Edit an entry's other fields only with
+# the explicit intent that the new runs be grouped with the existing ones
+# under that label (extra_configs still records what each row actually ran
+# with, v2 only). Otherwise add a new entry with a new label.
 #
-# Rules, enforced at load: every agent_model_name unique; every axis
-# combination unique; base_url required.
+# Rules, enforced at load: every agent_model_name unique; every
+# (model, reasoning_effort, thinking_budget_tokens, max_completion_tokens)
+# combination unique; every field above present on every entry.
 
 - agent_model_name: openpyxl_anthropic/claude-fable-5-max
   model: claude-fable-5
@@ -29,6 +44,9 @@
   thinking_budget_tokens: null
   max_completion_tokens: 128000
   base_url: https://api.anthropic.com
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
 
 - agent_model_name: openpyxl_anthropic/claude-sonnet-5-xhigh
   model: claude-sonnet-5
@@ -36,6 +54,9 @@
   thinking_budget_tokens: null
   max_completion_tokens: 64000
   base_url: https://api.anthropic.com
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
 
 - agent_model_name: openpyxl_anthropic/claude-haiku-4-5-think16k
   model: claude-haiku-4-5
@@ -43,13 +64,21 @@
   thinking_budget_tokens: 16000
   max_completion_tokens: 32000
   base_url: https://api.anthropic.com
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
 
+# The two OpenAI entries were run from configs that never set
+# recent_history_count, so they took the executor default of 5.
 - agent_model_name: openpyxl_openai/gpt-5.2-none
   model: gpt-5.2
   reasoning_effort: none
   thinking_budget_tokens: null
   max_completion_tokens: 64000
   base_url: https://api.openai.com/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 5
 
 - agent_model_name: openpyxl_openai/gpt-4o-mini
   model: gpt-4o-mini
@@ -57,3 +86,6 @@
   thinking_budget_tokens: null
   max_completion_tokens: 16000
   base_url: https://api.openai.com/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 5

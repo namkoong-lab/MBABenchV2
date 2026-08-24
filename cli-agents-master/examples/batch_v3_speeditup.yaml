@@ -1,5 +1,8 @@
 batch_name: "GPT-5.2 No Thinking - v3 Prompts - Speed-It-Up"
-model: "gpt-5.2"                    # OpenAI direct id (endpoint from agent_identities.yaml)
+# Only model key. The agent_identities.yaml entry supplies model (gpt-5.2),
+# reasoning_effort (none), max_completion_tokens (64000), base_url (OpenAI
+# direct) and the context flags; setting any of those here refuses to run.
+agent_model_name: "openpyxl_openai/gpt-5.2-none"
 auto_mode: true
 benchmark: "v1"                   # BizbenchV1 DB + s3://mbabench/BizbenchV1/
 prompt_version: "v3"
@@ -15,8 +18,4 @@ tasks:
 verbose: true
 enable_langfuse: false
 max_iterations: 30
-fresh_context_mode: true
-enhanced_excel_context: true
-max_completion_tokens: 64000
-reasoning_effort: "none"
 api_timeout_seconds: 300

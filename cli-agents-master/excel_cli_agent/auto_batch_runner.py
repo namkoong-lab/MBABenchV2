@@ -15,6 +15,7 @@ import time
 import traceback
 import yaml
 import boto3
+from sqlalchemy import inspect as sa_inspect, text as sa_text
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
@@ -84,6 +85,8 @@ class AutoBatchRunner(BatchRunner):
         # key and the monorepo config.
         self._s3_bucket = "mbabench"
         self._s3_root = "BizbenchV1"
+        self._identity = None
+        self._extra_configs_supported = False
 
     @property
     def s3_client(self):
@@ -113,7 +116,7 @@ class AutoBatchRunner(BatchRunner):
             config = yaml.safe_load(f)
 
         # Validate required fields for auto mode
-        required_fields = ['batch_name', 'model']
+        required_fields = ['batch_name', 'agent_model_name']
         for fld in required_fields:
             if fld not in config:
                 raise ValueError(f"Missing required field in config: {fld}")
@@ -145,25 +148,26 @@ class AutoBatchRunner(BatchRunner):
         # the historical trial-count-only behavior.
         config.setdefault('skip_if_succeeded', False)
 
-        # Cohort identity comes from the agent_identities.yaml registry,
-        # resolved from (model, reasoning_effort, thinking_budget_tokens,
-        # max_completion_tokens). agent_folder is retired: a hand-typed label
-        # could drift from the settings and pollute another cohort's trial
-        # counts.
+        # The config names its cohort (agent_model_name) and NOTHING else
+        # about the model: the agent_identities.yaml entry for that label
+        # supplies model, reasoning_effort, thinking_budget_tokens,
+        # max_completion_tokens, base_url, fresh_context_mode,
+        # enhanced_excel_context and recent_history_count. A config that sets
+        # any of them refuses to run (resolve_agent_identity), so rows under
+        # one label cannot have run with different settings. agent_folder is
+        # the retired name for a free-text label.
         if 'agent_folder' in config:
             raise ValueError(
-                "agent_folder is no longer supported. The cohort label is "
-                "resolved from the run's model settings via "
-                "excel_cli_agent/agent_identities.yaml — remove the key, and "
-                "add/edit a registry entry if this combination needs a new "
-                "or different label."
+                "agent_folder is no longer supported. Name the cohort with "
+                "agent_model_name (an entry in excel_cli_agent/"
+                "agent_identities.yaml); the registry supplies the model "
+                "settings."
             )
         identity = resolve_agent_identity(config)
-        config['agent_model_name'] = identity.agent_model_name
-        # The registry pins the endpoint too — routing keys off base_url, so
-        # this is what keeps a Claude model off the OpenAI code path when a
-        # config forgets the key.
-        config['base_url'] = identity.base_url
+        # From here the executor reads the registry's values from config
+        # like any other key.
+        config.update(identity.settings())
+        self._identity = identity
 
         # Benchmark selection. Required so a config can never silently
         # target the wrong experiment; it selects the database URL
@@ -203,6 +207,15 @@ class AutoBatchRunner(BatchRunner):
                 f"Export the {bench['db_name']} connection string (or fix "
                 f"the config's benchmark key) before running."
             )
+        # task_attempts.extra_configs (JSONB) exists in MBABenchV2 only. It
+        # is deliberately not on the ORM model: a mapped column missing from
+        # one database breaks every SELECT there (see db/models.py), so the
+        # runner probes for it and writes it with plain SQL after the insert.
+        self._extra_configs_supported = self._probe_extra_configs_column()
+        if not self._extra_configs_supported:
+            print(f"⚠️  task_attempts.extra_configs not present in the {bench['db_name']} "
+                  f"database — run settings will NOT be recorded on the row "
+                  f"(only in the local attempt package and this log).")
 
         # Resolve prompt version from config; the default follows the
         # benchmark (v1 -> DEFAULT_PROMPT_VERSION, v2 -> the v2-rubric set),
@@ -246,8 +259,9 @@ class AutoBatchRunner(BatchRunner):
         print(f"   Benchmark: {benchmark}")
         print(f"   Database: {describe_database_target(benchmark)}")
         print(f"   S3: s3://{self._s3_bucket}/{self._s3_root}/")
-        print(f"   Agent model name: {config['agent_model_name']} (from agent_identities.yaml)")
-        print(f"   API endpoint: {config['base_url']}")
+        print(f"   Agent model name: {config['agent_model_name']} (agent_identities.yaml)")
+        print(f"   Pinned by identity: {identity.settings()}")
+        print(f"   extra_configs column: {'yes' if self._extra_configs_supported else 'NO'}")
         print(f"   Prompt version: {prompt_ver}")
         print(f"   Max iterations: {config['max_iterations']}")
         print(f"   Max trials: {config['max_trials']}")
@@ -255,6 +269,22 @@ class AutoBatchRunner(BatchRunner):
         print(f"   Workspace base: {config.get('workspace_base_dir') or 'batch_logs/batch_<ts>/workspaces (default)'}")
 
         return config
+
+    @staticmethod
+    def _probe_extra_configs_column() -> bool:
+        """True if task_attempts has an extra_configs column in the connected DB."""
+        cols = sa_inspect(db_config._get_engine()).get_columns("task_attempts")
+        return any(c["name"] == "extra_configs" for c in cols)
+
+    def _write_extra_configs(self, db, attempt_id: int) -> None:
+        """Record the identity's full settings on the row (v2 DB only)."""
+        if not self._extra_configs_supported:
+            return
+        db.execute(
+            sa_text("UPDATE task_attempts SET extra_configs = CAST(:cfg AS jsonb) WHERE id = :id"),
+            {"cfg": json.dumps(self._identity.extra_configs()), "id": attempt_id},
+        )
+        db.commit()
 
     def resolve_tasks(self) -> List[TaskInfo]:
         """Query DB for tasks to process based on config."""
@@ -774,6 +804,9 @@ class AutoBatchRunner(BatchRunner):
             db.commit()
             db.refresh(attempt)
             print(f"  ✅ Created TaskAttempt (ID: {attempt.id}, cost: ${total_cost:.4f})")
+            self._write_extra_configs(db, attempt.id)
+            if self._extra_configs_supported:
+                print(f"  📌 extra_configs recorded: {self._identity.extra_configs()}")
         except Exception as e:
             db.rollback()
             print(f"  ❌ Failed to create TaskAttempt: {e}")

@@ -5,8 +5,20 @@
 #   nohup excel-agent --batch-config my_auto_config.yaml > ~/my_run.log 2>&1 &
 
 batch_name: "Auto Batch - MODEL_DISPLAY_NAME"
-model: "PROVIDER/MODEL_SLUG"          # OpenRouter model slug (e.g., "openai/gpt-5.2", "qwen/qwen3-235b-a22b-thinking-2507")
 auto_mode: true
+
+# Which agent to run (REQUIRED) — the cohort label written to
+# task_attempts.agent_model_name, and the ONLY model key allowed here. Its
+# entry in excel_cli_agent/agent_identities.yaml supplies model,
+# reasoning_effort, thinking_budget_tokens, max_completion_tokens, base_url,
+# fresh_context_mode, enhanced_excel_context and recent_history_count; the
+# run refuses to start if any of those appear in this file, and refuses an
+# unregistered label (printing the stanza to add). The resolved settings are
+# recorded on every DB row in task_attempts.extra_configs. Need different
+# settings? Usually add a new registry entry with a new label; edit an
+# existing entry only if the new runs are meant to be grouped with the
+# rows already under that label (see the registry header).
+agent_model_name: "openpyxl_openai/gpt-5.2-none"
 
 # Which experiment this run belongs to (REQUIRED):
 #   v1 -> BizbenchV1 DB, s3://mbabench/BizbenchV1/..., v1-rubric prompts
@@ -24,11 +36,6 @@ benchmark: "v1"
 # Where to create workspaces (files downloaded from S3 here). Optional:
 # omit to use the batch's own logs dir, batch_logs/batch_{ts}/workspaces/
 # workspace_base_dir: "~/auto_batch_MODEL_NAME"  # ~ is expanded automatically
-
-# No agent_folder: the cohort label (DB agent_model_name) is resolved from
-# (model, reasoning_effort, thinking_budget_tokens, max_completion_tokens)
-# via excel_cli_agent/agent_identities.yaml. An unregistered combination
-# refuses to run and prints the registry stanza to add.
 
 # Pin the prompt set explicitly. One key selects BOTH files (registry:
 # excel_cli_agent/prompt_versions.py, files: excel_cli_agent/prompts/):
@@ -57,27 +64,11 @@ task_filter:
   task_source: "fmwc"               # optional: "fmwc", "modeloff", "wsp", or omit for all
   missing_for_model: true           # only tasks with < max_trials attempts for this model
 
-# --- Model Settings ---
+# --- Run Settings (not part of the identity) ---
 verbose: true
 max_iterations: 10
-fresh_context_mode: true
-enhanced_excel_context: true
-recent_history_count: 3
-max_completion_tokens: 64000          # Use 64000 for frontier models, 16000 for smaller models
 api_timeout_seconds: 600
 cleanup_workspace: true                   # Delete workspace after S3 upload (default: true)
-
-# --- API Endpoint ---
-# base_url: auto-detects provider from URL. Omit to use legacy behavior (OpenRouter if key set, else OpenAI).
-# base_url: "http://localhost:8000/v1"         # vLLM / SGLang (local)
-# base_url: "https://openrouter.ai/api/v1"    # OpenRouter
-# base_url: "https://api.openai.com/v1"        # OpenAI direct
-# base_url: "https://api.anthropic.com"        # Anthropic (auto-detected, uses Anthropic SDK)
-
-# --- Optional Model-Specific Settings ---
-# reasoning_effort: "none"           # For GPT 5.2 (reasoning eats into max_completion_tokens, truncating JSONL output)
-# reasoning_effort: "high"           # For Gemini 3 Pro
-# thinking_budget_tokens: 50000      # For Opus 4.5 with Anthropic
 
 # task_template is AUTO-SELECTED per task based on task_source:
 #   fmwc/modeloff -> batch_config_template.yaml

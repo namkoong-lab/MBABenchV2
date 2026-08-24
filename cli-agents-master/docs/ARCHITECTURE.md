@@ -374,11 +374,12 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `auto_mode` | bool | false | auto | Enable auto mode (DB + S3 pipeline) |
 | `batch_name` | string | required | both | Run identifier |
 | **Model** | | | | |
-| `model` | string | required | both | Model slug (e.g. `openai/gpt-4o-mini`) |
-| `base_url` | string | auto-detected | both | API endpoint. Omit for default (OpenRouter if key set, else OpenAI). Set for vLLM/SGLang/Anthropic |
-| `max_completion_tokens` | int | 16000 | both | Max tokens for model output |
-| `reasoning_effort` | string | null | both | `none`, `low`, `medium`, `high`, `xhigh` |
-| `thinking_budget_tokens` | int | null | both | For Anthropic extended thinking |
+| `agent_model_name` | string | required | auto | Cohort label; an entry in `excel_cli_agent/agent_identities.yaml` that supplies all of the keys below. Setting any of them in an auto-mode config refuses to run |
+| `model` | string | required | local only | Model slug (e.g. `openai/gpt-4o-mini`). Auto mode: pinned by the agent identity |
+| `base_url` | string | auto-detected | local only | API endpoint. Omit for default (OpenRouter if key set, else OpenAI). Auto mode: pinned by the agent identity |
+| `max_completion_tokens` | int | 16000 | local only | Max tokens for model output. Auto mode: pinned by the agent identity |
+| `reasoning_effort` | string | null | local only | `none`, `low`, `medium`, `high`, `xhigh`. Auto mode: pinned by the agent identity |
+| `thinking_budget_tokens` | int | null | local only | For Anthropic extended thinking. Auto mode: pinned by the agent identity |
 | **Task input** | | | | |
 | `workspaces` | list | required | local | `[{path: "./folder/"}]` — folders with task files |
 | `tasks` | list | — | auto | Explicit task names from DB |
@@ -387,8 +388,9 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | **Execution** | | | | |
 | `max_iterations` | int | 30 | both | Max agent iterations per task |
 | `prompt_version` | string | `v10` | both | Prompt version (see `prompt_versions.py`) |
-| `fresh_context_mode` | bool | false | both | Reload xlsx each iteration |
-| `enhanced_excel_context` | bool | true | both | Grid format for Excel context |
+| `fresh_context_mode` | bool | false | local only | Reload xlsx each iteration. Auto mode: pinned by the agent identity, refused in the config |
+| `enhanced_excel_context` | bool | true | local only | Grid format for Excel context. Auto mode: pinned by the agent identity |
+| `recent_history_count` | int | 5 | local only | Recent tool calls replayed in fresh context. Auto mode: pinned by the agent identity |
 | `api_timeout_seconds` | int | 180 | both | API call timeout |
 | **Output** | | | | |
 | `workspace_base_dir` | string | required | both | Where fresh workspaces are created |
@@ -398,10 +400,17 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `max_trials` | int | 7 | auto | Skip task after N attempts |
 | `trials_since` | string | today | auto | Only count attempts after this date |
 
-The cohort label (DB `agent_model_name`) is not a config key: it is resolved
-from (model, reasoning_effort, thinking_budget_tokens, max_completion_tokens)
-via the `excel_cli_agent/agent_identities.yaml` registry. An unregistered
-combination refuses to run and prints the registry stanza to add.
+In auto mode the cohort label (DB `agent_model_name`) is the only model key
+in the config. Its entry in `excel_cli_agent/agent_identities.yaml` supplies
+`model`, `reasoning_effort`, `thinking_budget_tokens`, `max_completion_tokens`,
+`base_url`, `fresh_context_mode`, `enhanced_excel_context` and
+`recent_history_count`; a config that sets any of them refuses to run, and an
+unregistered label refuses to run and prints the registry stanza to add. The
+resolved settings are written to `task_attempts.extra_configs` (JSONB,
+MBABenchV2 only) with every row. Existing entries should normally not change:
+`agent_model_name` is what groups runs, so edit an entry's settings only when
+the new runs are meant to be grouped with the rows already under that label;
+otherwise add a new entry with a new label.
 
 ### Local Mode Example
 

@@ -25,7 +25,9 @@ results_dir: "./results"
 # Task type: "fmwc" (default) or "wsp" — selects the task template
 task_type: "fmwc"
 
-# Execution settings
+# Execution settings. Local mode has no DB row and no agent identity, so
+# fresh_context_mode / enhanced_excel_context stay plain keys here; in auto
+# mode they are pinned by agent_identities.yaml and refused in the config.
 max_iterations: 3
 prompt_version: "v10"
 max_completion_tokens: 16000

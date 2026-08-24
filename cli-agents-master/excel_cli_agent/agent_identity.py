@@ -1,12 +1,18 @@
-"""Resolve a run's cohort label (task_attempts.agent_model_name) from its
-model settings, via the agent_identities.yaml registry.
+"""Resolve a run's full model settings from its cohort label
+(task_attempts.agent_model_name) via the agent_identities.yaml registry.
 
-The four axes (model, reasoning_effort, thinking_budget_tokens,
-max_completion_tokens) define a cohort. The registry maps each combination
-to a label; trial counting, task-selection filters, and the DB row all use
-the resolved label. An unregistered combination refuses to run and prints a
-paste-ready registry stanza, so changing a setting can never silently write
-into another cohort.
+A batch config names its cohort with `agent_model_name`; nothing else about
+the model may appear in the config. The registry entry for that label
+supplies every setting that changes what the agent does:
+
+    model, reasoning_effort, thinking_budget_tokens, max_completion_tokens,
+    base_url, fresh_context_mode, enhanced_excel_context, recent_history_count
+
+The runner copies them into the config, the executor reads them like any
+other key, and the DB row records the same dict in
+task_attempts.extra_configs. An unknown label refuses to run and prints a
+paste-ready stanza; a config that sets any pinned key refuses to run too, so
+two rows under one label can never have run with different settings.
 """
 
 from pathlib import Path
@@ -14,137 +20,159 @@ from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import yaml
 
-from .models_config import DEFAULT_MAX_COMPLETION_TOKENS
-
 REGISTRY_PATH = Path(__file__).resolve().parent / "agent_identities.yaml"
 
 # (model, reasoning_effort, thinking_budget_tokens, max_completion_tokens)
 AxisKey = Tuple[str, Optional[str], Optional[int], int]
 
+# Every setting an identity pins, in stanza order. (key, type, nullable).
+# A batch config must not set any of these.
+PINNED_KEYS = (
+    ("model", str, False),
+    ("reasoning_effort", str, True),
+    ("thinking_budget_tokens", int, True),
+    ("max_completion_tokens", int, False),
+    ("base_url", str, False),
+    ("fresh_context_mode", bool, False),
+    ("enhanced_excel_context", bool, False),
+    ("recent_history_count", int, False),
+)
+PINNED_KEY_NAMES = tuple(k for k, _, _ in PINNED_KEYS)
+
 
 class AgentIdentity(NamedTuple):
     agent_model_name: str
+    model: str
+    reasoning_effort: Optional[str]
+    thinking_budget_tokens: Optional[int]
+    max_completion_tokens: int
     base_url: str
+    fresh_context_mode: bool
+    enhanced_excel_context: bool
+    recent_history_count: int
+
+    @property
+    def axes(self) -> AxisKey:
+        return (self.model, self.reasoning_effort,
+                self.thinking_budget_tokens, self.max_completion_tokens)
+
+    def settings(self) -> Dict[str, Any]:
+        """The pinned keys the runner writes into the batch config, and the
+        dict stored in task_attempts.extra_configs."""
+        return {k: getattr(self, k) for k in PINNED_KEY_NAMES}
+
+    # Alias so call sites read naturally at the DB write.
+    extra_configs = settings
 
 
 class AgentIdentityError(ValueError):
-    """Registry is invalid, or the run's axes have no registry entry."""
+    """Registry is invalid, the label is unknown, or the config sets a pinned key."""
 
 
-def _axes_from_entry(entry: Dict[str, Any], where: str) -> AxisKey:
-    try:
-        model = entry["model"]
-    except KeyError:
-        raise AgentIdentityError(f"{where}: entry is missing 'model'")
-    effort = entry.get("reasoning_effort")
-    budget = entry.get("thinking_budget_tokens")
-    max_tokens = entry.get("max_completion_tokens")
-    if max_tokens is None:
-        raise AgentIdentityError(f"{where}: entry is missing 'max_completion_tokens'")
-    return (str(model), None if effort is None else str(effort),
-            None if budget is None else int(budget), int(max_tokens))
+def _entry_to_identity(entry: Dict[str, Any], where: str) -> AgentIdentity:
+    label = entry.get("agent_model_name")
+    if not label:
+        raise AgentIdentityError(f"{where}: entry is missing 'agent_model_name'")
+    values: Dict[str, Any] = {}
+    for key, typ, nullable in PINNED_KEYS:
+        if key not in entry:
+            raise AgentIdentityError(
+                f"{where}: entry is missing '{key}' — it changes what the agent "
+                f"does, so every identity must pin it (use null if the model "
+                f"does not take it)" if nullable else
+                f"{where}: entry is missing '{key}' — it changes what the agent "
+                f"does, so every identity must pin it"
+            )
+        value = entry[key]
+        if value is None:
+            if not nullable:
+                raise AgentIdentityError(f"{where}: '{key}' may not be null")
+        elif (typ is int and isinstance(value, bool)) or not isinstance(value, typ):
+            # bool is an int subclass; keep the two strictly apart.
+            raise AgentIdentityError(
+                f"{where}: '{key}' must be {typ.__name__}, got {value!r}"
+            )
+        values[key] = value
+    return AgentIdentity(str(label), **values)
 
 
-def load_registry(path: Path = REGISTRY_PATH) -> Dict[AxisKey, AgentIdentity]:
-    """{axes: AgentIdentity}, refusing duplicate labels or axis combos."""
+def load_registry(path: Path = REGISTRY_PATH) -> Dict[str, AgentIdentity]:
+    """{agent_model_name: AgentIdentity}, refusing duplicate labels or axis
+    combos (two labels for the same model settings would split one cohort)."""
     entries = yaml.safe_load(path.read_text()) or []
     if not isinstance(entries, list):
         raise AgentIdentityError(f"{path}: expected a top-level list of entries")
 
-    by_axes: Dict[AxisKey, AgentIdentity] = {}
-    labels: Dict[str, AxisKey] = {}
+    by_label: Dict[str, AgentIdentity] = {}
+    by_axes: Dict[AxisKey, str] = {}
     for i, entry in enumerate(entries):
         where = f"{path.name} entry {i + 1}"
         if not isinstance(entry, dict):
             raise AgentIdentityError(f"{where}: expected a mapping")
-        label = entry.get("agent_model_name")
-        if not label:
-            raise AgentIdentityError(f"{where}: entry is missing 'agent_model_name'")
-        base_url = entry.get("base_url")
-        if not base_url:
+        identity = _entry_to_identity(entry, where)
+        if identity.agent_model_name in by_label:
             raise AgentIdentityError(
-                f"{where}: entry is missing 'base_url' — provider routing "
-                f"keys off it, so every agent must pin one"
+                f"{where}: agent_model_name '{identity.agent_model_name}' "
+                f"already used — labels must be unique"
             )
-        axes = _axes_from_entry(entry, where)
-        if axes in by_axes:
+        if identity.axes in by_axes:
             raise AgentIdentityError(
-                f"{where}: axes {axes} already mapped to "
-                f"'{by_axes[axes].agent_model_name}' — one combination, one cohort"
+                f"{where}: axes {identity.axes} already mapped to "
+                f"'{by_axes[identity.axes]}' — one combination, one cohort"
             )
-        if label in labels:
-            raise AgentIdentityError(
-                f"{where}: agent_model_name '{label}' already used for axes "
-                f"{labels[label]} — labels must be unique"
-            )
-        by_axes[axes] = AgentIdentity(str(label), str(base_url))
-        labels[label] = axes
-    return by_axes
+        by_label[identity.agent_model_name] = identity
+        by_axes[identity.axes] = identity.agent_model_name
+    return by_label
 
 
-def axes_from_config(config: Dict[str, Any]) -> AxisKey:
-    """The identity axes as the executor will actually apply them."""
-    effort = config.get("reasoning_effort")
-    budget = config.get("thinking_budget_tokens")
-    max_tokens = config.get("max_completion_tokens", DEFAULT_MAX_COMPLETION_TOKENS)
-    return (str(config["model"]), None if effort is None else str(effort),
-            None if budget is None else int(budget), int(max_tokens))
-
-
-def _suggest_label(axes: AxisKey) -> str:
-    model, effort, budget, max_tokens = axes
-    parts = [f"openpyxl_{model.replace('/', '_')}"]
-    if effort is not None:
-        parts.append(str(effort))
-    if budget is not None:
-        parts.append(f"think{budget // 1000}k" if budget % 1000 == 0 else f"think{budget}")
-    return "-".join(parts)
-
-
-def _stanza(axes: AxisKey, base_url: Optional[str]) -> str:
-    model, effort, budget, max_tokens = axes
-    return (
-        f"- agent_model_name: {_suggest_label(axes)}\n"
-        f"  model: {model}\n"
-        f"  reasoning_effort: {effort if effort is not None else 'null'}\n"
-        f"  thinking_budget_tokens: {budget if budget is not None else 'null'}\n"
-        f"  max_completion_tokens: {max_tokens}\n"
-        f"  base_url: {base_url or 'https://<provider endpoint for this model>'}"
-    )
+def _stanza(label: str) -> str:
+    return "\n".join([
+        f"- agent_model_name: {label}",
+        "  model: <provider model id>",
+        "  reasoning_effort: null            # or none/low/medium/high/xhigh/max",
+        "  thinking_budget_tokens: null      # or an int < max_completion_tokens",
+        "  max_completion_tokens: 64000",
+        "  base_url: https://<provider endpoint>",
+        "  fresh_context_mode: true",
+        "  enhanced_excel_context: true",
+        "  recent_history_count: 3",
+    ])
 
 
 def resolve_agent_identity(config: Dict[str, Any], path: Path = REGISTRY_PATH) -> AgentIdentity:
-    """The cohort identity (label + base_url) for this run's settings, or a
-    refusal telling the operator exactly what to add to the registry.
+    """The identity named by config['agent_model_name'], or a refusal.
 
-    A base_url in the batch config may only repeat the registry's — a
-    conflicting value would route the cohort's requests to a different
-    provider than its registered identity, so it refuses to run.
+    Refuses when the label is unregistered (prints the stanza to add) or when
+    the config sets any pinned key — the registry is the only source for
+    those, so a config cannot even repeat them.
     """
-    axes = axes_from_config(config)
-    registry = load_registry(path)
-    identity = registry.get(axes)
-    if identity is None:
-        model, effort, budget, max_tokens = axes
+    label = config.get("agent_model_name")
+    if not label:
         raise AgentIdentityError(
-            f"No agent identity registered for model={model!r}, "
-            f"reasoning_effort={effort!r}, thinking_budget_tokens={budget!r}, "
-            f"max_completion_tokens={max_tokens} — this combination has no "
-            f"cohort name yet. Add an entry to {path} (edit the label to "
-            f"taste):\n\n{_stanza(axes, config.get('base_url'))}\n"
+            f"Missing required field in config: agent_model_name — the cohort "
+            f"label from {path.name}. Registered: "
+            f"{sorted(load_registry(path))}"
         )
-    config_url = config.get("base_url")
-    if config_url and config_url.rstrip("/") != identity.base_url.rstrip("/"):
+    present = [k for k in PINNED_KEY_NAMES if k in config]
+    if present:
         raise AgentIdentityError(
-            f"base_url {config_url!r} in the batch config conflicts with the "
-            f"registered base_url {identity.base_url!r} for "
-            f"'{identity.agent_model_name}'. Remove the key (the registry's "
-            f"value is applied automatically), or register a separate agent "
-            f"identity for this endpoint."
+            f"{', '.join(present)} may not be set in a batch config: every "
+            f"model setting is pinned by the agent_model_name entry in "
+            f"{path.name}, so all rows under '{label}' ran the same way. "
+            f"Remove the key(s); to run with different values, register a "
+            f"NEW identity with a new label."
+        )
+    registry = load_registry(path)
+    identity = registry.get(str(label))
+    if identity is None:
+        raise AgentIdentityError(
+            f"No agent identity registered for agent_model_name={label!r}. "
+            f"Registered: {sorted(registry)}. To add it, append to {path} "
+            f"(fill in every field — none may be omitted):\n\n{_stanza(str(label))}\n"
         )
     return identity
 
 
 def resolve_agent_model_name(config: Dict[str, Any], path: Path = REGISTRY_PATH) -> str:
-    """The cohort label alone; see resolve_agent_identity."""
+    """The cohort label, validated against the registry; see resolve_agent_identity."""
     return resolve_agent_identity(config, path).agent_model_name

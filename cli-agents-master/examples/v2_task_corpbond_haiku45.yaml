@@ -12,9 +12,12 @@
 # is pinned explicitly below anyway; v12 is the only set embedding the v2
 # grading rubric, so v1..v11 would refuse to start.
 #
-# Identity — resolved from (model, effort, thinking budget, max tokens) via
-# excel_cli_agent/agent_identities.yaml, no agent_folder key:
-#   DB agent_model_name = openpyxl_anthropic/claude-haiku-4-5-think16k
+# Identity — agent_model_name is the ONLY model key. Its entry in
+# excel_cli_agent/agent_identities.yaml supplies model (claude-haiku-4-5),
+# thinking_budget_tokens (16000), max_completion_tokens (32000), base_url
+# (Anthropic direct), fresh_context_mode, enhanced_excel_context and
+# recent_history_count; setting any of those here refuses to run. The DB
+# row records them in task_attempts.extra_configs.
 #   S3 (v2 layout)      = MBABenchV2/attempts/cli_agents/claude-haiku-4-5/task_id={id}/{ts}/
 #   Local record        = cli-agents-master/run_logs/attempt-claude-haiku-4-5-{ts}/
 #
@@ -23,7 +26,7 @@
 #   excel-agent --batch-config examples/v2_task_corpbond_haiku45.yaml
 
 batch_name: "v2 - Haiku 4.5 - CorpBondII (capped)"
-model: "claude-haiku-4-5"                     # Anthropic direct id (not the OpenRouter slug)
+agent_model_name: "openpyxl_anthropic/claude-haiku-4-5-think16k"
 auto_mode: true
 benchmark: "v2"                               # MBABenchV2 DB + s3://mbabench/MBABenchV2/
 
@@ -44,17 +47,6 @@ trials_since: "2020-01-01"
 tasks:
   - "CorpBondII"
 
-base_url: "https://api.anthropic.com"         # triggers the Anthropic-direct path
-
-# Haiku 4.5 is a BUDGET-based thinking model, not an effort-based one:
-# output_config={"effort": ...} is rejected with a 400, so this config sets
-# thinking_budget_tokens instead of reasoning_effort. The runner then sends
-# thinking={"type":"enabled","budget_tokens":N}. Constraint: budget_tokens
-# must be >= 1024 and strictly LESS than max_completion_tokens.
-# Do NOT add reasoning_effort here — it takes the effort branch and 400s.
-thinking_budget_tokens: 16000
-max_completion_tokens: 32000                  # Haiku 4.5 output ceiling is 64000
-
 verbose: true
 
 # Execution cap. Hitting it is NOT recorded as a failure: the row lands with
@@ -63,7 +55,4 @@ verbose: true
 # it for a quality run; keep it low for a cheap pipeline check.
 max_iterations: 1
 
-fresh_context_mode: true
-enhanced_excel_context: true
-recent_history_count: 3
 cleanup_workspace: true

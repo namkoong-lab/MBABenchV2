@@ -6,8 +6,12 @@
 # pipeline work end to end" (DB row + all four S3 artifacts), not "how good
 # is the model".
 #
-# Identity — resolved from the model settings via
-# excel_cli_agent/agent_identities.yaml, no agent_folder key:
+# Identity — agent_model_name is the ONLY model key. Its entry in
+# excel_cli_agent/agent_identities.yaml supplies model (claude-haiku-4-5),
+# thinking_budget_tokens (16000; Haiku 4.5 is budget-based, an effort value
+# 400s), max_completion_tokens (32000), base_url (Anthropic direct),
+# fresh_context_mode, enhanced_excel_context and recent_history_count;
+# setting any of those here refuses to run.
 #   DB agent_model_name = openpyxl_anthropic/claude-haiku-4-5-think16k
 #   S3 prefix           = {model}_openpyxl = claude-haiku-4-5_openpyxl
 #
@@ -17,7 +21,7 @@
 #   excel-agent --batch-config examples/v1_task64_haiku45.yaml
 
 batch_name: "v1 - Haiku 4.5 - task 64 (capped)"
-model: "claude-haiku-4-5"                     # Anthropic direct id (not the OpenRouter slug)
+agent_model_name: "openpyxl_anthropic/claude-haiku-4-5-think16k"
 auto_mode: true
 benchmark: "v1"                               # BizbenchV1 DB + s3://mbabench/BizbenchV1/
 
@@ -34,17 +38,6 @@ trials_since: "2020-01-01"
 tasks:
   - "Order-It-07umtu"
 
-base_url: "https://api.anthropic.com"         # triggers the Anthropic-direct path
-
-# Haiku 4.5 is a BUDGET-based thinking model, not an effort-based one:
-# output_config={"effort": ...} is rejected with a 400, so this config sets
-# thinking_budget_tokens instead of reasoning_effort. The runner then sends
-# thinking={"type":"enabled","budget_tokens":N}. Constraint: budget_tokens
-# must be >= 1024 and strictly LESS than max_completion_tokens.
-# Do NOT add reasoning_effort here — it takes the effort branch and 400s.
-thinking_budget_tokens: 16000
-max_completion_tokens: 32000                  # Haiku 4.5 output ceiling is 64000
-
 verbose: true
 
 # Execution cap. Hitting it is NOT recorded as a failure: the row lands with
@@ -54,7 +47,4 @@ verbose: true
 # pipeline check.
 max_iterations: 12
 
-fresh_context_mode: true
-enhanced_excel_context: true
-recent_history_count: 3
 cleanup_workspace: true

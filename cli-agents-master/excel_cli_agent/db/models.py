@@ -60,6 +60,9 @@ class TaskAttempt(Base):
     # PDF truncation). NULL: unknown, predates this column, or a pipeline
     # without the concept (GUI / coding rows).
     context_reduced = Column(Boolean, nullable=True)
+    # extra_configs (JSONB) exists in MBABenchV2 only — not mapped for the
+    # same reason as old_id above. AutoBatchRunner writes it with raw SQL
+    # after the insert when the connected DB has the column.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True))
 

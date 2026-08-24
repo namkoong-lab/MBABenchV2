@@ -58,7 +58,10 @@ Copy `batch_config_template_auto.yaml` and customize:
 
 ```yaml
 batch_name: "Auto Batch - My Model"
-model: "openai/gpt-5.2"
+# Cohort label from excel_cli_agent/agent_identities.yaml; its entry supplies
+# model, reasoning_effort, thinking_budget_tokens, max_completion_tokens,
+# base_url, fresh_context_mode, enhanced_excel_context, recent_history_count.
+agent_model_name: "openpyxl_openai/gpt-5.2-none"
 auto_mode: true
 
 workspace_base_dir: "./workspaces"
@@ -72,9 +75,6 @@ task_filter:
   missing_for_model: true
 
 max_iterations: 30
-max_completion_tokens: 64000
-fresh_context_mode: true
-enhanced_excel_context: true
 ```
 
 Run:
