@@ -15,10 +15,10 @@ pip install .
 echo 'OPENAI_API_KEY=sk-...' > .env
 
 # 4. Run in local mode (no DB/S3 needed — just an API key)
-excel-agent --batch-config examples/test_local.yaml
+excel-agent --batch-config examples/local/test_local.yaml
 
 # Or with DB/S3 for production benchmarking (add DATABASE_URL + AWS keys to .env)
-# excel-agent --batch-config examples/test_quick.yaml
+# excel-agent --batch-config examples/v1/test_quick.yaml
 ```
 
 ## What Gets Created
@@ -194,9 +194,13 @@ Add a new `@mcp.tool()` function. See `docs/EXTENDING.md` for template.
 ### Configure Runs
 ```
 examples/
-├── test_local.yaml                # Local mode template (no DB/S3)
-├── test_quick.yaml                # Auto mode, single task, 3 iters
-└── test_mini_batch.yaml           # Auto mode, 3 tasks
+├── local/
+│   └── test_local.yaml            # Local mode template (no DB/S3)
+├── v1/                            # benchmark: v1 (BizbenchV1 DB/S3)
+│   ├── test_quick.yaml            # Auto mode, single task, 3 iters
+│   └── test_mini_batch.yaml       # Auto mode, 3 tasks
+└── v2/                            # benchmark: v2 (MBABenchV2 DB/S3)
+    └── v2_task_corpbond_haiku45.yaml  # Single v2 task end-to-end check
 batch_config_template_auto.yaml    # Full auto mode template with all options
 ```
 

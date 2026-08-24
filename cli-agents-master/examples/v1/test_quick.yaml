@@ -1,5 +1,5 @@
 # Quick test config — single task, 3 iterations, cheapest model
-# Usage: excel-agent --batch-config examples/test_quick.yaml
+# Usage: excel-agent --batch-config examples/v1/test_quick.yaml
 #
 # agent_model_name is the only model key: its agent_identities.yaml entry
 # supplies model (gpt-4o-mini), max_completion_tokens (16000), base_url

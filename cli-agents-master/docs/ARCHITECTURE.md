@@ -191,9 +191,13 @@ excel-cli-agent/
 ├── pyproject.toml                # Package config, deps, entry point
 ├── Dockerfile                    # Containerized deployment
 └── examples/
-    ├── test_local.yaml           # Local mode (no DB/S3 needed)
-    ├── test_quick.yaml           # Auto mode, single task, 3 iters
-    └── test_mini_batch.yaml      # Auto mode, 3 tasks, 3 iters
+    ├── local/
+    │   └── test_local.yaml       # Local mode (no DB/S3 needed)
+    ├── v1/                       # benchmark: v1 configs
+    │   ├── test_quick.yaml       # Auto mode, single task, 3 iters
+    │   └── test_mini_batch.yaml  # Auto mode, 3 tasks, 3 iters
+    └── v2/                       # benchmark: v2 configs
+        └── v2_task_corpbond_haiku45.yaml
 ```
 
 ## Data Flow

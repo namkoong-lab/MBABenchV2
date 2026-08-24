@@ -18,7 +18,7 @@
 # Run (from cli-agents-master/, .env holding ANTHROPIC_API_KEY; the DB URL
 # and AWS creds come from <MBABenchV2>/config/config.yaml, selected by the
 # benchmark key below):
-#   excel-agent --batch-config examples/v1_task64_haiku45.yaml
+#   excel-agent --batch-config examples/v1/v1_task64_haiku45.yaml
 
 batch_name: "v1 - Haiku 4.5 - task 64 (capped)"
 agent_model_name: "openpyxl_anthropic/claude-haiku-4-5-think16k"

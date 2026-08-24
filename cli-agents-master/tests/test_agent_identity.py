@@ -103,14 +103,16 @@ def test_wrong_type_rejected(tmp_path):
         ai.load_registry(reg)
 
 
-def test_every_auto_mode_example_resolves():
-    """Each shipped auto-mode config (and the template) names a registered
-    label, sets no pinned key, and no longer carries agent_folder."""
-    paths = sorted(EXAMPLES_DIR.glob("*.yaml")) + [TEMPLATE]
+def test_every_auto_and_local_mode_example_resolves():
+    """Each shipped auto-mode and local-mode config (and the template) names
+    a registered label, sets no pinned key, and no longer carries
+    agent_folder. Examples live in examples/{local,v1,v2}/."""
+    paths = sorted(EXAMPLES_DIR.rglob("*.yaml")) + [TEMPLATE]
+    assert any(p.parent != EXAMPLES_DIR for p in paths), "no example configs found"
     for cfg_path in paths:
         cfg = yaml.safe_load(cfg_path.read_text())
         assert "agent_folder" not in cfg, f"{cfg_path.name} still sets agent_folder"
-        if not cfg.get("auto_mode"):
+        if not (cfg.get("auto_mode") or cfg.get("local_mode")):
             continue
         leaked = [k for k in ai.PINNED_KEY_NAMES if k in cfg]
         assert not leaked, f"{cfg_path.name} sets pinned key(s) {leaked}"

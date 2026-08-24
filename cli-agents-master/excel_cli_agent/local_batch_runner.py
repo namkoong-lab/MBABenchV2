@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
+from .agent_identity import resolve_agent_identity
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
 from .prompt_versions import PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, parse_prompt_version
 
@@ -39,10 +40,19 @@ class LocalBatchRunner(BatchRunner):
         # Validate required fields
         if 'batch_name' not in config:
             raise ValueError("Missing required field: batch_name")
-        if 'model' not in config:
-            raise ValueError("Missing required field: model")
         if 'workspaces' not in config:
             raise ValueError("Missing required field: workspaces (list of {path: ...})")
+
+        # Same rule as auto mode: the config names its cohort with
+        # agent_model_name and the agent_identities.yaml entry supplies
+        # model, reasoning_effort, thinking_budget_tokens,
+        # max_completion_tokens, base_url, fresh_context_mode,
+        # enhanced_excel_context and recent_history_count. Setting any of
+        # them here refuses to run, so a local run and a DB run under the
+        # same label are guaranteed to use the same settings.
+        identity = resolve_agent_identity(config)
+        config.update(identity.settings())
+        self._identity = identity
 
         # Set defaults
         config.setdefault('verbose', False)
@@ -77,6 +87,7 @@ class LocalBatchRunner(BatchRunner):
         self.config = config
 
         print(f"✅ Configuration loaded: {config['batch_name']}")
+        print(f"   Agent model name: {config['agent_model_name']} (agent_identities.yaml)")
         print(f"   Model: {config['model']}")
         print(f"   Prompt version: {prompt_ver}")
         print(f"   Max iterations: {config['max_iterations']}")
@@ -150,7 +161,10 @@ class LocalBatchRunner(BatchRunner):
         # Append to attempts.jsonl
         attempt = {
             "task_name": task_name,
+            "agent_model_name": self.config['agent_model_name'],
             "model": self.config['model'],
+            # Same audit record auto mode writes to task_attempts.extra_configs.
+            "extra_configs": self._identity.settings(),
             "start_time": datetime.fromtimestamp(result.start_time).isoformat() if result.start_time else None,
             "end_time": datetime.fromtimestamp(result.end_time).isoformat() if result.end_time else None,
             "time_taken_min": result.duration_seconds / 60.0,
