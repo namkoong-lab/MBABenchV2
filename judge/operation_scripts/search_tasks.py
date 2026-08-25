@@ -7,18 +7,21 @@ Usage:
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
-from openai import OpenAI
 
 # Add judge/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
-from utils.llm_utils import robust_send_message
+from utils.judge_identity import resolve_judge_identity
+from utils.llm_utils import get_client, robust_send_message
+
+# Cheap ranking model; resolved through the judge identity registry like any
+# other model so routing and keys stay in one place.
+SEARCH_MODEL = "google/gemini-2.5-flash-lite"
 
 # Load configs into env vars
 load_project_configs()
@@ -40,8 +43,8 @@ def get_all_tasks(conn):
         return cur.fetchall()
 
 
-def fuzzy_search_with_llm(query, tasks, api_key, top_k=10):
-    """Use a cheap LLM via OpenRouter to rank tasks by relevance to the query."""
+def fuzzy_search_with_llm(query, tasks, top_k=10):
+    """Use a cheap LLM to rank tasks by relevance to the query."""
     task_list = "\n".join(
         f"  ID={t['id']} | name={t['task_name']} | source={t['task_source']} | deprecated={t['deprecated']}"
         for t in tasks
@@ -56,12 +59,10 @@ Tasks:
 
 Return ONLY a JSON array of task IDs in order of relevance, e.g. [3, 17, 5]. No explanation."""
 
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
-    )
+    identity = resolve_judge_identity(SEARCH_MODEL)
+    client = get_client(identity)
     messages = [{"role": "user", "content": prompt}]
-    response, _ = robust_send_message(client, messages, model="google/gemini-2.5-flash-lite")
+    response, _ = robust_send_message(client, messages, identity)
 
     content = response.choices[0].message.content.strip()
     # Extract JSON array from response (handle markdown code blocks)
@@ -83,11 +84,6 @@ def main():
     args = parser.parse_args()
     load_project_configs(benchmark=args.benchmark)
 
-    api_key = os.environ.get("BIZBENCHJUDGE_KEYS_OPEN_ROUTER_API_KEY")
-    if not api_key:
-        print("Error: BIZBENCHJUDGE_KEYS_OPEN_ROUTER_API_KEY not set.")
-        sys.exit(1)
-
     conn = get_db_connection()
     try:
         tasks = get_all_tasks(conn)
@@ -99,7 +95,7 @@ def main():
         return
 
     print(f"Searching {len(tasks)} tasks for: \"{args.query}\"")
-    matched_ids = fuzzy_search_with_llm(args.query, tasks, api_key, top_k=args.top_k)
+    matched_ids = fuzzy_search_with_llm(args.query, tasks, top_k=args.top_k)
 
     # Build lookup and display results
     task_lookup = {t["id"]: t for t in tasks}

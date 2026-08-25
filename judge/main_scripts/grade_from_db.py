@@ -33,6 +33,7 @@ sys.path.insert(0, str(_judge_root))
 
 import psycopg2
 import psycopg2.extras
+from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
 from utils.logger import add_log_file, logger, remove_log_file
 from utils import repo_config
@@ -283,42 +284,50 @@ def fetch_attempts_by_task_ids(conn, task_ids):
         return cur.fetchall()
 
 
+_GRADING_COLUMNS = (
+    "task_id", "attempt_id", "grader_model",
+    "grader_prompts", "grader_response",
+    "accuracy_grade", "formula_grade", "format_grade",
+    "rubric_version", "rubric_weight_version", "prompt_version",
+    "scored_results", "time_elapsed_min", "cost",
+    "raw_files_path", "raw_files",
+    "errors_encountered",
+    "failed", "failed_reason",
+    "deprecated", "deprecated_reason",
+    "solution_context_reduced", "attempt_context_reduced",
+    "context_reduced_details",
+    "agentic_mode", "judge_version",
+)
+
+_HAS_GRADER_REASONING = None
+
+
+def _has_grader_reasoning_column(conn):
+    """gradings.grader_reasoning exists in MBABenchV2 but may be absent in
+    older databases; probe once so the INSERT works against both."""
+    global _HAS_GRADER_REASONING
+    if _HAS_GRADER_REASONING is None:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'gradings' AND column_name = 'grader_reasoning'"
+            )
+            _HAS_GRADER_REASONING = cur.fetchone() is not None
+    return _HAS_GRADER_REASONING
+
+
 def insert_grading(conn, data):
     """Insert a grading record and return the new grading ID."""
+    columns = list(_GRADING_COLUMNS)
+    if _has_grader_reasoning_column(conn):
+        columns.append("grader_reasoning")
+    sql = (
+        f"INSERT INTO gradings ({', '.join(columns)}) "
+        f"VALUES ({', '.join(f'%({c})s' for c in columns)}) "
+        f"RETURNING id"
+    )
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO gradings (
-                task_id, attempt_id, grader_model,
-                grader_prompts, grader_response,
-                accuracy_grade, formula_grade, format_grade,
-                rubric_version, rubric_weight_version, prompt_version,
-                scored_results, time_elapsed_min, cost,
-                raw_files_path, raw_files,
-                errors_encountered,
-                failed, failed_reason,
-                deprecated, deprecated_reason,
-                solution_context_reduced, attempt_context_reduced,
-                context_reduced_details,
-                agentic_mode, judge_version
-            ) VALUES (
-                %(task_id)s, %(attempt_id)s, %(grader_model)s,
-                %(grader_prompts)s, %(grader_response)s,
-                %(accuracy_grade)s, %(formula_grade)s, %(format_grade)s,
-                %(rubric_version)s, %(rubric_weight_version)s, %(prompt_version)s,
-                %(scored_results)s, %(time_elapsed_min)s, %(cost)s,
-                %(raw_files_path)s, %(raw_files)s,
-                %(errors_encountered)s,
-                %(failed)s, %(failed_reason)s,
-                %(deprecated)s, %(deprecated_reason)s,
-                %(solution_context_reduced)s, %(attempt_context_reduced)s,
-                %(context_reduced_details)s,
-                %(agentic_mode)s, %(judge_version)s
-            )
-            RETURNING id
-        """,
-            data,
-        )
+        cur.execute(sql, data)
         grading_id = cur.fetchone()[0]
     conn.commit()
     return grading_id
@@ -915,6 +924,9 @@ def write_grading_to_db(conn, attempt, result, model, agentic=False):
         ),
         "agentic_mode": agentic,
         "judge_version": JUDGE_VERSION,
+        # Effective reasoning effort (identity-pinned unless overridden);
+        # dropped by insert_grading when the DB lacks the column.
+        "grader_reasoning": result.get("judge_reasoning"),
     }
 
     return insert_grading(conn, data)
@@ -952,6 +964,8 @@ def main(args):
         )
     )
     model = args.model
+    # Fail fast on an unregistered grader label (also covers --dry-run).
+    identity = resolve_judge_identity(model)
 
     # Refuse to start if rubric, check_order and judge mode don't all belong
     # to the selected benchmark (v1 vs v2).
@@ -1014,7 +1028,7 @@ def main(args):
             logger.info(f"\nTotal: {len(attempts)} attempts")
             return
 
-        client = get_client(model)
+        client = get_client(identity)
 
         # Grade each attempt
         # Persistent caches for extracted CSVs — avoids re-extracting across
@@ -1222,6 +1236,7 @@ def main(args):
         summary = {
             "run_id": run_id,
             "model": model,
+            "grader_identity": identity.settings(),
             "rubric_path": rubric_path,
             "template_path": template_path,
             "total_attempts": len(attempts),
@@ -1301,7 +1316,7 @@ def main(args):
 if __name__ == "__main__":
     load_project_configs()
 
-    JUDGE_MODEL = load_env_var("JUDGE_OPENROUTER_MODEL", required=True)
+    JUDGE_MODEL = load_env_var("JUDGE_DEFAULT_GRADER", required=True)
     DEFAULT_SOLUTION_CHAR_LIMIT = int(
         load_env_var("JUDGE_DEFAULT_SOLUTION_CONTEXT_CHAR_LIMIT", required=True)
     )
@@ -1370,7 +1385,7 @@ Examples:
     parser.add_argument(
         "--model",
         default=JUDGE_MODEL,
-        help=f"OpenRouter model for grading (default: {JUDGE_MODEL})",
+        help=f"Grader label from judge_identities.yaml (default: {JUDGE_MODEL})",
     )
     parser.add_argument(
         "--solution-char-limit",
@@ -1452,12 +1467,12 @@ Examples:
     parser.add_argument(
         "--reasoning-effort",
         type=str,
-        default="minimal",
+        default=None,
         choices=["none", "minimal", "low", "medium", "high"],
         help=(
-            "Reasoning/thinking effort passed to the judge model "
-            "(default: minimal). Models without thinking support may reject "
-            "the kwarg."
+            "Override the reasoning effort pinned by the grader's identity "
+            "(default: the identity's effort). Models without thinking "
+            "support may reject the kwarg."
         ),
     )
 

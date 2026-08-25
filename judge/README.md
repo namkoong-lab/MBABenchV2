@@ -46,9 +46,10 @@ would lift this.)
 
 Useful flags: `--dry-run`, `--no-db-write`, `--no-s3-upload`, `--nocall`,
 `--model <slug>`, `--reasoning-effort {none,minimal,low,medium,high}`.
-Any `google/*` slug passed to `--model` must be listed in
-`judge.openrouter_models` (project_configs.yaml) or it is routed
-Gemini-direct.
+`--model` takes a grader label registered in `judge_identities.yaml`, which
+pins the endpoint (openrouter | gemini | anthropic | openai), the wire model
+id, and the default reasoning effort. An unregistered label refuses to run
+and prints the stanza to add.
 
 ## Grade a local task folder
 

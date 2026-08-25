@@ -1,0 +1,62 @@
+# Judge identity registry — what a grader_model label means.
+#
+# `--model <label>` resolves here (utils/judge_identity.py); the entry pins
+# provider (endpoint), the wire model id, and the reasoning effort. Rules,
+# enforced at load: label unique; (provider, model, effort) unique; every
+# key present on every entry. Unknown label -> refusal + paste-ready stanza.
+#
+# Labels are the exact strings stored in gradings.grader_model, so re-grades
+# under an existing label keep hitting the endpoint that label used.
+# Seeded 2026-08-25 from SELECT DISTINCT grader_model FROM gradings on
+# MBABenchV2 plus the labels attested in project_configs.yaml and
+# _MODEL_PRICING (the v1 database was not reachable from this machine —
+# add any missing v1-era label with its historical provider before
+# re-grading under it).
+#
+# Policy (Pat, 2026-08-25): OpenAI grader models always use the OpenAI API
+# directly — never register an openai/* label with provider: openrouter.
+
+# Default grader (project_configs.yaml judge.default_grader).
+- grader_model: google/gemini-2.5-pro
+  provider: openrouter                # was in judge.openrouter_models
+  model: google/gemini-2.5-pro
+  effort: minimal
+
+- grader_model: google/gemini-2.5-flash
+  provider: openrouter                # was in judge.openrouter_models
+  model: google/gemini-2.5-flash
+  effort: minimal
+
+# Fuzzy task search (operation_scripts/search_tasks.py), not a grader:
+# called without reasoning_effort, hence null.
+- grader_model: google/gemini-2.5-flash-lite
+  provider: openrouter                # was in judge.openrouter_models
+  model: google/gemini-2.5-flash-lite
+  effort: null
+
+- grader_model: google/gemini-3.5-flash
+  provider: openrouter                # was in judge.openrouter_models
+  model: google/gemini-3.5-flash
+  effort: minimal
+
+# Graded via Gemini-direct (never in openrouter_models).
+- grader_model: google/gemini-3.5-flash-lite
+  provider: gemini
+  model: gemini-3.5-flash-lite
+  effort: minimal
+
+- grader_model: google/gemini-3-flash-preview
+  provider: gemini
+  model: gemini-3-flash-preview
+  effort: minimal
+
+# Judge-robustness study graders.
+- grader_model: anthropic/claude-opus-4-8
+  provider: anthropic
+  model: claude-opus-4-8
+  effort: null                        # anthropic path drops reasoning_effort
+
+- grader_model: openai/gpt-5.5
+  provider: openai
+  model: gpt-5.5
+  effort: none                        # only effort chat/completions accepts with tools

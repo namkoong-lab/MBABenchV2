@@ -37,12 +37,9 @@ judge:
   # Per-call trajectory recording (utils/trajectory.py), uploaded with the grading.
   record_trajectory: true
 
-  # Default grader model (override with --model).
-  openrouter_model: "google/gemini-2.5-pro"
-
-  # google/* slugs forced through OpenRouter instead of Gemini-direct (comma-separated,
-  # exact match). Add any google/* slug you pass to --model, or it hits Google's endpoint.
-  openrouter_models: "google/gemini-2.5-pro,google/gemini-2.5-flash,google/gemini-2.5-flash-lite,google/gemini-3.5-flash"
+  # Default grader label (override with --model); must be registered in
+  # judge_identities.yaml, which pins its endpoint, wire model id, and effort.
+  default_grader: "google/gemini-2.5-pro"
 
   default_total_character_limit: 2_000_000
   default_solution_context_char_limit: 1_000_000

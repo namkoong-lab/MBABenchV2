@@ -55,6 +55,7 @@ import psycopg2.extras
 _judge_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_judge_root))
 
+from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
@@ -365,8 +366,9 @@ class GradeOrchestrator:
         self.on_overflow = on_overflow
         self.reasoning_effort = reasoning_effort
 
-        # Provider-routed, cached client (thread-safe per SDK).
-        self.client = get_client(model)
+        # Identity-routed, cached client (thread-safe per SDK).
+        self.identity = resolve_judge_identity(model)
+        self.client = get_client(self.identity)
 
         # Persistent CSV cache roots, namespaced by database name because
         # task/attempt ids collide across the v1 and v2 databases.
@@ -792,7 +794,7 @@ def split_run_log_by_thread(run_log_path, out_dir):
 def main():
     load_project_configs()
 
-    JUDGE_MODEL = load_env_var("JUDGE_OPENROUTER_MODEL", required=True)
+    JUDGE_MODEL = load_env_var("JUDGE_DEFAULT_GRADER", required=True)
     DEFAULT_SOLUTION_CHAR_LIMIT = int(
         load_env_var("JUDGE_DEFAULT_SOLUTION_CONTEXT_CHAR_LIMIT", required=True)
     )
@@ -924,12 +926,12 @@ def main():
     parser.add_argument(
         "--reasoning-effort",
         type=str,
-        default="minimal",
+        default=None,
         choices=["none", "minimal", "low", "medium", "high"],
         help=(
-            "Reasoning/thinking effort passed to the judge model "
-            "(default: minimal). Models without thinking support may reject "
-            "the kwarg."
+            "Override the reasoning effort pinned by the grader's identity "
+            "(default: the identity's effort). Models without thinking "
+            "support may reject the kwarg."
         ),
     )
 
@@ -947,6 +949,8 @@ def main():
 
     args = parser.parse_args()
     load_project_configs(benchmark=args.benchmark)
+    # Fail fast on an unregistered grader label, before any DB work.
+    resolve_judge_identity(args.model)
 
     # Resolve paths
     rubric_path = str(

@@ -57,6 +57,7 @@ _judge_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_judge_root))
 
 from utils.excel_utils import calculate_message_size_for_files
+from utils.judge_identity import resolve_judge_identity
 from utils.logger import logger, remove_log_file
 from utils.misc_utils import (
     add_benchmark_arg,
@@ -930,7 +931,9 @@ def main():
     load_project_configs(benchmark=args.benchmark)
 
     # Resolve env-driven config
-    judge_model = load_env_var("JUDGE_OPENROUTER_MODEL", required=True)
+    judge_model = load_env_var("JUDGE_DEFAULT_GRADER", required=True)
+    # Fail fast if the plan would name an unregistered grader label.
+    resolve_judge_identity(judge_model)
     rubric_version = load_env_var("JUDGE_RUBRIC_VERSION", required=True)
     judge_version_std = int(load_env_var("JUDGE_VERSION", required=True))
     prompt_version_std = str(load_env_var("JUDGE_PROMPT_VERSION", required=True))

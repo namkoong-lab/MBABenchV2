@@ -1,14 +1,13 @@
 """LLM communication utilities for the judge system."""
 
-import os
 import random
 import threading
 import time
 
 from openai import OpenAI
 
+from .judge_identity import JudgeIdentity
 from .logger import logger
-from .misc_utils import load_env_var
 from .repo_config import resolve_api_key
 
 # Retry constants
@@ -18,69 +17,16 @@ RATE_LIMIT_DELAY = 30
 MAX_ATTEMPTS = 10
 
 # ---- Provider routing ------------------------------------------------------
-# `google/*` model slugs are routed to Gemini's OpenAI-compatible endpoint
-# using KEYS_GEMINI_KEY; `anthropic/*` slugs to Anthropic's OpenAI-compatible
-# endpoint using KEYS_ANTHROPIC_KEY; everything else goes to OpenRouter.
-# Clients are cached per-provider so the underlying httpx connection pool is
-# reused across calls (the OpenAI SDK is thread-safe).
-
-_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-_ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1/"
-_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-_GEMINI_PREFIX = "google/"
-_ANTHROPIC_PREFIX = "anthropic/"
-_OPENAI_PREFIX = "openai/"
+# Which endpoint a grader hits is pinned by its JudgeIdentity (resolved from
+# judge_identities.yaml) — never sniffed from the model slug or the ambient
+# env. The identity's provider names the base_url and the api-key entry
+# (keys resolve env-first, then config/config.yaml keys.*; see
+# repo_config.resolve_api_key). Clients are cached per-provider so the
+# underlying httpx connection pool is reused across calls (the OpenAI SDK is
+# thread-safe).
 
 _clients: dict[str, OpenAI] = {}
 _clients_lock = threading.Lock()
-
-
-def _openrouter_override() -> set:
-    """Model slugs forced through OpenRouter (comma-separated): env
-    JUDGE_OPENROUTER_MODELS overrides judge.openrouter_models in
-    project_configs.yaml. Lets capped/retired Google models run through
-    OpenRouter without touching configs."""
-    v = os.environ.get("JUDGE_OPENROUTER_MODELS") or str(
-        load_env_var("JUDGE_OPENROUTER_MODELS", default="")
-    )
-    return {s.strip() for s in v.split(",") if s.strip()}
-
-
-def is_gemini_model(model: str) -> bool:
-    """True iff the model id should be routed to Gemini's API directly."""
-    return model.startswith(_GEMINI_PREFIX) and model not in _openrouter_override()
-
-
-def is_anthropic_model(model: str) -> bool:
-    """True iff the model id should be routed to Anthropic's API directly."""
-    return model.startswith(_ANTHROPIC_PREFIX)
-
-
-def is_openai_model(model: str) -> bool:
-    """True iff the model id should be routed to OpenAI's API directly.
-
-    Gated on env OPENAI_API_KEY (session-scoped, never persisted): without the
-    key, `openai/*` slugs keep their historical OpenRouter routing.
-    """
-    return model.startswith(_OPENAI_PREFIX) and bool(os.environ.get("OPENAI_API_KEY"))
-
-
-def to_api_model_id(model: str) -> str:
-    """Strip provider prefixes the wire endpoint doesn't expect.
-
-    Gemini's compat endpoint takes bare names (`gemini-3-flash-preview`),
-    not OpenRouter's `google/...` slug; Anthropic's compat endpoint likewise
-    takes bare ids (`claude-opus-4-8`). OpenRouter takes the slug as-is.
-    The full slug stays the canonical id everywhere else (cost lookup,
-    metrics, DB rows) so only this function strips it.
-    """
-    if is_gemini_model(model):
-        return model[len(_GEMINI_PREFIX) :]
-    if is_anthropic_model(model):
-        return model[len(_ANTHROPIC_PREFIX) :]
-    if is_openai_model(model):
-        return model[len(_OPENAI_PREFIX) :]
-    return model
 
 
 _OK_IMAGE_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -125,21 +71,14 @@ def strip_unsupported_anthropic_images(messages):
     return cleaned
 
 
-def get_client(model: str) -> OpenAI:
-    """Return a cached OpenAI-compatible client matching the model's provider.
+def get_client(identity: JudgeIdentity) -> OpenAI:
+    """Return a cached OpenAI-compatible client for the identity's provider.
 
     First call per provider builds the client; subsequent calls are dict
     lookups. Safe to call from worker threads — the lock only contends
     on cold start.
     """
-    if is_gemini_model(model):
-        provider = "gemini"
-    elif is_anthropic_model(model):
-        provider = "anthropic"
-    elif is_openai_model(model):
-        provider = "openai"
-    else:
-        provider = "openrouter"
+    provider = identity.provider
     client = _clients.get(provider)
     if client is not None:
         return client
@@ -147,24 +86,10 @@ def get_client(model: str) -> OpenAI:
         client = _clients.get(provider)
         if client is not None:
             return client
-        # Keys: environment first, then <MBABenchV2>/config/config.yaml keys.*
-        if provider == "gemini":
-            client = OpenAI(
-                base_url=_GEMINI_BASE_URL,
-                api_key=resolve_api_key("gemini"),
-            )
-        elif provider == "anthropic":
-            client = OpenAI(
-                base_url=_ANTHROPIC_BASE_URL,
-                api_key=resolve_api_key("anthropic"),
-            )
-        elif provider == "openai":
-            client = OpenAI(api_key=resolve_api_key("openai"))
-        else:
-            client = OpenAI(
-                base_url=_OPENROUTER_BASE_URL,
-                api_key=resolve_api_key("openrouter"),
-            )
+        kwargs = {"api_key": resolve_api_key(identity.api_key_provider)}
+        if identity.base_url is not None:
+            kwargs["base_url"] = identity.base_url
+        client = OpenAI(**kwargs)
         _clients[provider] = client
         return client
 
@@ -251,17 +176,18 @@ def backoff(attempt):
 def robust_send_message(
     client,
     messages,
-    model,
+    identity,
     system_instruction=None,
     response_format=None,
     reasoning_effort=None,
 ):
-    """Send a message to OpenRouter with exponential backoff retry logic.
+    """Send a message to the identity's provider with exponential backoff.
 
     Args:
-        client: OpenAI-compatible client
+        client: OpenAI-compatible client (get_client(identity))
         messages: List of message dicts
-        model: Model identifier string
+        identity: JudgeIdentity — supplies the wire model id and the
+            provider-specific request shaping below
         system_instruction: Optional system message to prepend
         response_format: Optional response format dict (e.g., {"type": "json_object"})
         reasoning_effort: Optional reasoning effort level passed verbatim to the
@@ -292,19 +218,19 @@ def robust_send_message(
 
             size_info = calculate_message_size(api_messages)
 
-            kwargs = {"model": to_api_model_id(model), "messages": api_messages}
+            kwargs = {"model": identity.model, "messages": api_messages}
             if response_format:
                 kwargs["response_format"] = response_format
             if reasoning_effort is not None:
                 kwargs["reasoning_effort"] = reasoning_effort
-            if is_openai_model(model):
+            if identity.provider == "openai":
                 # OpenAI (direct) 400s on non-image MIME parts (emf/wmf/bmp/
                 # tiff embedded in workbooks) exactly like Anthropic; the
                 # OpenRouter route normalized these, the direct API doesn't.
                 kwargs["messages"] = strip_unsupported_anthropic_images(
                     kwargs["messages"]
                 )
-            if is_anthropic_model(model):
+            if identity.provider == "anthropic":
                 # Anthropic's OpenAI-compat endpoint: the native API requires
                 # max_tokens (compat default is small), and the judge's
                 # reasoning_effort values ("minimal"/"none") aren't valid
@@ -322,58 +248,11 @@ def robust_send_message(
                 kwargs["max_tokens"] = 32000
                 kwargs.pop("reasoning_effort", None)
                 kwargs.pop("response_format", None)
-                # Anthropic accepts only jpeg/png/gif/webp image inputs and
-                # 400s on anything else (Excel workbooks can embed emf/wmf/
-                # bmp/tiff, which Gemini tolerates). Drop unsupported images
-                # so grading proceeds on the CSV/text content; the rubric is
-                # driven by cell values/formulas, not embedded pictures.
-                _ok_img = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-                cleaned = []
-                for _m in kwargs["messages"]:
-                    _c = _m.get("content")
-                    if isinstance(_c, list):
-                        _new = []
-                        for _it in _c:
-                            if (
-                                isinstance(_it, dict)
-                                and _it.get("type") == "image_url"
-                            ):
-                                _u = _it.get("image_url", {}).get("url", "")
-                                _mt = (
-                                    _u[5 : _u.find(";")]
-                                    if _u.startswith("data:") and ";" in _u
-                                    else ""
-                                )
-                                if _mt not in _ok_img:
-                                    continue
-                            _new.append(_it)
-                        _m = {**_m, "content": _new}
-                    cleaned.append(_m)
-                kwargs["messages"] = cleaned
+                kwargs["messages"] = strip_unsupported_anthropic_images(
+                    kwargs["messages"]
+                )
 
             response = client.chat.completions.create(**kwargs)
-
-            if is_anthropic_model(model):
-                import os as _os
-                _dbg = _os.environ.get("ANTHROPIC_JUDGE_DEBUG")
-                if _dbg:
-                    try:
-                        _ch = response.choices[0]
-                        _txt = _ch.message.content or ""
-                        _fr = getattr(_ch, "finish_reason", None)
-                        _ct = (
-                            response.usage.completion_tokens
-                            if getattr(response, "usage", None)
-                            else -1
-                        )
-                        with open(_dbg, "a") as _f:
-                            _f.write(
-                                f"\n===== finish_reason={_fr} completion_tokens={_ct} "
-                                f"content_len={len(_txt)} =====\n"
-                                f"HEAD: {_txt[:300]!r}\nTAIL: {_txt[-300:]!r}\n"
-                            )
-                    except Exception:
-                        pass
 
             metrics = {
                 "message_size": size_info["text"],

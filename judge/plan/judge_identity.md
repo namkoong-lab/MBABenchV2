@@ -1,5 +1,31 @@
 # Plan: judge identity registry replaces prefix-sniffing model routing
 
+## Status — implemented 2026-08-25
+
+All code changes below are in. Deviations from the plan as written:
+
+- `gradings` has no `extra_configs` column, so the identity settings are
+  recorded in `_metadata.json` / `run_summary.json`, and the **effective
+  reasoning effort** goes into the existing `gradings.grader_reasoning`
+  column (present in MBABenchV2; `insert_grading` probes for it so v1
+  still works). This also closes the "grader_reasoning read but never
+  written" gap.
+- `openai/*` labels are registered `provider: openai` regardless of any
+  historical OpenRouter routing — per policy, OpenAI grader models always
+  hit the OpenAI API directly.
+- The v1 database was not reachable when seeding `judge_identities.yaml`;
+  it was seeded from the v2 `gradings` table plus the labels attested in
+  config/pricing. Add missing v1-era labels before re-grading under them.
+- `operation_scripts/search_tasks.py` also moved onto the registry (its
+  hand-built OpenRouter client read a stale env key).
+- `main_scripts/judge.py` gained the `sys.path` shim its sibling entry
+  points already had (direct invocation had been broken since the
+  pyproject stopped installing `utils`).
+
+Verified: offline suites pass (incl. new `tests_offline/test_judge_identity.py`),
+all CLIs `--help`, real `--dry-run` against v2, unknown-label stanza refusal.
+Still owed: one real graded attempt per provider (user runs these).
+
 ## Problem
 
 `judge/utils/llm_utils.py` decides which API endpoint a grader model hits by

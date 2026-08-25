@@ -3,10 +3,15 @@
 import hashlib
 import json
 import shutil
+import sys
 import time
 import traceback
 import uuid
 from pathlib import Path
+
+# Ensure judge/ directory is in Python path for local imports (mirrors
+# grade_from_db.py; needed since the pyproject stopped installing `utils`).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from openai import OpenAI
 from utils.excel_utils import (
@@ -18,14 +23,12 @@ from utils.excel_utils import (
     shorten_attempt_csv_files,
     shorten_solution_csv_files,
 )
+from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import (
     calculate_cost,
     get_client,
-    is_anthropic_model,
-    is_openai_model,
     robust_send_message,
     strip_unsupported_anthropic_images,
-    to_api_model_id,
 )
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
@@ -50,7 +53,7 @@ from utils.trajectory import TrajectoryRecorder
 
 ### Obtain constants
 load_project_configs()
-JUDGE_MODEL = load_env_var("JUDGE_OPENROUTER_MODEL", required=True)
+JUDGE_MODEL = load_env_var("JUDGE_DEFAULT_GRADER", required=True)
 DEFAULT_SOLUTION_CONTEXT_CHAR_LIMIT = int(
     load_env_var("JUDGE_DEFAULT_SOLUTION_CONTEXT_CHAR_LIMIT", required=True)
 )
@@ -400,14 +403,16 @@ def judge_case(
     max_tool_rounds: int = AGENTIC_JUDGE_MAX_ROUNDS,
     reasoning_effort: str | None = None,
 ):
-    """Execute the complete judging workflow for a case using OpenRouter.
+    """Execute the complete judging workflow for a case.
 
     Args:
         task_folder: Path to the task folder containing Excel files.
-        client: Configured OpenRouter client.
+        client: OpenAI-compatible client from get_client(identity).
         rubric_path: Path to the rubric JSON file.
         template_path: Path to the prompt template YAML file.
-        model: Model identifier to use for API calls (the grader model).
+        model: Grader label from judge_identities.yaml; pins the endpoint,
+            wire model id, and default effort. Stored as-is in
+            gradings.grader_model.
         no_file_check: If True, skip file confirmation step (default: True).
             This should always be True. It's only kept optional for legacy reasons.
         nocall: If True, skip API calls (for testing).
@@ -439,6 +444,19 @@ def judge_case(
         the run auto-routed to the agentic judge, ``result["auto_routed"]`` is
         True and the rest of the dict is whatever ``agentic_judge_case`` returns.
     """
+    # The label pins endpoint + wire id + effort via judge_identities.yaml.
+    # reasoning_effort=None means "the identity's pinned effort"; an explicit
+    # differing value is an experiment override — warn, and record it.
+    identity = resolve_judge_identity(model)
+    if reasoning_effort is None:
+        reasoning_effort = identity.effort
+    elif reasoning_effort != identity.effort:
+        logger.warning(
+            f"reasoning_effort {reasoning_effort!r} overrides the effort "
+            f"pinned by {model!r} ({identity.effort!r}); the effective value "
+            f"is what gets recorded"
+        )
+
     # Shared preparation: validation, file processing
     prep = _prepare_case(
         task_folder=task_folder,
@@ -1034,7 +1052,7 @@ def judge_case(
                 response, metrics = robust_send_message(
                     client,
                     conversation_messages,
-                    model,
+                    identity,
                     response_format={"type": "json_object"},
                     reasoning_effort=reasoning_effort,
                 )
@@ -1269,6 +1287,7 @@ def judge_case(
         attempt_context_reduced=attempt_context_reduced,
         context_reduced_details=context_reduced_details,
         reasoning_effort=reasoning_effort,
+        grader_identity=identity.settings(),
         recorder=recorder,
     )
 
@@ -1551,6 +1570,7 @@ def _finalize_case(
     agentic=False,
     auto_routed=False,
     reasoning_effort=None,
+    grader_identity=None,
     recorder=None,
 ):
     """Shared finalization: save judgement, calculate scores, write metadata."""
@@ -1631,6 +1651,7 @@ def _finalize_case(
         "task_folder": task_folder_name,
         "grader_model": model,
         "judge_reasoning": reasoning_effort,
+        "grader_identity": grader_identity,
         "judge_mode": "agentic" if agentic else "non-agentic",
         "auto_routed": auto_routed,
         "attempt_model": attempt_model,
@@ -1719,6 +1740,8 @@ def _finalize_case(
         "attempt_context_reduced": attempt_context_reduced,
         "context_reduced_details": context_reduced_details,
         "auto_routed": auto_routed,
+        "judge_reasoning": reasoning_effort,
+        "grader_identity": grader_identity,
     }
     if score_results:
         result["score_results"] = score_results
@@ -2603,10 +2626,11 @@ def agentic_judge_case(
 
     Args:
         task_folder: Path to the task folder containing Excel files.
-        client: Configured OpenRouter/OpenAI client.
+        client: OpenAI-compatible client from get_client(identity).
         rubric_path: Path to the rubric JSON file.
         rubric_weight_path: Path to the rubric weights JSON file.
-        model: Model identifier for API calls.
+        model: Grader label from judge_identities.yaml; pins the endpoint,
+            wire model id, and default effort.
         nocall: If True, skip API calls (for testing).
         noupload: If True, skip file preparation (for testing).
         use_existing: If True, skip regenerating files if they already exist.
@@ -2627,6 +2651,19 @@ def agentic_judge_case(
     Returns:
         dict: Same structure as judge_case — paths, scores, parse info.
     """
+    # The label pins endpoint + wire id + effort via judge_identities.yaml.
+    # reasoning_effort=None means "the identity's pinned effort"; an explicit
+    # differing value is an experiment override — warn, and record it.
+    identity = resolve_judge_identity(model)
+    if reasoning_effort is None:
+        reasoning_effort = identity.effort
+    elif reasoning_effort != identity.effort:
+        logger.warning(
+            f"reasoning_effort {reasoning_effort!r} overrides the effort "
+            f"pinned by {model!r} ({identity.effort!r}); the effective value "
+            f"is what gets recorded"
+        )
+
     # Shared preparation: validation, file processing
     prep = _prepare_case(
         task_folder=task_folder,
@@ -2842,12 +2879,12 @@ def agentic_judge_case(
             wire_chars_at_call = _wire_char_total(state.messages)
 
             _msgs = state.messages
-            if is_anthropic_model(model) or is_openai_model(model):
+            if identity.provider in ("anthropic", "openai"):
                 # OpenAI (direct) 400s on emf/wmf/bmp/tiff parts just like
                 # Anthropic; OpenRouter normalizes them, direct API doesn't.
                 _msgs = strip_unsupported_anthropic_images(_msgs)
             _create_kwargs = {
-                "model": to_api_model_id(model),
+                "model": identity.model,
                 "messages": _msgs,
                 "tools": AGENTIC_JUDGE_TOOLS,
             }
@@ -2855,7 +2892,7 @@ def agentic_judge_case(
                 # OpenAI chat/completions rejects function tools with any
                 # reasoning_effort except 'none' (gpt-5.5).
                 _create_kwargs["reasoning_effort"] = (
-                    "none" if is_openai_model(model) else reasoning_effort
+                    "none" if identity.provider == "openai" else reasoning_effort
                 )
             _call_t0 = time.time()
             try:
@@ -3156,16 +3193,16 @@ def agentic_judge_case(
                 )
 
                 _msgs = state.messages
-                if is_anthropic_model(model) or is_openai_model(model):
+                if identity.provider in ("anthropic", "openai"):
                     _msgs = strip_unsupported_anthropic_images(_msgs)
                 _create_kwargs = {
-                    "model": to_api_model_id(model),
+                    "model": identity.model,
                     "messages": _msgs,
                     "tools": finalize_tools,
                 }
                 if reasoning_effort is not None:
                     _create_kwargs["reasoning_effort"] = (
-                        "none" if is_openai_model(model) else reasoning_effort
+                        "none" if identity.provider == "openai" else reasoning_effort
                     )
                 _call_t0 = time.time()
                 try:
@@ -3443,6 +3480,7 @@ def agentic_judge_case(
         agentic=True,
         auto_routed=auto_routed,
         reasoning_effort=reasoning_effort,
+        grader_identity=identity.settings(),
         recorder=recorder,
     )
 
@@ -3486,7 +3524,9 @@ def main(args):
         )
     )
 
-    client = get_client(args.model)
+    # Fail fast on an unregistered label, before any file work.
+    identity = resolve_judge_identity(args.model)
+    client = get_client(identity)
 
     if args.agentic:
         agentic_judge_case(
@@ -3556,7 +3596,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         default=JUDGE_MODEL,
-        help=f"OpenRouter model to use for grading (default: {JUDGE_MODEL})",
+        help=f"Grader label from judge_identities.yaml (default: {JUDGE_MODEL})",
     )
     parser.add_argument(
         "--nocall",
@@ -3649,12 +3689,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--reasoning-effort",
         type=str,
-        default="minimal",
+        default=None,
         choices=["none", "minimal", "low", "medium", "high"],
         help=(
-            "Reasoning/thinking effort passed to the judge model "
-            "(default: minimal). Models without thinking support may reject "
-            "the kwarg."
+            "Override the reasoning effort pinned by the grader's identity "
+            "(default: the identity's effort). Models without thinking "
+            "support may reject the kwarg."
         ),
     )
 
