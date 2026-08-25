@@ -18,8 +18,7 @@ This replaced the UNO socket bridge (persistent soffice listener + a second
 UNO-capable python) in 2026-08: `import uno` only exists in an interpreter
 shipped with LibreOffice, and on macOS Apple's launch constraint on that
 interpreter made the architecture unusable — runs silently degraded to the
-_eval_formula fallback. See plan/libreoffice_recalc.md (decision) and
-plan/libreoffice_recalc_b1_impl.md (this design).
+_eval_formula fallback. See plan/libreoffice_recalc.md.
 """
 
 import logging

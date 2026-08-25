@@ -1,7 +1,18 @@
 # Plan: reproducible LibreOffice recalculation for cli-agents
 
-Status: decided 2026-08-25 — Option B1. Implementation plan:
-`plan/libreoffice_recalc_b1_impl.md`. Nothing implemented yet.
+Status: **implemented 2026-08-25 — Option B1** (commit 9e3e6ee). The engine
+now runs `soffice --headless --calc --convert-to xlsx` per recalc (no UNO, no
+second python, same engine on macOS and Linux); the server fails loudly when
+LibreOffice is missing (`--allow-recalc-fallback` / `--no-libreoffice` to opt
+out); batch runners preflight the engine before claiming tasks and record
+`recalc_engine` + LibreOffice version in `extra_configs`; `uno_python` became
+`libreoffice_path` (null = auto-detect). Verified on macOS with LibreOffice
+26.2.5.2: 19 offline tests (`tests/test_recalc_engine_offline.py`, fake-soffice
+stub), 6/6 integration tests (`tests/test_libreoffice_calc.py`), ~570 ms per
+recalc on a warm profile, and an end-to-end PMT check whose cached value
+survives `openpyxl data_only=True` — the judge-visible property this plan was
+about. Still owed: the same checks on an Ubuntu box, a Mac↔Ubuntu transcript
+diff on a real task, and the judge-parity CSV comparison.
 
 ## The situation
 

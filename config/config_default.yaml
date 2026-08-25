@@ -56,6 +56,6 @@ venv_path: null
 # null = auto-detect: `soffice` on PATH (Linux: apt-get install libreoffice-calc),
 # else the macOS app bundle (/Applications/LibreOffice.app/Contents/MacOS/soffice).
 # Set explicitly only for non-standard installs; LIBREOFFICE_PATH env overrides.
-# See cli-agents-master/plan/libreoffice_recalc_b1_impl.md.
+# See cli-agents-master/plan/libreoffice_recalc.md.
 libreoffice_path: null
 
