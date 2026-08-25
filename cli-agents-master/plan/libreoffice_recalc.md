@@ -1,6 +1,7 @@
 # Plan: reproducible LibreOffice recalculation for cli-agents
 
-Status: proposal, 2026-08-23. Nothing below is implemented yet.
+Status: decided 2026-08-25 — Option B1. Implementation plan:
+`plan/libreoffice_recalc_b1_impl.md`. Nothing implemented yet.
 
 ## The situation
 

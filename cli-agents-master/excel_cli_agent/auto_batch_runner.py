@@ -277,12 +277,15 @@ class AutoBatchRunner(BatchRunner):
         return any(c["name"] == "extra_configs" for c in cols)
 
     def _write_extra_configs(self, db, attempt_id: int) -> None:
-        """Record the identity's full settings on the row (v2 DB only)."""
+        """Record the identity's full settings on the row (v2 DB only),
+        plus the recalc-engine provenance from the batch preflight."""
         if not self._extra_configs_supported:
             return
+        cfg = dict(self._identity.extra_configs())
+        cfg.update(self._recalc_extra_configs())
         db.execute(
             sa_text("UPDATE task_attempts SET extra_configs = CAST(:cfg AS jsonb) WHERE id = :id"),
-            {"cfg": json.dumps(self._identity.extra_configs()), "id": attempt_id},
+            {"cfg": json.dumps(cfg), "id": attempt_id},
         )
         db.commit()
 
@@ -826,6 +829,11 @@ class AutoBatchRunner(BatchRunner):
         # start: silent download failures previously produced empty-context
         # attempts that looked normal in the DB.
         self._verify_s3_access()
+
+        # Fail fast if the LibreOffice recalc engine can't start (unless the
+        # config sets allow_recalc_fallback), and record which engine this
+        # batch runs so every attempt row carries the provenance.
+        self._verify_recalc_engine()
 
         # Setup batch logging directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

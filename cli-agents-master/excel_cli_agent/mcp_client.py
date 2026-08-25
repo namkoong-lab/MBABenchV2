@@ -32,9 +32,13 @@ class ExcelMCPClient:
 
     CONNECT_TIMEOUT = 60  # Timeout for server startup
 
-    def __init__(self, server_script_path: str, storage_path: str = "./excel_files"):
+    def __init__(self, server_script_path: str, storage_path: str = "./excel_files",
+                 server_args: Optional[List[str]] = None):
         self.server_script_path = Path(server_script_path)
         self.storage_path = storage_path
+        # Extra argv appended to the server command (e.g. --no-libreoffice,
+        # --allow-recalc-fallback).
+        self.server_args: List[str] = list(server_args or [])
         self.process: Optional[subprocess.Popen] = None
         self.available_tools: List[str] = []
         self.created_files: List[str] = []
@@ -142,7 +146,7 @@ class ExcelMCPClient:
         try:
             # Start the MCP server subprocess
             self.process = subprocess.Popen(
-                [sys.executable, str(self.server_script_path), self.storage_path],
+                [sys.executable, str(self.server_script_path), self.storage_path, *self.server_args],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

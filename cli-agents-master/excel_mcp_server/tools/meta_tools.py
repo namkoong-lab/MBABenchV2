@@ -1,4 +1,4 @@
-"""Meta tools: report_mcp_issue, validate_formula."""
+"""Meta tools: report_mcp_issue, validate_formula, get_recalc_engine_info."""
 import json
 import sys
 from datetime import datetime
@@ -137,3 +137,23 @@ async def validate_formula(formula: str) -> str:
             "functions_used": [],
             "potential_names": []
         }, indent=2)
+
+
+@mcp.tool()
+async def get_recalc_engine_info() -> str:
+    """Report which formula recalculation engine this server is using.
+
+    Harness-facing provenance tool: the batch runner records the answer on
+    every attempt (extra_configs.recalc_engine) so fallback-engine runs can
+    never be mistaken for LibreOffice runs.
+
+    Returns:
+        JSON string {"engine": "libreoffice", "soffice_path": ..., "soffice_source": ...,
+        "soffice_version": ...} when LibreOffice recalculation is active, or
+        {"engine": "fallback"} when running with the limited _eval_formula fallback.
+    """
+    from ..core.shared_state import _lo_engine
+
+    if _lo_engine is not None and _lo_engine.is_running:
+        return json.dumps(_lo_engine.info(), indent=2)
+    return json.dumps({"engine": "fallback"}, indent=2)

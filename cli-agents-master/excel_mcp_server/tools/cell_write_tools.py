@@ -221,22 +221,29 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
         _save_workbook_sync(wb, _get_file_path(filename))
 
         calculated_value = None
-        lo_recalc_info = None
+        # Which engine stands behind calculated_value; always stamped on the
+        # response so transcripts record fallback-engine values as such.
+        recalc_engine_info = {"engine": "fallback"}
 
         from ..core.shared_state import _lo_engine
         if _lo_engine and _lo_engine.is_running:
             lo_result = _recalculate_with_libreoffice(filename)
-            lo_recalc_info = {
-                "engine": "libreoffice",
-                "duration_ms": lo_result.get("duration_ms", 0),
-            }
             if lo_result["success"]:
+                recalc_engine_info = {
+                    "engine": "libreoffice",
+                    "duration_ms": lo_result.get("duration_ms", 0),
+                }
                 try:
                     wb_view = _load_workbook_view(filename)
                     ws_view = wb_view[worksheet_name]
                     calculated_value = ws_view[cell].value
                 except Exception:
                     pass
+            else:
+                recalc_engine_info = {
+                    "engine": "fallback",
+                    "libreoffice_error": lo_result.get("error"),
+                }
 
         if calculated_value is None:
             try:
@@ -267,8 +274,7 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
         else:
             response["calculated_value"] = "Not available (open file in Excel to calculate)"
 
-        if lo_recalc_info:
-            response["recalc_engine"] = lo_recalc_info
+        response["recalc_engine"] = recalc_engine_info
 
         return json.dumps(response, indent=2, default=str)
 

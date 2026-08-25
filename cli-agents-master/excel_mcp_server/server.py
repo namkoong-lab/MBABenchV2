@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Excel MCP Server
-Provides 21 Excel manipulation tools via MCP protocol using FastMCP.
+Provides Excel manipulation tools via MCP protocol using FastMCP.
 
 Tools are registered in excel_mcp_server/tools/ via @mcp.tool() decorators.
 Shared state (mcp instance, storage path) lives in excel_mcp_server/core/shared_state.py.
@@ -22,13 +22,10 @@ from excel_mcp_server.core import shared_state  # noqa: E402
 # Import all tool modules to trigger @mcp.tool() registration
 import excel_mcp_server.tools  # noqa: F401, E402
 
-# LibreOffice headless recalculation engine (optional)
-try:
-    from libreoffice_calc import LibreOfficeCalcEngine
-    _LIBREOFFICE_AVAILABLE = True
-except ImportError:
-    _LIBREOFFICE_AVAILABLE = False
-    LibreOfficeCalcEngine = None
+# LibreOffice recalculation engine: direct `soffice --convert-to` per recalc,
+# no UNO. A plain package import — the engine has no import-time dependency on
+# LibreOffice itself, so availability is decided at start(), loudly, not here.
+from excel_mcp_server.libreoffice_calc import LibreOfficeCalcEngine  # noqa: E402
 
 
 def main():
@@ -38,6 +35,12 @@ def main():
                        help="Path to Excel files storage directory")
     parser.add_argument("--no-libreoffice", action="store_true",
                        help="Disable LibreOffice recalculation engine")
+    parser.add_argument("--allow-recalc-fallback", action="store_true",
+                       help="If the LibreOffice engine cannot start, keep running "
+                            "with the limited _eval_formula fallback instead of "
+                            "exiting. Without this flag an unavailable engine is "
+                            "fatal, so a batch can never silently produce "
+                            "fallback-engine attempts.")
     args = parser.parse_args()
 
     # Set storage path on shared state
@@ -46,27 +49,30 @@ def main():
 
     print(f"Excel MCP Server starting with storage: {shared_state.STORAGE_PATH}", file=sys.stderr)
 
-    # Start LibreOffice engine (if available and not disabled)
-    if not args.no_libreoffice and _LIBREOFFICE_AVAILABLE:
-        try:
-            # Unique UNO port per server process: concurrent batches on one
-            # machine each spawn their own MCP server + soffice, and a shared
-            # port makes the second server's startup pkill kill the first
-            # server's soffice (observed 2026-07-23). UNO_PORT env overrides.
-            import os
-            uno_port = int(os.environ.get("UNO_PORT", 0)) or (2002 + (os.getpid() % 500))
-            shared_state._lo_engine = LibreOfficeCalcEngine(uno_port=uno_port)
-            shared_state._lo_engine.start()
-            print(f"LibreOffice Calc engine started (UNO port: {shared_state._lo_engine.uno_port})", file=sys.stderr)
-        except Exception as e:
-            print(f"Warning: LibreOffice engine failed to start: {e}", file=sys.stderr)
-            print("Falling back to _eval_formula + xlcalculator", file=sys.stderr)
-            shared_state._lo_engine = None
+    if args.no_libreoffice:
+        print("LibreOffice engine disabled by --no-libreoffice flag", file=sys.stderr)
     else:
-        if args.no_libreoffice:
-            print("LibreOffice engine disabled by --no-libreoffice flag", file=sys.stderr)
-        elif not _LIBREOFFICE_AVAILABLE:
-            print("LibreOffice engine not available (install libreoffice-calc-nogui)", file=sys.stderr)
+        try:
+            shared_state._lo_engine = LibreOfficeCalcEngine()
+            shared_state._lo_engine.start()
+            info = shared_state._lo_engine.info()
+            print(f"LibreOffice recalc engine started: {info['soffice_path']} "
+                  f"({info['soffice_version'] or 'version unknown'})", file=sys.stderr)
+        except Exception as e:
+            shared_state._lo_engine = None
+            if args.allow_recalc_fallback:
+                print(f"Warning: LibreOffice engine failed to start: {e}", file=sys.stderr)
+                print("--allow-recalc-fallback set: continuing with the limited "
+                      "_eval_formula fallback (single-cell evaluation, no cached "
+                      "values saved for the judge).", file=sys.stderr)
+            else:
+                print(f"Error: LibreOffice engine failed to start: {e}", file=sys.stderr)
+                print("Refusing to run with the degraded _eval_formula fallback. "
+                      "Install LibreOffice (or set libreoffice_path in "
+                      "<MBABenchV2>/config/config.yaml / LIBREOFFICE_PATH), or pass "
+                      "--allow-recalc-fallback / --no-libreoffice to opt out "
+                      "explicitly.", file=sys.stderr)
+                sys.exit(1)
 
     try:
         shared_state.mcp.run()

@@ -52,6 +52,10 @@ keys:
 
 venv_path: null
 
-# cli-agents: which python runs the LibreOffice recalculation helper. See cli-agents-master/plan/libreoffice_recalc.md.
-uno_python: "/usr/bin/python3"
+# cli-agents: the LibreOffice binary (soffice) used for formula recalculation.
+# null = auto-detect: `soffice` on PATH (Linux: apt-get install libreoffice-calc),
+# else the macOS app bundle (/Applications/LibreOffice.app/Contents/MacOS/soffice).
+# Set explicitly only for non-standard installs; LIBREOFFICE_PATH env overrides.
+# See cli-agents-master/plan/libreoffice_recalc_b1_impl.md.
+libreoffice_path: null
 

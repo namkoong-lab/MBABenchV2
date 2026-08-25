@@ -4,6 +4,8 @@ Batch Runner for Excel CLI Agent (Synchronous Implementation)
 Processes workspaces sequentially based on YAML configuration.
 """
 import os
+import shutil
+import tempfile
 import yaml
 import time
 import json
@@ -71,6 +73,9 @@ class BatchRunner:
         self.enable_langfuse = enable_langfuse
         self.config: Optional[Dict[str, Any]] = None
         self.batch_logs_dir: Optional[Path] = None
+        # Provenance from _verify_recalc_engine(): which formula recalc engine
+        # the MCP server runs ({"engine": "libreoffice"|"fallback", ...}).
+        self._recalc_engine_info: Optional[Dict[str, Any]] = None
 
     def load_config(self) -> Dict[str, Any]:
         """Load and validate YAML configuration"""
@@ -149,6 +154,72 @@ class BatchRunner:
 
         return total_estimated_tokens
 
+    def _server_extra_args(self) -> List[str]:
+        """Extra argv for the MCP server subprocess.
+
+        allow_recalc_fallback: true lets the server run with the degraded
+        _eval_formula engine when LibreOffice is unavailable. By default an
+        unavailable engine makes the server exit — and so the batch fail
+        loudly — instead of silently producing fallback-engine attempts.
+        """
+        if self.config and self.config.get('allow_recalc_fallback'):
+            return ["--allow-recalc-fallback"]
+        return []
+
+    def _verify_recalc_engine(self):
+        """Abort the batch if the recalc engine can't start; record provenance.
+
+        Spawns one throwaway MCP server (exactly as each workspace will) and
+        asks it which engine it runs. With the default strict server, a
+        machine without LibreOffice fails here — before any task is claimed
+        or trial burned — instead of mid-batch. The answer is stored on
+        self._recalc_engine_info and recorded per attempt, closing the gap
+        where fallback-engine cohorts (pv1105) were indistinguishable from
+        LibreOffice ones.
+        """
+        probe_dir = tempfile.mkdtemp(prefix="recalc_probe_")
+        client = ExcelMCPClient(self.server_path, probe_dir,
+                                server_args=self._server_extra_args())
+        try:
+            client.connect()
+            result = client.call_tool("get_recalc_engine_info", {})
+            if not result.get("success") or not isinstance(result.get("result"), dict):
+                raise RuntimeError(f"get_recalc_engine_info returned {result}")
+            self._recalc_engine_info = result["result"]
+        except Exception as e:
+            raise RuntimeError(
+                "Recalc engine preflight failed: the Excel MCP server did not "
+                f"come up ({e}). Most likely LibreOffice is missing — install "
+                "it (Linux: apt-get install libreoffice-calc; macOS: install "
+                "LibreOffice.app) or set libreoffice_path in "
+                "<MBABenchV2>/config/config.yaml. To deliberately run with the "
+                "degraded _eval_formula fallback, set allow_recalc_fallback: "
+                "true in the batch config."
+            ) from e
+        finally:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+            shutil.rmtree(probe_dir, ignore_errors=True)
+
+        if self._recalc_engine_info.get("engine") == "libreoffice":
+            version = self._recalc_engine_info.get("soffice_version") or "version unknown"
+            print(f"  ✅ Recalc engine verified: libreoffice ({version})")
+        else:
+            print("  ⚠️  Recalc engine: _eval_formula fallback "
+                  "(allow_recalc_fallback set) — attempts will be recorded "
+                  "with recalc_engine=fallback.")
+
+    def _recalc_extra_configs(self) -> Dict[str, Any]:
+        """The recalc-provenance keys merged into extra_configs per attempt."""
+        if not self._recalc_engine_info:
+            return {}
+        out: Dict[str, Any] = {"recalc_engine": self._recalc_engine_info.get("engine")}
+        if self._recalc_engine_info.get("soffice_version"):
+            out["libreoffice_version"] = self._recalc_engine_info["soffice_version"]
+        return out
+
     def process_workspace(self, workspace_config: WorkspaceConfig) -> WorkspaceResult:
         """Process a single workspace with the Excel agent (synchronous)"""
         workspace_path = workspace_config.path
@@ -196,7 +267,8 @@ class BatchRunner:
             print(f"📝 Task: {task_description[:100]}...")
 
             # Initialize Excel client and task executor
-            excel_client = ExcelMCPClient(self.server_path, workspace_path)
+            excel_client = ExcelMCPClient(self.server_path, workspace_path,
+                                          server_args=self._server_extra_args())
             langfuse_enabled = self.config.get('enable_langfuse', self.enable_langfuse)
             task_executor = ExcelTaskExecutor(
                 excel_client,

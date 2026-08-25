@@ -108,13 +108,13 @@ The MCP server provides the agent's capabilities — everything the model can ac
 
 **Workbook I/O** (`core/workbook_io.py`) — Handles all openpyxl load/save operations with fsync to prevent data loss. Every save forces a disk flush.
 
-**LibreOffice Bridge** (`core/libreoffice_bridge.py`) — Triggers LibreOffice recalculation after formula writes. Uses a UNO bridge subprocess (`uno_recalc_helper.py`) running on system Python (required for UNO bindings). This ensures all dependent cells update immediately, so the agent sees correct values on the next read.
+**LibreOffice Bridge** (`core/libreoffice_bridge.py`) — Triggers LibreOffice recalculation after formula writes. This ensures all dependent cells update immediately, so the agent sees correct values on the next read.
 
 ### Backends
 
 **openpyxl** — Python library for reading and writing `.xlsx` files. Handles cell values, formulas, formatting, and workbook structure. Fast but doesn't evaluate formulas.
 
-**LibreOffice Calc** (`libreoffice_calc.py`) — Persistent LibreOffice instance that recalculates all formulas after every write. Bridges the gap between openpyxl (which stores formulas) and Excel (which evaluates them). The agent sees computed values, not just formula text.
+**LibreOffice Calc** (`libreoffice_calc.py`) — Recalculates all formulas after every write by running `soffice --headless --convert-to xlsx` (one subprocess per recalc; a persistent profile keeps launches warm). Bridges the gap between openpyxl (which stores formulas) and Excel (which evaluates them): the converted file replaces the original with cached values embedded, so the agent sees computed values and the judge's `data_only=True` reads work. The binary resolves from `LIBREOFFICE_PATH`, `libreoffice_path` in `<MBABenchV2>/config/config.yaml`, PATH, or the macOS app bundle. If the engine can't start, the server exits instead of silently degrading — pass `--allow-recalc-fallback` (batch config: `allow_recalc_fallback: true`) to run with the limited `_eval_formula` fallback deliberately; either way each attempt records `recalc_engine` in `extra_configs`.
 
 ### Output Layer (swappable)
 
@@ -140,9 +140,9 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 
 **Batch config YAML** — All runtime parameters: mode selection, cohort (`agent_model_name`), benchmark, iterations, prompt version, task filtering, output paths. See the Config Reference table below for all parameters.
 
-**`<MBABenchV2>/config/config.yaml`** — Monorepo config: model API keys (`keys.*`), database URLs (`database.v1_url` / `v2_url`, selected by the batch config's `benchmark` key), S3 credentials (`aws.*`) and the LibreOffice UNO probe interpreter (`uno_python`; on macOS point it at a non-UNO python such as `/usr/bin/python3` so the bundled LibreOffice python's launch-constraint hang doesn't blow the 60s MCP connect timeout).
+**`<MBABenchV2>/config/config.yaml`** — Monorepo config: model API keys (`keys.*`), database URLs (`database.v1_url` / `v2_url`, selected by the batch config's `benchmark` key), S3 credentials (`aws.*`) and optionally the LibreOffice binary (`libreoffice_path`; null auto-detects `soffice` on PATH or the macOS app bundle).
 
-**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `UNO_PYTHON` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
+**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `LIBREOFFICE_PATH` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
 
 **prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
 
@@ -170,8 +170,7 @@ excel-cli-agent/
 ├── excel_mcp_server/             # MCP server package
 │   ├── server.py                 # Server entry point, tool registration
 │   ├── formula_validator.py      # Formula syntax/function validation
-│   ├── libreoffice_calc.py       # Persistent LibreOffice engine
-│   ├── uno_recalc_helper.py      # UNO bridge subprocess (system python)
+│   ├── libreoffice_calc.py       # LibreOffice engine (soffice --convert-to per recalc)
 │   ├── core/
 │   │   ├── shared_state.py       # MCP instance, global storage path
 │   │   ├── workbook_io.py        # Load/save workbooks with fsync
@@ -450,9 +449,9 @@ max_iterations: 30
 ### Credentials
 
 Inside the monorepo, everything is read from `<MBABenchV2>/config/config.yaml`
-(`keys.*`, `database.v1_url` / `v2_url`, `aws.*`, `uno_python`). A `.env` in the working
+(`keys.*`, `database.v1_url` / `v2_url`, `aws.*`, `libreoffice_path`). A `.env` in the working
 directory can override the model API key (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or `UNO_PYTHON`, and supply `DATABASE_URL` / `AWS_*`
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or `LIBREOFFICE_PATH`, and supply `DATABASE_URL` / `AWS_*`
 for standalone runs where the monorepo config isn't installed.
 
 ## Key Design Patterns
@@ -467,9 +466,9 @@ for standalone runs where the monorepo config isn't installed.
 
 ## Deployment Notes
 
-- **Max 4 concurrent processes per machine** — each runs its own LibreOffice instance. More causes memory pressure and crashes.
+- **Max 4 concurrent processes per machine** — each spawns its own LibreOffice conversion per recalc (no resident soffice between recalcs, but peak memory during concurrent conversions still adds up).
 - **Credentials**: `<MBABenchV2>/config/config.yaml`; `.env` only for overrides / standalone runs (see Credentials above).
 - **After code changes**: always `pip install .` to update the installed package.
-- **Killing a stuck run**: `kill <PID>`. LibreOffice subprocesses may linger — clean with `pkill -f soffice`.
+- **Killing a stuck run**: `kill <PID>`. LibreOffice only lives for the duration of one conversion; a lingering `soffice` after a kill is at most one process.
 - **Logs**: `batch_logs/batch_<timestamp>/` (per-batch reports).
 - **Disk**: workspaces cleaned by default (`cleanup_workspace: true`). Set `false` to inspect solution.xlsx before S3 upload.

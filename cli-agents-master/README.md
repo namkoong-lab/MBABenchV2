@@ -7,6 +7,8 @@ AI-powered Excel automation agent that builds financial models from case materia
 ```bash
 # 1. Install LibreOffice (required for formula recalculation)
 apt-get update && apt-get install -y libreoffice-calc
+# macOS: install LibreOffice.app (e.g. `brew install --cask libreoffice`);
+# the default location is auto-detected, no config needed.
 
 # 2. Install the package
 pip install .

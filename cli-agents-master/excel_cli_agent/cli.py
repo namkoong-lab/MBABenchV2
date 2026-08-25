@@ -21,14 +21,15 @@ from .repo_config import repo_value
 
 
 class ExcelCLIAgent:
-    def __init__(self, server_path: str, storage_path: str, api_key: str, model: str = DEFAULT_MODEL, fresh_context_mode: bool = False, enhanced_excel_context: bool = True, enable_langfuse: bool = False, base_url: str = None):
+    def __init__(self, server_path: str, storage_path: str, api_key: str, model: str = DEFAULT_MODEL, fresh_context_mode: bool = False, enhanced_excel_context: bool = True, enable_langfuse: bool = False, base_url: str = None, allow_recalc_fallback: bool = False):
         self.server_path = server_path
         self.storage_path = storage_path
         self.api_key = api_key
         self.model = model
 
         # Initialize components
-        self.excel_client = ExcelMCPClient(server_path, storage_path)
+        server_args = ["--allow-recalc-fallback"] if allow_recalc_fallback else []
+        self.excel_client = ExcelMCPClient(server_path, storage_path, server_args=server_args)
         self.task_executor = ExcelTaskExecutor(self.excel_client, api_key, model, fresh_context_mode=fresh_context_mode, enhanced_excel_context=enhanced_excel_context, base_url=base_url)
 
         # CLI state
@@ -330,6 +331,10 @@ def main():
                        help="Save solution.xlsx copy + AI context text after each iteration")
     parser.add_argument("--base-url", default=None,
                        help="API base URL (auto-detects OpenAI vs Anthropic). Works with vLLM, SGLang, OpenRouter, etc.")
+    parser.add_argument("--allow-recalc-fallback", action="store_true", default=False,
+                       help="Interactive/--batch mode only: if LibreOffice is unavailable, run with "
+                            "the limited _eval_formula fallback instead of failing at startup. "
+                            "Batch-config runs use the allow_recalc_fallback config key instead.")
 
     args = parser.parse_args()
 
@@ -383,6 +388,7 @@ def main():
         fresh_context_mode=args.fresh_context,
         enhanced_excel_context=args.enhanced_excel,
         base_url=args.base_url,
+        allow_recalc_fallback=args.allow_recalc_fallback,
     )
     agent.task_executor.set_max_iterations(args.max_iterations)
     agent.task_executor.set_verbose(args.verbose)

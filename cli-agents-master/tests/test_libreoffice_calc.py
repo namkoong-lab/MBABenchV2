@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Tests for LibreOffice headless recalculation engine.
+Tests for the LibreOffice recalculation engine (soffice --convert-to).
 
-Tests the UNO bridge lifecycle, formula recalculation, and cached value accuracy.
+Integration tests: they require a real LibreOffice install (resolved the same
+way the engine resolves it — PATH, config, or the macOS app bundle). Offline
+coverage of the engine's mechanics lives in test_recalc_engine_offline.py.
 """
 import os
 import sys
-import time
 import tempfile
 
 import openpyxl
 
 # Add parent dir to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'excel_mcp_server'))
-from libreoffice_calc import LibreOfficeCalcEngine
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from excel_mcp_server.libreoffice_calc import LibreOfficeCalcEngine, resolve_soffice
 
 
 def create_test_workbook(path, formulas):
@@ -71,14 +72,18 @@ def read_formulas(path, cells):
 
 
 def test_engine_lifecycle():
-    """Test that the engine starts and stops cleanly."""
+    """Test that the engine starts (binary + warmup) and stops cleanly."""
     print("Test: Engine lifecycle...")
-    engine = LibreOfficeCalcEngine(uno_port=2010)
+    engine = LibreOfficeCalcEngine()
 
     assert not engine.is_running, "Engine should not be running before start"
 
     engine.start()
     assert engine.is_running, "Engine should be running after start"
+    info = engine.info()
+    assert info["engine"] == "libreoffice"
+    assert info["soffice_path"], "start() should record the resolved binary"
+    print(f"  binary: {info['soffice_path']} ({info['soffice_version']})")
 
     engine.stop()
     assert not engine.is_running, "Engine should not be running after stop"
@@ -89,7 +94,7 @@ def test_engine_lifecycle():
 def test_basic_recalculation():
     """Test basic arithmetic formula recalculation."""
     print("Test: Basic recalculation (SUM, arithmetic)...")
-    engine = LibreOfficeCalcEngine(uno_port=2011)
+    engine = LibreOfficeCalcEngine()
     engine.start()
 
     try:
@@ -113,6 +118,9 @@ def test_basic_recalculation():
         assert result["success"], f"Recalculation failed: {result['error']}"
         assert result["duration_ms"] > 0, "Duration should be positive"
 
+        # The recalculated file replaced the original in place
+        assert os.path.isfile(path), "Original path should still exist"
+
         # After recalc: real values
         after = read_cached_values(path, ["A3", "B1", "C1"])
         assert after["A3"] == 30, f"A3 should be 30, got {after['A3']}"
@@ -131,9 +139,9 @@ def test_basic_recalculation():
 
 
 def test_financial_functions():
-    """Test financial functions that xlcalculator can't handle."""
-    print("Test: Financial functions (PMT, IRR, NPV)...")
-    engine = LibreOfficeCalcEngine(uno_port=2012)
+    """Test financial functions the _eval_formula fallback can't handle."""
+    print("Test: Financial functions (PMT, NPV)...")
+    engine = LibreOfficeCalcEngine()
     engine.start()
 
     try:
@@ -176,7 +184,7 @@ def test_financial_functions():
 def test_cross_sheet_references():
     """Test formulas that reference other worksheets."""
     print("Test: Cross-sheet references...")
-    engine = LibreOfficeCalcEngine(uno_port=2013)
+    engine = LibreOfficeCalcEngine()
     engine.start()
 
     try:
@@ -218,7 +226,7 @@ def test_cross_sheet_references():
 def test_lookup_functions():
     """Test VLOOKUP and INDEX/MATCH."""
     print("Test: Lookup functions (VLOOKUP, INDEX/MATCH)...")
-    engine = LibreOfficeCalcEngine(uno_port=2014)
+    engine = LibreOfficeCalcEngine()
     engine.start()
 
     try:
@@ -251,42 +259,10 @@ def test_lookup_functions():
         engine.stop()
 
 
-def test_auto_restart():
-    """Test that the engine auto-restarts if soffice dies."""
-    print("Test: Auto-restart after soffice death...")
-    engine = LibreOfficeCalcEngine(uno_port=2015)
-    engine.start()
-
-    try:
-        # Kill soffice
-        engine._soffice_process.kill()
-        engine._soffice_process.wait()
-        time.sleep(1)
-
-        assert not engine.is_running, "Engine should detect dead process"
-
-        # Next recalculate should auto-restart
-        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as f:
-            path = f.name
-
-        create_test_workbook(path, {"A1": 5, "A2": "=A1*2"})
-
-        result = engine.recalculate(path)
-        assert result["success"], f"Auto-restart recalculation failed: {result['error']}"
-
-        after = read_cached_values(path, ["A2"])
-        assert after["A2"] == 10, f"A2 should be 10 after auto-restart, got {after['A2']}"
-
-        os.unlink(path)
-        print(f"  PASSED")
-    finally:
-        engine.stop()
-
-
 def test_recalculation_timing():
-    """Measure recalculation timing for a typical workbook."""
+    """Measure per-call timing; the warm profile should keep repeat calls fast."""
     print("Test: Recalculation timing...")
-    engine = LibreOfficeCalcEngine(uno_port=2016)
+    engine = LibreOfficeCalcEngine()
     engine.start()
 
     try:
@@ -309,6 +285,9 @@ def test_recalculation_timing():
             times.append(result["duration_ms"])
 
         avg = sum(times) / len(times)
+        # Each call spawns soffice; on a warm profile it should stay well
+        # inside the MCP write-tool budget (90s) with big headroom.
+        assert max(times) < 30000, f"Recalc too slow for the 90s tool budget: {times}"
 
         os.unlink(path)
         print(f"  PASSED (times: {[f'{t:.0f}ms' for t in times]}, avg: {avg:.0f}ms)")
@@ -318,8 +297,11 @@ def test_recalculation_timing():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("LibreOffice Calc Engine Tests")
+    print("LibreOffice Calc Engine Tests (soffice --convert-to)")
     print("=" * 60)
+
+    resolved = resolve_soffice()
+    print(f"Resolved binary: {resolved}")
 
     tests = [
         test_engine_lifecycle,
@@ -327,7 +309,6 @@ if __name__ == "__main__":
         test_financial_functions,
         test_cross_sheet_references,
         test_lookup_functions,
-        test_auto_restart,
         test_recalculation_timing,
     ]
 

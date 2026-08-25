@@ -164,7 +164,7 @@ class LocalBatchRunner(BatchRunner):
             "agent_model_name": self.config['agent_model_name'],
             "model": self.config['model'],
             # Same audit record auto mode writes to task_attempts.extra_configs.
-            "extra_configs": self._identity.settings(),
+            "extra_configs": {**self._identity.settings(), **self._recalc_extra_configs()},
             "start_time": datetime.fromtimestamp(result.start_time).isoformat() if result.start_time else None,
             "end_time": datetime.fromtimestamp(result.end_time).isoformat() if result.end_time else None,
             "time_taken_min": result.duration_seconds / 60.0,
@@ -198,6 +198,11 @@ class LocalBatchRunner(BatchRunner):
         batch_start_time = time.time()
 
         config = self.load_config()
+
+        # Fail fast if the LibreOffice recalc engine can't start (unless the
+        # config sets allow_recalc_fallback), and record which engine this
+        # batch runs so every attempts.jsonl line carries the provenance.
+        self._verify_recalc_engine()
 
         # Setup batch logging directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
