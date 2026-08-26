@@ -1,0 +1,330 @@
+# ============================================================================
+# excel-agents infra — default config schema.
+#
+# This file defines EVERY configurable knob and its default.
+# To override anything, create a sibling `configs.yaml` (gitignored) and set
+# only the keys you want to change.
+#
+# Merge order (later wins):
+#   1. configs.default.yaml       (this file)
+#   2. configs.yaml               (user global overrides)
+#   3. --run-config <file>        (the per-experiment overlay)
+#
+# Leaf form: each concrete setting is a dict with two keys:
+#     value:    the default (or "" / [] / null if none)
+#     required: true  -> must be truthy after merge, else ConfigError
+#               false -> may be empty; callers decide when it's needed
+#
+# Override form: in configs.yaml and run configs you may use EITHER the full
+# `{value: ...}` form or a raw scalar/list:
+#     source:
+#       kind: "postgres_s3"           # raw — shorthand
+#       kind: {value: "postgres_s3"}  # full form — same effect
+# ============================================================================
+
+
+# ---- Which benchmark this run belongs to -----------------------------------
+# Gates identity resolution, source/sink schema validation (task_io/
+# registry.py — a v2 run refuses the bizbench schema and vice versa), and
+# the database URL selected from <repo>/config/config.yaml.
+#   v1 — BizbenchV1 DB (schema "bizbench"), s3://mbabench/BizbenchV1/attempts.
+#        Kept as switch scaffolding for uniformity with the other pipelines;
+#        no v1 excel cohorts are planned.
+#   v2 — MBABenchV2 DB (schema "mbabenchv2"), s3://mbabench/MBABenchV2/attempts.
+benchmark:
+  value: "v2"                # "v1" | "v2"
+  required: true
+
+
+# ---- Agent identity --------------------------------------------------------
+# The cohort label — the ONLY model-selecting key a run config may set.
+# Everything behavioral (provider, ui_model_label, thinking_effort,
+# agent_folder, agent_model_type) is pinned by this label's entry in
+# agent_identities.yaml; setting any of those in a config refuses to run.
+agent_model_name:
+  value: null                # e.g. "claude_excel_opus_4_6"
+  required: false            # required at resolve time with a didactic error
+
+agent:
+  # DERIVED — leave null. The run's prompt version is the top-level
+  # `prompt_version`, which both selects the prompt text and is written to
+  # task_attempts.prompt_version; run.py copies it here before building the
+  # sink. A run config may set this key, in which case it must match the
+  # top-level value — a mismatch is refused.
+  prompt_version:
+    value: null
+    required: false
+
+
+# ---- Where task files land on disk -----------------------------------------
+paths:
+  # Downloaded starting_files land here, as does `attempts/`, where each
+  # attempt gets a working directory for the engine's solutions/, json_logs/
+  # and general_logs/. That directory is deleted once the sink has uploaded
+  # its contents, so nothing under here is a lasting record.
+  scratch_dir:
+    value: "scratch/excel-agents"
+    required: true
+  # Local mirror of everything the postgres_s3 sink uploads, laid out under
+  # the same relative path as the S3 key. Best-effort; S3 is the record of
+  # truth. Set to "" to disable mirroring. (The `local` sink's own ndjson
+  # path is sink.output_dir, not this key.)
+  output_dir:
+    value: "outputs"
+    required: false
+
+
+# ---- Task source (where tasks come from) -----------------------------------
+source:
+  kind:
+    value: "postgres_s3"     # "yaml" | "postgres_s3"
+    required: true
+
+  # REQUIRED when kind == "postgres_s3": picks the concrete schema wiring.
+  # "bizbench" (benchmark v1) or "mbabenchv2" (benchmark v2) — must match
+  # `benchmark` above (enforced at build time). Must be null/omitted for
+  # kinds that don't use it (e.g. "yaml").
+  schema:
+    value: "mbabenchv2"      # null | "bizbench" | "mbabenchv2"
+    required: false
+
+  # Used when kind == "yaml". Either a single file with a `tasks:` list, or a
+  # folder whose *.yaml files are each loaded.
+  yaml_path:
+    value: ""
+    required: false
+
+  # Used when kind == "postgres_s3"
+  filters:
+    task_ids:
+      value: []              # [] = no filter
+      required: false
+    task_sources:
+      value: []              # e.g. ["jp"]
+      required: false
+    skip_deprecated:
+      value: true
+      required: false
+    skip_already_attempted:
+      value: true             # skip tasks that already have a non-failed
+                              # attempt from this agent at this prompt_version
+      required: false
+
+
+# ---- Attempt sink (where results go) ---------------------------------------
+sink:
+  kind:
+    value: "local"           # "local" | "postgres_s3"
+    required: true
+
+  # REQUIRED when kind == "postgres_s3" — must match `benchmark` (see source).
+  schema:
+    value: null              # null | "bizbench" | "mbabenchv2"
+    required: false
+
+  # Used when kind == "local"
+  output_dir:
+    value: "outputs"
+    required: false
+
+
+# ---- Database --------------------------------------------------------------
+# NORMALLY LEAVE `url` EMPTY. The connection string comes from the monorepo
+# config at <repo>/config/config.yaml, selected by the `benchmark` key at the
+# top of this file (database.v1_url / database.v2_url). That is what makes
+# "v2 run recorded into the v1 DB" impossible: the run config picks the
+# benchmark and the database together, or neither.
+#
+# Resolution order (task_io/registry.py), first hit wins:
+#   1. `url` below — an explicit override.
+#   2. <repo>/config/config.yaml -> database.v{1,2}_url  (benchmark-selected)
+#   3. the env var named by `url_env` (a single blind url — it cannot tell
+#      v1 from v2, so it is last).
+database:
+  url:
+    value: ""
+    required: false
+  url_env:
+    value: "MBABENCHV2JUDGE_KEYS_DATABASE_URL"
+    required: false
+
+
+# ---- AWS / S3 --------------------------------------------------------------
+# Same three layers as `database` above:
+#   1. `access_key_id` / `secret_access_key` below (explicit override)
+#   2. <repo>/config/config.yaml -> aws.access_key_id / aws.secret_access_key
+#   3. the env vars named by the `*_env` keys
+# `session_token` has no monorepo equivalent — layers 1 and 3 only.
+# If nothing resolves, the postgres_s3 source/sink RAISE rather than falling
+# through to boto3's default credential chain: a benchmark run must not
+# silently pick up whichever AWS identity happens to be ambient.
+aws:
+  region:
+    value: "us-east-1"
+    required: false
+  access_key_id:
+    value: ""
+    required: false
+  access_key_id_env:
+    value: "AWS_ACCESS_KEY_ID"
+    required: false
+  secret_access_key:
+    value: ""
+    required: false
+  secret_access_key_env:
+    value: "AWS_SECRET_ACCESS_KEY"
+    required: false
+  session_token:
+    value: ""
+    required: false
+  session_token_env:
+    value: "AWS_SESSION_TOKEN"
+    required: false
+  # null = derived from the sink schema at build time (task_io/registry.py):
+  #   bizbench   -> bucket "mbabench",  prefix "BizbenchV1/attempts"
+  #   mbabenchv2 -> bucket "mbabench",  prefix "MBABenchV2/attempts"
+  s3_bucket:
+    value: null
+    required: false
+  s3_prefix:
+    value: null
+    required: false
+
+
+# ============================================================================
+# Engine inputs (everything from here down is assembled into the dict passed
+# to the engine subprocess, once per task, by infra/run.py).
+#
+# Rule: no placeholder defaults. Every default here is either a real working
+# value or `null` where null has an unambiguous meaning in the agent code.
+# The runner's preflight will exit(2) before touching the browser if anything
+# ends up empty/placeholder for the active provider.
+# ============================================================================
+
+
+# ---- Prompts ---------------------------------------------------------------
+# Selects the prompt text for this run from
+# tasks_configs/prompts/registry.yaml, AND is written to
+# task_attempts.prompt_version — one key, so the DB label and the text the
+# agent receives cannot disagree. Registered versions:
+#
+#     0    000 pipeline smoke test   (no modeling — add a "TEST SHEET";
+#                                    throwaway rows, never grade)
+#   200    rubric-v9 3-step          (132-check rubric, 3 panel turns —
+#                                    byte-identical to the gui pipeline's
+#                                    prompts_v2 files)
+#
+# Must equal agent.prompt_version if that is also set; run.py refuses a
+# mismatch rather than picking one.
+prompt_version:
+  value: 200
+  required: false
+
+
+# ---- OneDrive layout --------------------------------------------------------
+# The OneDrive folder segments the engine clicks through to reach a task:
+#     onedrive_base_path + task_source + task_name + "Task"
+# The provisioning script (scripts/provision_onedrive.py) creates exactly
+# this layout from the tasks table + S3, so the engine and the provisioner
+# can never disagree about where a task lives.
+onedrive_base_path:
+  value: ["My files", "mbabench_tasks"]
+  required: true
+
+
+# ---- Browser (shared by both providers) ------------------------------------
+# One real Chrome instance holds the Microsoft 365 session; the engine
+# attaches over CDP. scripts/setup_chrome.sh launches it with these same
+# values (both read this config, so they cannot drift).
+browser:
+  cdp_port:
+    value: 9222
+    required: true
+  # null = auto-detect (Chrome Canary first, then regular Chrome).
+  chrome_binary:
+    value: null
+    required: false
+  # Chrome --user-data-dir holding the Microsoft 365 login. A relative path
+  # is resolved against the repo root (gitignored browser_profiles/ tree).
+  # Also the distinctive token used to scope any automation-Chrome cleanup —
+  # kills never touch a browser running a different profile.
+  profile_dir:
+    value: "browser_profiles/chrome-excel"
+    required: true
+  headless:
+    value: false
+    required: false
+  # Playwright default timeout for page actions, ms.
+  timeout:
+    value: 30000
+    required: false
+
+
+# ---- Claude add-in provider block ------------------------------------------
+# NOTE: no `model` key here — the model is pinned by agent_model_name via
+# agent_identities.yaml (ui_model_label). Setting one refuses to run.
+claude_excel_agent:
+  max_sec_per_task:
+    value: 7200                # 2h; the engine's own wall-clock guard
+    required: false
+  max_wait_per_prompt_seconds:
+    value: 7200
+    required: false
+  check_interval_seconds:
+    value: 2
+    required: false
+  panel_boot_timeout_seconds:
+    value: 30
+    required: false
+  logging:
+    level:
+      value: "INFO"
+      required: false
+    save_to_file:
+      value: true
+      required: false
+
+
+# ---- ChatGPT add-in provider block -----------------------------------------
+# NOTE: no `thinking_effort` key here — it is pinned by agent_model_name via
+# agent_identities.yaml. Setting one refuses to run.
+chatgpt_excel_agent:
+  # true = flip the add-in's "Apply edits automatically" switch on during
+  # setup (recommended for unattended runs; verified after clicking).
+  apply_edits_automatically:
+    value: true
+    required: false
+  max_sec_per_task:
+    value: 7200
+    required: false
+  max_wait_per_prompt_seconds:
+    value: 7200
+    required: false
+  check_interval_seconds:
+    value: 2
+    required: false
+  panel_boot_timeout_seconds:
+    value: 30
+    required: false
+  logging:
+    level:
+      value: "INFO"
+      required: false
+    save_to_file:
+      value: true
+      required: false
+
+
+# ---- Runner behavior --------------------------------------------------------
+runner:
+  # Infra (pipeline) failures — nav, panel, Excel UI, download — are retried
+  # in place without recording anything: no DB row, no trial burned. This is
+  # the total number of tries per task before the runner gives up on it for
+  # this invocation (the task stays eligible for future runs).
+  max_infra_tries:
+    value: 3
+    required: false
+  # Seconds between infra retries.
+  sleep_between_retries:
+    value: 20
+    required: false

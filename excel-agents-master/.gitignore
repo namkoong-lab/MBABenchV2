@@ -1,0 +1,15 @@
+# Machine-specific config overrides (credentials, ports, base paths)
+infra/configs/configs.yaml
+
+# Run outputs and working state
+scratch/
+outputs/
+upload_dumps/
+onedrive_manifest.json
+
+# Browser profiles hold live Microsoft 365 sessions — never commit
+browser_profiles/
+
+__pycache__/
+*.pyc
+.pytest_cache/

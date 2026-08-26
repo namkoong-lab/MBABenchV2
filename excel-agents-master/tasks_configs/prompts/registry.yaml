@@ -1,0 +1,53 @@
+# Prompt-version registry — maps `prompt_version` to the prompt file(s) sent.
+#
+# WHY THIS EXISTS
+# The version is the single key that selects the text, so the number written
+# to task_attempts.prompt_version and the prompt the agent received are the
+# same decision and cannot disagree.
+#
+# HOW IT IS USED
+# infra/configs/prompt_registry.py reads this file; infra/run.py resolves the
+# run's `prompt_version` through it, loads the files' TEXT, and embeds it in
+# the engine config (each file = one panel turn, in order). The same text is
+# snapshotted into the attempt's prompts JSON and uploaded to S3.
+#
+# ADDING A VERSION
+# Add an entry; never edit an existing one. A version that has been used for
+# a real run is immutable — rows in task_attempts already point at it.
+# New text = new number.
+#
+# NUMBERING (shared with gui-agents so cross-pipeline rows are comparable)
+#   0        infrastructure smoke test — not a benchmark prompt. Rows it
+#            produces are throwaway.
+#   200      the rubric-v9 (132-check) 3-step prompt set, BYTE-IDENTICAL to
+#            gui-agents-master/tasks_configs/prompts_v2/ (enforced by
+#            tests/test_prompt_parity.py). Identical prompts + identical
+#            rubric mean a gui-vs-excel delta is attributable to the
+#            interface, not the text.
+
+versions:
+
+  0:
+    label: "000 pipeline smoke test"
+    description: >
+      NOT a benchmark prompt. One turn asking the agent to return the
+      workbook unchanged plus a single extra sheet named "TEST SHEET"
+      holding a large bold "TEST" in A1. Exists to exercise the whole
+      path — navigation, panel, turn, download, validation, S3/DB write —
+      in minutes, with a solution checkable by eye. Never grade a run
+      recorded under this version.
+    files:
+      - "tasks_configs/prompts/v000_test.txt"
+
+  200:
+    label: "rubric-v9 3-step (shared with gui)"
+    description: >
+      Three prompts, one panel turn each: analyze & plan (Summary sheet) ->
+      build (embeds the full 132-check rubric) -> QA. Byte-identical copies
+      of gui-agents-master/tasks_configs/prompts_v2/, under the same number
+      the gui pipeline uses, so the web-chat and in-Excel cohorts ran the
+      exact same text.
+    files:
+      - "tasks_configs/prompts_v2/step1_analyze.txt"
+      - "tasks_configs/prompts_v2/step2_build.txt"
+      - "tasks_configs/prompts_v2/step3_qa.txt"

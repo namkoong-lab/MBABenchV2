@@ -19,6 +19,7 @@ dependencies = [
     "excel-cli-agent",
     "coding-agents",
     "gui-system",
+    "excel-agents",
 
     # scripts/ — ingest_tasks.py, add_task.py, estimate_task_times.py
     "boto3>=1.34",
@@ -51,6 +52,7 @@ members = [
     "cli-agents-master",
     "coding-agents-master",
     "gui-agents-master",
+    "excel-agents-master",
 ]
 
 [tool.uv.sources]
@@ -58,6 +60,7 @@ excel-judge = { workspace = true }
 excel-cli-agent = { workspace = true }
 coding-agents = { workspace = true }
 gui-system = { workspace = true }
+excel-agents = { workspace = true }
 
 # Expose the vendored config system (config/python/config.py) as the importable
 # top-level `config` module. An editable install keeps config.py at its real
