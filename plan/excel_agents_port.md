@@ -29,12 +29,33 @@ database.v2_url)`, downloaded task 2's starting file from S3, and built
 the engine config with the correct workbook/panel split
 (template_file=BasicGrowth.xlsx, 0 panel uploads).
 
-Still owed (needs a browser + M365 account): `./scripts/setup_chrome.sh`
-login, add-in installs, `provision_onedrive.py` against the 68 jp tasks
-(selector shakedown expected — it is new OneDrive automation), and the §
+Provisioning decision changed 2026-08-26: MANUAL upload (Pat created a
+consumer OneDrive account; Excel for the web works without a subscription).
+`provision_onedrive.py --stage` (added same day) builds the exact local
+tree for a one-drag upload; the browser-automated create/upload path stays
+as a fallback. Staged and checked: all 68 jp tasks, one workbook each
+(21.5 MB total, zero panel-upload files — the add-in file-attach path is
+unused by this cohort), all names OneDrive-legal.
+
+Still owed (needs the browser + accounts): `./scripts/setup_chrome.sh`
+login to the new OneDrive account; FIRST CHECK: do the Claude/ChatGPT
+add-ins install on a free consumer account (if the Office store blocks
+them, an M365 Personal/Basic subscription is needed after all); add-in
+installs + in-panel provider sign-ins; drag onedrive_staging/jp into
+My files > mbabench_tasks; `provision_onedrive.py --verify`; and the §
 Acceptance end-to-end smoke per provider (prompt_version 0, then a real
 task; confirm the UI-verify abort path and that a forced nav failure
-leaves no DB row). gui-agents' own suite re-ran clean (80/80) after the
+leaves no DB row).
+
+Also owed — **memory off, both providers** (run-to-run interference; same
+policy already applied to the GUI agents): the add-in panels are
+claude.ai / OpenAI accounts under the hood, so disable the memory feature
+in whichever accounts the add-ins sign into (already covered if they share
+the GUI agents' accounts). During setup, check whether the add-ins expose
+a memory toggle in-panel; if so, add a `_disable_memory()` to
+`handle_initial_setup` mirroring `_disable_web_search()` so it is asserted
+off every task. During the smoke, also confirm each attempt's panel opens
+a FRESH conversation rather than resuming the workbook's previous chat. gui-agents' own suite re-ran clean (80/80) after the
 port copied from it.
 
 Decisions locked with Pat:

@@ -18,7 +18,10 @@ catch as NAV_FAILED retries later.
 
 Usage (from excel-agents-master/):
     uv run python scripts/provision_onedrive.py --dry-run     # list the plan
-    uv run python scripts/provision_onedrive.py               # create+upload
+    uv run python scripts/provision_onedrive.py --stage       # manual path:
+        # build the tree locally under onedrive_staging/, then drag it into
+        # OneDrive web yourself (one folder drag; no browser automation)
+    uv run python scripts/provision_onedrive.py               # automated upload
     uv run python scripts/provision_onedrive.py --verify      # check + manifest
     uv run python scripts/provision_onedrive.py --task-sources jp
 
@@ -316,11 +319,52 @@ async def provision(args) -> int:
         plan.append((spec, task_source, Path(workbook) if workbook else None))
 
     logger.info(f"\nPlan: {len(plan)} task folder(s) under {' > '.join(base_path)}")
+    # OneDrive rejects these characters in folder/file names. A task name
+    # carrying one can't be provisioned under its verbatim name — flag it
+    # loudly rather than let it surface as NAV_FAILED retries later.
+    _ONEDRIVE_ILLEGAL = set('"*:<>?/\\|')
     for spec, task_source, workbook in plan:
         wb = workbook.name if workbook else "(no workbook — folder only)"
-        logger.info(f"  {task_source}/{spec.task_name}/Task/  <- {wb}")
+        bad = _ONEDRIVE_ILLEGAL & set(spec.task_name)
+        flag = f"   ⚠️ task name has OneDrive-illegal chars: {sorted(bad)}" if bad else ""
+        logger.info(f"  {task_source}/{spec.task_name}/Task/  <- {wb}{flag}")
     if args.dry_run:
         logger.info("[DRY RUN] Nothing was created or uploaded.")
+        return 0
+
+    if args.stage is not None:
+        # MANUAL-UPLOAD PATH: build the exact folder tree locally, then drag
+        # it into OneDrive in one go (OneDrive web uploads folders
+        # recursively). No browser involved.
+        import shutil
+
+        stage_root = Path(args.stage)
+        if not stage_root.is_absolute():
+            stage_root = _REPO_ROOT / stage_root
+        staged = skipped = 0
+        total_bytes = 0
+        for spec, task_source, workbook in plan:
+            task_dir = stage_root / task_source / spec.task_name / "Task"
+            task_dir.mkdir(parents=True, exist_ok=True)
+            if workbook is None:
+                skipped += 1
+                continue
+            dest = task_dir / workbook.name
+            shutil.copy2(workbook, dest)
+            total_bytes += dest.stat().st_size
+            staged += 1
+        logger.info(
+            f"\nStaged {staged} workbook(s) "
+            f"({total_bytes / 1024 / 1024:.1f} MB; {skipped} folder-only) "
+            f"under:\n  {stage_root}"
+        )
+        logger.info(
+            f"\nNext: in OneDrive web, open "
+            f"'{' > '.join(base_path)}' (create those folders if new), then "
+            f"drag the folder(s) inside {stage_root.name}/ "
+            f"(e.g. '{plan[0][1]}') into it. When uploads finish, run "
+            f"--verify to confirm the layout and write the manifest."
+        )
         return 0
 
     if not args.yes:
@@ -405,6 +449,11 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the plan; touch nothing.")
+    parser.add_argument("--stage", nargs="?", const="onedrive_staging",
+                        default=None, metavar="DIR",
+                        help="Manual-upload path: build the exact folder tree "
+                        "locally under DIR (default onedrive_staging/) for a "
+                        "single drag into OneDrive web. No browser.")
     parser.add_argument("--verify", action="store_true",
                         help="Read-only: check folders + workbooks, write the manifest.")
     parser.add_argument("--task-sources", nargs="*", default=None,

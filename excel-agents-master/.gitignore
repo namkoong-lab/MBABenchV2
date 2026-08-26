@@ -13,3 +13,6 @@ browser_profiles/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Manual-upload staging tree (drag into OneDrive web, then delete)
+onedrive_staging/
