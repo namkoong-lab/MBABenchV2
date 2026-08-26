@@ -89,3 +89,44 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 5
+
+# GPT-5.6 Sol at the top reasoning tier — the OpenAI-flagship counterpart to
+# openpyxl_anthropic/claude-fable-5-max. Wire id + effort ladder verified
+# against the OpenAI model page 2026-08-26: gpt-5.6-sol (Sol = flagship of
+# the 5.6 Sol/Terra/Luna family) takes reasoning_effort
+# none/low/medium/high/xhigh/max; "max" is the top tier, and the Chat
+# Completions endpoint (what the executor calls) supports it. The separate
+# Responses-API "reasoning mode: pro" execution mode is NOT reachable from
+# this pipeline and is deliberately not part of this identity.
+# max_completion_tokens 128000 = the model's documented output ceiling,
+# matching the fable-5-max entry; recent_history_count 3 also matches
+# fable-5-max (the older OpenAI entries' 5 was an executor-default accident,
+# per the note above them) so the two flagship-max cohorts run under
+# identical harness settings.
+- agent_model_name: openpyxl_openai/gpt-5.6-sol-max
+  model: gpt-5.6-sol
+  reasoning_effort: max
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.openai.com/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
+
+# RETIRED, never viable — do not use. Chat Completions rejects
+# reasoning_effort "max" for gpt-5.6-sol (400 unsupported_value, live-tested
+# 2026-08-26: supported values none/low/medium/high/xhigh; "max" exists only
+# on the Responses API, which this executor does not call). The entry above
+# stays per append-only rules: its 30 recorded rows (attempt ids 428-457,
+# 2026-08-26, all agent_failed "needs_clarification" from that 400) are
+# deprecated in the DB. The replacement below is the real top tier for this
+# pipeline; it is the cohort to grade.
+- agent_model_name: openpyxl_openai/gpt-5.6-sol-xhigh
+  model: gpt-5.6-sol
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.openai.com/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

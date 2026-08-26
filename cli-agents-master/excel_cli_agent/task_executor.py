@@ -873,7 +873,13 @@ class ExcelTaskExecutor:
             # is accepted by every effort-based Anthropic model, so set it here
             # for all of them. Budget-based models (Opus 4.6 and older) keep
             # setting thinking_budget_tokens and take the branch above unchanged.
-            request_kwargs["thinking"] = {"type": "adaptive"}
+            # display:"summarized" streams a server-generated summary of the
+            # reasoning. Without it (the default is "omitted" on effort-based
+            # models) thinking deltas arrive EMPTY, so an hour-long thinking
+            # phase is indistinguishable from a dead stream (seen live
+            # 2026-08-26: 3,604s of keepalives, zero content, peer close).
+            # Visibility-only: reasoning depth, output, and billing unchanged.
+            request_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
             request_kwargs["output_config"] = {"effort": self.reasoning_effort}
             print(
                 f"🧠 Anthropic adaptive thinking, effort={self.reasoning_effort} "
@@ -889,6 +895,7 @@ class ExcelTaskExecutor:
             thinking_text = ""
             input_tokens = 0
             output_tokens = 0
+            last_progress = 0  # thinking chars at the last liveness tick
 
             with self.anthropic_client.messages.stream(**request_kwargs) as stream:
                 for event in stream:
@@ -899,9 +906,18 @@ class ExcelTaskExecutor:
                         elif event.type == 'content_block_delta':
                             delta = event.delta
                             if hasattr(delta, 'text'):
+                                if not response_text:
+                                    print(f"   ✍️  response text streaming ({time.time() - start_time:.0f}s)")
                                 response_text += delta.text
                             elif hasattr(delta, 'thinking'):
                                 thinking_text += delta.thinking
+                                # Liveness tick: silence now means "no bytes",
+                                # not "maybe thinking" — a stalled call is
+                                # visible within minutes instead of at the 1h
+                                # stream reap.
+                                if len(thinking_text) - last_progress >= 20_000:
+                                    last_progress = len(thinking_text)
+                                    print(f"   💭 thinking… {len(thinking_text):,} chars ({time.time() - start_time:.0f}s)")
                         elif event.type == 'message_delta':
                             # Final message with usage
                             if hasattr(event, 'usage'):
