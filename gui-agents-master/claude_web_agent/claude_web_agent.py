@@ -264,6 +264,18 @@ class ClaudeWebAgent(WebAgent):
     # UI labels: Low / Medium / High (default) / Extra / Max.
     EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
     EFFORT_TRIGGER_SELECTOR = '[data-testid="effort-menu-trigger"]'
+    # 2026-08-26 UI: the effort-menu-trigger testid is gone. The trigger is
+    # now the plain menuitem whose text is "Effort" + the current level +
+    # a chevron glyph (e.g. "EffortMax"), same shape as "More models".
+    # The testid selectors stay primary; these labels drive the fallback
+    # lookup (and the trigger-text parse) when the testids are absent.
+    EFFORT_OPTION_LABELS = {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Extra",
+        "max": "Max",
+    }
 
     # claude_web.mode — the Chat/Cowork toggle (verified live 2026-07-21):
     # a Base-UI div[role=radiogroup] of span[role=radio] whose text is an
@@ -476,16 +488,78 @@ class ClaudeWebAgent(WebAgent):
         except Exception:
             pass
 
-    async def _hover_effort_submenu(self) -> bool:
+    async def _find_effort_trigger(self):
+        """Locate the Effort submenu trigger inside the open dropdown.
+
+        Testid first; falls back to the visible menuitem whose text starts
+        with "Effort" (2026-08 UI renders it as "Effort<Level><chevron>").
+        Returns an ElementHandle or None."""
+        trigger = await self.page.query_selector(self.EFFORT_TRIGGER_SELECTOR)
+        if trigger and await trigger.is_visible():
+            return trigger
+        for item in await self.page.query_selector_all('[role="menuitem"]'):
+            try:
+                if not await item.is_visible():
+                    continue
+                text = ((await item.text_content()) or "").strip()
+                if text.startswith("Effort"):
+                    return item
+            except Exception:
+                continue
+        return None
+
+    async def _hover_effort_submenu(self):
         """Open the Effort flyout inside the model dropdown (dropdown must be
         open). Uses JS-dispatched hover — the flyout itself intercepts real
-        pointer events once open."""
-        trigger = await self.page.query_selector(self.EFFORT_TRIGGER_SELECTOR)
-        if not trigger or not await trigger.is_visible():
-            return False
+        pointer events once open. Returns the trigger handle (truthy) or
+        None, so callers can re-read the trigger's own text."""
+        trigger = await self._find_effort_trigger()
+        if not trigger:
+            return None
         await trigger.evaluate(self._JS_HOVER)
         await asyncio.sleep(1.0)
-        return True
+        return trigger
+
+    async def _get_effort_option(self, effort: str):
+        """Locate the flyout option for ``effort`` (flyout must be open).
+
+        Testid first; falls back to the visible menuitemradio whose text
+        starts with the option's UI label (no model name shares a prefix
+        with Low/Medium/High/Extra/Max, and verification stays on
+        aria-checked either way). Returns an ElementHandle or None."""
+        option = await self.page.query_selector(
+            f'[data-testid="effort-option-{effort}"]'
+        )
+        if option and await option.is_visible():
+            return option
+        label = self.EFFORT_OPTION_LABELS[effort].lower()
+        for item in await self.page.query_selector_all('[role="menuitemradio"]'):
+            try:
+                if not await item.is_visible():
+                    continue
+                text = ((await item.text_content()) or "").strip().lower()
+                if text.startswith(label):
+                    return item
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    async def _effort_from_trigger_text(trigger) -> Optional[str]:
+        """Parse the current level out of the trigger's own text
+        ("Effort<Level><chevron>") — secondary, positive-evidence-only
+        verification for when the flyout options can't be located."""
+        try:
+            text = ((await trigger.text_content()) or "").strip()
+        except Exception:
+            return None
+        if not text.startswith("Effort"):
+            return None
+        # Strip the "Effort" prefix and any trailing icon glyphs
+        # (private-use-area codepoints) / whitespace.
+        rest = text[len("Effort"):]
+        rest = "".join(ch for ch in rest if not (0xE000 <= ord(ch) <= 0xF8FF))
+        return rest.strip() or None
 
     async def _find_visible_switch(self):
         """Return the visible thinking switch inside the open dropdown, or None.
@@ -681,22 +755,41 @@ class ClaudeWebAgent(WebAgent):
                 f"Valid: {', '.join(self.EFFORT_LEVELS)}"
             )
             return False
-        option_sel = f'[data-testid="effort-option-{effort}"]'
+        label = self.EFFORT_OPTION_LABELS[effort]
         try:
             if not await self._open_model_dropdown():
                 return False
-            if not await self._hover_effort_submenu():
+            trigger = await self._hover_effort_submenu()
+            if not trigger:
                 logger.error(
                     "Effort submenu trigger not found "
-                    f"({self.EFFORT_TRIGGER_SELECTOR}) — UI drift?"
+                    f"({self.EFFORT_TRIGGER_SELECTOR} or an 'Effort…' "
+                    "menuitem) — UI drift?"
                 )
                 await self._log_dropdown_dom()
                 await self._close_model_dropdown()
                 return False
 
-            option = await self.page.query_selector(option_sel)
-            if not option or not await option.is_visible():
-                logger.error(f"Effort option {option_sel} not found — UI drift?")
+            option = await self._get_effort_option(effort)
+            if not option:
+                # Hover may no longer expand the flyout — try a click.
+                await trigger.evaluate(self._JS_CLICK)
+                await asyncio.sleep(1.0)
+                option = await self._get_effort_option(effort)
+            if not option:
+                # Last resort: the trigger text carries the current level.
+                current = await self._effort_from_trigger_text(trigger)
+                if current and current.lower() == label.lower():
+                    logger.info(
+                        f"Effort already {label} (per trigger text; flyout "
+                        "options not reachable)"
+                    )
+                    await self._close_model_dropdown()
+                    return True
+                logger.error(
+                    f"Effort option for {effort!r} not found (testid or "
+                    f"label {label!r}) — UI drift?"
+                )
                 await self._log_dropdown_dom()
                 await self._close_model_dropdown()
                 return False
@@ -713,14 +806,18 @@ class ClaudeWebAgent(WebAgent):
             await self._close_model_dropdown()
             if not await self._open_model_dropdown():
                 return False
-            if not await self._hover_effort_submenu():
+            trigger = await self._hover_effort_submenu()
+            if not trigger:
                 await self._close_model_dropdown()
                 return False
-            option = await self.page.query_selector(option_sel)
+            option = await self._get_effort_option(effort)
             checked = (
                 option is not None
                 and (await option.get_attribute("aria-checked")) == "true"
             )
+            if not checked and option is None:
+                current = await self._effort_from_trigger_text(trigger)
+                checked = bool(current) and current.lower() == label.lower()
             await self._close_model_dropdown()
 
             if checked:
