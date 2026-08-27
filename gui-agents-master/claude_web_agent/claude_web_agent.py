@@ -286,13 +286,25 @@ class ClaudeWebAgent(WebAgent):
     MODE_VALUES = ("chat", "cowork")
     MODE_RADIO_LABELS = {"chat": "Chat", "cowork": "Cowork"}
 
-    # claude_web.cowork_approval — cowork's action-approval dropdown. The
-    # trigger button's aria-label is the CURRENT selection's full label
-    # (visible text is just "Manual"/"Auto"/…).
+    # claude_web.cowork_approval — cowork's action-approval dropdown.
+    # Pre-2026-08 UI: the trigger button's aria-label is the CURRENT
+    # selection's full label (visible text is just "Manual"/"Auto"/…).
+    # 2026-08-27 UI: the aria-label is gone — the trigger is now a ghost
+    # button[aria-haspopup="menu"] in a row UNDER the composer whose own
+    # text is just the short label (e.g. "Auto"), next to a same-shaped
+    # "Project" pill. Either way the open menu's options are
+    # role=menuitemradio divs whose text starts with the full label.
     COWORK_APPROVAL_LABELS = {
         "manual": "Manually approve",
         "auto": "Automatically approve",
         "skip": "Skip all approvals",
+    }
+    # Trigger text in the 2026-08-27 UI. Exact match only — "Project" sits
+    # in an identically-shaped button in the same row.
+    COWORK_APPROVAL_SHORT = {
+        "manual": "Manual",
+        "auto": "Auto",
+        "skip": "Skip",
     }
 
     # JS-dispatched hover/click sequences. These skip Playwright's
@@ -368,6 +380,41 @@ class ClaudeWebAgent(WebAgent):
             return await self.ensure_cowork_approval()
         return True
 
+    async def _find_approval_trigger(self):
+        """Locate the cowork approval trigger and read its current selection.
+
+        Returns ``(handle, key)`` where ``key`` is the normalized current
+        value ("manual"/"auto"/"skip"), or ``(None, None)`` if absent, or
+        ``(handle, None)`` if found but unreadable. Two selector
+        generations, tried in order:
+
+        - ``button[aria-label="<full label>"]`` (verified live 2026-07-21);
+          fires while the trigger still carries the selection as aria-label.
+        - a ``button[aria-haspopup="menu"]`` whose own trimmed text is
+          exactly a short label ("Auto") — fires once the aria-label is
+          gone (2026-08-27 UI, trigger row under the composer).
+        """
+        for key, lbl in self.COWORK_APPROVAL_LABELS.items():
+            cand = await self.page.query_selector(f'button[aria-label="{lbl}"]')
+            if cand and await cand.is_visible():
+                return cand, key
+        handle = await self.page.evaluate_handle(
+            """(shorts) => Array.from(document.querySelectorAll(
+                'button[aria-haspopup="menu"]'
+            )).filter(el => el.getClientRects().length > 0)
+              .find(el => shorts.includes((el.textContent || '').trim()))
+              || null""",
+            list(self.COWORK_APPROVAL_SHORT.values()),
+        )
+        el = handle.as_element()
+        if el is None:
+            return None, None
+        text = ((await el.text_content()) or "").strip()
+        for key, short in self.COWORK_APPROVAL_SHORT.items():
+            if text == short:
+                return el, key
+        return el, None
+
     async def ensure_cowork_approval(self) -> bool:
         """Set cowork's action-approval mode per ``claude_web.cowork_approval``.
 
@@ -383,19 +430,13 @@ class ClaudeWebAgent(WebAgent):
             )
             return False
 
-        # The trigger button's aria-label is the current selection.
-        btn = None
-        for lbl in self.COWORK_APPROVAL_LABELS.values():
-            cand = await self.page.query_selector(f'button[aria-label="{lbl}"]')
-            if cand and await cand.is_visible():
-                btn = cand
-                if lbl == target_label:
-                    logger.info(f"Cowork approval already {target!r}")
-                    return True
-                break
+        btn, current = await self._find_approval_trigger()
         if btn is None:
             logger.error("Cowork approval dropdown not found — UI drift?")
             return False
+        if current == target:
+            logger.info(f"Cowork approval already {target!r}")
+            return True
 
         try:
             await btn.evaluate(self._JS_CLICK)
@@ -415,10 +456,8 @@ class ClaudeWebAgent(WebAgent):
             await el.evaluate(self._JS_CLICK)
             await asyncio.sleep(1.0)
 
-            verify = await self.page.query_selector(
-                f'button[aria-label="{target_label}"]'
-            )
-            if verify and await verify.is_visible():
+            _, current = await self._find_approval_trigger()
+            if current == target:
                 logger.info(f"Cowork approval set to {target!r} (verified)")
                 return True
             logger.error(f"Cowork approval {target!r} did not verify")
