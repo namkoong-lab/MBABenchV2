@@ -294,8 +294,10 @@ claude_excel_agent:
 
 
 # ---- ChatGPT add-in provider block -----------------------------------------
-# NOTE: no `thinking_effort` key here — it is pinned by agent_model_name via
-# agent_identities.yaml. Setting one refuses to run.
+# NOTE: no `ui_model_label` / `thinking_effort` keys here — both are pinned
+# by agent_model_name via agent_identities.yaml (the add-in's combined
+# "Model and thinking effort" menu, since 2026-08-27). Setting either
+# refuses to run.
 chatgpt_excel_agent:
   # true = flip the add-in's "Apply edits automatically" switch on during
   # setup (recommended for unattended runs; verified after clicking).

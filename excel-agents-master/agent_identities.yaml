@@ -9,15 +9,22 @@
 #
 #   provider          which add-in the engine drives:
 #                       claude_excel_agent | chatgpt_excel_agent
-#   ui_model_label    Claude only: the EXACT text of the add-in's model
-#                     dropdown item ("Opus 4.6", "Sonnet 4.6", ...). The
-#                     engine selects it AND re-reads the selector afterwards,
-#                     aborting the attempt (infra, unrecorded) if the UI does
-#                     not show this label. null for ChatGPT (its add-in has
-#                     no model dropdown).
-#   thinking_effort   ChatGPT only: the "Thinking effort" pill label
-#                     ("Fast" | "Standard" | "Heavy"), selected and verified
-#                     the same fail-loud way. null for Claude.
+#   ui_model_label    The EXACT text of the add-in's model item. Claude:
+#                     the model dropdown ("Opus 4.6", "Fable 5", ...).
+#                     ChatGPT: the Model group of the combined "Model and
+#                     thinking effort" menu ("GPT-5.6 Sol", ...) — a
+#                     ChatGPT axis since 2026-08-27, when the add-in grew
+#                     the picker; older ChatGPT entries pin null and are
+#                     refused at resolve time (they stay below as
+#                     append-only history). The engine selects the label
+#                     AND re-reads the trigger afterwards, aborting the
+#                     attempt (infra, unrecorded) if the UI does not show
+#                     it.
+#   thinking_effort   ChatGPT only: the "Thinking effort" label
+#                     ("Instant" | "Medium" | "High" | "Extra High" on the
+#                     2026-08-27 UI; "Fast" | "Standard" | "Heavy" before
+#                     it), selected and verified the same fail-loud way.
+#                     null for Claude.
 #   agent_folder      S3 prefix segment attempts land under.
 #   agent_model_type  always "excel" — the task_attempts.agent_model_type
 #                     for this pipeline (gui/api/coding_cli are the others).
@@ -56,4 +63,29 @@
   ui_model_label: null
   thinking_effort: "Heavy"
   agent_folder: chatgpt_excel_heavy
+  agent_model_type: excel
+
+# Claude 5-family dropdown (verified live 2026-08-27: "Fable 5" / "Opus 5" /
+# "Sonnet 5" / "Opus 4.8").
+- agent_model_name: claude_excel_fable_5
+  provider: claude_excel_agent
+  ui_model_label: "Fable 5"
+  thinking_effort: null
+  agent_folder: claude_excel_fable_5
+  agent_model_type: excel
+
+# ChatGPT add-in, 2026-08-27 UI: the composer grew a combined "Model and
+# thinking effort" menu (Model: "GPT-5.5 Thinking" / "GPT-5.6 Sol"; Thinking
+# effort: "Instant" / "Medium" / "High" / "Extra High"), replacing the
+# effort-only pill. chatgpt_excel_heavy above predates the picker — its
+# "Heavy" label no longer exists in the UI and it pins no model, so it can
+# never run again (resolve refuses it; zero rows were ever recorded under
+# it). It stays untouched as append-only history. A fresh panel chat was
+# observed defaulting to GPT-5.5 Thinking, so ChatGPT identities must pin
+# the model explicitly.
+- agent_model_name: chatgpt_excel_gpt_5_6_sol_xhigh
+  provider: chatgpt_excel_agent
+  ui_model_label: "GPT-5.6 Sol"
+  thinking_effort: "Extra High"
+  agent_folder: chatgpt_excel_gpt_5_6_sol_xhigh
   agent_model_type: excel

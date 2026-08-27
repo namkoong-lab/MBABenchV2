@@ -32,6 +32,12 @@ VALID = """
   thinking_effort: "Heavy"
   agent_folder: chatgpt_excel_heavy
   agent_model_type: excel
+- agent_model_name: chatgpt_excel_gpt_5_6_sol_xhigh
+  provider: chatgpt_excel_agent
+  ui_model_label: "GPT-5.6 Sol"
+  thinking_effort: "Extra High"
+  agent_folder: chatgpt_excel_gpt_5_6_sol_xhigh
+  agent_model_type: excel
 """
 
 
@@ -45,11 +51,25 @@ def test_shipped_registry_loads():
 
 def test_resolve_known_label(tmp_path):
     path = _write(tmp_path, VALID)
-    cfg = SimpleNamespace(agent_model_name="chatgpt_excel_heavy")
+    cfg = SimpleNamespace(agent_model_name="chatgpt_excel_gpt_5_6_sol_xhigh")
     identity = resolve_agent_identity(cfg, path)
     assert identity.provider == "chatgpt_excel_agent"
-    assert identity.thinking_effort == "Heavy"
+    assert identity.ui_model_label == "GPT-5.6 Sol"
+    assert identity.thinking_effort == "Extra High"
     assert identity.settings()["agent_model_type"] == "excel"
+
+
+def test_legacy_chatgpt_without_model_loads_but_refuses_to_resolve(tmp_path):
+    """Pre-model-picker ChatGPT entries stay loadable (append-only history)
+    but cannot run: without a pinned model the panel default would decide
+    the cohort."""
+    path = _write(tmp_path, VALID)
+    assert "chatgpt_excel_heavy" in load_registry(path)
+    with pytest.raises(AgentIdentityError, match="model picker") as e:
+        resolve_agent_identity(
+            SimpleNamespace(agent_model_name="chatgpt_excel_heavy"), path
+        )
+    assert "ui_model_label" in str(e.value)  # points at the fix
 
 
 def test_unknown_label_prints_stanza(tmp_path):
@@ -123,16 +143,16 @@ def test_provider_axis_validation(tmp_path):
 """)
     with pytest.raises(AgentIdentityError, match="ui_model_label"):
         load_registry(path)
-    # ChatGPT with a Claude axis set
+    # ChatGPT without a thinking_effort
     path = _write(tmp_path, """
 - agent_model_name: bad_chatgpt
   provider: chatgpt_excel_agent
-  ui_model_label: "Opus 4.6"
-  thinking_effort: "Heavy"
+  ui_model_label: "GPT-5.6 Sol"
+  thinking_effort: null
   agent_folder: bad_chatgpt
   agent_model_type: excel
 """)
-    with pytest.raises(AgentIdentityError, match="Claude axis"):
+    with pytest.raises(AgentIdentityError, match="thinking_effort"):
         load_registry(path)
 
 

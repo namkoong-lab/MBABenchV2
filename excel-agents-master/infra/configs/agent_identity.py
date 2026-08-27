@@ -121,13 +121,14 @@ def _entry_to_identity(entry: dict[str, Any], where: str) -> AgentIdentity:
         if not identity.thinking_effort:
             raise AgentIdentityError(
                 f"{where}: chatgpt_excel_agent identities must pin "
-                f"thinking_effort (the add-in's 'Thinking effort' pill label)"
+                f"thinking_effort (the add-in's 'Thinking effort' label)"
             )
-        if identity.ui_model_label is not None:
-            raise AgentIdentityError(
-                f"{where}: ui_model_label is a Claude axis; must be null "
-                f"for chatgpt_excel_agent (its add-in has no model dropdown)"
-            )
+        # ui_model_label became a ChatGPT axis on 2026-08-27, when the
+        # add-in grew a combined "Model and thinking effort" menu. Entries
+        # from before then pin null; they stay loadable (the registry is
+        # append-only history) but resolve_agent_identity refuses to run
+        # them — without a pinned model the run would use whatever the
+        # panel defaults to.
     return identity
 
 
@@ -164,8 +165,8 @@ def _stanza(label: str) -> str:
     return "\n".join([
         f"- agent_model_name: {label}",
         "  provider: claude_excel_agent      # or chatgpt_excel_agent",
-        '  ui_model_label: "Opus 4.6"        # Claude dropdown text; null for ChatGPT',
-        "  thinking_effort: null             # ChatGPT pill label; null for Claude",
+        '  ui_model_label: "Opus 4.6"        # exact model dropdown/menu text (both providers)',
+        "  thinking_effort: null             # ChatGPT 'Thinking effort' label; null for Claude",
         f"  agent_folder: {label}",
         "  agent_model_type: excel",
     ])
@@ -218,5 +219,22 @@ def resolve_agent_identity(
             f"No agent identity registered for agent_model_name={label!r}. "
             f"Registered: {sorted(registry)}. To add it, append to {path} "
             f"(fill in every field — none may be omitted):\n\n{_stanza(str(label))}\n"
+        )
+    if identity.provider == "chatgpt_excel_agent" and identity.ui_model_label is None:
+        raise AgentIdentityError(
+            f"agent_model_name={label!r} predates the ChatGPT add-in's model "
+            f"picker (2026-08-27 UI) and pins no ui_model_label — without it "
+            f"the run would use whatever model the panel defaults to. The "
+            f"registry is append-only: leave that entry as history and "
+            f"register a NEW label pinning both axes, e.g.:\n\n"
+            + "\n".join([
+                f"- agent_model_name: {label}_<model>",
+                "  provider: chatgpt_excel_agent",
+                '  ui_model_label: "GPT-5.6 Sol"     # exact Model menu text',
+                f'  thinking_effort: "{identity.thinking_effort}"',
+                f"  agent_folder: {label}_<model>",
+                "  agent_model_type: excel",
+            ])
+            + "\n"
         )
     return identity

@@ -185,9 +185,15 @@ class ChatGPTCore(AIAgentCore):
                 logger.warning("⚠️ Could not find ChatGPT frame for setup")
                 return False
 
-            # Pin + verify the thinking effort. A miss is a setup failure
-            # (engine → PANEL_FAILED → infra retry, nothing recorded) —
-            # never "run on whatever effort the pill happened to show".
+            # Pin + verify the model, then the thinking effort — both from
+            # the identity registry via the combined "Model and thinking
+            # effort" menu (2026-08-27 UI). A miss on either is a setup
+            # failure (engine → PANEL_FAILED → infra retry, nothing
+            # recorded) — never "run on whatever the panel happened to
+            # show": a fresh chat was observed defaulting to GPT-5.5
+            # Thinking, so an unpinned model is a silently wrong cohort.
+            if not await self._select_model(frame):
+                return False
             if not await self._select_thinking_effort(frame):
                 return False
             # The edits toggle is convenience, not identity — best-effort.
@@ -208,6 +214,201 @@ class ChatGPTCore(AIAgentCore):
                 pass
             return False
 
+    # ------------------------------------------------------------------
+    # The combined "Model and thinking effort" trigger (2026-08-27 UI).
+    #
+    # One composer button (id `reasoning-effort-select` — the pre-drift id
+    # survived) opens one Radix menu holding a "Model" group ("GPT-5.5
+    # Thinking" / "GPT-5.6 Sol") and a "Thinking effort" group ("Instant" /
+    # "Medium" / "High" / "Extra High"). The button's aria-label carries
+    # both axes: "Model and thinking effort: <model> · <effort>", so a
+    # single read verifies everything; its text renders the model only.
+    # Menu items expose no aria-checked, so verification always reads the
+    # trigger, never the items.
+    # ------------------------------------------------------------------
+
+    async def _get_effort_pill(self, frame):
+        """The combined model/effort trigger button, by stable id first."""
+        for sel in (
+            "button#reasoning-effort-select",
+            'button[aria-label^="Model and thinking effort"]',
+            'button[aria-label^="Thinking effort"]',  # pre-drift pill
+        ):
+            el = await frame.query_selector(sel)
+            if el:
+                return el
+        return None
+
+    @staticmethod
+    def _parse_trigger_state(aria_label, text):
+        """(model, effort) as the combined trigger currently shows them.
+
+        Handles both generations: the combined form
+        "Model and thinking effort: <model> · <effort>" and the pre-drift
+        effort-only pill "Thinking effort: <effort>". Either slot is None
+        when the trigger does not state it — callers must treat a None
+        slot as unverified, never as a match.
+        """
+        label = (aria_label or "").strip()
+        tail = label.split(":", 1)[1].strip() if ":" in label else ""
+        if "·" in tail:
+            model, effort = (part.strip() for part in tail.split("·", 1))
+            return (model or None), (effort or None)
+        if label.lower().startswith("thinking effort"):
+            return None, (tail or (text or "").strip() or None)
+        if tail:
+            return tail, None
+        return ((text or "").strip() or None), None
+
+    async def _read_trigger(self, frame):
+        """(model, effort) from the current trigger, (None, None) if absent."""
+        pill = await self._get_effort_pill(frame)
+        if not pill:
+            return None, None
+        return self._parse_trigger_state(
+            await pill.get_attribute("aria-label"),
+            await pill.text_content(),
+        )
+
+    async def _open_trigger_menu(self, frame):
+        """Click the trigger and wait for its Radix menu; None on failure."""
+        pill = await self._get_effort_pill(frame)
+        if not pill or not await pill.is_visible():
+            return None
+        await pill.click()
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            menu = await frame.query_selector('[role="menu"][data-state="open"]')
+            if menu:
+                return menu
+        return None
+
+    @staticmethod
+    async def _click_menu_item(menu, target_lower):
+        """Click the menu item whose primary label matches target.
+
+        Equality on the `span.truncate` label first (an item's text also
+        contains its description, and effort labels nest — "High" is a
+        substring of "Extra High" — so equality must win); substring on the
+        truncate label, then on the full text, only as drift fallbacks.
+        """
+        items = await menu.query_selector_all('[role="menuitem"]')
+
+        async def _label(item):
+            label_el = await item.query_selector("span.truncate")
+            return (
+                ((await label_el.text_content()) if label_el else "")
+                .strip()
+                .lower()
+            )
+
+        for match in ("equal", "truncate_sub", "full_sub"):
+            for item in items:
+                try:
+                    if not await item.is_visible():
+                        continue
+                    if match == "equal":
+                        hit = (await _label(item)) == target_lower
+                    elif match == "truncate_sub":
+                        label = await _label(item)
+                        hit = bool(label) and target_lower in label
+                    else:
+                        full = (await item.text_content() or "").strip().lower()
+                        hit = target_lower in full
+                    if hit:
+                        await item.click()
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    async def _select_model(self, frame) -> bool:
+        """Pin the add-in model via the combined model/effort menu.
+
+        Reads ``chatgpt_excel_agent.ui_model_label`` from config (injected
+        by the runner from the agent-identity registry) and matches it
+        case-insensitively against the trigger's model slot and the menu's
+        Model items. No whitelist — new models are a registry entry away,
+        never a code change. Leave unset to skip (legacy identities are
+        already refused at resolve time).
+
+        Returns True when no model is pinned, or when the trigger verifiably
+        shows the pinned model afterwards; False otherwise — the caller
+        treats False as a setup failure (infra, unrecorded), never as "run
+        on whatever model happens to be active".
+        """
+        target = self.config.get("chatgpt_excel_agent", {}).get("ui_model_label")
+        if not target:
+            return True
+        target_lower = str(target).strip().lower()
+        if not target_lower:
+            return True
+
+        async def _attempt():
+            pill = await self._get_effort_pill(frame)
+            if not pill or not await pill.is_visible():
+                return "pill_missing"
+            model, _ = self._parse_trigger_state(
+                await pill.get_attribute("aria-label"),
+                await pill.text_content(),
+            )
+            if model and model.strip().lower() == target_lower:
+                return "already"
+
+            menu = await self._open_trigger_menu(frame)
+            if not menu:
+                await self._dismiss_dropdown(frame)
+                return "menu_missing"
+            if not await self._click_menu_item(menu, target_lower):
+                await self._dismiss_dropdown(frame)
+                return "not_found"
+
+            await asyncio.sleep(0.5)
+            model_after, _ = await self._read_trigger(frame)
+            if model_after and model_after.strip().lower() == target_lower:
+                return "selected"
+            logger.warning(
+                "Model click did not change trigger (shows '%s')", model_after
+            )
+            return "click_no_effect"
+
+        try:
+            for attempt in (1, 2):
+                logger.info("Selecting ChatGPT model: %s (attempt %d)", target, attempt)
+                result = await _attempt()
+                if result == "selected":
+                    logger.info("✅ Model verified: '%s'", target)
+                    return True
+                if result == "already":
+                    logger.info("✅ Model '%s' already selected", target)
+                    return True
+                if result == "pill_missing":
+                    logger.error(
+                        "Model/effort trigger not found — the pinned model "
+                        "cannot be applied or verified; aborting setup"
+                    )
+                    return False
+                if result in ("menu_missing", "not_found", "click_no_effect"):
+                    if attempt == 1:
+                        logger.info(
+                            "Model attempt 1 failed (%s); retrying", result
+                        )
+                        await asyncio.sleep(0.5)
+                        continue
+                    logger.error(
+                        "Model '%s' not applied after 2 attempts (%s) — "
+                        "aborting setup rather than running on an unverified "
+                        "model",
+                        target,
+                        result,
+                    )
+                    return False
+            return False
+        except Exception as e:
+            logger.error("Could not set model: %s", e)
+            await self._dismiss_dropdown(frame)
+            return False
+
     async def _select_thinking_effort(self, frame) -> bool:
         """Pin the 'Thinking effort' pill to the configured value.
 
@@ -216,20 +417,16 @@ class ChatGPTCore(AIAgentCore):
         treats False as a setup failure.
 
         Reads ``chatgpt_excel_agent.thinking_effort`` from config and matches
-        it case-insensitively against the pill's aria-label and the dropdown
-        menu items. No whitelist — any current or future label works
-        (Fast / Standard / Heavy / …). Leave unset to skip.
+        it case-insensitively against the combined trigger's effort slot and
+        the menu's Thinking-effort items. No whitelist — any current or
+        future label works ("Instant" / "Medium" / "High" / "Extra High" on
+        the 2026-08-27 UI). Leave unset to skip.
 
-        Selector strategy (most to least stable):
-          * pill:      ``button#reasoning-effort-select``
-                       (fallback: ``aria-label^="Thinking effort"``)
-          * menu root: ``[role="menu"][data-state="open"]`` — Radix emits
-                       ``data-state`` so we can verify the dropdown opened
-                       before scanning (catches silent click failures).
-          * menu item: ``[role="menuitem"]`` inside the menu root.
-          * item label: ``span.truncate`` within each item — the primary
-                       label ("Fast"/"Heavy"/…). Much safer than
-                       text_content, which also includes the description.
+        Shares the combined "Model and thinking effort" trigger and menu
+        with `_select_model` (see the section comment above). Verification
+        reads the trigger's parsed effort slot with EQUALITY — effort
+        labels nest ("High" ⊂ "Extra High"), so substring verification
+        would report false matches.
         """
         target = self.config.get("chatgpt_excel_agent", {}).get("thinking_effort")
         if not target:
@@ -239,91 +436,39 @@ class ChatGPTCore(AIAgentCore):
         if not target_lower:
             return True
 
-        async def _read_current(pill_el):
-            aria = (await pill_el.get_attribute("aria-label") or "").strip()
-            cur = aria.rsplit(":", 1)[-1].strip() if ":" in aria else ""
-            if not cur:
-                cur = (await pill_el.text_content() or "").strip()
-            return cur
-
         async def _attempt():
             """Return 'selected', 'already', 'pill_missing', 'menu_missing',
             'not_found', or 'click_no_effect'."""
-            pill = await frame.query_selector("button#reasoning-effort-select")
-            if not pill:
-                pill = await frame.query_selector(
-                    'button[aria-label^="Thinking effort"]'
-                )
+            pill = await self._get_effort_pill(frame)
             if not pill or not await pill.is_visible():
                 return "pill_missing"
 
-            current = (await _read_current(pill)).lower()
-            if current == target_lower or target_lower in current:
+            _, effort = self._parse_trigger_state(
+                await pill.get_attribute("aria-label"),
+                await pill.text_content(),
+            )
+            if effort and effort.strip().lower() == target_lower:
                 return "already"
 
-            await pill.click()
-
-            # Wait for the Radix menu to open (up to ~2s).
-            menu = None
-            for _ in range(20):
-                await asyncio.sleep(0.1)
-                menu = await frame.query_selector('[role="menu"][data-state="open"]')
-                if menu:
-                    break
+            menu = await self._open_trigger_menu(frame)
             if not menu:
                 await self._dismiss_dropdown(frame)
                 return "menu_missing"
-
-            async def _click_matching():
-                items = await menu.query_selector_all('[role="menuitem"]')
-                # Primary pass: exact / substring on the truncate label.
-                for item in items:
-                    try:
-                        if not await item.is_visible():
-                            continue
-                        label_el = await item.query_selector("span.truncate")
-                        label = (
-                            ((await label_el.text_content()) if label_el else "")
-                            .strip()
-                            .lower()
-                        )
-                        if label == target_lower or (label and target_lower in label):
-                            await item.click()
-                            return True
-                    except Exception:
-                        continue
-                # Last-resort pass: full text substring.
-                for item in items:
-                    try:
-                        if not await item.is_visible():
-                            continue
-                        full = (await item.text_content() or "").strip().lower()
-                        if target_lower in full:
-                            await item.click()
-                            return True
-                    except Exception:
-                        continue
-                return False
-
-            if not await _click_matching():
+            if not await self._click_menu_item(menu, target_lower):
                 await self._dismiss_dropdown(frame)
                 return "not_found"
 
-            # Verify the pill actually changed. Radix popovers occasionally
-            # accept the click visually but the parent React state misses
-            # the update — verify so we can retry instead of running with
-            # the wrong effort.
+            # Verify the trigger actually changed. Radix popovers
+            # occasionally accept the click visually but the parent React
+            # state misses the update — verify so we can retry instead of
+            # running with the wrong effort. A vanished or unreadable
+            # trigger is NOT success: verification needs positive evidence.
             await asyncio.sleep(0.5)
-            verify_pill = await frame.query_selector(
-                "button#reasoning-effort-select"
-            ) or await frame.query_selector('button[aria-label^="Thinking effort"]')
-            if not verify_pill:
-                return "selected"  # pill gone; treat as success
-            after = (await _read_current(verify_pill)).lower()
-            if after == target_lower or target_lower in after:
+            _, after = await self._read_trigger(frame)
+            if after and after.strip().lower() == target_lower:
                 return "selected"
             logger.warning(
-                "Thinking-effort click did not change pill (still '%s')", after
+                "Thinking-effort click did not change trigger (shows '%s')", after
             )
             return "click_no_effect"
 

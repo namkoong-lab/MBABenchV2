@@ -111,6 +111,27 @@ def test_engine_config_splits_workbook_from_panel_files(tmp_path):
     assert preflight_check(engine_config) == []
 
 
+def test_engine_config_pins_chatgpt_both_axes(tmp_path):
+    """Since the add-in's combined menu (2026-08-27), a ChatGPT identity
+    pins model AND effort — both must reach the provider block the core
+    reads."""
+    from infra.configs.agent_identity import AgentIdentity
+
+    identity = AgentIdentity(
+        agent_model_name="chatgpt_excel_gpt_5_6_sol_xhigh",
+        provider="chatgpt_excel_agent",
+        ui_model_label="GPT-5.6 Sol",
+        thinking_effort="Extra High",
+        agent_folder="chatgpt_excel_gpt_5_6_sol_xhigh",
+        agent_model_type="excel",
+    )
+    cfg = load_configs(override_path=tmp_path / "absent.yaml")
+    engine_config = build_engine_config(cfg, _spec(tmp_path), identity, ["text"])
+    assert engine_config["agent_type"] == "chatgpt_excel_agent"
+    assert engine_config["chatgpt_excel_agent"]["ui_model_label"] == "GPT-5.6 Sol"
+    assert engine_config["chatgpt_excel_agent"]["thinking_effort"] == "Extra High"
+
+
 def test_preflight_catches_missing_upload_file(tmp_path):
     cfg = load_configs(override_path=tmp_path / "absent.yaml")
     spec = _spec(tmp_path)
