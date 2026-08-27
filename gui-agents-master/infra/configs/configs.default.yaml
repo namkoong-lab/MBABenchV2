@@ -258,13 +258,16 @@ poll:
 #     9    pv9 single prompt         (17-check rubric, 1 turn)
 #   200    rubric-v9 3-step          (132-check rubric, 3 turns)
 #   201    rubric-v9 single-pass     (132-check rubric, 1 turn)
+#   202    rubric-v9 3-step          + Questions-sheet answers (3 turns)
+#   203    rubric-v9 single-pass     + Questions-sheet answers (1 turn)
 #
-# Default 200 = exactly the files this repo has always sent by default,
-# under a number that identifies only them.
+# Default 202 = the 3-step set + the Questions-sheet answer convention
+# (tasks_configs/prompts_v3/ — see its README). 200/201 remain registered
+# for the pre-Questions cohorts; new runs should not use them.
 # Must equal agent.prompt_version if that is also set; run.py refuses a
 # mismatch rather than picking one.
 prompt_version:
-  value: 200
+  value: 202
   required: false
 
 # Empty = let the engine resolve paths from CWD. Set to the directory

@@ -29,7 +29,7 @@ def test_defaults_load_clean(tmp_path):
     assert cfg.benchmark == "v2"
     assert cfg.browser.cdp_port == 9222
     assert cfg.source.schema == "mbabenchv2"
-    assert cfg.prompt_version == 200
+    assert cfg.prompt_version == 203
 
 
 def test_unknown_key_is_a_typo_error(tmp_path):

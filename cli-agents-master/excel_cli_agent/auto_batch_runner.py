@@ -224,7 +224,7 @@ class AutoBatchRunner(BatchRunner):
         # vice versa) invalidates the wave. Set EXCEL_AGENT_SKIP_RUBRIC_GUARD=1
         # for a deliberate cross-benchmark experiment (logged loudly).
         global SYSTEM_PROMPT_PATH, TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH
-        default_ver = "v12" if benchmark == "v2" else DEFAULT_PROMPT_VERSION
+        default_ver = "v13" if benchmark == "v2" else DEFAULT_PROMPT_VERSION
         prompt_ver = config.get('prompt_version', default_ver)
         if prompt_ver not in PROMPT_VERSIONS:
             raise ValueError(f"Unknown prompt_version '{prompt_ver}'. Available: {list(PROMPT_VERSIONS.keys())}")
@@ -235,7 +235,7 @@ class AutoBatchRunner(BatchRunner):
                       f"{benchmark} with the {prompt_rubric}-rubric prompt set "
                       f"({prompt_ver}) as a deliberate cross-benchmark experiment.")
             else:
-                suggestion = "v12" if benchmark == "v2" else "v11"
+                suggestion = "v13" if benchmark == "v2" else "v11"
                 raise ValueError(
                     f"prompt_version {prompt_ver} embeds the {prompt_rubric} "
                     f"grading rubric, but benchmark={benchmark} tasks are graded "

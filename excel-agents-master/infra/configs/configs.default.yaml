@@ -213,11 +213,19 @@ aws:
 #   200    rubric-v9 3-step          (132-check rubric, 3 panel turns —
 #                                    byte-identical to the gui pipeline's
 #                                    prompts_v2 files)
+#   202    rubric-v9 3-step          + Questions-sheet answers (byte-identical
+#                                    to the gui pipeline's prompts_v3 files)
+#   203    rubric-v9 single-pass     + Questions-sheet answers (one panel
+#                                    turn — byte-identical to the gui
+#                                    pipeline's prompts/v2_2.txt)
 #
+# Default 203 = the single-pass set + the Questions-sheet answer convention,
+# matching what the gui waves run so a gui-vs-excel delta is attributable to
+# the interface. 200/202 remain registered; new runs should not use 200.
 # Must equal agent.prompt_version if that is also set; run.py refuses a
 # mismatch rather than picking one.
 prompt_version:
-  value: 200
+  value: 203
   required: false
 
 

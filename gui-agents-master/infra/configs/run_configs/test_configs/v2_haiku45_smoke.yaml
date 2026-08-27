@@ -9,7 +9,7 @@
 # which asks for the workbook back unchanged plus one "TEST SHEET" — seconds
 # of agent time instead of a full model, and a solution file you can verify
 # by eye. Never grade the attempts it writes. For real benchmark data on this
-# identity, set prompt_version to 200 or 201 and move the config out of
+# identity, set prompt_version to 202 or 203 and move the config out of
 # test_configs/.
 
 benchmark: v2

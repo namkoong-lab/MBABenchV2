@@ -86,3 +86,33 @@ versions:
       mid-build and the agent's truncation-continue loop to resume it.
     files:
       - "tasks_configs/prompts/v2_1.txt"
+
+  202:
+    label: "rubric-v9 3-step + Questions-sheet answers"
+    description: >
+      Version 200 with one addition: the starting workbook's 'Questions'
+      sheet (questions in column A from A2, reserved answer cells in column
+      B from B2 down, units in column C, answer-format instructions in the
+      header row) must be preserved — same name, same rows — and answered
+      with live formulas referencing the model. Same three chat turns; the
+      132-check rubric body is byte-identical to version 200's, so any
+      score delta is attributable to the answer-placement instruction
+      alone. Generated from prompts_v2/ — see prompts_v3/README.md.
+    files:
+      - "tasks_configs/prompts_v3/step1_analyze.txt"
+      - "tasks_configs/prompts_v3/step2_build.txt"
+      - "tasks_configs/prompts_v3/step3_qa.txt"
+
+  203:
+    label: "rubric-v9 single-pass + Questions-sheet answers"
+    description: >
+      Version 201 with the same Questions-sheet addition as 202: the
+      created-'Answers'-sheet deliverable is replaced by filling the
+      starting workbook's 'Questions' sheet (live formulas in column B
+      from B2 down; sheet preserved under its exact name), and the QA
+      checklist gains the matching item 8. One chat turn; rubric body
+      byte-identical to step2_build.txt's from the `== FULL RUBRIC ==`
+      marker onward, unchanged from 200/201. Same ~67k-char
+      truncation-continue caveat as 201.
+    files:
+      - "tasks_configs/prompts/v2_2.txt"

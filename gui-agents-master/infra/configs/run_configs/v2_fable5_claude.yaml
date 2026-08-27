@@ -2,8 +2,9 @@
 # DB identity resolves to: claude_fable_5_max  (v2 keys on mode + model + effort)
 # Shape copied from mbabenchv2_run_examples/mbabenchv2_db_sink.yaml.
 #
-# Note: prompt_version 200 IS the v2 3-step set (prompts_v2/step1..step3) —
-# the version is the only thing that selects the text.
+# Note: prompt_version 202 IS the v2 3-step set + Questions-sheet answers
+# (prompts_v3/step1..step3) — the version is the only thing that selects the
+# text. (200 = the same set without the Questions-sheet convention.)
 # v2 runs use the plain "chat" surface (the repo default), not cowork.
 #
 # Run (from gui-agents-master/, Chrome already running + logged in):
@@ -29,7 +30,7 @@ sink:
 provider:
   kind: "claude"
 
-prompt_version: 200
+prompt_version: 202
 
 claude_web:
   mode: "chat"                       # "cowork" instead -> identity claude_fable_5_cowork_max

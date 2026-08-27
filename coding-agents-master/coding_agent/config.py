@@ -94,7 +94,7 @@ class LimitsConfig:
 # aws.s3_bucket, and the prompt-template default.
 BENCHMARKS = {
     "v1": {"root": "BizbenchV1", "db_name": "BizbenchV1", "template": "v7"},
-    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v8"},
+    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v9"},
 }
 DEFAULT_S3_BUCKET = "mbabench"
 
@@ -108,7 +108,7 @@ class RunConfig:
     benchmark: str = "v1"  # "v1" (BizbenchV1 wave) | "v2" (MBABenchV2 task set)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
-    template_version: str = "v7"  # v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
+    template_version: str = "v7"  # v9 = v2 Questions-sheet mirror (v2 default); v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     workspaces_dir: Path = PACKAGE_DIR.parent / "workspaces"
@@ -174,8 +174,8 @@ def load_config(path: str | Path) -> RunConfig:
     )
     if raw.get("workspaces_dir"):
         cfg.workspaces_dir = Path(raw["workspaces_dir"]).expanduser()
-    if cfg.template_version not in ("v5", "v6", "v7", "v8"):
-        raise ValueError('template_version must be "v5", "v6", "v7", or "v8"')
+    if cfg.template_version not in ("v5", "v6", "v7", "v8", "v9"):
+        raise ValueError('template_version must be "v5", "v6", "v7", "v8", or "v9"')
     if cfg.sandbox.mode not in ("docker", "host"):
         raise ValueError('sandbox.mode must be "docker" or "host"')
     return cfg

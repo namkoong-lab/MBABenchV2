@@ -38,13 +38,13 @@ def main() -> int:
     assert v1.s3_root == "BizbenchV1"
     print("OK  default config -> v1, v7, BizbenchV1 root")
 
-    # v2: root/template flip together.
+    # v2: root/template flip together (v9 = the Questions-sheet template).
     v2 = load_config(_cfg("benchmark: v2\n"))
     assert v2.benchmark == "v2"
-    assert v2.template_version == "v8"
+    assert v2.template_version == "v9"
     assert v2.s3_root == "MBABenchV2"
     assert v2.s3_bucket  # from config/config.yaml aws.s3_bucket or the default
-    print("OK  benchmark v2 -> v8, MBABenchV2 root")
+    print("OK  benchmark v2 -> v9, MBABenchV2 root")
 
     # the old internal: stanza is refused, not silently honoured.
     try:
@@ -61,13 +61,27 @@ def main() -> int:
     except ValueError:
         print("OK  benchmark v3 refused")
 
-    # v8 template resolves for every task_source, passes the rubric
-    # checksum guard, and yields prompt_version 108.
+    # v9 template resolves for every task_source, passes the rubric
+    # checksum guard, and yields prompt_version 109.
     for src in ("fmwc", "modeloff", "wsp", "jp"):
-        assert template_name(src, "v8") == "task_template_shared_v8.txt"
+        assert template_name(src, "v9") == "task_template_shared_v9.txt"
     sys_path, tpl_path = prompt_file_paths(v2, "jp")
+    assert parse_prompt_version(sys_path.name, tpl_path.name) == 109
+    print("OK  v9 template: shared across sources, checksum guard passed, pv=109")
+
+    # v9 carries the Questions-sheet convention; its rubric is byte-identical
+    # to v8's (guard hashes are the same constant).
+    tpl_text = tpl_path.read_text()
+    assert "ANSWERS (the 'Questions' sheet)" in tpl_text
+    assert "8. The 'Questions' sheet is intact" in tpl_text
+    assert "start solution.xlsx as a copy of the starting workbook" in tpl_text
+    print("OK  v9 template carries the Questions-sheet convention")
+
+    # v8 still selectable and guarded: pv 108.
+    v2_v8 = load_config(_cfg("benchmark: v2\ntemplate_version: v8\n"))
+    sys_path, tpl_path = prompt_file_paths(v2_v8, "jp")
     assert parse_prompt_version(sys_path.name, tpl_path.name) == 108
-    print("OK  v8 template: shared across sources, checksum guard passed, pv=108")
+    print("OK  v8 template still selectable, checksum guard passed, pv=108")
 
     # v7 unchanged: still pv 107 with its own guard.
     sys_path, tpl_path = prompt_file_paths(v1, "fmwc")

@@ -34,12 +34,13 @@ benchmark: "v2"                               # MBABenchV2 DB + s3://mbabench/MB
 # logs directory, batch_logs/batch_{ts}/workspaces/{task}_{run_id}/
 
 # One key pins BOTH prompt files (see excel_cli_agent/prompt_versions.py):
-#   v12 -> prompts/system_prompt_v12.txt (system v12)
-#        + prompts/task_template_shared_v6.txt (template v6, shared fmwc/wsp)
-# Recorded in the DB as prompt_version 1206 (system*100 + template). Same
+#   v13 -> prompts/system_prompt_v13.txt (system v13, adds the
+#          Questions-sheet answer convention)
+#        + prompts/task_template_shared_v7.txt (template v7, shared fmwc/wsp)
+# Recorded in the DB as prompt_version 1307 (system*100 + template). Same
 # value the benchmark would default to; pinned so a future default change
 # can't silently move this cohort.
-prompt_version: "v12"
+prompt_version: "v13"
 
 max_trials: 7
 trials_since: "2020-01-01"

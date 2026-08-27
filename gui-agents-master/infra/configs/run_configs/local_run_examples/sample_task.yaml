@@ -26,7 +26,7 @@
 #
 # or send a different registered prompt set for this task only:
 #
-#     prompt_version: 201
+#     prompt_version: 203
 
 task_name: "Sample_Task"
 task_source: "my_tasks"
