@@ -19,13 +19,17 @@ config/config.yaml database.v2_url)`) before letting a run proceed. All registri
   config fields (provider, mode, model, effort) looked up in append-only Python tables; unknown
   combinations refuse to run. File: `infra/configs/agent_identity.py`. To add: append one entry
   to the benchmark's `_V2_*_IDENTITIES` dict mapping the new axis tuple to `AgentIdentity(label, s3_folder)`.
-- **Run**: first start Chrome with the logged-in profile, on the port your run config's
-  `browser.cdp_port` names (9223 for the Claude profile below; ChatGPT uses its own port + profile):
+- **Run**: first start Chrome on the port your run config's `browser.cdp_port` names (9223 =
+  the Claude lane; 9222 = the ChatGPT lane). The profile dir is keyed by the port, so a new lane
+  only needs a new `PORT=` — Chrome allows one process per profile dir, and a launch against a
+  running profile hands off to it and silently ignores the new port. First launch on a new port
+  opens a blank profile: log in once there; it persists. Keep the `$HOME` spelling — zsh does not
+  expand `~` after `=` (a bare `~/...` creates a literal `./~` dir in whatever cwd you launch from):
 
 ```bash
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9223 \
-  --user-data-dir=~/.chrome-web-agent-claude2 \
+PORT=9223; "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=$PORT \
+  --user-data-dir="$HOME/.chrome-web-agent-$PORT" \
   --no-first-run --no-default-browser-check \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
@@ -34,7 +38,7 @@ config/config.yaml database.v2_url)`) before letting a run proceed. All registri
 ```
 
 ```bash
-cd gui-agents-master && python -m infra.run --run-config infra/configs/run_configs/v2_fable5_claude.yaml --dry-run
+cd gui-agents-master && uv run python -m infra.run --run-config infra/configs/run_configs/v2_fable5_claude.yaml --dry-run
 ```
 
   Drop `--dry-run`, add `-y` for real. Key args: `--task-id N` (one task, re-runs even if
