@@ -68,7 +68,7 @@ MODEL_PRICING = {
     "anthropic/claude-opus-4.6": {"input": 5.00, "output": 25.00},
     "claude-opus-4-6": {"input": 5.00, "output": 25.00},  # Anthropic direct model ID
     "claude-opus-4-8": {"input": 5.00, "output": 25.00},  # Anthropic direct model ID
-    "claude-fable-5": {"input": 10.00, "output": 50.00},  # Anthropic direct model ID
+    "claude-fable-5": {"input": 25.00, "output": 50.00},  # Anthropic direct model ID; see DIRECT_API_PRICING
     "gpt-5.6-sol": {"input": 5.00, "output": 30.00},  # OpenAI direct model ID
     "google/gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
     "z-ai/glm-4.7": {"input": 0.40, "output": 1.50},
@@ -200,14 +200,35 @@ def _candidate_slugs(model: str) -> list:
     return candidates
 
 
+# Prices verified against ACTUAL billing for direct-API runs. These outrank
+# the OpenRouter live feed, which lists brokered-route prices that can
+# differ from what the provider bills a direct API key. Keys are bare
+# direct-API ids (no "/"), which never name an OpenRouter-routed run, so
+# these overrides cannot touch OpenRouter cohorts (whose real billed cost
+# is preferred via usage.include anyway).
+#
+# claude-fable-5: calibrated 2026-08-27 against a Console credit diff over
+# a single isolated run (attempt 468: 3,214,460 in / 439,972 out drew
+# $102.58; $25/$50 predicts $102.36, +0.2% residual; the $10/$50 the live
+# feed lists for anthropic/claude-fable-5 predicts $54.14, -47%). Single
+# calibration point — input/output split assumes output stayed at the
+# listed $50; re-verify against the next isolated run's credit diff.
+DIRECT_API_PRICING = {
+    "claude-fable-5": {"input": 25.00, "output": 50.00},
+}
+
+
 def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
     """Return {input, output} $/MTok for a model, preferring live data.
 
-    Order: live OpenRouter prices (exact id, then direct-API id mapped to
-    its OpenRouter slug) -> static MODEL_PRICING -> None. Falling back or
+    Order: DIRECT_API_PRICING (billing-verified direct-API rates) -> live
+    OpenRouter prices (exact id, then direct-API id mapped to its
+    OpenRouter slug) -> static MODEL_PRICING -> None. Falling back or
     failing to price is warned once per model so silent 0-cost rows can't
     accumulate unnoticed.
     """
+    if model in DIRECT_API_PRICING:
+        return DIRECT_API_PRICING[model]
     live = _fetch_live_pricing()
     if live:
         for slug in _candidate_slugs(model):
