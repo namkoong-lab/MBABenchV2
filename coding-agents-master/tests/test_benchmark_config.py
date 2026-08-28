@@ -75,6 +75,12 @@ def main() -> int:
     assert "ANSWERS (the 'Questions' sheet)" in tpl_text
     assert "8. The 'Questions' sheet is intact" in tpl_text
     assert "start solution.xlsx as a copy of the starting workbook" in tpl_text
+    assert "the reserved answer cells are in the column headed 'Answers'" in tpl_text, (
+        "step-1 plan bullet lost the header-anchored answer-column wording"
+    )
+    assert "reserved answer cells in column B (" not in tpl_text, (
+        "stale hard-coded column-B plan wording survived"
+    )
     print("OK  v9 template carries the Questions-sheet convention")
 
     # v8 still selectable and guarded: pv 108.

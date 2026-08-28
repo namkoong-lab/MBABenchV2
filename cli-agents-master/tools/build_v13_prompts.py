@@ -28,6 +28,9 @@ Harness-necessitated translations on top of v12's rules:
   * the ANSWERS block's "carry the sheet over" wording  ->  names copy_file
     as the way to start solution.xlsx from the starting workbook so the
     'Questions' sheet survives.
+  * the v11 body's "create separate answer sheets per question" deliverable-
+    structure advice  ->  answer in the 'Questions' sheet's reserved cells
+    (it contradicted the ANSWERS convention this version adds).
 Everything from the "== FULL RUBRIC" marker onward is copied byte-exact
 (and is byte-identical to v12's rubric — the v3 revision does not touch the
 rubric); tests/test_v13_prompts.py asserts that equality plus the 132-check
@@ -145,6 +148,32 @@ def build_system_prompt() -> str:
         '- Cross-sheet link formulas: font: {"color": "008000"}\n'
         '- External links are forbidden (rubric: Potential Dangers) -- there should be none to color red\n'
         '- Header rows: font: {"color": "FFFFFF", "bold": true}, fill: {"color": "002060"}',
+    )
+
+    # The v11 body's deliverable-structure advice told the model to create
+    # separate per-question answer sheets — the opposite of the ANSWERS
+    # convention above. Rewrite it to defer to the 'Questions' sheet.
+    out = swap(
+        out,
+        '2. MATCH EXPECTED DELIVERABLE STRUCTURE:\n'
+        '   - Read PDF questions/materials to understand expected format\n'
+        '   - If questions are "Q1, Q2, Q3, Q4", create SEPARATE sheets for each\n'
+        '   - If case expects Cover sheet, create it\n'
+        '   - Do not assume format - follow case requirements exactly\n'
+        '\n'
+        '   Example: If questions are Q1-Q4, create separate answer sheets for each question\n'
+        '   rather than putting all answers in a single sheet.',
+        '2. MATCH EXPECTED DELIVERABLE STRUCTURE:\n'
+        '   - Read PDF questions/materials to understand expected format\n'
+        "   - Answer the case's questions in the starting workbook's 'Questions' sheet, "
+        "in its reserved 'Answers'-column cells - see the ANSWERS convention above; "
+        'do NOT create separate per-question answer sheets\n'
+        '   - If case expects Cover sheet, create it\n'
+        '   - Do not assume format - follow case requirements exactly\n'
+        '\n'
+        "   Example: If questions are Q1-Q4, their answers belong in the 'Questions' "
+        'sheet\'s reserved answer cells (one row per question), each entered as a live '
+        'formula referencing the model.',
     )
 
     if re.search(r"rubric criteri", out):

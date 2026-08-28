@@ -288,12 +288,15 @@ class ChatGPTWebAgent(WebAgent):
     MODE_TOGGLE_WAIT_SEC = 8.0
     MODE_TOGGLE_POLL_SEC = 0.5
 
-    # Work-mode picker (pill menu → power slider + "Advanced" rows).
-    # The rows (Model / Effort / Speed) and their options carry no
-    # roles/testids — they're div.__menu-item, text-anchored. After picking
-    # an off-slider effort (Ultra), the slider DECOUPLES (shows "Reset to
-    # default"); state must be verified from the rows + pill text, never
-    # the slider.
+    # Work-mode picker. TWO generations coexist (ensure_work_settings
+    # detects per-run, so an A/B flip back keeps working):
+    #  - Advanced-rows (pre-2026-08-28): pill menu → "Advanced" → Model /
+    #    Effort / Speed rows with flyouts. The rows carry no roles/testids —
+    #    they're div.__menu-item, text-anchored. After picking an off-slider
+    #    effort (Ultra), the slider DECOUPLES (shows "Reset to default");
+    #    state must be verified from the rows + pill text, never the slider.
+    #  - Slider generation (verified live 2026-08-28): see the _SLIDER_*
+    #    block below — the Advanced rows are gone entirely.
     WORK_MODEL_LABELS = {
         "gpt_5_6_sol": "GPT-5.6 Sol",
         "gpt_5_6_terra": "GPT-5.6 Terra",
@@ -312,6 +315,48 @@ class ChatGPTWebAgent(WebAgent):
         "standard": "Standard",
         "fast": "Fast",
     }
+
+    # Slider-generation work picker (verified live 2026-08-28). The pill
+    # menu is a two-view widget (data-view simple|advanced):
+    #  - model:  menuitemradio list behind a [role=menuitem]
+    #            aria-label="Select model" view toggle. Radios read
+    #            "5.6 Sol" (no "GPT-" prefix); "Default" is a
+    #            recommended-mix pseudo-model, NOT an explicit selection.
+    #  - effort: a "Power" slider row (aria-label="Power"), keyboard
+    #            Left/Right; live state is announced through
+    #            aria-describedby as "<Label>, <n> of <total>.".
+    #  - speed:  menuitemcheckbox aria-label="Enable fast mode"
+    #            (unchecked = Standard, checked = Fast).
+    # Ultra exists ONLY under an explicit model: with "Default" the slider
+    # tops out at Extra High ("5 of 5"); selecting 5.6 Sol re-ranges it to
+    # 6 stops ("Extra High, 4 of 6" → Max → Ultra). So the model radio
+    # must be clicked even when the toggle already displays the right
+    # name — the toggle shows what "Default" RESOLVES to, not that an
+    # explicit model is pinned. Anchored on aria-labels, not the hashed
+    # utility classes.
+    _SLIDER_TOGGLE_SEL = (
+        '[role="menu"][data-state="open"] '
+        '[role="menuitem"][aria-label="Select model"]'
+    )
+    _SLIDER_POWER_SEL = (
+        '[role="menu"][data-state="open"] [role="menuitem"][aria-label="Power"]'
+    )
+    _SLIDER_FAST_SEL = (
+        '[role="menu"][data-state="open"] '
+        '[role="menuitemcheckbox"][aria-label="Enable fast mode"]'
+    )
+    # UI order, low → high; drives the arrow-walk direction. Positions are
+    # NOT stable across models ("Extra High" is 5 of 5 under Default but
+    # 4 of 6 under 5.6 Sol), so all comparisons go by label.
+    # CAUTION: REOPENING the pill menu snaps a committed Ultra back to Max
+    # (observed live 2026-08-28: close at Ultra → pill "5.6 Sol Ultra";
+    # open + Escape → pill "5.6 Sol Max"). Two consequences: (a) every
+    # ensure_work_settings call must re-walk the slider — "already Ultra"
+    # will essentially never be read back after an open; (b) nothing may
+    # reopen this menu between setting the effort and sending the prompt,
+    # or the send goes out at Max. The engine's flow (set → close → pill
+    # check → send) respects this.
+    _SLIDER_EFFORT_LADDER = ("Light", "Medium", "High", "Extra High", "Max", "Ultra")
 
     # JS-dispatched hover/click — skip pointer-events actionability checks
     # (submenu flyouts overlay their sibling menu items).
@@ -896,13 +941,206 @@ class ChatGPTWebAgent(WebAgent):
         )
         return False
 
-    async def ensure_work_settings(self) -> bool:
-        """Work-mode picker: pill menu → Advanced → Model / Effort / Speed.
+    async def _slider_picker_present(self) -> bool:
+        """True when the open pill menu is the slider generation."""
+        return await self.page.query_selector(self._SLIDER_TOGGLE_SEL) is not None
 
+    async def _slider_effort_state(self):
+        """(label, position, total) from the Power row's live announcement,
+        e.g. ("Extra High", 4, 6). None when unreadable — callers fail
+        loudly rather than guess."""
+        try:
+            state = await self.page.evaluate(
+                """(sel) => {
+                    const sc = document.querySelector(sel);
+                    if (!sc) return null;
+                    const ids = (sc.getAttribute('aria-describedby') || '')
+                        .split(/\\s+/);
+                    for (const id of ids) {
+                        const el = document.getElementById(id);
+                        const t = el ? (el.textContent || '').trim() : '';
+                        // No $ anchor: at the top stop the announcement
+                        // appends a sentence — "Ultra, 6 of 6. Consumes
+                        // usage limits faster" (live 2026-08-28).
+                        const m = t.match(/^(.+?), (\\d+) of (\\d+)\\.?/);
+                        if (m) return [m[1], parseInt(m[2], 10), parseInt(m[3], 10)];
+                    }
+                    return null;
+                }""",
+                self._SLIDER_POWER_SEL,
+            )
+            return tuple(state) if state else None
+        except Exception:
+            return None
+
+    async def _slider_set_model(self, model_label: str) -> bool:
+        """Pin the model radio in the slider picker's advanced view.
+
+        Clicks the radio even when it already appears selected: selection
+        flips the widget back to the simple view (observed behavior), which
+        the effort step needs, and a same-value select is idempotent.
+        """
+        short = model_label.replace("GPT-", "")
+        toggle = await self.page.query_selector(self._SLIDER_TOGGLE_SEL)
+        if toggle is None:
+            logger.error("Slider picker: 'Select model' toggle vanished")
+            return False
+        await toggle.evaluate(self._JS_POINTER_CLICK)
+        await asyncio.sleep(1.0)
+        # Match the radio's FIRST text line: "Default" carries a
+        # description line, plain models don't.
+        clicked = await self.page.evaluate(
+            """(args) => {
+                const [short, full] = args;
+                const radios = [...document.querySelectorAll(
+                    '[role="menu"][data-state="open"] [role="menuitemradio"]')];
+                const t = radios.find(r => {
+                    const first = ((r.innerText || '').trim()
+                        .split('\\n')[0] || '').trim();
+                    return first === short || first === full;
+                });
+                if (!t) return null;
+                const r = t.getBoundingClientRect();
+                const opts = {bubbles: true, cancelable: true, view: window,
+                              clientX: r.left + r.width / 2,
+                              clientY: r.top + r.height / 2};
+                for (const ev of ['pointerdown','mousedown','pointerup',
+                                  'mouseup','click'])
+                    t.dispatchEvent(new MouseEvent(ev, opts));
+                return ((t.innerText || '').trim().split('\\n')[0] || '').trim();
+            }""",
+            [short, model_label],
+        )
+        if clicked is None:
+            logger.error(f"Slider picker: model radio {short!r} not found")
+            return False
+        await asyncio.sleep(1.2)
+        # The radios stay in the DOM after the view flips back — verify
+        # aria-checked without reopening the advanced view.
+        checked = await self.page.evaluate(
+            """(short) => {
+                const radios = [...document.querySelectorAll(
+                    '[role="menu"][data-state="open"] [role="menuitemradio"]')];
+                const t = radios.find(r => ((r.innerText || '').trim()
+                    .split('\\n')[0] || '').trim() === short);
+                return t ? t.getAttribute('aria-checked') === 'true' : false;
+            }""",
+            short,
+        )
+        if not checked:
+            logger.error(
+                f"Slider picker: model {short!r} did not verify as checked"
+            )
+            return False
+        logger.info(f"Slider picker: model {short!r} selected (verified)")
+        return True
+
+    async def _slider_set_effort(self, effort_label: str) -> bool:
+        """Walk the Power slider to the target effort with arrow keys.
+
+        Label-driven: the announcement text is re-read after every press,
+        and positions are never trusted (they shift with the model's
+        available range)."""
+        if effort_label not in self._SLIDER_EFFORT_LADDER:
+            logger.error(
+                f"Slider picker: effort {effort_label!r} not in ladder "
+                f"{self._SLIDER_EFFORT_LADDER}"
+            )
+            return False
+        target_idx = self._SLIDER_EFFORT_LADDER.index(effort_label)
+        state = await self._slider_effort_state()
+        if state is None:
+            logger.error("Slider picker: cannot read Power slider state")
+            return False
+        label, pos, total = state
+        if label == effort_label:
+            logger.info(
+                f"Slider picker: effort already {effort_label!r} "
+                f"({pos} of {total})"
+            )
+            return True
+        if target_idx >= total:
+            logger.error(
+                f"Slider picker: {effort_label!r} needs stop "
+                f"{target_idx + 1} but the slider offers {total} — Ultra "
+                f"requires an explicit model, not 'Default'"
+            )
+            return False
+        sc = await self.page.query_selector(self._SLIDER_POWER_SEL)
+        if sc is None:
+            logger.error("Slider picker: Power row not found")
+            return False
+        await sc.evaluate("el => el.focus()")
+        await asyncio.sleep(0.3)
+        focused = await self.page.evaluate(
+            "(sel) => document.activeElement === document.querySelector(sel)",
+            self._SLIDER_POWER_SEL,
+        )
+        if not focused:
+            logger.error("Slider picker: Power row did not take focus")
+            return False
+        # Bounded walk: one press per iteration, re-read, stop on match.
+        for _ in range(len(self._SLIDER_EFFORT_LADDER) + 2):
+            state = await self._slider_effort_state()
+            if state is None:
+                logger.error("Slider picker: Power state unreadable mid-walk")
+                return False
+            label, pos, total = state
+            if label == effort_label:
+                logger.info(
+                    f"Slider picker: effort set to {effort_label!r} "
+                    f"({pos} of {total}, verified)"
+                )
+                return True
+            try:
+                cur_idx = self._SLIDER_EFFORT_LADDER.index(label)
+            except ValueError:
+                logger.error(
+                    f"Slider picker: unknown effort label {label!r} — "
+                    f"UI drifted again"
+                )
+                return False
+            key = "ArrowRight" if target_idx > cur_idx else "ArrowLeft"
+            await self.page.keyboard.press(key)
+            await asyncio.sleep(0.6)
+        logger.error(
+            f"Slider picker: arrow walk never reached {effort_label!r} "
+            f"(stuck at {label!r})"
+        )
+        return False
+
+    async def _slider_set_speed(self, speed_label: str) -> bool:
+        """Fast-mode checkbox: unchecked = Standard, checked = Fast."""
+        want = speed_label == "Fast"
+        cb = await self.page.query_selector(self._SLIDER_FAST_SEL)
+        if cb is None:
+            logger.error("Slider picker: fast-mode toggle not found")
+            return False
+        cur = (await cb.get_attribute("aria-checked")) == "true"
+        if cur == want:
+            logger.info(f"Slider picker: speed already {speed_label!r}")
+            return True
+        await cb.evaluate(self._JS_POINTER_CLICK)
+        await asyncio.sleep(0.8)
+        cb = await self.page.query_selector(self._SLIDER_FAST_SEL)
+        cur = cb is not None and (await cb.get_attribute("aria-checked")) == "true"
+        if cur != want:
+            logger.error(
+                f"Slider picker: fast-mode did not verify for {speed_label!r}"
+            )
+            return False
+        logger.info(f"Slider picker: speed set to {speed_label!r} (verified)")
+        return True
+
+    async def ensure_work_settings(self) -> bool:
+        """Work-mode picker: model / effort / speed, either generation.
+
+        Detects which picker the open pill menu renders (slider generation
+        vs Advanced rows — see the class comments) and drives that one.
         Fails loudly on unknown labels or verification mismatch. Final
         cross-check reads the pill text (``<model-short> <effort>``, e.g.
-        "5.6 Sol Ultra") — NOT the slider, which decouples after an
-        off-slider effort like Ultra is chosen.
+        "5.6 Sol Ultra") — NOT the slider, which in the rows generation
+        decouples after an off-slider effort like Ultra is chosen.
         """
         model = self.agent_config.get("model")
         effort = self.agent_config.get("effort")
@@ -937,23 +1175,42 @@ class ChatGPTWebAgent(WebAgent):
             return False
 
         try:
-            if not await self._ensure_work_rows_visible():
-                logger.error("Advanced rows not reachable in work pill menu")
-                await self._close_pill_menu()
+            if not await self._open_pill_menu():
+                logger.error("Work pill menu did not open")
                 return False
 
-            for prefix, label in (
-                ("Model", model_label),
-                ("Effort", effort_label),
-                ("Speed", speed_label),
-            ):
-                if label is None:
-                    continue
-                if not await self._select_work_option(prefix, label):
+            if await self._slider_picker_present():
+                # Slider generation (2026-08-28). Model first — it is what
+                # unlocks the Ultra stop on the effort slider.
+                if model_label and not await self._slider_set_model(model_label):
+                    await self._close_pill_menu()
+                    return False
+                if effort_label and not await self._slider_set_effort(effort_label):
+                    await self._close_pill_menu()
+                    return False
+                if not await self._slider_set_speed(speed_label):
+                    await self._close_pill_menu()
+                    return False
+                await self._close_pill_menu()
+            else:
+                # Advanced-rows generation (pre-2026-08-28).
+                if not await self._ensure_work_rows_visible():
+                    logger.error("Advanced rows not reachable in work pill menu")
                     await self._close_pill_menu()
                     return False
 
-            await self._close_pill_menu()
+                for prefix, label in (
+                    ("Model", model_label),
+                    ("Effort", effort_label),
+                    ("Speed", speed_label),
+                ):
+                    if label is None:
+                        continue
+                    if not await self._select_work_option(prefix, label):
+                        await self._close_pill_menu()
+                        return False
+
+                await self._close_pill_menu()
 
             # Cross-check the pill: shows "<model-short> <effort>" (model
             # without the "GPT-" prefix).
@@ -2162,6 +2419,27 @@ class ChatGPTWebAgent(WebAgent):
                 f"Backend-API: {len(refs)} candidate artifact(s): {list(refs)}"
             )
 
+            # The scan above sees every workbook path mentioned anywhere in the
+            # conversation, including scratch files the model wrote and moved on
+            # from an hour earlier. It cannot tell those from the deliverable —
+            # but the finished page can, because it renders exactly the
+            # artifact(s) the model handed over. Narrow to those when the page
+            # says so, and keep everything when it doesn't.
+            surfaced = await self._surfaced_artifact_names()
+            if surfaced:
+                scoped = {f: c for f, c in refs.items() if f in surfaced}
+                if scoped and len(scoped) != len(refs):
+                    logger.info(
+                        f"Backend-API: final turn surfaces {sorted(surfaced)} — "
+                        f"dropping {sorted(set(refs) - set(scoped))}"
+                    )
+                    refs = scoped
+                elif not scoped:
+                    logger.info(
+                        f"Backend-API: no sandbox ref matches the surfaced "
+                        f"artifact(s) {sorted(surfaced)} — keeping all candidates"
+                    )
+
             for fname, candidates in refs.items():
                 # sandbox_path must be the RAW /mnt/data/... or /workspace/...
                 # path — leaving the sandbox: prefix on returns file_not_found.
@@ -2200,6 +2478,48 @@ class ChatGPTWebAgent(WebAgent):
         except Exception as e:
             logger.info(f"Backend-API download unavailable ({e}) — using DOM flow")
         return saved
+
+    async def _surfaced_artifact_names(self) -> set[str]:
+        """Workbook filenames the FINAL assistant turn presents for download.
+
+        This is the only signal that distinguishes the deliverable from a
+        scratch file: the conversation history contains both, the finished
+        turn contains only what the model handed over. Verified live
+        2026-08-28 — the turn carries ``button[aria-label="FlightPlan.xlsx"]``
+        (inline link, file card) beside ``button[aria-label="Download file"]``.
+
+        Read-only: queries attributes, never clicks and never opens the
+        preview, so it carries none of the §1c OOM risk.
+
+        Returns an empty set on drift or error — the caller then keeps every
+        candidate, so a selector change degrades to today's behavior rather
+        than dropping a real deliverable.
+        """
+        try:
+            names = await self.page.evaluate(
+                """() => {
+                  const turns = [...document.querySelectorAll(
+                    "[data-message-author-role='assistant']")];
+                  if (!turns.length) return [];
+                  const last = turns[turns.length - 1];
+                  const root = last.closest('article') || last.parentElement || last;
+                  const out = new Set();
+                  for (const el of root.querySelectorAll('[aria-label]')) {
+                    const a = (el.getAttribute('aria-label') || '').trim();
+                    if (/\\.xlsx?$/i.test(a)) out.add(a);
+                  }
+                  return [...out];
+                }"""
+            )
+            surfaced = {n for n in (names or []) if n}
+            if surfaced:
+                logger.info(f"Final turn surfaces artifact(s): {sorted(surfaced)}")
+            return surfaced
+        except Exception as e:
+            logger.info(
+                f"Could not read surfaced artifacts ({e}) — keeping all candidates"
+            )
+            return set()
 
     async def _download_via_work_tiles(self, download_path: Path) -> list[str]:
         """Work-mode file downloads (verified live 2026-07-21).
@@ -2266,16 +2586,31 @@ class ChatGPTWebAgent(WebAgent):
                 clicker = overlay_handle.as_element() or tile
                 await clicker.evaluate(self._JS_CLICK)
 
-                # Wait for the preview dialog's Download button.
+                # Wait for a Download control. Two UI generations coexist:
+                # the older preview dialog with aria-label "Download", and
+                # (verified live 2026-08-28) a "Download file" button rendered
+                # straight onto the card, with no dialog at all — so the
+                # non-dialog selectors must be tried too or this path waits out
+                # its deadline on a dialog that never opens. Ordered
+                # dialog-first so the scoped match still wins when one exists.
+                #
+                # "Download apps" in the sidebar also contains "Download":
+                # match the labels exactly, never by substring.
+                dl_selectors = (
+                    '[role="dialog"] button[aria-label="Download"]',
+                    '[role="dialog"] button[aria-label="Download file"]',
+                    'button[aria-label="Download file"]',
+                )
                 dl = None
                 deadline = asyncio.get_event_loop().time() + 10
                 while asyncio.get_event_loop().time() < deadline:
-                    dl = await self.page.query_selector(
-                        '[role="dialog"] button[aria-label="Download"]'
-                    )
-                    if dl and await dl.is_visible():
+                    for sel in dl_selectors:
+                        cand = await self.page.query_selector(sel)
+                        if cand and await cand.is_visible():
+                            dl = cand
+                            break
+                    if dl is not None:
                         break
-                    dl = None
                     await asyncio.sleep(0.5)
                 if dl is None:
                     logger.warning(

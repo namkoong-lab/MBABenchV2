@@ -132,6 +132,15 @@ class ClaudeWebAgent(WebAgent):
         "out of usage credits",
         "plan usage resets",
         "usage will reset",
+        # 2026-08-28: the live quota message interpolates the MODEL NAME
+        # into the sentence — "You've reached your Fable 5 limit. Switch to
+        # another model, or manage usage credits at claude.ai/..." — so the
+        # legacy "reached your limit" literal no longer substring-matches
+        # and the lane burned failed rows on quota replies that read as
+        # normal messages (tasks 53-54). Match the model-name-independent
+        # tail phrases instead of chasing per-model wordings.
+        "Switch to another model, or manage usage credits",
+        "manage usage credits at claude.ai",
     )
 
     # Errors that appear INSIDE an otherwise-complete response. The turn

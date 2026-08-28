@@ -449,25 +449,116 @@ def _write_prompts_file(
     return path
 
 
+def _workbook_rank(path: Path) -> tuple[bool, int, int]:
+    """(clears_quality_floor, size_bytes, sheet_count) for ranking candidates.
+
+    Never raises: an unreadable candidate simply fails the floor, so a corrupt
+    file can never outrank a good one. Uses the same thresholds as
+    check_output_quality so selection and the verdict agree.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return False, 0, 0
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(path, read_only=True)
+        n_sheets = len(wb.sheetnames)
+        wb.close()
+    except ImportError:
+        # Without openpyxl, rank on size alone rather than rejecting everything.
+        return size >= QUALITY_MIN_BYTES, size, 0
+    except Exception:
+        return False, size, 0
+    return (size >= QUALITY_MIN_BYTES and n_sheets >= QUALITY_MIN_SHEETS), size, n_sheets
+
+
 def find_solution_file(
     run_dir: Path, task_name: str, solution_name: str | None, after: datetime
 ) -> Path | None:
+    """The attempt's deliverable workbook.
+
+    An agent can leave SEVERAL .xlsx in solutions/: a long ChatGPT run
+    routinely writes scratch workbooks alongside the real one, and every
+    candidate gets renamed to include the task name, so name matching alone
+    cannot separate them. Ranking by mtime picks whichever landed LAST, which
+    is the scratch file as often as the deliverable (2026-08-27: a 6 KB
+    bellman_test.xlsx beat the real 2.5 MB workbook on task 24).
+
+    So rank by quality floor first, then size, then recency. If nothing clears
+    the floor the newest still wins, so this never returns None where the old
+    ordering returned a file — a degraded output stays the caller's problem to
+    report, not this function's to hide.
+    """
     solutions = run_dir / "solutions"
     if not solutions.exists():
         return None
     # Must match rename_solution_file's sanitizer; otherwise task names with
     # stripped chars (e.g. '&') fail to match the on-disk filename.
     needle = _sanitize_name(solution_name or task_name).lower()
-    matches: list[tuple[float, Path]] = []
+    matches: list[Path] = []
     for p in solutions.glob("*.xlsx"):
         if p.stat().st_mtime < after.timestamp():
             continue
         if needle in p.name.lower():
-            matches.append((p.stat().st_mtime, p))
+            matches.append(p)
     if not matches:
         return None
-    matches.sort(reverse=True)
-    return matches[0][1]
+    if len(matches) == 1:
+        return matches[0]
+
+    scored = []
+    for p in matches:
+        ok, size, n_sheets = _workbook_rank(p)
+        scored.append((ok, size, p.stat().st_mtime, p, n_sheets))
+    # Path is deliberately outside the sort key — it is never compared.
+    scored.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)
+    best = scored[0]
+    logger.info(
+        f"{len(scored)} candidate workbooks in solutions/; chose "
+        f"{best[3].name} ({best[1]:,} bytes, {best[4]} sheets, "
+        f"quality_ok={best[0]}). Not chosen: "
+        + ", ".join(f"{s[3].name} ({s[1]:,} bytes)" for s in scored[1:])
+    )
+    return best[3]
+
+
+def collect_extra_workbooks(run_dir: Path, solution_file: Path | None) -> list[Path]:
+    """Every OTHER workbook the agent left in solutions/.
+
+    Uploaded after the solution so a mis-pick costs a re-pointer instead of
+    the whole run: the bytes reach S3 either way. Before this, only the
+    chosen file was uploaded, so picking wrong meant the real workbook never
+    left the machine (2026-08-27, task 24 — 131 minutes nearly lost).
+
+    Order matters downstream: the sink uploads [solution, *log_files] and the
+    judge grades the FIRST xlsx, so these must be appended after the logs,
+    never prepended.
+    """
+    solutions = run_dir / "solutions"
+    if not solutions.exists():
+        return []
+    try:
+        chosen = solution_file.resolve() if solution_file else None
+    except OSError:
+        chosen = None
+    extras = []
+    for p in sorted(solutions.glob("*.xlsx")):
+        if not p.is_file():
+            continue
+        try:
+            if chosen is not None and p.resolve() == chosen:
+                continue
+        except OSError:
+            continue
+        extras.append(p)
+    if extras:
+        logger.info(
+            f"Preserving {len(extras)} non-selected workbook(s) alongside the "
+            f"solution: " + ", ".join(p.name for p in extras)
+        )
+    return extras
 
 
 # Post-run output quality gate. Heuristic floor to catch obviously-degraded
@@ -1075,7 +1166,10 @@ def main() -> int:
                 prompt_version=cfg.agent.prompt_version,
                 status=status,
                 solution_file=solution_file,
-                log_files=collect_log_files(run_dir),
+                # Extras last: attempt_files is [solution, *log_files] and the
+                # judge grades the first xlsx, so the solution stays first.
+                log_files=collect_log_files(run_dir)
+                + collect_extra_workbooks(run_dir, solution_file),
                 started_at=started.isoformat(),
                 finished_at=finished.isoformat(),
                 duration_seconds=round((finished - started).total_seconds(), 2),

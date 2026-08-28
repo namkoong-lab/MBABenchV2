@@ -38,11 +38,6 @@ You are an expert financial-modeling agent building an Excel solution for the pr
 Your only allowed method for solving this problem is building an Excel model in a workbook named solution.xlsx in the workspace root, using the starting workbook and data files provided in the starting_files/ directory. You may write and run code to construct and inspect the workbook, but you must not use code to find the final answers: the Excel file you build must be the only thing performing the calculations. Every calculated value in the workbook must be a live Excel formula; never compute a result outside Excel and paste it in as a constant.
 
 Step 1 - Analyze & plan. Review the file(s) in starting_files/ and produce a brief written analysis on a new sheet named 'Summary', covering:
-1. Task type - which financial model is required (e.g., 3-Statement, DCF, LBO, Valuation, Project Finance, Working Capital).
-2. The primary question(s) to answer and every deliverable the case requires. The workbook's 'Questions' sheet lists these questions in column A (one per row, starting at A2), with reserved answer cells in column B (the first answer belongs in B2, the second in B3, and so on), units in column C where given, and answer-format instructions in its header row - plan how the model will produce each answer.
-3. All given inputs and assumptions, with their values and units.
-4. Your build plan - the tabs you will create, in order, and the calculation flow / key drivers.
-
 """
 
 
@@ -55,9 +50,14 @@ def swap(text: str, old: str, new: str) -> str:
 
 
 def main() -> int:
+    step1 = (PROMPTS_V3 / "step1_analyze.txt").read_text()
     step2 = (PROMPTS_V3 / "step2_build.txt").read_text()
     step3 = (PROMPTS_V3 / "step3_qa.txt").read_text()
     v7 = V7.read_text()
+
+    # ---- Step 1: plan items byte-lifted from step1_analyze.txt (item 2
+    # carries the header-anchored 'Answers'-column wording) ----
+    plan_items = step1[step1.index("1. Task type") : step1.index("\n\nDo not start building")]
 
     # ---- Step 2: harness-translate the head; keep the rubric byte-exact ----
     marker = "== FULL RUBRIC"
@@ -127,6 +127,8 @@ def main() -> int:
 
     out = (
         HARNESS_PREAMBLE
+        + plan_items
+        + "\n\n"
         + head
         + rubric.rstrip("\n")
         + "\n\n"

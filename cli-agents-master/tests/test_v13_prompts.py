@@ -68,6 +68,13 @@ def main() -> int:
     )
     print("OK  ANSWERS convention present with CLI copy_file translation")
 
+    # The v11 body's separate-answer-sheets advice was rewritten to defer to
+    # the 'Questions' sheet — nothing may contradict the ANSWERS convention.
+    assert "create SEPARATE sheets for each" not in sys_text
+    assert "create separate answer sheets" not in sys_text
+    assert "do NOT create separate per-question answer sheets" in sys_text
+    print("OK  deliverable-structure advice defers to the 'Questions' sheet")
+
     # No v1 leftovers in the system prompt.
     assert "17 criteria across 3 categories" not in sys_text
     assert not re.search(r"rubric criteri", sys_text), "v1 criterion-number labels survived"
