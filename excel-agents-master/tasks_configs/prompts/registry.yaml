@@ -56,9 +56,10 @@ versions:
     label: "rubric-v9 3-step + Questions-sheet answers (shared with gui)"
     description: >
       Version 200 with one addition: the starting workbook's 'Questions'
-      sheet (questions in column A from A2, reserved answer cells in column
-      B from B2 down, units in column C, answer-format instructions in the
-      header row) must be preserved — same name, same rows — and answered
+      sheet (questions in column A from A2, reserved answer cells in the
+      column headed 'Answers' — B in most tasks, C in a few, from row 2
+      down — units in the 'Unit' column, answer-format instructions in
+      the header row) must be preserved — same name, same rows — and answered
       with live formulas referencing the model. Byte-identical copies of
       gui-agents-master/tasks_configs/prompts_v3/, under the same number
       the gui pipeline uses; the 132-check rubric body is unchanged from
@@ -72,8 +73,8 @@ versions:
     label: "rubric-v9 single-pass + Questions-sheet answers (shared with gui)"
     description: >
       The 202 content folded into ONE panel turn, with the same
-      Questions-sheet convention (live-formula answers in column B from B2
-      down; sheet preserved under its exact name) and the matching QA item
+      Questions-sheet convention (live-formula answers in the 'Answers'
+      column from row 2 down; sheet preserved under its exact name) and the matching QA item
       8. Byte-identical copy of gui-agents-master/tasks_configs/prompts/
       v2_2.txt under the same number the gui pipeline uses, so the
       web-chat and in-Excel cohorts run the exact same text; the 132-check

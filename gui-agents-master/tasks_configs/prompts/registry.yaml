@@ -91,9 +91,10 @@ versions:
     label: "rubric-v9 3-step + Questions-sheet answers"
     description: >
       Version 200 with one addition: the starting workbook's 'Questions'
-      sheet (questions in column A from A2, reserved answer cells in column
-      B from B2 down, units in column C, answer-format instructions in the
-      header row) must be preserved — same name, same rows — and answered
+      sheet (questions in column A from A2, reserved answer cells in the
+      column headed 'Answers' — B in most tasks, C in a few, from row 2
+      down — units in the 'Unit' column, answer-format instructions in
+      the header row) must be preserved — same name, same rows — and answered
       with live formulas referencing the model. Same three chat turns; the
       132-check rubric body is byte-identical to version 200's, so any
       score delta is attributable to the answer-placement instruction
@@ -108,8 +109,9 @@ versions:
     description: >
       Version 201 with the same Questions-sheet addition as 202: the
       created-'Answers'-sheet deliverable is replaced by filling the
-      starting workbook's 'Questions' sheet (live formulas in column B
-      from B2 down; sheet preserved under its exact name), and the QA
+      starting workbook's 'Questions' sheet (live formulas in the
+      'Answers' column from row 2 down; sheet preserved under its exact
+      name), and the QA
       checklist gains the matching item 8. One chat turn; rubric body
       byte-identical to step2_build.txt's from the `== FULL RUBRIC ==`
       marker onward, unchanged from 200/201. Same ~67k-char

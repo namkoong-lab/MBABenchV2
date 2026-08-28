@@ -27,7 +27,7 @@ Your only allowed method for solving this is the Excel workbook itself: build ev
 STEP 1 - ANALYZE & PLAN (do not build yet):
 Read ALL files in the ATTACHED PDFs and ATTACHED EXCEL CONTEXT sections above, then produce a brief written analysis on a new sheet named 'Summary', covering:
 1. Task type - which financial model is required (e.g., 3-Statement, DCF, LBO, Valuation, Project Finance, Working Capital).
-2. The primary question(s) to answer and every deliverable the case requires. The workbook's 'Questions' sheet lists these questions in column A (one per row, starting at A2), with reserved answer cells in column B (the first answer belongs in B2, the second in B3, and so on), units in column C where given, and answer-format instructions in its header row - plan how the model will produce each answer.
+2. The primary question(s) to answer and every deliverable the case requires. The workbook's 'Questions' sheet lists these questions in column A (one per row, starting at A2; a few tasks split the questions across multiple sheets whose names begin with 'Questions' - treat each the same way); the reserved answer cells are in the column headed 'Answers' in row 1 - column B in most tasks, column C in a few (where column B holds a pre-filled label such as Model or Part) - with the first answer in that column's row 2, the next in row 3, and so on. Units sit in the column headed 'Unit' where given, and answer-format instructions in the header row - plan how the model will produce each answer.
 3. All given inputs and assumptions, with their values and units.
 4. Your build plan - the tabs you will create, in order, and the calculation flow / key drivers.
 
@@ -45,6 +45,6 @@ Audit the workbook against the rubric's Error Checks and Potential Dangers categ
 5. No hidden sheets/rows/columns, no white-on-white text, no external links, no macros/VBA.
 6. The Summary/output sheet auto-updates from the model (no hardcoded results).
 7. Sign convention, units, and number formats are consistent throughout.
-8. The 'Questions' sheet is intact - same name, same questions in the same rows - and every reserved answer cell in column B (B2 down, one per question) contains a live formula referencing the model whose result follows the header row's answer-format instructions and the column-C units. No reserved answer cell is empty or hard-coded.
+8. The 'Questions' sheet is intact - same name, same questions in the same rows (each such sheet, where a task has more than one) - and every reserved answer cell in the column headed 'Answers' (row 2 down, one per question; column B in most tasks, column C in a few) contains a live formula referencing the model whose result follows the header row's answer-format instructions and the 'Unit' column where given. No reserved answer cell is empty or hard-coded.
 
 Fix everything you find and confirm the master "Model OK" flag is green. The deliverable is the solution.xlsx workbook itself - it must contain the completed model, not a text description of it.

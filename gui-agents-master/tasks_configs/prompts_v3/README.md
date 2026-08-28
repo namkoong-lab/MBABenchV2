@@ -1,10 +1,11 @@
 # V2 benchmark prompts, Questions-sheet revision (rubric-v9)
 
 `prompts_v2/` + one addition: every starting workbook carries a `Questions`
-sheet (questions in column A from A2, reserved answer cells in column B from
-B2, units in column C where given, answer-format instructions in the header
-row), and the agent must preserve that sheet and fill column B with live
-formulas referencing the model. Nothing else changed: the 132-check rubric
+sheet (questions in column A from A2, reserved answer cells in the column
+headed 'Answers' — B in most tasks, C in a few, from row 2 down — units in
+the 'Unit' column where given, answer-format instructions in the header
+row), and the agent must preserve that sheet and fill the 'Answers' column
+with live formulas referencing the model. Nothing else changed: the 132-check rubric
 body is **byte-identical** to `prompts_v2/step2_build.txt` from the
 `== FULL RUBRIC ==` marker onward, so scores stay comparable and any delta
 is attributable to the answer-placement instruction alone.
