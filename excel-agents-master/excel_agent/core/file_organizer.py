@@ -6,6 +6,7 @@ Handles downloading Excel files and organizing log files into date-based folder 
 
 import asyncio
 import logging
+import re
 import shutil
 import traceback
 from dataclasses import dataclass, field
@@ -329,6 +330,24 @@ class FileOrganizer:
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             await download.save_as(str(output_path))
+            # save_as over a CDP-attached browser can write 0 bytes while
+            # Chrome saves the same stream natively to its own download
+            # directory (2026-08-27: a second Playwright client attaching
+            # mid-run reset the browser-wide download behavior; both capture
+            # attempts produced empty files while ~/Downloads held the intact
+            # workbook, and the 28-min attempt was discarded as infra). Never
+            # trust save_as blindly: verify the byte count and recover the
+            # native artifact when it exists.
+            if output_path.stat().st_size == 0:
+                rescued = FileOrganizer._rescue_native_download(
+                    download.suggested_filename, dl_start_time
+                )
+                if rescued is not None:
+                    shutil.copy2(rescued, output_path)
+                    logger.warning(
+                        f"⚠️ save_as wrote 0 bytes; recovered the workbook "
+                        f"from the browser's native download dir: {rescued}"
+                    )
             dl_elapsed = (datetime.now() - dl_start_time).total_seconds()
             file_size_mb = output_path.stat().st_size / (1024 * 1024)
             logger.info(
@@ -341,6 +360,44 @@ class FileOrganizer:
             logger.error(f"❌ Error saving downloaded file: {e}")
             logger.debug(traceback.format_exc())
             return None
+
+    @staticmethod
+    def _rescue_native_download(
+        suggested_filename: Optional[str], started: datetime
+    ) -> Optional[Path]:
+        """Newest matching file in the browser's native download directory.
+
+        When Playwright's managed download artifact is empty (see caller),
+        Chrome has usually saved the real stream itself under the suggested
+        filename — deduplicated as "name (N).ext" — in its default download
+        directory (the engine launches Chrome without overriding it, so
+        ~/Downloads). Return the newest non-empty candidate written since
+        `started`, or None; on None the caller's existing validation-failure
+        path stands.
+        """
+        if not suggested_filename:
+            return None
+        native_dir = Path.home() / "Downloads"
+        if not native_dir.is_dir():
+            return None
+        stem = Path(suggested_filename).stem
+        suffix = Path(suggested_filename).suffix
+        pattern = re.compile(rf"^{re.escape(stem)}( \(\d+\))?{re.escape(suffix)}$")
+        threshold = started.timestamp() - 5
+        try:
+            candidates = [
+                p
+                for p in native_dir.iterdir()
+                if p.is_file()
+                and pattern.match(p.name)
+                and p.stat().st_mtime >= threshold
+                and p.stat().st_size > 0
+            ]
+        except OSError:
+            return None
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: p.stat().st_mtime)
 
     @staticmethod
     def copy_log_file(source_path: Path, dest_dir: Path) -> Optional[Path]:

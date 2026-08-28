@@ -215,3 +215,52 @@ def test_frame_scans_exclude_host_frames():
         "excel_agent/core/chatgpt_core.py",
     ):
         assert "_is_host_frame(f)" in _src(rel)
+
+
+def test_download_capture_never_trusts_save_as():
+    # 2026-08-27: save_as wrote 0 bytes while Chrome saved the real stream
+    # natively to ~/Downloads; the 28-min attempt was discarded as infra.
+    # Capture must verify the byte count and rescue the native artifact.
+    src = _src("excel_agent/core/file_organizer.py")
+    assert "_rescue_native_download" in src
+    assert ".st_size == 0" in src
+
+
+def test_addins_search_budget_covers_ribbon_race():
+    # 2026-08-27: the Add-ins ribbon took ~40s+ to materialize on a fresh
+    # copy under two-lane load; a 15s budget lost that race seven times.
+    src = _src("excel_agent/engine.py")
+    assert "find_and_click(max_seconds=60)" in src
+    assert "PANEL_OPEN_TIMEOUT_S = 480" in src
+
+
+def test_rescue_native_download_picks_newest_matching(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    import os
+
+    from excel_agent.core.file_organizer import FileOrganizer
+
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+    started = datetime.now() - timedelta(seconds=60)
+    old = started - timedelta(hours=1)
+
+    def make(name, size, when):
+        p = downloads / name
+        p.write_bytes(b"x" * size)
+        os.utime(p, (when.timestamp(), when.timestamp()))
+        return p
+
+    make("4_Task_Model.xlsx", 100, started + timedelta(seconds=5))
+    newest = make("4_Task_Model (1).xlsx", 100, started + timedelta(seconds=30))
+    make("4_Task_Model (2).xlsx", 0, started + timedelta(seconds=40))  # empty
+    make("4_Task_Model (3).xlsx", 100, old)  # stale, predates the download
+    make("other.xlsx", 100, started + timedelta(seconds=30))  # wrong name
+
+    got = FileOrganizer._rescue_native_download("4_Task_Model.xlsx", started)
+    assert got == newest
+    # No match cases: unknown filename, and no suggested filename at all.
+    assert FileOrganizer._rescue_native_download("nope.xlsx", started) is None
+    assert FileOrganizer._rescue_native_download(None, started) is None

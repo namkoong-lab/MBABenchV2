@@ -376,7 +376,11 @@ async def run_automation(config: dict) -> str:
                     )
                     logger.info(f"🤖 Using {ai_agent.get_addon_name()}")
 
-                    PANEL_OPEN_TIMEOUT_S = 240
+                    # 480 so three open attempts fit at the 60s find_and_click
+                    # budget below (2026-08-27: the Add-ins ribbon took ~40s+
+                    # to materialize on a fresh copy under two-lane load; the
+                    # old 15s budget lost that race seven straight times).
+                    PANEL_OPEN_TIMEOUT_S = 480
                     CLOSE_PANEL_TIMEOUT = 15
                     agent_opened = False
 
@@ -407,7 +411,7 @@ async def run_automation(config: dict) -> str:
                                     except Exception as e:
                                         logger.error(f"❌ Could not reload page: {e}")
 
-                            if await ai_agent.find_and_click(max_seconds=15):
+                            if await ai_agent.find_and_click(max_seconds=60):
                                 if await ai_agent.verify_session_health():
                                     agent_opened = True
                                     break
