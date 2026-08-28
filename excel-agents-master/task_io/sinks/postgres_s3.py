@@ -291,7 +291,17 @@ class PostgresS3AttemptSink:
         for attempt in range(2):
             conn = self._connect()
             try:
+                # Neon computes have been observed serving sessions with
+                # default_transaction_read_only=on (2026-08-27: engine
+                # succeeded, INSERT refused with ReadOnlySqlTransaction,
+                # attempt stranded in S3 with no row). The default is
+                # advisory — request a read-write transaction explicitly,
+                # as the FIRST statement of the INSERT's own transaction so
+                # it also holds under PgBouncer transaction pooling (where
+                # session-level SETs don't stick to the next transaction).
+                conn.rollback()
                 with conn.cursor() as cur:
+                    cur.execute("SET TRANSACTION READ WRITE")
                     cur.execute(stmt, params)
                     row = cur.fetchone()
                 conn.commit()
@@ -493,7 +503,10 @@ class _TaskAttemptsPostgresS3Sink(PostgresS3AttemptSink):
             import json
 
             conn = self._connect()
+            conn.rollback()
             with conn.cursor() as cur:
+                # Same read-only-default guard as _insert_row.
+                cur.execute("SET TRANSACTION READ WRITE")
                 cur.execute(
                     sql.SQL(
                         "UPDATE {tbl} SET extra_configs = %s::jsonb WHERE id = %s"
