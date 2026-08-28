@@ -14,6 +14,20 @@ survives `openpyxl data_only=True` — the judge-visible property this plan was
 about. Still owed: the same checks on an Ubuntu box, a Mac↔Ubuntu transcript
 diff on a real task, and the judge-parity CSV comparison.
 
+Addendum 2026-08-28 — the residual silent-fallback surfaces are closed. With
+the LibreOffice engine active, `get_cell_range` reports a formula cell whose
+cached value is missing as null and lists it in `uncached_formula_cells`
+instead of substituting `_eval_formula`; `set_cell_formula` no longer papers
+a None readback over with an evaluator number while stamping
+`engine=libreoffice` (the evaluator runs only in the deliberate
+no-LibreOffice mode, labeled `calculated_value_engine: "fallback_eval"`, and
+`get_cell_range` labels its substitutions in `fallback_evaluated_cells`);
+`edit_cells` now checks and reports its recalculation outcome
+(`recalc_engine` on every response, loud `warning` on failure — an openpyxl
+save drops all cached values, so an ignored failure left the whole file
+uncached behind a success message). Covered by 10 offline tests in
+`tests/test_fallback_provenance_offline.py`.
+
 ## The situation
 
 After the agent writes a formula, the Excel MCP server should show it the

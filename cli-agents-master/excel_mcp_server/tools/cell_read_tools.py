@@ -24,7 +24,12 @@ async def get_cell_range(filename: str, worksheet_name: str, range_address: str,
 
     Returns:
         JSON string with range data: {range, values} in raw mode,
-        or {range, values, view_values} in default mode
+        or {range, values, view_values} in default mode. view_values come
+        from the file's cached (recalculated) values; a formula cell with no
+        cached value is reported as null and listed in uncached_formula_cells
+        rather than silently estimated. Only in the deliberate no-LibreOffice
+        server mode may the limited _eval_formula fallback stand in, and then
+        the affected cells are listed in fallback_evaluated_cells.
     """
     try:
         wb_raw = _load_workbook(filename)
@@ -48,29 +53,41 @@ async def get_cell_range(filename: str, worksheet_name: str, range_address: str,
             raw_values = to_raw(target)
             result = {"range": range_address, "values": raw_values}
         else:
+            # Provenance rule: with the LibreOffice engine active, a formula
+            # cell whose cached value is missing is reported as null and
+            # listed — never silently replaced by the limited _eval_formula
+            # evaluator, whose results can diverge from LibreOffice's. Only
+            # the deliberate no-LibreOffice server mode may substitute, and
+            # then the substituted cells are listed so transcripts record it.
+            from ..core.shared_state import _lo_engine
+            lo_active = bool(_lo_engine and _lo_engine.is_running)
+            fallback_evaluated: List[str] = []
+            uncached: List[str] = []
+
+            def view_for(coord: str, raw_val):
+                v = ws_view[coord].value
+                if v is None and isinstance(raw_val, str) and raw_val.startswith('='):
+                    if lo_active:
+                        uncached.append(coord)
+                    else:
+                        try:
+                            v = _eval_formula(raw_val, wb_raw, ws_raw, {})
+                            fallback_evaluated.append(coord)
+                        except Exception:
+                            v = None
+                            uncached.append(coord)
+                return v
+
             def to_pairs(cell_or_range):
                 pairs = []
                 if hasattr(cell_or_range, 'value'):
                     raw_val = cell_or_range.value
-                    view_val = ws_view[cell_or_range.coordinate].value
-                    if view_val is None and isinstance(raw_val, str) and raw_val.startswith('='):
-                        try:
-                            view_val = _eval_formula(raw_val, wb_raw, ws_raw, {})
-                        except Exception:
-                            view_val = None
-                    pairs = [[(raw_val, view_val)]]
+                    pairs = [[(raw_val, view_for(cell_or_range.coordinate, raw_val))]]
                 else:
                     for row in ws_raw[range_address]:
                         row_pairs = []
                         for c in row:
-                            raw_val = c.value
-                            v = ws_view[c.coordinate].value
-                            if v is None and isinstance(raw_val, str) and raw_val.startswith('='):
-                                try:
-                                    v = _eval_formula(raw_val, wb_raw, ws_raw, {})
-                                except Exception:
-                                    v = None
-                            row_pairs.append((raw_val, v))
+                            row_pairs.append((c.value, view_for(c.coordinate, c.value)))
                         pairs.append(row_pairs)
                 return pairs
 
@@ -78,6 +95,22 @@ async def get_cell_range(filename: str, worksheet_name: str, range_address: str,
             raw_values = [[rv for (rv, vv) in row] for row in pairs]
             view_values = [[vv for (rv, vv) in row] for row in pairs]
             result = {"range": range_address, "values": raw_values, "view_values": view_values}
+            notes = []
+            if uncached:
+                result["uncached_formula_cells"] = uncached
+                notes.append(
+                    "view_values is null for the cells in uncached_formula_cells: "
+                    "the file holds no cached value for them (recalculation may "
+                    "have failed or not run yet)."
+                )
+            if fallback_evaluated:
+                result["fallback_evaluated_cells"] = fallback_evaluated
+                notes.append(
+                    "view_values for the cells in fallback_evaluated_cells were "
+                    "computed by the limited _eval_formula fallback, not LibreOffice."
+                )
+            if notes:
+                result["note"] = " ".join(notes)
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
         return f"Error getting cell range: {str(e)}"

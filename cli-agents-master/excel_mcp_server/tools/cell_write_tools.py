@@ -58,12 +58,32 @@ async def edit_cells(filename: str, worksheet_name: str, cell_updates: List[Dict
 
         _save_workbook_sync(wb, _get_file_path(filename))
 
+        # Recalculate and REPORT the outcome. The openpyxl save above drops
+        # every formula cell's cached value, so an ignored recalc failure
+        # here would leave the whole file uncached behind a "Successfully
+        # updated" message (every later read shows null view values until a
+        # recalc succeeds).
+        recalc_engine_info = {"engine": "fallback"}
         from ..core.shared_state import _lo_engine
         if _lo_engine and _lo_engine.is_running:
-            _recalculate_with_libreoffice(filename)
+            lo_result = _recalculate_with_libreoffice(filename)
+            if lo_result["success"]:
+                recalc_engine_info = {
+                    "engine": "libreoffice",
+                    "duration_ms": lo_result.get("duration_ms", 0),
+                }
+            else:
+                recalc_engine_info = {
+                    "engine": "fallback",
+                    "libreoffice_error": lo_result.get("error"),
+                    "warning": "Recalculation FAILED — cached values in this "
+                               "file are stale or missing until a "
+                               "recalculation succeeds",
+                }
 
         return f"Successfully updated {len(updated_cells)} cells in '{filename}:{worksheet_name}'\n" + \
-               json.dumps(updated_cells, indent=2)
+               json.dumps({"updated_cells": updated_cells,
+                           "recalc_engine": recalc_engine_info}, indent=2)
     except Exception as e:
         return f"Error editing cells: {str(e)}"
 
@@ -221,12 +241,14 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
         _save_workbook_sync(wb, _get_file_path(filename))
 
         calculated_value = None
+        value_from_fallback_eval = False
         # Which engine stands behind calculated_value; always stamped on the
         # response so transcripts record fallback-engine values as such.
         recalc_engine_info = {"engine": "fallback"}
 
         from ..core.shared_state import _lo_engine
-        if _lo_engine and _lo_engine.is_running:
+        lo_active = bool(_lo_engine and _lo_engine.is_running)
+        if lo_active:
             lo_result = _recalculate_with_libreoffice(filename)
             if lo_result["success"]:
                 recalc_engine_info = {
@@ -253,11 +275,16 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
             except Exception:
                 pass
 
-        if calculated_value is None:
+        if calculated_value is None and not lo_active:
+            # Deliberate no-LibreOffice mode only: the limited evaluator may
+            # stand in, and the response labels it below. With LibreOffice
+            # active, a missing cached value stays "Not available" — never a
+            # possibly-divergent evaluator number.
             try:
                 wb_raw = _load_workbook(filename)
                 ws_raw = wb_raw[worksheet_name]
                 calculated_value = _eval_formula(formula, wb_raw, ws_raw, {})
+                value_from_fallback_eval = calculated_value is not None
             except Exception:
                 pass
 
@@ -271,6 +298,8 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
         if calculated_value is not None:
             response["calculated_value"] = calculated_value
             response["value_type"] = _infer_type(calculated_value)
+            if value_from_fallback_eval:
+                response["calculated_value_engine"] = "fallback_eval"
         else:
             response["calculated_value"] = "Not available (open file in Excel to calculate)"
 
