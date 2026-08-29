@@ -19,7 +19,7 @@ agent_model_name: claudecode_anthropic/claude-fable-5-max
 # shown are the defaults and may be omitted.
 sandbox:
   mode: docker                  # "host" = UNSANDBOXED (rung-0 debugging only)
-  image: mbabench-coding-agent:v1
+  image: mbabench-coding-agent:v2
 limits:
   wall_clock_seconds: 14400     # 4h hard kill
   junk_seconds: 180             # sub-3-min "successes" go to needs_review

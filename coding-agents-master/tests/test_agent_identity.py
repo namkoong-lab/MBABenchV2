@@ -87,7 +87,7 @@ def main() -> int:
     cfg = load_config(ROOT / "run_configs" / "example_codex.yaml")
     assert cfg.agent.cli == "codex" and cfg.agent.model == "gpt-5.6-sol" and cfg.agent.effort == "xhigh"
     assert cfg.agent_model_name == "codex_openai/gpt-5.6-sol-xhigh"
-    assert cfg.extra_configs()["sandbox_image"] == "mbabench-coding-agent:v1"
+    assert cfg.extra_configs()["sandbox_image"] == "mbabench-coding-agent:v2"
     f = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
     f.write("mode: internal\nidentity: old\nagent:\n  cli: claude\n  model: m\n")
     f.close()

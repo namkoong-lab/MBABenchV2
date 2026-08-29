@@ -1,4 +1,4 @@
-"""Offline checks for the benchmark (v1|v2) switch and the v8 template.
+"""Offline checks for the benchmark (v1|v2) switch and the v8/v9 templates.
 
 Run from coding-agents-master:  python tests/test_benchmark_config.py
 No Docker, DB, S3, or API keys needed.
@@ -31,12 +31,29 @@ agent_model_name: claudecode_anthropic/claude-haiku-4-5
 
 
 def main() -> int:
-    # v1 default: unchanged historical wiring.
-    v1 = load_config(_cfg(""))
+    # benchmark is required for internal mode — a silent default would let a
+    # config that omits the key record against the wrong benchmark.
+    try:
+        load_config(_cfg(""))
+        raise AssertionError("internal config without benchmark should be refused")
+    except ValueError as e:
+        assert "benchmark is required" in str(e)
+        print("OK  internal config without benchmark refused")
+
+    # external mode has no DB/S3; omitting benchmark keeps the v1 template default.
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        f.write("mode: external\nagent_model_name: claudecode_anthropic/claude-haiku-4-5\n")
+        ext_path = f.name
+    ext = load_config(ext_path)
+    assert ext.benchmark == "v1" and ext.template_version == "v7"
+    print("OK  external config without benchmark -> v1 template default")
+
+    # v1 explicit: unchanged historical wiring.
+    v1 = load_config(_cfg("benchmark: v1\n"))
     assert v1.benchmark == "v1"
     assert v1.template_version == "v7"
     assert v1.s3_root == "BizbenchV1"
-    print("OK  default config -> v1, v7, BizbenchV1 root")
+    print("OK  benchmark v1 -> v7, BizbenchV1 root")
 
     # v2: root/template flip together (v9 = the Questions-sheet template).
     v2 = load_config(_cfg("benchmark: v2\n"))

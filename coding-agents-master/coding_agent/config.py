@@ -77,7 +77,9 @@ class AgentConfig:
 @dataclass
 class SandboxConfig:
     mode: str = "docker"  # "docker" | "host" (host = UNSANDBOXED, dev/rung-0 only)
-    image: str = "mbabench-coding-agent:v1"
+    # The tag is the CLI-version pin recorded per attempt
+    # (extra_configs.sandbox_image); retag any rebuild that changes contents.
+    image: str = "mbabench-coding-agent:v2"
     network_allow: list[str] = field(default_factory=list)
     cpus: int = 4
     memory: str = "8g"
@@ -105,7 +107,7 @@ class RunConfig:
     identity: AgentIdentity
     agent: AgentConfig
     mode: str  # "internal" | "external"
-    benchmark: str = "v1"  # "v1" (BizbenchV1 wave) | "v2" (MBABenchV2 task set)
+    benchmark: str = "v1"  # "v1" | "v2"; required in internal run configs (no default)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
     template_version: str = "v7"  # v9 = v2 Questions-sheet mirror (v2 default); v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
@@ -151,7 +153,19 @@ def load_config(path: str | Path) -> RunConfig:
     if raw.get("mode") not in ("internal", "external"):
         raise ValueError('mode must be "internal" or "external"')
 
-    benchmark = str(raw.get("benchmark", "v1")).lower()
+    # Required for internal runs: a silent default would let a config that
+    # omits the key record its rows against whichever benchmark the default
+    # names. External mode has no DB/S3; v1 only sets the template default.
+    if "benchmark" in raw:
+        benchmark = str(raw["benchmark"]).lower()
+    elif raw["mode"] == "external":
+        benchmark = "v1"
+    else:
+        raise ValueError(
+            "benchmark is required (v1 = BizbenchV1 wave, v2 = MBABenchV2 task "
+            "set): it selects the database, the S3 root and the prompt-template "
+            "default together"
+        )
     if benchmark not in BENCHMARKS:
         raise ValueError(
             f'benchmark must be one of {sorted(BENCHMARKS)} '
