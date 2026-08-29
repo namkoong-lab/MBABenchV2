@@ -1,8 +1,9 @@
 """Worksheet management tools: list, create, delete."""
 import json
 
+from ..core.libreoffice_bridge import _save_with_recalc
 from ..core.shared_state import mcp
-from ..core.workbook_io import _get_file_path, _save_workbook_sync, _load_workbook
+from ..core.workbook_io import _load_workbook
 
 
 @mcp.tool()
@@ -62,9 +63,10 @@ async def create_worksheet(filename: str, worksheet_name: str) -> str:
             )
 
         wb.create_sheet(worksheet_name)
-        _save_workbook_sync(wb, _get_file_path(filename))
+        recalc = _save_with_recalc(wb, filename)
 
-        return f"Worksheet '{worksheet_name}' created successfully in '{filename}'"
+        return (f"Worksheet '{worksheet_name}' created successfully in '{filename}'\n"
+                f"recalc_engine: {json.dumps(recalc)}")
     except Exception as e:
         return f"Error creating worksheet: {str(e)}"
 
@@ -84,8 +86,9 @@ async def delete_worksheet(filename: str, worksheet_name: str) -> str:
         wb = _load_workbook(filename)
         if worksheet_name in wb.sheetnames:
             wb.remove(wb[worksheet_name])
-            _save_workbook_sync(wb, _get_file_path(filename))
-            return f"Worksheet '{worksheet_name}' deleted successfully from '{filename}'"
+            recalc = _save_with_recalc(wb, filename)
+            return (f"Worksheet '{worksheet_name}' deleted successfully from '{filename}'\n"
+                    f"recalc_engine: {json.dumps(recalc)}")
         else:
             return f"Worksheet '{worksheet_name}' not found in '{filename}'"
     except Exception as e:

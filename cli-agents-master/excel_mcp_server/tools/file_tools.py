@@ -4,9 +4,10 @@ from typing import List, Optional
 
 import openpyxl
 
-from ..core.shared_state import mcp
 from ..core import shared_state as _state
-from ..core.workbook_io import _get_file_path, _save_workbook_sync, _load_workbook
+from ..core.libreoffice_bridge import _save_with_recalc
+from ..core.shared_state import mcp
+from ..core.workbook_io import _get_file_path, _load_workbook, _save_workbook_sync
 
 
 @mcp.tool()
@@ -127,8 +128,11 @@ async def copy_file(source_filename: str, destination_filename: str) -> str:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         wb = openpyxl.load_workbook(source_path)
-        _save_workbook_sync(wb, dest_path)
+        # The openpyxl round-trip drops every cached value, so the copy must
+        # be recalculated like any other save.
+        recalc = _save_with_recalc(wb, destination_filename)
 
-        return f"Successfully copied '{source_filename}' to '{destination_filename}'"
+        return (f"Successfully copied '{source_filename}' to '{destination_filename}'\n"
+                f"recalc_engine: {json.dumps(recalc)}")
     except Exception as e:
         return f"Error copying file: {str(e)}"

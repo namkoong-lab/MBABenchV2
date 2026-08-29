@@ -3,12 +3,12 @@ import json
 import re
 from typing import Any, Dict, List
 
-from ..core.shared_state import mcp, _lo_engine
-from ..core.workbook_io import _get_file_path, _save_workbook_sync, _load_workbook, _load_workbook_view
-from ..core.libreoffice_bridge import _recalculate_with_libreoffice
-from ..helpers.type_inference import _infer_type
+from ..core.libreoffice_bridge import _recalculate_with_libreoffice, _save_with_recalc
+from ..core.shared_state import _lo_engine, mcp
+from ..core.workbook_io import _get_file_path, _load_workbook, _load_workbook_view, _save_workbook_sync
 from ..helpers.cell_validation import _validate_cell_references
 from ..helpers.formula_evaluation import _eval_formula
+from ..helpers.type_inference import _infer_type
 
 
 @mcp.tool()
@@ -56,30 +56,10 @@ async def edit_cells(filename: str, worksheet_name: str, cell_updates: List[Dict
                 "type": "value"
             })
 
-        _save_workbook_sync(wb, _get_file_path(filename))
-
-        # Recalculate and REPORT the outcome. The openpyxl save above drops
-        # every formula cell's cached value, so an ignored recalc failure
-        # here would leave the whole file uncached behind a "Successfully
-        # updated" message (every later read shows null view values until a
-        # recalc succeeds).
-        recalc_engine_info = {"engine": "fallback"}
-        from ..core.shared_state import _lo_engine
-        if _lo_engine and _lo_engine.is_running:
-            lo_result = _recalculate_with_libreoffice(filename)
-            if lo_result["success"]:
-                recalc_engine_info = {
-                    "engine": "libreoffice",
-                    "duration_ms": lo_result.get("duration_ms", 0),
-                }
-            else:
-                recalc_engine_info = {
-                    "engine": "fallback",
-                    "libreoffice_error": lo_result.get("error"),
-                    "warning": "Recalculation FAILED — cached values in this "
-                               "file are stale or missing until a "
-                               "recalculation succeeds",
-                }
+        # Save + recalculate + report via the shared helper — see
+        # libreoffice_bridge._save_with_recalc for why every save must
+        # recalculate (an openpyxl save drops every cached value).
+        recalc_engine_info = _save_with_recalc(wb, filename)
 
         return f"Successfully updated {len(updated_cells)} cells in '{filename}:{worksheet_name}'\n" + \
                json.dumps({"updated_cells": updated_cells,

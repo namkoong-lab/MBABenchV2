@@ -2,10 +2,11 @@
 import json
 from typing import Any, Dict, Optional
 
-from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from ..core.libreoffice_bridge import _save_with_recalc
 from ..core.shared_state import mcp
-from ..core.workbook_io import _get_file_path, _save_workbook_sync, _load_workbook
+from ..core.workbook_io import _load_workbook
 
 
 @mcp.tool()
@@ -26,8 +27,9 @@ async def freeze_panes(filename: str, worksheet_name: str, cell: str) -> str:
         wb = _load_workbook(filename)
         ws = wb[worksheet_name]
         ws.freeze_panes = cell
-        _save_workbook_sync(wb, _get_file_path(filename))
-        return json.dumps({"success": True, "frozen_at": cell, "worksheet": worksheet_name})
+        recalc_engine_info = _save_with_recalc(wb, filename)
+        return json.dumps({"success": True, "frozen_at": cell, "worksheet": worksheet_name,
+                           "recalc_engine": recalc_engine_info})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
@@ -118,7 +120,8 @@ async def format_cells(
                     c.number_format = number_format
                 cell_count += 1
 
-        _save_workbook_sync(wb, _get_file_path(filename))
-        return json.dumps({"success": True, "cells_formatted": cell_count, "range": range_address, "worksheet": worksheet_name})
+        recalc_engine_info = _save_with_recalc(wb, filename)
+        return json.dumps({"success": True, "cells_formatted": cell_count, "range": range_address,
+                           "worksheet": worksheet_name, "recalc_engine": recalc_engine_info})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
