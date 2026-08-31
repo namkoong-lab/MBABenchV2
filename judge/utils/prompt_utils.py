@@ -84,6 +84,24 @@ def _has_optional_data(entry: dict, kwargs: dict) -> bool:
     return True
 
 
+def render_rubric_checks_list(items: list[dict]) -> str:
+    """Render an explicit check list into prompt-ready text.
+
+    Letters are assigned by position in `items`, so a suitability-filtered
+    list stays contiguous (A..N over the applicable checks) and matches the
+    letter->name mapping built from the same list.
+    """
+    blocks = []
+    for i, item in enumerate(items):
+        letter = check_letter(i)
+        blocks.append(
+            f"Check {letter}: {item['description']}\n"
+            f"Pass: {item['good']}\n"
+            f"Fail: {item['bad']}"
+        )
+    return "\n\n".join(blocks)
+
+
 def render_rubric_checks(rubric_path: str, category: str) -> str:
     """Render a rubric category's checks into prompt-ready text.
 
@@ -96,16 +114,7 @@ def render_rubric_checks(rubric_path: str, category: str) -> str:
     """
     with open(rubric_path) as f:
         rubric = json.load(f)
-    items = rubric[category]
-    blocks = []
-    for i, item in enumerate(items):
-        letter = check_letter(i)
-        blocks.append(
-            f"Check {letter}: {item['description']}\n"
-            f"Pass: {item['good']}\n"
-            f"Fail: {item['bad']}"
-        )
-    return "\n\n".join(blocks)
+    return render_rubric_checks_list(rubric[category])
 
 
 def compile_prompt(template_path: str, **kwargs) -> list[list[dict]]:

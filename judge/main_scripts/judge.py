@@ -23,6 +23,7 @@ from utils.excel_utils import (
     shorten_attempt_csv_files,
     shorten_solution_csv_files,
 )
+from utils import rubric_suitability
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import (
     calculate_cost,
@@ -33,6 +34,7 @@ from utils.llm_utils import (
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
     add_benchmark_arg,
+    current_benchmark,
     dump_messages_yaml,
     get_absolute_path,
     load_env_var,
@@ -48,6 +50,7 @@ from utils.prompt_utils import (
     encode_file_to_base64,
     format_file_section,
     render_rubric_checks,
+    render_rubric_checks_list,
 )
 from utils.trajectory import TrajectoryRecorder
 
@@ -1572,6 +1575,7 @@ def _finalize_case(
     reasoning_effort=None,
     grader_identity=None,
     recorder=None,
+    suitability_provenance=None,
 ):
     """Shared finalization: save judgement, calculate scores, write metadata."""
     output_dir = Path(output_dir)
@@ -1621,6 +1625,10 @@ def _finalize_case(
         score_results = calculate_scores(
             all_responses, weights_data, max_mistakes=RUBRIC_MAX_MISTAKES
         )
+        if suitability_provenance is not None:
+            # Phase A provenance rides inside scored_results (and scores.json)
+            # so every grading records exactly which checks were gated out.
+            score_results["rubric_suitability"] = suitability_provenance
         scores_path = output_dir / "scores.json"
         with open(scores_path, "w", encoding="utf-8") as f:
             json.dump(score_results, f, indent=2)
@@ -1680,6 +1688,8 @@ def _finalize_case(
             cat: data["normalized_score"]
             for cat, data in score_results["criteria_scores"].items()
         }
+    if suitability_provenance is not None:
+        metadata_dict["rubric_suitability"] = suitability_provenance
 
     if metadata_path.exists():
         try:
@@ -1834,8 +1844,8 @@ AGENTIC_JUDGE_TOOLS = [
             "description": (
                 "Read a rectangular range from a CSV file in the AI attempt or "
                 "golden solution directories. You must specify the row and column "
-                "range to extract. Use the file metadata provided in the prompt "
-                "(dimensions and additional_format.txt) to decide which ranges to "
+                "range to extract. Use the sheet dimensions and any formatting "
+                "metadata provided to decide which ranges to "
                 "inspect. HARD LIMIT: a single call may not cover more than "
                 "5000 cells ((end_row - start_row + 1) * (end_col - start_col + "
                 "1)). Requests exceeding this are rejected; split large regions "
@@ -2057,6 +2067,44 @@ def _render_files_text(file_list, file_metadata=None) -> str:
     return "\n".join(lines)
 
 
+_DIMS_RE = None
+
+
+def _render_files_text_dims_only(file_list, file_metadata=None) -> str:
+    """File listing with one dimensions line per sheet (template 5+).
+
+    The full formatting metadata (merged cells / frozen panes) is no longer
+    inlined here — it accompanies read_file results in the Formatting and
+    Structure categories instead — so the listing is byte-identical across
+    categories and sits in the prompt-cache-stable prefix.
+    """
+    global _DIMS_RE
+    if _DIMS_RE is None:
+        import re as _re
+
+        _DIMS_RE = _re.compile(r"Sheet Dimensions: (\d+) rows x (\d+) columns")
+    lines = []
+    for fname in file_list:
+        lines.append(f"    {fname}")
+        meta = (file_metadata or {}).get(fname)
+        info = (meta or {}).get("format_info")
+        if info:
+            m = _DIMS_RE.search(info)
+            if m:
+                lines.append(
+                    f"      Dimensions: {m.group(1)} rows x {m.group(2)} columns"
+                )
+    return "\n".join(lines)
+
+
+def _prompt_version_at_least(version_str, minimum: int) -> bool:
+    """True when the agentic prompt version's major number >= minimum."""
+    try:
+        return int(str(version_str).split(".")[0]) >= minimum
+    except (TypeError, ValueError):
+        return False
+
+
 def _render_prior_findings_block(prior_findings) -> str | None:
     if not prior_findings:
         return None
@@ -2234,6 +2282,21 @@ class WorkingJudgement:
         if pending_letters:
             return f"{marks or '(none yet)'} | pending: {', '.join(pending_letters)}"
         return marks or "(none)"
+
+    def fails_missing_mistakes(self) -> list[str]:
+        """Letters recorded 'fail' with zero appended mistakes.
+
+        calculate_scores treats such checks as a scoring hazard
+        (fail_without_mistakes) and the whole grading is marked failed \u2014
+        the loop nudges the model to repair them before accepting completion.
+        """
+        return [
+            l
+            for l in self.check_letters
+            if l in self.working
+            and self.working[l].get("decision") == "fail"
+            and not self.working[l].get("mistakes")
+        ]
 
     def finalize(self) -> list[dict]:
         return [self.working[l] for l in self.check_letters if l in self.working]
@@ -2468,8 +2531,21 @@ def _build_pressure_signal(
     return status, tier
 
 
-def _execute_read_file(tool_call, attempt_dir, solution_dir):
-    """Execute a read_file tool call, extracting the specified row/column range from a CSV."""
+def _execute_read_file(tool_call, attempt_dir, solution_dir, category=None,
+                       format_notes=None):
+    """Execute a read_file tool call, extracting the specified row/column range from a CSV.
+
+    When `category` is given (prompt template 5+), requests for *_full.csv
+    resolve through the category-keyed serving rule (2026-08 cost lever):
+      - Formatting          -> the full view (style FORMAT segments included)
+      - every other category -> the *_data.csv sibling (style segments
+        stripped; number-format rendering kept), falling back to the full
+        view if the sibling is missing (pre-revision cache).
+    Formatting and Structure reads also append the sheet's formatting
+    metadata (merged cells / frozen panes) once per sheet per category,
+    tracked in `format_notes`. Presented filenames stay *_full.csv — the
+    resolution is an internal indirection.
+    """
     import csv as csv_mod
 
     args = json.loads(tool_call.function.arguments)
@@ -2497,16 +2573,33 @@ def _execute_read_file(tool_call, attempt_dir, solution_dir):
             f"already inlined under the corresponding *_full.csv entry in the "
             f"file list."
         )
+    if filename.endswith("_data.csv"):
+        return (
+            f"Error: '{filename}' is not directly readable — request the "
+            f"corresponding *_full.csv instead."
+        )
     if not file_path.exists():
         available = sorted(
             f.name
             for f in Path(base_dir).iterdir()
-            if f.is_file() and not f.name.endswith("_additional_format.txt")
+            if f.is_file()
+            and not f.name.endswith("_additional_format.txt")
+            and not f.name.endswith("_data.csv")
         )
         return (
             f"Error: File '{filename}' not found in {source} directory. "
             f"Available files: {', '.join(available)}"
         )
+
+    # Category-keyed serving indirection (template 5+ only).
+    if category is not None and category != "Formatting" and filename.endswith(
+        "_full.csv"
+    ):
+        data_sibling = Path(base_dir) / (
+            filename[: -len("_full.csv")] + "_data.csv"
+        )
+        if data_sibling.exists():
+            file_path = data_sibling
 
     # Prevent path traversal
     try:
@@ -2592,7 +2685,32 @@ def _execute_read_file(tool_call, attempt_dir, solution_dir):
         f"[Range: rows {start_row}-{end_row}, columns {start_col}-{end_col} "
         f"| File: {total_rows} rows x {total_cols} cols]\n"
     )
-    return header + result_text
+
+    # Formatting/Structure categories carry the sheet's formatting metadata
+    # (merged cells / frozen panes) with the first read of each sheet —
+    # under template 5 the file listings no longer inline it.
+    appendix = ""
+    if (
+        category in ("Formatting", "Structure")
+        and format_notes is not None
+        and filename.endswith("_full.csv")
+    ):
+        note_key = (source, filename)
+        if note_key not in format_notes:
+            fmt_txt = Path(base_dir) / (
+                filename[: -len("_full.csv")] + "_additional_format.txt"
+            )
+            if fmt_txt.exists():
+                format_notes.add(note_key)
+                try:
+                    appendix = (
+                        "\n[Sheet formatting metadata — sent once per sheet "
+                        "for this category]\n" + fmt_txt.read_text(encoding="utf-8")
+                    )
+                except OSError:
+                    appendix = ""
+
+    return header + result_text + appendix
 
 
 def agentic_judge_case(
@@ -2788,21 +2906,95 @@ def agentic_judge_case(
     with open(str(rubric_json_path), "r", encoding="utf-8") as _rf:
         _rubric_data = json.load(_rf)
 
+    # Per-task rubric suitability gating (Phase A, 2026-08 judge update).
+    # not_applicable checks are never prompted and never scored; the filtered
+    # weights dict renormalizes within each category automatically because
+    # calculate_scores divides by the summed weight of the checks it is given.
+    # A v2 grading without a staged annotation raises SuitabilityError
+    # (JUDGE_SKIP_SUITABILITY=1 grades ungated, recorded in scored_results).
+    suitability = rubric_suitability.load_for_case(
+        prep["task_path"], _rubric_data, current_benchmark(required=False)
+    )
+    if suitability is not None:
+        _applicable_names = {
+            cat: set(names) for cat, names in suitability["applicable"].items()
+        }
+        _rubric_effective = {
+            cat: [c for c in checks if c["name"] in _applicable_names.get(cat, set())]
+            for cat, checks in _rubric_data.items()
+        }
+        weights_data = rubric_suitability.build_effective_weights(
+            weights_data, suitability["excluded"]
+        )
+        suitability_provenance = {"gated": True, **suitability["provenance"]}
+        logger.info(
+            f"  Suitability gating: {suitability_provenance['excluded_count']} "
+            f"not_applicable check(s) excluded; "
+            f"{suitability_provenance['applicable_count']} applicable"
+        )
+        # Rebuild the letter->name mapping over the filtered lists so letters
+        # stay contiguous (A..N over applicable checks).
+        check_name_mapping = {
+            (cat, check_letter(i)): item["name"]
+            for cat, checks in _rubric_effective.items()
+            for i, item in enumerate(checks)
+        }
+        # Keep the staged annotation with the uploaded artifacts.
+        _staged_annotation = prep["task_path"] / rubric_suitability.STAGED_FILENAME
+        if _staged_annotation.exists():
+            shutil.copy(
+                str(_staged_annotation),
+                str(output_dir / rubric_suitability.STAGED_FILENAME),
+            )
+        recorder.record_event(
+            "rubric_suitability",
+            gated=True,
+            s3_key=suitability_provenance.get("s3_key"),
+            excluded_count=suitability_provenance["excluded_count"],
+        )
+    else:
+        _rubric_effective = _rubric_data
+        suitability_provenance = {"gated": False}
+        if rubric_suitability.skip_requested():
+            suitability_provenance["skipped_via_env"] = True
+        recorder.record_event("rubric_suitability", gated=False)
+
+    # Category-keyed CSV serving + dimensions-only file listings arrived with
+    # prompt template 5 (agentic prompt_version >= 5); template 4 runs keep
+    # the legacy behavior byte-for-byte.
+    serve_data_views = _prompt_version_at_least(versions["PROMPT_VERSION"], 5)
+
     for stage_idx, category in enumerate(CHECK_ORDER):
+        checks_for_category = _rubric_effective.get(category, [])
+        if suitability is not None and not checks_for_category:
+            # Defensive: no current annotation zeroes out a category. The
+            # category is skipped entirely; build_effective_weights already
+            # dropped it from CategoryWeights and renormalized.
+            logger.warning(
+                f"\n  [Category] {category}: 0 applicable checks — skipped"
+            )
+            recorder.record_event(
+                "category_skipped_no_applicable_checks", category=category
+            )
+            continue
+
         logger.info(f"\n  [Category] {category} (stage {stage_idx})...")
 
-        rubric_checks_text = render_rubric_checks(str(rubric_json_path), category)
-        num_checks = len(_rubric_data.get(category, []))
+        rubric_checks_text = render_rubric_checks_list(checks_for_category)
+        num_checks = len(checks_for_category)
         check_letters = [check_letter(i) for i in range(num_checks)]
 
+        _render_listing = (
+            _render_files_text_dims_only if serve_data_views else _render_files_text
+        )
         compile_kwargs = dict(
             category=category,
             rubric_checks_text=rubric_checks_text,
             check_letters_text=", ".join(check_letters),
-            attempt_files_text=_render_files_text(
+            attempt_files_text=_render_listing(
                 attempt_file_list, attempt_file_metadata
             ),
-            solution_files_text=_render_files_text(
+            solution_files_text=_render_listing(
                 solution_file_list, solution_file_metadata
             ),
             prior_findings=_render_prior_findings_block(
@@ -2818,6 +3010,12 @@ def agentic_judge_case(
         seed_messages = list(stages[0])
 
         state = AgenticCategoryLoop(category, check_letters, seed_messages)
+        # Sheets whose formatting metadata has already accompanied a read in
+        # this category (Formatting/Structure serve it once per sheet).
+        format_notes_served: set = set()
+        # Bounded nudges for fails recorded without a concrete mistake
+        # (otherwise one slip marks the whole grading failed downstream).
+        fail_nudge_count = 0
 
         cumulative_metrics = {
             "message_size": 0,
@@ -3052,7 +3250,11 @@ def agentic_judge_case(
 
                     if name == "read_file":
                         tool_result = _execute_read_file(
-                            tc, ai_attempt_dir, golden_solution_dir
+                            tc,
+                            ai_attempt_dir,
+                            golden_solution_dir,
+                            category=category if serve_data_views else None,
+                            format_notes=format_notes_served,
                         )
                     elif name == "evict_tool_results":
                         try:
@@ -3129,6 +3331,37 @@ def agentic_judge_case(
                 round_idx += 1
                 continue
 
+            # All letters recorded — but a 'fail' with no appended mistake
+            # would flag the grading failed (fail_without_mistakes). Nudge
+            # the model to repair those, at most twice per category.
+            missing_mistakes = state.working.fails_missing_mistakes()
+            if missing_mistakes and fail_nudge_count < 2:
+                fail_nudge_count += 1
+                nudge_content = (
+                    f"You recorded {', '.join(missing_mistakes)} as 'fail' but "
+                    f"appended no mistake. For each, either call append_mistake "
+                    f"with the concrete cell/range location and description of "
+                    f"the issue you found, or call record_check again with "
+                    f"decision 'pass' if there is in fact no concrete issue."
+                )
+                nudge_msg = {"role": "user", "content": nudge_content}
+                state.append_wire(nudge_msg, tag="nudge")
+                recorder.record_event(
+                    "nudge",
+                    category=category,
+                    round=state.round,
+                    phase="fail_without_mistakes",
+                    letters=missing_mistakes,
+                )
+                nsize = _measure_message_chars(nudge_msg)
+                cumulative_metrics["message_size"] += nsize
+                cumulative_metrics["message_size_with_images"] += nsize
+                logger.info(
+                    f"      Nudged: fail without mistakes {missing_mistakes}"
+                )
+                round_idx += 1
+                continue
+
             # No tool calls, no pending → done
             logger.info(
                 f"      Model stopped with all checks recorded: "
@@ -3175,15 +3408,23 @@ def agentic_judge_case(
             cumulative_metrics["message_size"] += fsize
             cumulative_metrics["message_size_with_images"] += fsize
 
-            finalize_tools = [
-                t
-                for t in AGENTIC_JUDGE_TOOLS
-                if t["function"]["name"]
-                in ("record_check", "append_mistake", "get_working_judgement")
-            ]
+            # Keep the tool declarations IDENTICAL to the main loop's. Gemini
+            # binds thought signatures to the request configuration; swapping
+            # to a reduced tool list mid-conversation made every request after
+            # the first forced round fail with 400 "Corrupted thought
+            # signature" (seen 2026-08-30, gemini-3.5-flash via OpenRouter).
+            # Non-scratchpad tools are still blocked at execution time below
+            # ("disabled in forced finalization"), which is what actually
+            # enforces the restriction.
+            finalize_tools = AGENTIC_JUDGE_TOOLS
 
-            max_forced_rounds = 5
+            # 15, was 5: models often record one check per round here, and a
+            # big Formatting category can enter finalization with 10+ pending
+            # (empty-choices retries can also consume wall-clock mid-stream).
+            max_forced_rounds = 15
             forced_round = 0
+            forced_api_retries = 0
+            max_forced_api_retries = 5
             while forced_round < max_forced_rounds and state.working.pending:
                 forced_round += 1
                 state.round = max_tool_rounds + forced_round
@@ -3239,6 +3480,47 @@ def agentic_judge_case(
                     response=response,
                     t0=_call_t0,
                 )
+
+                # Same OpenRouter quirk the main loop guards against: upstream
+                # provider errors can arrive as 200 OK with choices=null. The
+                # bare response.choices[0] here crashed whole gradings during
+                # Formatting finalizations (seen 2026-08-30, gemini window).
+                if not response.choices:
+                    err_detail = (
+                        (response.model_extra or {}).get("error")
+                        or getattr(response, "error", None)
+                        or "no error field"
+                    )
+                    forced_api_retries += 1
+                    forced_round -= 1  # retry the same forced round
+                    recorder.record_event(
+                        "empty_choices",
+                        category=category,
+                        round=state.round,
+                        phase="forced_finalization",
+                        retry=forced_api_retries,
+                        error=str(err_detail)[:500],
+                    )
+                    if forced_api_retries > max_forced_api_retries:
+                        logger.error(
+                            f"    Forced finalization: giving up after "
+                            f"{max_forced_api_retries} empty-choices retries. "
+                            f"err={err_detail}"
+                        )
+                        state.log_event(
+                            "forced_finalization_empty_choices_giveup",
+                            error=str(err_detail)[:500],
+                        )
+                        break
+                    wait = min(2**forced_api_retries + 1, 30)
+                    logger.warning(
+                        f"    Forced finalization: empty choices (retry "
+                        f"{forced_api_retries}/{max_forced_api_retries}): "
+                        f"err={err_detail}. Retrying in {wait}s..."
+                    )
+                    time.sleep(wait)
+                    continue
+                forced_api_retries = 0
 
                 usage = response.usage
                 if usage:
@@ -3482,6 +3764,7 @@ def agentic_judge_case(
         reasoning_effort=reasoning_effort,
         grader_identity=identity.settings(),
         recorder=recorder,
+        suitability_provenance=suitability_provenance,
     )
 
 

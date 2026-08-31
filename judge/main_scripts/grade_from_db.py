@@ -33,10 +33,12 @@ sys.path.insert(0, str(_judge_root))
 
 import psycopg2
 import psycopg2.extras
+from utils import repo_config, rubric_suitability
+from utils.answer_check import run_answer_check, summary_block
+from utils.excel_utils import find_golden_solution_file
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
 from utils.logger import add_log_file, logger, remove_log_file
-from utils import repo_config
 from utils.misc_utils import (
     BENCHMARKS,
     add_benchmark_arg,
@@ -587,6 +589,7 @@ def grade_single_attempt(
     no_s3_upload=False,
     on_overflow="route_to_agentic",
     reasoning_effort=None,
+    suitability_source_path=None,
 ):
     """Grade a single attempt. Returns a result dict."""
     attempt_id = attempt["attempt_id"]
@@ -615,6 +618,22 @@ def grade_single_attempt(
         }
 
     logger.info(f"  Task folder: {task_folder}")
+
+    # Stage the task's rubric suitability annotation (Phase A) where the
+    # agentic judge looks for it. A missing annotation is not an error here —
+    # the judge enforces the v2 refusal rule itself.
+    if suitability_source_path:
+        try:
+            shutil.copy(
+                str(suitability_source_path),
+                str(task_folder / rubric_suitability.STAGED_FILENAME),
+            )
+            logger.info(
+                f"  Staged {rubric_suitability.STAGED_FILENAME} from "
+                f"{Path(suitability_source_path).name}"
+            )
+        except OSError as e:
+            logger.warning(f"  Failed to stage suitability annotation: {e}")
 
     # Per-attempt log
     log_path = str(task_folder / "grade_from_db.log")
@@ -718,6 +737,24 @@ def grade_single_attempt(
             with open(conversation_path) as f:
                 conversation = json.load(f)
 
+        # Phase B — harness answer check (score-neutral). Runs on the two
+        # workbooks in the task folder, writes its artifact into output_dir
+        # (so the S3 upload below carries it), and its summary rides in
+        # scored_results.answer_check. Failures never block grading.
+        answer_check_summary = None
+        try:
+            solution_xlsx = find_golden_solution_file(Path(task_folder))
+            ac_result = run_answer_check(
+                Path(task_folder) / "ai_attempt.xlsx",
+                solution_xlsx,
+                output_json_path=output_dir / "answer_check.json",
+            )
+            answer_check_summary = summary_block(ac_result)
+            logger.info(f"  [answer_check] {answer_check_summary}")
+        except Exception as e:  # noqa: BLE001 — score-neutral, never blocks
+            logger.warning(f"  [answer_check] skipped on error: {e}")
+            answer_check_summary = {"status": "error", "error": str(e)}
+
         # Upload the full output_dir tree (files in subfolders included) to S3
         # under a unique {timestamp}_{uuid} prefix. Done before the DB write so
         # the gradings row always references a finalized location.
@@ -746,6 +783,8 @@ def grade_single_attempt(
             "final_score": result.get("final_score") or 0,
         }
         scored_results = result.get("score_results", {})
+        if answer_check_summary is not None and isinstance(scored_results, dict):
+            scored_results["answer_check"] = answer_check_summary
 
         # Warn loudly if expected scores are missing from the judge result.
         # Completeness is defined by the configured weights file (via
@@ -818,6 +857,12 @@ def grade_single_attempt(
             "solution_csv_dir": result.get("solution_csv_dir"),
             "attempt_csv_dir": result.get("attempt_csv_dir"),
             "auto_routed": bool(result.get("auto_routed")),
+            # Effective reasoning effort (identity pin, or a --reasoning-effort
+            # override). write_grading_to_db reads this for the
+            # gradings.grader_reasoning column; without it every row stored
+            # NULL and two efforts of one label were indistinguishable.
+            "judge_reasoning": result.get("judge_reasoning"),
+            "grader_identity": result.get("grader_identity"),
         }
 
     except Exception as e:
@@ -1035,10 +1080,18 @@ def main(args):
         # runs. Namespaced by database name because task/attempt ids collide
         # across the v1 and v2 databases.
         cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
-        solution_cache_base = cache_root / "solution_csv_cache"
+        # "_v2" cache generation (2026-08): extraction now also writes the
+        # *_data.csv serving variants, so pre-revision caches (which lack
+        # them) must never be reused. Old cache dirs are left untouched.
+        solution_cache_base = cache_root / "solution_csv_cache_v2"
         solution_cache_base.mkdir(parents=True, exist_ok=True)
-        attempt_cache_base = cache_root / "attempt_csv_cache"
+        attempt_cache_base = cache_root / "attempt_csv_cache_v2"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
+        # Phase A: per-task suitability annotations, fetched once per run and
+        # staged into each task folder (the judge enforces the v2 rule).
+        suitability_cache_dir = cache_root / "rubric_suitability"
+        suitability_sources: dict[int, Path | None] = {}
+        s3_suitability_client = None
         attempt_filter = args.attempt_sheet_name_filter
         # Namespace attempt cache by filter state — filtered extractions are a
         # strict subset/rename of unfiltered ones, so they must not share a path.
@@ -1125,6 +1178,40 @@ def main(args):
                     )
                     continue
 
+            # Fetch + pin the task's suitability annotation (v2 agentic only;
+            # memoized per task). Failures are logged and left to the judge's
+            # refusal rule so one bad task doesn't kill the run.
+            suitability_src = None
+            if agentic and current_benchmark() == "v2":
+                if task_id not in suitability_sources:
+                    try:
+                        if s3_suitability_client is None:
+                            s3_suitability_client = _get_s3_client()
+                        annotation, s3_key = rubric_suitability.fetch_annotation(
+                            s3_suitability_client,
+                            load_env_var("S3_RAW_FILES_BUCKET", required=True),
+                            BENCHMARKS[current_benchmark()]["s3_root"],
+                            task_id,
+                            suitability_cache_dir,
+                        )
+                        annotation["_staging"] = {"s3_key": s3_key}
+                        staged_src = (
+                            suitability_cache_dir / f"task_id={task_id}__staged.json"
+                        )
+                        staged_src.write_text(json.dumps(annotation, indent=2))
+                        suitability_sources[task_id] = staged_src
+                        logger.info(
+                            f"  Suitability annotation for task {task_id}: {s3_key}"
+                        )
+                    except Exception as e:  # noqa: BLE001 — judge enforces
+                        suitability_sources[task_id] = None
+                        logger.warning(
+                            f"  No usable suitability annotation for task "
+                            f"{task_id}: {e} — the judge will refuse this "
+                            f"grading unless JUDGE_SKIP_SUITABILITY=1"
+                        )
+                suitability_src = suitability_sources[task_id]
+
             result = grade_single_attempt(
                 attempt=attempt,
                 client=client,
@@ -1150,6 +1237,7 @@ def main(args):
                 no_s3_upload=args.no_s3_upload,
                 on_overflow=args.on_overflow,
                 reasoning_effort=args.reasoning_effort,
+                suitability_source_path=suitability_src,
             )
             results.append(result)
 
@@ -1162,11 +1250,20 @@ def main(args):
             ):
                 task_cache_dir = solution_cache_base / f"task_id={task_id}"
                 if not task_cache_dir.exists():
-                    shutil.copytree(result["solution_csv_dir"], str(task_cache_dir))
-                    logger.info(
-                        f"  Persisted solution CSVs for task {task_id}: "
-                        f"{task_cache_dir}"
-                    )
+                    try:
+                        shutil.copytree(result["solution_csv_dir"], str(task_cache_dir))
+                        logger.info(
+                            f"  Persisted solution CSVs for task {task_id}: "
+                            f"{task_cache_dir}"
+                        )
+                    except (FileExistsError, shutil.Error) as e:
+                        # Concurrent graders on different attempts of the same
+                        # task race here; the cache is shared and identical, so
+                        # losing the race is harmless.
+                        logger.info(
+                            f"  Solution CSV cache for task {task_id} written "
+                            f"concurrently ({e.__class__.__name__}); using it"
+                        )
                 solution_csv_cache[task_id] = str(task_cache_dir)
 
             # Persist attempt CSVs to the cache directory for this attempt
@@ -1181,11 +1278,19 @@ def main(args):
                     / f"attempt_id={attempt_id}{attempt_cache_suffix}"
                 )
                 if not attempt_cache_dir.exists():
-                    shutil.copytree(result["attempt_csv_dir"], str(attempt_cache_dir))
-                    logger.info(
-                        f"  Persisted attempt CSVs for attempt {attempt_id}: "
-                        f"{attempt_cache_dir}"
-                    )
+                    try:
+                        shutil.copytree(
+                            result["attempt_csv_dir"], str(attempt_cache_dir)
+                        )
+                        logger.info(
+                            f"  Persisted attempt CSVs for attempt {attempt_id}: "
+                            f"{attempt_cache_dir}"
+                        )
+                    except (FileExistsError, shutil.Error) as e:
+                        logger.info(
+                            f"  Attempt CSV cache for {attempt_id} written "
+                            f"concurrently ({e.__class__.__name__}); using it"
+                        )
                 attempt_csv_cache[attempt_id] = str(attempt_cache_dir)
 
             # If judge_case auto-routed to the agentic judge due to context

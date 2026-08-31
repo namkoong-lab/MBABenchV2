@@ -31,10 +31,12 @@ Harness-necessitated translations on top of v12's rules:
   * the v11 body's "create separate answer sheets per question" deliverable-
     structure advice  ->  answer in the 'Questions' sheet's reserved cells
     (it contradicted the ANSWERS convention this version adds).
-Everything from the "== FULL RUBRIC" marker onward is copied byte-exact
-(and is byte-identical to v12's rubric — the v3 revision does not touch the
-rubric); tests/test_v13_prompts.py asserts that equality plus the 132-check
-count.
+Everything from the "== FULL RUBRIC" marker onward is copied byte-exact.
+Since the 2026-08 rubric revision (in-place update from the canonical
+checklist xlsx via judge/operation_scripts/build_rubric_9_from_xlsx.py) the
+v13 rubric deliberately DIFFERS from frozen v12's; tests/test_v13_prompts.py
+asserts byte-equality with prompts_v3, divergence from frozen prompts_v2,
+and the 132-check count.
 
 Usage (from cli-agents-master):  python tools/build_v13_prompts.py
 """

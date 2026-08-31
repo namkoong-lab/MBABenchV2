@@ -51,6 +51,34 @@ pins the endpoint (openrouter | gemini | anthropic | openai), the wire model
 id, and the default reasoning effort. An unregistered label refuses to run
 and prints the stanza to add.
 
+### v2 agentic regime (judge_version 3, 2026-08)
+
+Since the 2026-08 update (rubric_9 revised in place from the canonical
+checklist xlsx via `operation_scripts/build_rubric_9_from_xlsx.py`; weights
+adopted from the same sheet), a v2 agentic grading additionally:
+
+- **Gates checks by per-task suitability** (`utils/rubric_suitability.py`):
+  the latest complete julian annotation from
+  `s3://<bucket>/MBABenchV2/rubric_suitability/` is fetched by grade_from_db,
+  staged as `<task folder>/rubric_suitability.json`, and validated against
+  the rubric; `not_applicable` checks are never prompted or scored, weights
+  renormalize within category, CategoryWeights stay fixed. A v2 grading
+  without an annotation refuses (`JUDGE_SKIP_SUITABILITY=1` grades ungated);
+  provenance lands in `scored_results.rubric_suitability`.
+- **Runs the score-neutral answer check** (`utils/answer_check.py`): the
+  Questions-sheet answers of attempt vs golden solution, compared with
+  tolerance `|a-b| <= max(1e-9, 1e-6*max(|a|,|b|))`; full artifact
+  `answer_check.json` rides with the raw files, summary in
+  `scored_results.answer_check`. Never affects the 0-100 score. Side-by-side
+  view: `operation_scripts/report_answer_check.py`.
+- **Serves category-keyed context views** (template 5): extraction writes a
+  format-stripped `<sheet>_data.csv` beside every `<sheet>_full.csv`;
+  `read_file` serves the data view except in Formatting, and attaches
+  merged-cells/frozen-panes metadata once per sheet in Formatting and
+  Structure. Listings show dimensions only, and the per-category user
+  message keeps static blocks first so consecutive categories share a
+  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation.
+
 ## Grade a local task folder
 
 ```bash

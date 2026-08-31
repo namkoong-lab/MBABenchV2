@@ -5,7 +5,8 @@ tools/build_v8_template.py generated v8 from the v2 GUI files.
 Sources (single source of truth, shared with the GUI pipeline):
     gui-agents-master/tasks_configs/prompts_v3/step1_analyze.txt
     gui-agents-master/tasks_configs/prompts_v3/step2_build.txt   (embeds the
-        132-check rubric — copied byte-exact; unchanged from prompts_v2)
+        132-check rubric — copied byte-exact; carries the 2026-08 revision,
+        so it deliberately differs from frozen prompts_v2 / template v8)
     gui-agents-master/tasks_configs/prompts_v3/step3_qa.txt
 
 Harness-necessitated translations, the same rules v8 used plus one:

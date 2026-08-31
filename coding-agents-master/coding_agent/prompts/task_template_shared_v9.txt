@@ -10,7 +10,7 @@ Step 1 - Analyze & plan. Review the file(s) in starting_files/ and produce a bri
 
 Step 2 - Build the model. Build the complete Excel model now, in solution.xlsx, using live Excel formulas for every calculated value (your code may write the workbook, but the workbook must perform every calculation).
 
-You will be graded against the rubric below: 12 weighted categories, 132 checks. Build so that every check meets its "Good" standard and avoids its "Bad" standard. Category weights (share of total score): Accuracy 18%, Formatting 13%, Structure 11%, Error Checks 11%, Assumptions 9.5%, Formulas 9%, Flexibility 8%, Potential Dangers 6.5%, Documentation 5%, Model Outputs & Executive Summary 5%, Purpose & Scope 3%, Rounding 1%.
+You will be graded against the rubric below: 12 weighted categories, 132 checks. Build so that every check meets its "Good" standard and avoids its "Bad" standard. Category weights (share of total score): Accuracy 19%, Structure 14%, Error Checks 13%, Formulas 12%, Formatting 9.5%, Potential Dangers 8%, Assumptions 7%, Flexibility 6.5%, Documentation 4%, Model Outputs & Executive Summary 4%, Purpose & Scope 2%, Rounding 1%.
 
 ANSWERS (the 'Questions' sheet)
 - The starting workbook contains a sheet named 'Questions' (a few tasks split this across multiple sheets whose names begin with 'Questions' - treat each the same way): the case's questions in column A (one per row, starting at A2), reserved answer cells in the column headed 'Answers' in row 1 - column B in most tasks, column C in a few (where column B holds a pre-filled label such as Model or Part; leave it untouched) - with the answer to the first question in that column's row 2, the second in row 3, and so on (the number of questions varies by task), units in the column headed 'Unit' where given, and answer-format instructions in the header row.
@@ -52,20 +52,20 @@ ACCURACY
 
 Final calculation accuracy
 The final calculations must be accurate given the inputs and case context.
-  Good: Calculations are accurate and match the inputs and case context.
-  Bad:  Calculations contain errors, are incomplete relative to the case requirements, or key outputs are absent.
+  Good: Calculations are accurate and consistent with the inputs and case context. Hardcoded outputs are not accepted as correct - even where the value happens to be right - because there is no way to verify that the result was calculated in the workbook. A single incorrect output is enough to fail this item. Differences that follow from a documented rounding convention do not count as errors.
+  Bad:  Calculations contain errors, are incomplete relative to the case requirements, key outputs are absent, or the answers are hardcoded.
 
 --------------------------------------------------------------------------------
 
 Starting values
-The workbook must use the correct starting/input values given in the case context.
+The workbook must use the correct starting/input values given in the case context, transcribed with the correct unit and scale.
   Good: Workbook uses the correct starting/input values from the case context.
-  Bad:  Workbook uses incorrect starting/input values.
+  Bad:  One or more starting/input values differ from the case context, or are transcribed with the wrong unit or scale.
 
 --------------------------------------------------------------------------------
 
 Deliverable completeness
-Every output, schedule, and deliverable specified in the case brief is present and fully built out.
+Every output, schedule, and deliverable specified in the case context is present and fully built out.
   Good: All deliverables specified in the case context are present and complete.
   Bad:  Workbook does not complete the task; outputs are missing or partial.
 
@@ -75,8 +75,8 @@ ASSUMPTIONS
 ================================================================================
 
 Centralized assumptions
-All assumptions should be summarized at the beginning of the model or in a separate assumptions sheet, rather than hidden in calculation cells or scattered throughout the model. Assumptions should flow in one direction: from the assumptions sheet into calculations, never the reverse.
-  Good: All assumptions are grouped at the start of the model or on a dedicated sheet; easy to find and update.
+All assumptions should be summarized at the beginning of the model or in a separate assumptions sheet, rather than hidden in calculation cells or scattered throughout the model. Assumptions should flow in one direction: from the assumptions sheet into calculations, never the reverse. A clearly labeled, self-contained input block held on a build sheet is acceptable where it is the single source for that driver and is signposted from the central assumptions sheet.
+  Good: All assumptions are grouped at the start of the model or on a dedicated sheet; easy to find and update. Any input block held on a build sheet is clearly labeled and signposted from the central assumptions sheet.
   Bad:  Assumptions are embedded directly in formulas (e.g., =B5*1.05) or appear on multiple sheets with no single source of truth.
 
 --------------------------------------------------------------------------------
@@ -103,22 +103,22 @@ Each assumption must display an explicit unit of measure (e.g., %, $, x, days) s
 --------------------------------------------------------------------------------
 
 Assumption sources
-Each assumption must reference its source (e.g., case cell XYZ, company filing, Bloomberg, management estimate) so reviewers can verify inputs and assess staleness.
-  Good: Every assumption cites a specific, datable source (e.g., '10-K FY2024 p.45').
-  Bad:  Assumptions lack source citations, or sources are vague (e.g., 'management' without date or document reference).
+Each assumption must reference its source (e.g., a specific section of the case context, a company filing, or a market data provider) so reviewers can verify inputs and assess staleness. Where no external source exists, the assumption must be explicitly labeled as a judgment or estimate, with an owner and a date.
+  Good: Every assumption cites a specific, verifiable source (e.g., 'case context, section 2' or '10-K FY2024 p.45'), dated where a date is meaningful - or, where no external source exists, is explicitly labeled as a judgment or estimate with an owner and date.
+  Bad:  Assumptions lack source citations, or sources are vague (e.g., 'management' with no owner, date, or document reference).
 
 --------------------------------------------------------------------------------
 
 Named ranges for key assumptions
-Key global inputs (e.g., tax_rate, valuation_date) should use named ranges to improve formula readability. Apply sparingly; overuse hides cell references and clutters the Name Manager. Names should be named properly and meaningful.
+Key global inputs (e.g., tax_rate, valuation_date) should use named ranges to improve formula readability. Apply sparingly; overuse hides cell references and clutters the Name Manager. Names should follow a consistent convention and be self-explanatory.
   Good: Truly global, stable inputs (e.g., tax rate, valuation date) use named ranges.
-  Bad:  Named ranges are missing for key globals, or names are poorly labeled.
+  Bad:  Named ranges are missing for key globals, or names are unclear or inconsistently constructed.
 
 --------------------------------------------------------------------------------
 
 Single date driver
-A single, clearly labeled valuation/as-of date cell should drive discount periods, stub periods, mid-year conventions, and roll-forwards across the model.
-  Good: One labeled valuation/as-of date cell drives all date-dependent logic, including discount periods, stub periods, roll-forwards, and mid-year conventions.
+A single, clearly labeled anchor date (valuation date, as-of date, or model start date) should drive discount periods, stub periods, mid-year conventions, and roll-forwards across the model. A model with no date-dependent logic satisfies this item by default.
+  Good: One labeled anchor date cell drives all date-dependent logic, including discount periods, stub periods, roll-forwards, and mid-year conventions - or the model contains no date-dependent logic.
   Bad:  No single date driver; dates are hardcoded or scattered across cells.
 
 
@@ -127,9 +127,9 @@ DOCUMENTATION
 ================================================================================
 
 Formula commentary for non-obvious formulas
-Non-obvious or complex formulas should carry cell comments explaining their logic. Comments should state what the formula does and why, not simply restate the formula.
-  Good: Non-obvious and complex formulas have comments explaining the business rationale or methodology, not just restating the formula.
-  Bad:  Complex formulas have no comments, or comments say what the formula computes (e.g., 'calculates margin') instead of why that method was chosen.
+Non-obvious or complex formulas should carry an explanation - a cell comment or note, or an adjacent annotation column. The explanation should state what the formula does and why that approach was chosen, not simply restate the formula.
+  Good: Non-obvious and complex formulas are explained via comments, notes, or an annotation column, covering the business rationale or methodology rather than restating the formula.
+  Bad:  Complex formulas carry no explanation, or the explanation says what the formula computes (e.g., 'calculates margin') instead of why that method was chosen.
 
 --------------------------------------------------------------------------------
 
@@ -141,15 +141,15 @@ The workbook should include a glossary documenting colors, abbreviations, and co
 --------------------------------------------------------------------------------
 
 How to use guide
-A 'How to use this model' tab or section should walk users through inputs, scenarios, and outputs as well as model handling from the user perspective.
-  Good: A 'How to use' tab or section guides users through inputs, scenarios, and outputs and how to use the model from the user perspective.
+A 'How to use this model' tab or section should walk users through inputs, scenarios, and outputs, and explain how to operate the model from the user's perspective.
+  Good: A 'How to use' tab or section guides the user through the inputs they may change, how to select scenarios, and where to read the outputs.
   Bad:  No usage guide for the model.
 
 --------------------------------------------------------------------------------
 
 Linked table of contents
-The model should include a table of contents with hyperlinks to each worksheet.
-  Good: A table of contents links to each sheet via hyperlinks.
+The model should include a table of contents with hyperlinks to each worksheet. For very small workbooks (roughly three sheets or fewer) a table of contents may reasonably be omitted.
+  Good: A table of contents links to each sheet via hyperlinks - or the workbook is small enough that one is not warranted.
   Bad:  No table of contents, or one without working hyperlinks.
 
 --------------------------------------------------------------------------------
@@ -183,16 +183,16 @@ The model should include documentation explaining key design decisions (e.g., ch
 --------------------------------------------------------------------------------
 
 Version history / change log
-The model should include a version history or change log recording what changed, when, and by whom - on a separate tab.
-  Good: A version history or change log records what changed, when, and by whom on a separate tab.
+The model should include a version history or change log recording what changed, when, and by whom - on a dedicated tab or in a clearly labeled section of the cover sheet.
+  Good: A version history or change log records what changed, when, and by whom, on a dedicated tab or in a clearly labeled cover-sheet section.
   Bad:  No version history or change log.
 
 --------------------------------------------------------------------------------
 
 Methodology documentation
-Methodology documentation (possibly a separate file) should explain the modeling approach, conventions, and assumptions for stakeholders and users.
+Methodology documentation should explain the modeling approach, conventions, and assumptions for stakeholders and users. It may sit outside the workbook, provided the model points to it.
   Good: Methodology documentation explains the approach, conventions, and assumptions.
-  Bad:  No methodology documentation accompanies the model.
+  Bad:  No methodology documentation accompanies the model, or it is referenced but not provided.
 
 
 ================================================================================
@@ -207,14 +207,14 @@ Subtotals must be correct SUMs of their line items and must tie to the totals th
 --------------------------------------------------------------------------------
 
 No formula errors
-The model must be free of any visible Excel errors (#REF!, #N/A, #DIV/0!, #VALUE!, #NAME?, #NUM!, #NULL!).
+The model must be free of any visible Excel errors (#REF!, #N/A, #DIV/0!, #VALUE!, #NUM!, #NULL!, #NAME?, and in modern Excel #SPILL! and #CALC!).
   Good: No visible Excel errors anywhere in the model.
   Bad:  One or more visible Excel errors are present.
 
 --------------------------------------------------------------------------------
 
 No unresolved cell warnings
-The model should contain no unresolved cell warnings. These warnings signal potential issues (numbers stored as text, omitted cells in ranges, inconsistent formulas) that, left unresolved, undermine trust in the model.
+The model should contain no unresolved cell warnings. These warnings signal potential issues (numbers stored as text, omitted cells in ranges, inconsistent formulas) that, left unresolved, undermine trust in the model. Warnings that are known false positives (e.g., a year deliberately stored as text) should be dismissed or explained rather than left visible.
   Good: No unresolved cell warnings are present.
   Bad:  Unresolved cell warnings appear, indicating unresolved issues.
 
@@ -228,15 +228,15 @@ Error handling (e.g., IFERROR, IFNA) should suppress only intentionally produced
 --------------------------------------------------------------------------------
 
 Reasonable file size
-File size should be reasonable for the model's content. As a guideline, a standard 3-statement model should rarely exceed 5-10 MB; sizes above 25 MB usually indicate oversized used ranges, legacy formatting, embedded objects, or model bloat.
-  Good: File size is proportionate to content; a standard 3-statement model is under 10 MB, and any file over 25 MB has a documented justification.
+File size should be proportionate to the model's content. As a guideline, a typical single-entity operating or valuation model should rarely exceed 10 MB; sizes above 25 MB usually indicate oversized used ranges, legacy formatting, embedded objects, or model bloat. A larger file is acceptable where the content justifies it (e.g., an embedded data extract), provided the reason is documented.
+  Good: File size is proportionate to content; a typical model stays under 10 MB, and any larger file has a documented justification.
   Bad:  File size is excessive, suggesting bloated ranges, legacy formatting, or embedded objects.
 
 --------------------------------------------------------------------------------
 
 Reasonable recalculation time
-The model should recalculate in a reasonable time (a full recalc under 5 seconds is a good benchmark for standard models). Long recalc times often point to volatile functions (INDIRECT, OFFSET, NOW), whole-column references, array formulas over large ranges, or overly complex formula chains.
-  Good: The model recalculates quickly (under 5 seconds for a standard model); no noticeable lag when changing inputs.
+The model should recalculate in a reasonable time (a full recalculation under 5 seconds is a good benchmark for a typical single-entity model). Long recalculation times often point to volatile functions (INDIRECT, OFFSET, NOW), whole-column references, array formulas over large ranges, or overly complex formula chains.
+  Good: The model recalculates quickly (under 5 seconds for a typical model); no noticeable lag when changing inputs.
   Bad:  Recalculation is noticeably slow (5 seconds or longer), impeding interactive use and scenario analysis.
 
 --------------------------------------------------------------------------------
@@ -249,16 +249,16 @@ A value for a specific item must match everywhere that item appears across sheet
 --------------------------------------------------------------------------------
 
 No unused formatting
-No unused formatting (color, borders, styles) should remain on empty cells - it is okay to have unused formatting if that formatting is a continuation of formatting from other cells (e.g., formatted separation row between model parts).
+Formatting (color, borders, styles) should not be left on empty cells. Formatting that deliberately continues a pattern from adjacent cells - for example a formatted separator row between model sections - is acceptable.
   Good: Formatting is confined to cells with content or only used as a continuation of formatting from other cells (e.g., formatted separation row between model parts).
   Bad:  Unused formatting appears on empty cells.
 
 --------------------------------------------------------------------------------
 
 Clean Name Manager
-The Name Manager should contain only current, actively referenced defined names. Orphaned or outdated entries should be removed before delivery.
+The Name Manager should contain only current, actively referenced defined names. Orphaned or outdated entries should be removed before delivery. Hidden names generated by Excel or by add-ins are not counted against this item.
   Good: The Name Manager holds only current, in-use names.
-  Bad:  Unused or outdated names remain in the Name Manager.
+  Bad:  Unused, outdated, or #REF! defined names remain in the Name Manager (hidden names in the Name Manager do not count in that sense and will not lead to a disqualification).
 
 --------------------------------------------------------------------------------
 
@@ -284,16 +284,16 @@ A master error flag on the cover or summary page should use conditional formatti
 --------------------------------------------------------------------------------
 
 Consistent units
-Units must be consistent across the model (e.g., all in $mm or all in $000s). No mixing of scales. Where appropriate (e.g., for price per piece) a different unit may be used.
-  Good: Units are consistent across the model with no mixing of scales - where appropriate (e.g., for price per piece) a different unit may be used.
-  Bad:  Units or scales are mixed (e.g., $mm in one place, $000s in another).
+Units must be consistent across the model (e.g., all in $mm or all in $000s). No mixing of scales. Where a different unit is genuinely appropriate (e.g., price per unit, headcount, or a per-share figure), it must be labeled explicitly.
+  Good: Units are consistent across the model with no mixing of scales; where a different unit is genuinely appropriate (e.g., price per unit or a per-share figure), it is labeled explicitly.
+  Bad:  Units or scales are mixed without labeling (e.g., $mm in one place, $000s in another).
 
 --------------------------------------------------------------------------------
 
 Units carried through correctly
-Units defined on the assumptions sheet must carry through correctly to calculation and output sheets with no mid-model scale changes.
+Units defined on the assumptions sheet must carry through correctly to calculation and output sheets with no mid-model scale changes. Scale changes that might be necessary to bring all units on the calculations sheet to the same magnitude are okay.
   Good: Assumption units carry through to calculations and outputs unchanged.
-  Bad:  Units are not carried through correctly; a scale change occurs mid-model.
+  Bad:  Units are not carried through correctly; a scale change (that is not needed to bring all units on the calculations sheet to the same magnitude) occurs mid-model.
 
 --------------------------------------------------------------------------------
 
@@ -308,8 +308,8 @@ FLEXIBILITY
 ================================================================================
 
 Multi-unit coverage
-When multiple business units, divisions, or locations are in scope, the model should use segmented structure with consolidation logic and, where applicable, inter-company eliminations and transfer pricing.
-  Good: Multiple units are handled with segmented structure, proper consolidation, and inter-company eliminations or transfer pricing where applicable - or the case involves only one unit, so no segmentation is required. Single-unit cases satisfy this item by default.
+When multiple business units, divisions, or locations are in scope, the model should use a segmented structure with consolidation logic and, where applicable, inter-company eliminations and transfer pricing. A single-unit case satisfies this item by default.
+  Good: Multiple units are handled with a segmented structure, proper consolidation, and inter-company eliminations or transfer pricing where applicable - or the case involves a single unit, in which case the item is satisfied by default.
   Bad:  Multiple units are in scope but the model lacks segmentation, consolidation logic, or required eliminations.
 
 --------------------------------------------------------------------------------
@@ -322,14 +322,14 @@ Unless the case rules out future M&A or divestitures, the model should accommoda
 --------------------------------------------------------------------------------
 
 Capitalization switches
-Where the case warrants alternative accounting treatment, switches (flags) should allow assets to be capitalized or decapitalized without rebuilding the model.
-  Good: Switches allow capitalization/decapitalization where the case warrants them - or the case does not require such treatment changes. If the case never requires this, the item is satisfied by default.
-  Bad:  The case warrants capitalization/decapitalization analysis, but no switches exist and the change would require a rebuild.
+Where the case warrants alternative accounting treatment, switches (flags) should allow assets to be capitalized or expensed without rebuilding the model. A case that never requires such a treatment change satisfies this item by default.
+  Good: Switches allow the capitalize-versus-expense treatment to be changed where the case warrants it - or the case does not require such treatment changes.
+  Bad:  The case warrants capitalize-versus-expense analysis, but no switches exist and the change would require a rebuild.
 
 --------------------------------------------------------------------------------
 
 Reuse as planning tool
-If the model was created to evaluate a business opportunity and later reuse (e.g., as an ongoing planning tool) is foreseeable, the design should support that reuse. If no reuse is foreseeable, the item is satisfied by default.
+If the model was created to evaluate a business opportunity and later reuse (e.g., as an ongoing planning tool) is foreseeable, the design should support that reuse. If no reuse is foreseeable (i.e. ruled out in the instructions), the item is satisfied by default.
   Good: Design supports both initial evaluation and foreseeable later reuse (e.g., as a planning tool) - or no ongoing reuse is foreseeable.
   Bad:  Design suits only one-time evaluation despite a foreseeable need for ongoing reuse.
 
@@ -367,9 +367,9 @@ Input cells must be visually marked (color, shading, border) so users immediatel
 --------------------------------------------------------------------------------
 
 Input cells data validation
-Input cells should also use data validation (warning for inputs outside of ranges deemed appropriate) to constrain entries to allowable ranges or types.
-  Good: Data validation is used to restrict the entries in the input cells (to reasonable value ranges/values).
-  Bad:  No data validation is used to restrict the entries in the input cells (to reasonable value ranges/values).
+Key input cells should use data validation to constrain entries to allowable ranges or types, warning the user when an entry falls outside the range deemed appropriate.
+  Good: Key input cells use data validation to constrain entries to sensible ranges, types, or lists, so an out-of-range entry is rejected or flagged at the point of entry.
+  Bad:  Input cells accept any entry; no data validation constrains values, types, or lists, even where an out-of-range entry would break the model silently.
 
 --------------------------------------------------------------------------------
 
@@ -382,14 +382,14 @@ Number formats should be reasonable: no excess decimals, currency symbols where 
 
 Consistent number formats
 Number formats must be consistent across the model for comparable values.
-  Good: Number formats are consistent for comparable values across the model.
+  Good: Number formats are consistent for comparable values across the model (also consistent is the number of shown decimals for comparable values).
   Bad:  Number formats vary inconsistently for comparable values.
 
 --------------------------------------------------------------------------------
 
 No bright-yellow highlighting
-Bright yellow highlighting used during model construction to flag TBD, placeholder, or work-in-progress items must be entirely removed from the final deliverable. This does not apply to yellow used intentionally in the delivered model for a defined purpose, such as conditional formatting on error-check rows or a documented convention for flagging assumptions requiring periodic review - provided such usage is explained in the model's glossary or conventions guide.
-  Good: No bright yellow cells signaling unfinished or placeholder work remain in the final product. Any yellow used intentionally for a documented, ongoing purpose (e.g., error-check conditional formatting, flagged review items) is explained in the glossary or conventions.
+Bright yellow highlighting used during model construction to flag TBD, placeholder, or work-in-progress items must be entirely removed from the final deliverable. This does not apply to yellow used intentionally in the delivered model for a defined purpose - for example conditional formatting on error-check rows, a documented convention for marking input cells, or flagging assumptions that require periodic review - provided such usage is to be explained in the model's glossary or conventions guide.
+  Good: No bright yellow cells signaling unfinished or placeholder work remain in the final product. Any yellow used intentionally for a documented, ongoing purpose (e.g., error-check conditional formatting, marked input cells, flagged review items) is explained in the glossary or conventions.
   Bad:  Cells with bright yellow fill that appear to mark unfinished, placeholder, or TBD items remain in the delivered workbook, signaling incomplete work - or yellow is used for an ongoing purpose but is not documented in the glossary, making it indistinguishable from leftover WIP markers.
 
 --------------------------------------------------------------------------------
@@ -472,7 +472,7 @@ Borders should be used sparingly to partition sections and separate key areas of
 --------------------------------------------------------------------------------
 
 Header & title shading
-Shading should be used consistently to highlight headers and titles only, making them visually distinct from data rows.
+Shading (cell fill color) should be used consistently to highlight headers and titles only, making them visually distinct from data rows.
   Good: Shading is applied consistently to headers and titles only, making headings visually distinct from data rows in a professional manner.
   Bad:  Shading is applied excessively across many rows or sections, or headings are not visually distinct from data rows.
 
@@ -486,15 +486,15 @@ Totals and subtotals should be bolded or otherwise visually distinguished from r
 --------------------------------------------------------------------------------
 
 Consistent zoom level
-Every sheet should use a uniform zoom level (100%, 80%, or 75%) across the entire workbook so the model appears consistent when navigating between tabs.
-  Good: All sheets use the same zoom level (100%, 80%, or 75%), providing a consistent viewing experience.
+Every sheet should use the same zoom level across the entire workbook (commonly 75%, 80%, or 100%) so the model does not jump in scale when navigating between tabs.
+  Good: All sheets use the same zoom level (commonly 100%, 80%, or 75%), providing a consistent viewing experience.
   Bad:  Zoom levels vary across sheets, creating an inconsistent and unprofessional viewing experience.
 
 --------------------------------------------------------------------------------
 
 Active cell reset to A1 on all sheets
-The cursor should be parked at cell A1 on every sheet before delivery so that each tab opens at its starting position.
-  Good: The cursor is parked at A1 on every sheet; each tab opens at its starting position.
+The cursor should be parked at cell A1 (or the sheet's designated home cell) on every sheet before delivery, so that each tab opens at its intended starting position.
+  Good: The cursor is parked at A1, or at the sheet's designated home cell; each tab opens at its intended starting position.
   Bad:  The cursor is left mid-sheet on one or more tabs, causing sheets to open at unexpected positions.
 
 --------------------------------------------------------------------------------
@@ -535,8 +535,8 @@ Monetary and other (large) quantity values should be formatted with a thousands 
 --------------------------------------------------------------------------------
 
 Currency stated
-The currency used in the model must be clearly stated as a unit, especially where FX is involved.
-  Good: The currency is clearly stated as a unit.
+The currency used in the model must be clearly stated as a unit, and stated per block or column, especially in cases where FX is involved.
+  Good: The currency is clearly stated as a unit, including for each block or column.
   Bad:  The currency is not stated, leaving values ambiguous.
 
 --------------------------------------------------------------------------------
@@ -550,8 +550,8 @@ Column widths must be sufficient to display all values without truncation or '##
 
 Reasonable column widths
 Column widths should not be excessive.
-  Good: The columns in the model are not too wide - multiple columns of the same width (of the largest width) can fit on a screen. In case of too wide columns, text wrapping is used.
-  Bad:  The model contains very wide columns (rule of thumb: no column should be wider than roughly 75-80 characters at default font).
+  Good: Columns are no wider than their content requires; several full-width columns fit on screen at once, and long text is wrapped rather than accommodated by widening the column.
+  Bad:  The model contains excessively wide columns (rule of thumb: wider than roughly 75-80 characters at the default font), or long text is left unwrapped.
 
 --------------------------------------------------------------------------------
 
@@ -572,14 +572,14 @@ Row heights should be consistent within each tab.
 Reasonable row heights
 Row heights should not be excessive.
   Good: Row heights are reasonable - by default, rows should be only one line high. While rows higher than one line are acceptable, they should be used sparingly.
-  Bad:  The model contains very high rows (rule of thumb: no row should be higher than 60 points).
+  Bad:  The model contains excessively tall rows (rule of thumb: taller than roughly 60 points).
 
 --------------------------------------------------------------------------------
 
 No merged cells
 Merged cells break Excel's grid logic (broken formulas, sorting failures, reference errors). Use Center Across Selection instead to preserve grid integrity.
   Good: No merged cells; Center Across Selection is used where needed.
-  Bad:  Merged cells are present.
+  Bad:  Merged cells are present. (Merged cells on the Instructions Tab are allowed)
 
 --------------------------------------------------------------------------------
 
@@ -598,9 +598,9 @@ Page breaks should be configured so that each tab prints legibly as PDF or hard 
 --------------------------------------------------------------------------------
 
 File extension (.xlsx)
-The workbook should be saved with the .xlsx file extension - if VBA/Macros are present as .xlsm.
+The workbook should be saved in a standard Excel format: .xlsx, or .xlsm where VBA/macros are present.
   Good: The workbook is saved as .xlsx (.xlsm when VBA/Macros are present).
-  Bad:  The workbook is saved in a different format.
+  Bad:  The workbook is saved in a legacy or non-standard format (e.g., .xls, .csv, or an export from another spreadsheet application).
 
 
 ================================================================================
@@ -615,9 +615,9 @@ The model should avoid non-standard, uncommon formulas (e.g., FILTERXML, WEBSERV
 --------------------------------------------------------------------------------
 
 Modern formula usage
-Modern formulas should be preferred where available and where backward compatibility is not a constraint: XLOOKUP over VLOOKUP, XMATCH over MATCH, IFS or SWITCH over nested IF, and LET for readable intermediate variables. If the model must support Excel 2016 or earlier, note the trade-off (if not stated, assume that the newest version of Excel is used by the client).
-  Good: Modern functions (XLOOKUP, XMATCH, IFS, SWITCH, LET) are used where they improve robustness and readability.
-  Bad:  Legacy functions (VLOOKUP, deeply nested IFs) are used where modern equivalents are clearly preferable.
+Modern functions should be preferred where they improve robustness or readability and where backward compatibility is not a constraint: XLOOKUP over VLOOKUP, IFS or SWITCH over deeply nested IFs, and LET for readable intermediate variables. INDEX/XMATCH remains a fully acceptable professional standard and is not penalized. Unless the case context states otherwise, assume the client uses a current version of Excel; where an older version must be supported, the legacy equivalents are acceptable, and the trade-off should be documented.
+  Good: Modern functions (XLOOKUP, XMATCH, IFS, SWITCH, LET) are used where they improve robustness and readability - or a legacy equivalent is used for a documented compatibility or performance reason, for example INDEX/XMATCH or nested IFs in a very large model, where they compute more efficiently than IFS or SWITCH (in that case efficiency > auditability).
+  Bad:  Fragile legacy constructs are used where a modern equivalent is clearly preferable and no compatibility or performance reason is given - most commonly VLOOKUP with a hardcoded column index, or IFs nested many levels deep.
 
 --------------------------------------------------------------------------------
 
@@ -636,8 +636,8 @@ Formulas must reference assumption cells rather than embedding constants (e.g., 
 --------------------------------------------------------------------------------
 
 Simple, stepwise formulas
-Formulas should be simple, readable, and broken into logical steps using helper columns, rows, or LET. As a guideline, formulas nesting more than three functions deep ('3-clause rule') should be split. Some complexity is acceptable to keep the model structure lean.
-  Good: Complex logic is broken into steps via helper columns or LET. No formula nests more than three functions deep without justification.
+Formulas should be simple, readable, and broken into logical steps using helper columns, helper rows, or LET. As a practical guideline, a formula nesting more than about three functions deep ('3-clause rule') should be split. Some complexity is acceptable where splitting would bloat the model structure.
+  Good: Complex logic is broken into steps via helper rows/columns or LET. No formula nests more than about ~three functions deep without justification.
   Bad:  Monolithic mega-formulas obscure logic. No helper columns when clearly needed. Difficult to understand or debug.
 
 --------------------------------------------------------------------------------
@@ -671,7 +671,7 @@ Anchoring conventions ($) should be applied consistently across comparable formu
 --------------------------------------------------------------------------------
 
 Avoid whole-column references
-Whole-column/row references (e.g., SUM(A:A)) force Excel to evaluate up to a million rows per formula. Use defined ranges, table columns, or names instead.
+Whole-column/row references (e.g., SUM(A:A)) force Excel to evaluate up to a million rows per formula. Use defined ranges, TrimRef (e.g., A:.A), table columns, or names instead.
   Good: Defined or structured ranges are used; no whole-column/row references.
   Bad:  Whole-column/row references (e.g., SUM(A:A)) are present.
 
@@ -681,22 +681,22 @@ MODEL OUTPUTS & EXECUTIVE SUMMARY
 ================================================================================
 
 Output reasonableness check
-Outputs should pass a directional sense check against intuition, industry benchmarks, comparable company data, or sell-side estimates. Key metrics to sanity-check include revenue growth, EBITDA margins, ROIC, and implied valuation multiples. Such a sense check is part of the model.
-  Good: The model includes an explicit sense-check section comparing key outputs (growth, margins, multiples) to benchmarks, comps, or sell-side estimates.
-  Bad:  Outputs are implausible or inconsistent with benchmarks - or no sense check made.
+Outputs should pass a directional sense check against intuition, industry benchmarks, comparable companies or transactions, or third-party estimates. The metrics to check depend on the model type - growth and margins for an operating model, IRR and money multiple for a transaction model, debt service cover for project finance, payback and NPV for a capex case, implied multiples for a valuation. The sense check is part of the model, not a separate exercise.
+  Good: The model includes an explicit sense-check section comparing its key outputs to benchmarks, comparables, or third-party estimates, using metrics appropriate to the model type.
+  Bad:  Outputs are implausible or inconsistent with benchmarks - or no sense check is present.
 
 --------------------------------------------------------------------------------
 
 Key ratios & outputs section
-The model should include a key-ratios section computing margins, returns, leverage, growth rates, and valuation multiples.
-  Good: A dedicated section computes key ratios and output metrics (margins, returns, leverage, growth, multiples).
+The model should include a key-ratios section computing the output metrics relevant to its purpose - for example margins, returns, leverage and cover ratios, growth rates, valuation multiples, or transaction returns.
+  Good: A dedicated section computes the key ratios and output metrics relevant to the model's purpose.
   Bad:  No key-ratios or output metrics section.
 
 --------------------------------------------------------------------------------
 
 Cross-scenario summary
-A summary should display results (across all scenarios/cases) in one place.
-  Good: A summary displays results (across all cases) in one view.
+A summary should display results across all scenarios/cases in one place. A model that deliberately runs a single case satisfies this item by default.
+  Good: A summary displays results across all cases in one view - or the model deliberately runs a single case.
   Bad:  No cross-case summary; results are buried in separate sheets.
 
 --------------------------------------------------------------------------------
@@ -712,9 +712,9 @@ POTENTIAL DANGERS
 ================================================================================
 
 No hidden sheets
-The file should be free of hidden or very-hidden sheets. Any legitimate hidden sheet must be disclosed.
-  Good: No hidden or very-hidden sheets, or any are disclosed and justified.
-  Bad:  Undisclosed hidden or very-hidden sheets are present.
+The file should be free of hidden or very hidden sheets. Any legitimate hidden sheet must be disclosed.
+  Good: No hidden or very hidden sheets, or any present are disclosed and justified.
+  Bad:  Undisclosed hidden or very hidden sheets are present.
 
 --------------------------------------------------------------------------------
 
@@ -726,29 +726,15 @@ The file should be free of hidden rows or columns. Use grouping instead of hidin
 --------------------------------------------------------------------------------
 
 No white-on-white hiding
-No content should be concealed using white font on a white background.
-  Good: No white-on-white hidden cells.
-  Bad:  Content is concealed via white-on-white formatting.
-
---------------------------------------------------------------------------------
-
-Password protection disclosed
-Any worksheet or cell protection must be disclosed, justified, and openable by the reviewer.
-  Good: Any protection is disclosed, justified, and openable.
-  Bad:  Undisclosed password protection prevents full audit.
-
---------------------------------------------------------------------------------
-
-Passwords available
-Where protected content exists, the passwords must be available to the user. A file with no protected content satisfies this item by default.
-  Good: No protected content exists, or all passwords for protected content are available.
-  Bad:  Protected content exists but passwords are unavailable.
+No content should be concealed by formatting - in particular white font on a white background, or a number format that renders a populated cell blank.
+  Good: No content is concealed by white-on-white formatting or by a blanking number format.
+  Bad:  Content is concealed via white-on-white formatting or a number format that hides the value.
 
 --------------------------------------------------------------------------------
 
 No external links
-The file should be free of external links to other workbooks (unless stated in the instructions), which can break when the linked file moves, cause #REF errors, and hide dependencies.
-  Good: No external links (unless stated in the instructions); the file is self-contained.
+The file should be free of external links to other workbooks (unless the case context requires them), as they can break when the linked file moves, cause #REF! errors, and hide dependencies.
+  Good: No external links (unless required by the case context/stated in the instructions); the file is self-contained.
   Bad:  External links to other workbooks are present.
 
 --------------------------------------------------------------------------------
@@ -775,9 +761,16 @@ A single sign convention (e.g., costs negative, revenues positive) must be appli
 --------------------------------------------------------------------------------
 
 No errors under extreme-but-plausible inputs
-The model should still work when key assumptions are changed substantially (e.g., useful life tripled, valuation date shifted 12 months, revenue halved). Stress-testing exposes hidden breaks, BS imbalances, divide-by-zeros, and broken roll-forwards.
+The model should still work when key assumptions are changed substantially (e.g., useful life tripled, valuation date shifted 12 months, revenue halved). Stress-testing exposes hidden breaks, balance sheet imbalances, divide-by-zero errors, and broken roll-forwards.
   Good: The model produces sensible results under stress scenarios (e.g., revenue halved, useful life tripled, valuation date shifted). No Excel errors or balance-sheet imbalances emerge.
   Bad:  Under stress, the model breaks, produces balance sheet imbalances, throws Excel errors, or generates nonsensical results (e.g., negative useful life, or negative shares outstanding).
+
+--------------------------------------------------------------------------------
+
+Automatic calculation mode
+The workbook should be delivered with calculation set to automatic - and, where intentional circularity requires it, with iterative calculation enabled and that requirement stated. Manual calculation mode means displayed values may not reflect the inputs currently shown.
+  Good: Calculation is set to automatic, with iterative calculation enabled and documented where the model uses intentional circularity.
+  Bad:  The workbook is saved in manual calculation mode without disclosure, so displayed values may be stale - or iterative calculation is required but not enabled.
 
 
 ================================================================================
@@ -802,14 +795,14 @@ ROUNDING
 ================================================================================
 
 Full precision in intermediates
-Intermediate calculations must retain full precision. Round only final outputs presented to users. Display formatting (e.g., showing 0 decimals) is acceptable as long as the underlying cell value retains full precision.
-  Good: Intermediate calculations retain full precision; rounding is applied only to outputs.
-  Bad:  Intermediate calculations are rounded (unless rounding is stated in the instructions), compounding precision errors.
+Intermediate calculations must retain full precision; round only the final outputs presented to users. Display formatting (e.g., showing 0 decimals) is acceptable, as it does not change the underlying value. Rounding inside the model is legitimate only where the quantity is genuinely discrete (e.g., headcount, units sold, share counts) or where a contract or the case context specifies it.
+  Good: Intermediate calculations retain full precision; rounding is applied only to outputs, to genuinely discrete quantities, or where the case context requires it.
+  Bad:  Intermediate calculations are rounded without justification, compounding precision errors through the model.
 
 --------------------------------------------------------------------------------
 
 Rounded outputs
-Final outputs should be rounded to a sensible precision that communicates the appropriate level of certainty.
+Final outputs should be rounded to a sensible precision that communicates the appropriate level of certainty. (Rounding precision might be dictated for the questions)
   Good: Final outputs are rounded to a sensible, readable precision.
   Bad:  Final outputs show full, false precision.
 
@@ -826,23 +819,23 @@ STRUCTURE
 ================================================================================
 
 Essential components present
-The model should include all essential components: cover page, table of contents, summary/dashboard, assumptions, scenarios (where applicable), calculation sheets, financial statements (where applicable), error-check sheet, and output data.
-  Good: All essential components are present: cover, table of contents, summary, assumptions, scenarios (if applicable), calculations, statements (if applicable), error-check sheet, and outputs.
+The model should include all essential components: cover page, table of contents, summary/dashboard, assumptions, scenarios (where applicable), calculation sheets, financial statements (where applicable), error-check sheet, and output data. Components should be scaled to the model's size and purpose; in a small model several may reasonably sit on fewer sheets, provided each function remains clearly delineated.
+  Good: All essential components are present: cover, table of contents, summary, assumptions, scenarios (if applicable), calculations, statements (if applicable), error-check sheet, and outputs - or, in a small model, these functions are clearly delineated across fewer sheets.
   Bad:  One or more essential components are missing.
 
 --------------------------------------------------------------------------------
 
 Cover sheet first
-The cover sheet should be the first tab, setting context and orienting the user on opening.
-  Good: The cover sheet is the first tab.
-  Bad:  The cover sheet is missing or not the first tab.
+The cover sheet should be the first tab, setting context and orienting the user on opening - typically stating the model's title, purpose, owner, version, and date.
+  Good: The cover sheet is the first tab and states the model's title, purpose, owner, version, and date.
+  Bad:  The cover sheet is missing, is not the first tab, or omits basic identifying information.
 
 --------------------------------------------------------------------------------
 
-Tab structure approach
-The model should use a deliberate tab structure - functional (each tab covers a different function such as Revenue or Debt, with its own left-to-right timeline), period-based (each tab covers a different time period, with functions stacked within it), or hybrid - chosen to suit navigation and calculation flow.
-  Good: A deliberate, suitable tab structure is used consistently.
-  Bad:  The tab structure is unclear, inconsistent, or ill-suited to the model.
+Timeline orientation
+Within calculation tabs, the timeline should run horizontally as standard - periods across columns, line items down rows - and be applied consistently. Period columns should align across tabs, so that a given column refers to the same period everywhere in the workbook (given no time period length shift). A vertical timeline (periods down rows) is acceptable where the tab's content justifies it, but should not be the default.
+  Good: Timeline runs horizontally on all calculation tabs, with periods occupying identical columns across the workbook. Where a vertical orientation is used, it is justified by the content - typically a register or data table where each record needs several attribute columns (ID, currency, rate, source, flags) visible simultaneously, and the number of periods is small enough to scan without excessive scrolling. The choice is consistent within each tab, and the reason for any deviation is evident from the tab itself.
+  Bad:  Orientation is mixed within a single tab, or varies across tabs with no rationale. Period columns are misaligned between tabs (e.g. Jan-24 sits in column H on one sheet and column K on another), creating link risk. A vertical timeline is used by default, forcing constant vertical scrolling to compare periods and breaking the copy-right formula convention. Alternatively, a horizontal timeline is forced onto a record-based table, pushing essential attribute columns off-screen.
 
 --------------------------------------------------------------------------------
 
@@ -861,30 +854,30 @@ Subtitles, categories, and calculation names should be aligned with their respec
 --------------------------------------------------------------------------------
 
 Best-fit structure for stated purpose
-The structure should not merely be acceptable but optimal given the model's specific requirements, audience and foreseeable future uses.
+Beyond being merely acceptable, the structure should be the best fit given the model's specific requirements, audience, and foreseeable future uses. This item fails only where a clearly better alternative exists and can be articulated.
   Good: The structure is well-justified as the best choice for the model's requirements, audience, and foreseeable future uses.
-  Bad:  A sub-optimal structure is used where a better one clearly exists.
+  Bad:  A clearly better structure exists for the model's requirements, audience, or foreseeable uses, and the chosen structure creates avoidable friction.
 
 --------------------------------------------------------------------------------
 
 Deal vs. planning orientation
-The structure should reflect whether the model is for one-time deal evaluation or ongoing planning, as these require different data-refresh cadence, flexibility, and reporting depth.
-  Good: Structure matches the model's deal-evaluation or ongoing-planning purpose.
+The structure (calculation architecture) should reflect whether the model is for one-time deal evaluation or ongoing planning, as these require different data-refresh cadence, flexibility, and reporting depth.
+  Good: Structure (calculation architecture) matches the model's deal-evaluation or ongoing-planning purpose.
   Bad:  Structure does not match the deal-vs-planning intent.
 
 --------------------------------------------------------------------------------
 
 Real fiscal year handling
-The model must handle the company's real fiscal calendar, including non-calendar year-ends (e.g., July-June).
-  Good: The model correctly reflects the company's fiscal year, including non-calendar year-ends.
-  Bad:  The model assumes a calendar year and mishandles the actual fiscal year-end.
+The model must handle the entity's real fiscal calendar, including non-calendar year-ends (e.g., July-June). Where the case context specifies no fiscal calendar, a calendar-year assumption is acceptable provided it is stated.
+  Good: The model correctly reflects the entity's fiscal year, including non-calendar year-ends - or no fiscal calendar is specified and the assumption used is stated.
+  Bad:  The model assumes a calendar year where the case context specifies a different fiscal year-end, or the assumption is left unstated.
 
 --------------------------------------------------------------------------------
 
 Stub period handling
-Stub periods (partial years at the start or end of a forecast) must be calculated correctly using appropriate day-count conventions (actual/365, actual/360, 30/360) consistent with the model's purpose, instructions and jurisdiction.
-  Good: Stub periods are calculated correctly with appropriate day-count conventions.
-  Bad:  Stub periods are mishandled or ignored.
+Stub periods (partial periods at the start or end of a forecast) must be calculated correctly using a day-count convention (actual/365, actual/360, 30/360) appropriate to the model's purpose, the case context/instructions, and the jurisdiction. A model whose periods are all full periods satisfies this item by default.
+  Good: Stub periods are calculated correctly with an appropriate day-count convention - or the model contains no stub periods.
+  Bad:  Stub periods arise but are mishandled or ignored.
 
 --------------------------------------------------------------------------------
 
@@ -896,7 +889,7 @@ Cover, inputs, calculations, analyses, and outputs should each sit on separate s
 --------------------------------------------------------------------------------
 
 Logical tab order
-Tabs should be ordered to follow model flow: cover -> table of contents -> assumptions/inputs -> calculations -> (financial statements) -> (analyses/scenarios) -> outputs/summary -> error checks.
+Tabs should be ordered to follow model flow: cover → table of contents → assumptions/inputs → calculations → (financial statements) → (analyses/scenarios) → outputs/summary → error checks.
   Good: Tabs follow a clear model flow from cover to inputs to calculations to statements to outputs to error checks.
   Bad:  Tabs are out of model-flow order.
 
@@ -938,16 +931,16 @@ Similar tabs should share a consistent layout - same columns for headings, sub-h
 --------------------------------------------------------------------------------
 
 Freeze panes set
-Freeze panes should keep row labels and the timeline header visible while scrolling on large calculation sheets.
-  Good: Freeze panes keep labels and the timeline visible during scrolling.
-  Bad:  Freeze panes are not set where needed; labels scroll out of view.
+Freeze panes keep labels and the timeline visible during scrolling. Freeze panes are also not excessively set - i.e. not more than 2/3 of a regular screen view should be blocked by freeze panes.
+  Good: Freeze panes keep labels and the timeline visible during scrolling while enough of the calculations is still visible.
+  Bad:  Freeze panes are not set where needed; labels scroll out of view. Or freeze panes set excessively.
 
 --------------------------------------------------------------------------------
 
 One timeline per sheet
-Each worksheet should contain only one timeline. Multiple timelines on one sheet create ambiguity about which period a calculation refers to.
-  Good: Each worksheet uses a single timeline.
-  Bad:  A worksheet contains multiple timelines.
+Each worksheet should contain only one timeline. Multiple timelines on one sheet create ambiguity about which period a calculation refers to. Where a sheet genuinely needs a second periodicity (e.g., an annual summary beneath a quarterly build), the blocks must be clearly separated and labeled.
+  Good: Each worksheet uses a single timeline - or any additional periodicity is clearly separated, labeled, and justified.
+  Bad:  A worksheet contains multiple timelines that are interleaved or not clearly separated, labeled and justified.
 
 --------------------------------------------------------------------------------
 
@@ -973,16 +966,23 @@ Header rows should indicate whether the data in each column consists of actual v
 --------------------------------------------------------------------------------
 
 Clear row labels
-Row labels should be clear, descriptive, professional, and use standard financial terminology appropriate to the target audience.
-  Good: Row labels are clear, professional, and use standard terminology.
-  Bad:  Row labels are vague, unprofessional, or use non-standard terms.
+Row labels should be clear, descriptive, professional, correctly spelled, and use standard financial terminology appropriate to the target audience.
+  Good: Row labels are clear, professional, correctly spelled, and use standard terminology.
+  Bad:  Row labels are vague, unprofessional, misspelled, or use non-standard terms.
 
 --------------------------------------------------------------------------------
 
 Clear column labels
-Column labels should be clear, descriptive, professional, and use standard financial terminology appropriate to the target audience.
-  Good: Column labels are clear, professional, and use standard terminology.
-  Bad:  Column labels are vague, unprofessional, or use non-standard terms.
+Column labels should be clear, descriptive, professional, correctly spelled, and use standard financial terminology appropriate to the target audience.
+  Good: Column labels are clear, professional, correctly spelled, and use standard terminology.
+  Bad:  Column labels are vague, unprofessional, misspelled, or use non-standard terms.
+
+--------------------------------------------------------------------------------
+
+Roll-forward (corkscrew) structure for balances
+Balance items that move over time - debt, cash, PP&E, working capital, equity, provisions, share count - should be built as explicit roll-forwards: opening balance, additions, deductions, closing balance, with each period's closing balance feeding the next period's opening balance. A model with no carried-forward balances satisfies this item by default.
+  Good: Balance items are built as explicit roll-forwards, with each movement on its own line and closing balances feeding the next period's opening balance - or the model carries no balances forward.
+  Bad:  Balance items are computed in one compressed formula without showing opening balance, movements, and closing balance - or a period's opening balance does not equal the prior period's closing balance.
 
 --------------------------------------------------------------------------------
 

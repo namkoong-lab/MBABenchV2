@@ -42,9 +42,10 @@ def main() -> int:
     assert rubric_for_prompt_version("v11") == "v1"
     print("OK  rubric_for_prompt_version: v12/v13 -> v2, v11 -> v1")
 
-    # The rubric section is byte-exact against the GUI v3 source of truth,
-    # which is itself byte-identical to the v2 rubric (the Questions-sheet
-    # revision must not touch the rubric).
+    # The rubric section is byte-exact against the GUI v3 source of truth.
+    # Since the 2026-08 rubric revision (in-place text update from the
+    # canonical checklist xlsx) prompts_v3 deliberately DIFFERS from the
+    # frozen prompts_v2 rubric — assert both directions.
     sys_text = sys_path.read_text()
     rubric = sys_text[sys_text.index(RUBRIC_MARKER):]
     rubric = rubric[: rubric.index("--- AVAILABLE TOOLS ---")].rstrip("\n")
@@ -52,12 +53,14 @@ def main() -> int:
     expected = step2[step2.index(RUBRIC_MARKER):].rstrip("\n")
     assert rubric == expected, "v13 rubric section drifted from prompts_v3/step2_build.txt"
     step2_v2 = STEP2_V2.read_text()
-    assert expected == step2_v2[step2_v2.index(RUBRIC_MARKER):].rstrip("\n"), (
-        "prompts_v3 rubric drifted from prompts_v2 — the revision must not touch the rubric"
+    assert expected != step2_v2[step2_v2.index(RUBRIC_MARKER):].rstrip("\n"), (
+        "prompts_v3 rubric matches frozen prompts_v2 — the 2026-08 revision "
+        "text is missing (rerun judge/operation_scripts/build_rubric_9_from_xlsx.py "
+        "and tools/build_v13_prompts.py)"
     )
     n_checks = len(re.findall(r"\n\s*Good:", rubric))
     assert n_checks == 132, f"expected 132 checks, found {n_checks}"
-    print(f"OK  rubric byte-exact vs prompts_v3 and unchanged vs prompts_v2 ({len(rubric)} chars, 132 checks)")
+    print(f"OK  rubric byte-exact vs prompts_v3; 2026-08 revision differs from frozen prompts_v2 ({len(rubric)} chars, 132 checks)")
 
     # The Questions-sheet convention made it into the system prompt, with
     # the CLI copy_file translation applied.

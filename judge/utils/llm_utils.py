@@ -112,6 +112,11 @@ _MODEL_PRICING = {
     "google/gemini-3.6-flash": (0.5, 3.0),
     "google/gemini-3.1-pro-preview": (2.0, 12.0),
     "openai/gpt-5.5": (5.0, 30.0),   # judge-robustness study 2026-07-26 (OpenRouter)
+    # Judge bake-off 2026-08 — PROVISIONAL list prices; ground truth comes
+    # from Patrick's isolated-window credits-dashboard deltas after the runs
+    # ($/MTok = delta / token_tracking totals), then recalibrate here.
+    "openai/gpt-5.6-sol": (5.0, 30.0),       # OpenAI list (matches cli models_config)
+    "anthropic/claude-opus-5": (5.0, 25.0),  # Anthropic list price
 }
 _DEFAULT_PRICING = (10.0, 30.0)  # Fallback pricing per 1M tokens
 

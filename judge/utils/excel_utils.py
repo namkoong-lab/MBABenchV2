@@ -698,14 +698,22 @@ def extract_cell_formatting(cell) -> str:
     return ";".join(formatting_parts)
 
 
-def create_enhanced_cell(
+def create_enhanced_cell_variants(
     cell,
     cell_data_only,
     row_idx: int,
     col_idx: int,
     _cached_config=None,
-) -> str:
-    """Create enhanced cell data with embedded formula and formatting."""
+) -> tuple:
+    """(full, data) encodings of one cell.
+
+    `full` embeds reference, display value, formula, and the style FORMAT
+    segment. `data` is identical minus the cell-level style segment
+    (fonts/colors/alignment/borders) — number-format rendering stays inside
+    the display value, so Rounding/Accuracy still read display precision.
+    Stripping happens here, at part level, because display text may itself
+    contain '|' or literal '[FORMAT:' number-format annotations.
+    """
     # Start with formatted display value (includes number formatting)
     display_value = _get_formatted_value(cell, cell_data_only, _cached_config)
 
@@ -727,13 +735,28 @@ def create_enhanced_cell(
     if formula_text is not None:
         cell_parts.append(f"FORMULA:{formula_text}")
 
+    data_variant = "|".join(cell_parts)
+
     # Add formatting if present and cell has value or color formatting
     if _cell_has_value_or_color(cell, cell_data_only):
         formatting = extract_cell_formatting(cell)
         if formatting:
             cell_parts.append(f"FORMAT:{formatting}")
 
-    return "|".join(cell_parts)
+    return "|".join(cell_parts), data_variant
+
+
+def create_enhanced_cell(
+    cell,
+    cell_data_only,
+    row_idx: int,
+    col_idx: int,
+    _cached_config=None,
+) -> str:
+    """Create enhanced cell data with embedded formula and formatting."""
+    return create_enhanced_cell_variants(
+        cell, cell_data_only, row_idx, col_idx, _cached_config=_cached_config
+    )[0]
 
 
 def list_to_csv(data: List[List[str]]) -> str:
@@ -754,6 +777,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
     use_fast = load_env_var("JUDGE_FAST_CELL_EXTRACT", "true").lower() == "true"
 
     enhanced_data = []
+    data_view = []  # same encoding minus the style FORMAT segment
 
     if use_fast:
         # In read-only mode, worksheet_data.cell(r, c) re-scans the XML from the
@@ -772,32 +796,39 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
             zip(worksheet.iter_rows(), worksheet_data.iter_rows()), 1
         ):
             enhanced_row = []
+            data_row = []
             for col_idx, (cell, cell_data_only) in enumerate(zip(row, row_data), 1):
-                enhanced_cell = create_enhanced_cell(
+                full_cell, data_cell = create_enhanced_cell_variants(
                     cell,
                     cell_data_only,
                     row_idx,
                     col_idx,
                     _cached_config=cached_config,
                 )
-                enhanced_row.append(enhanced_cell)
+                enhanced_row.append(full_cell)
+                data_row.append(data_cell)
             enhanced_data.append(enhanced_row)
+            data_view.append(data_row)
     else:
         for row_idx, row in enumerate(worksheet.iter_rows(), 1):
             enhanced_row = []
+            data_row = []
             for col_idx, cell in enumerate(row, 1):
                 cell_data_only = worksheet_data.cell(row_idx, col_idx)
-                enhanced_cell = create_enhanced_cell(
+                full_cell, data_cell = create_enhanced_cell_variants(
                     cell,
                     cell_data_only,
                     row_idx,
                     col_idx,
                 )
-                enhanced_row.append(enhanced_cell)
+                enhanced_row.append(full_cell)
+                data_row.append(data_cell)
             enhanced_data.append(enhanced_row)
+            data_view.append(data_row)
 
     return {
         "full": list_to_csv(enhanced_data),
+        "data": list_to_csv(data_view),
         "metadata": {
             "format": "Enhanced with cell references, formulas and formatting",
             "separator": "|",
@@ -952,6 +983,16 @@ def save_sheet_csv_files(
         saved_files.append(str(enhanced_path))
         if not quiet:
             logger.info(f"Saved: {enhanced_path}")
+
+    # Format-stripped sibling view (2026-08 cost lever): identical encoding
+    # minus the style FORMAT segments. Served by the agentic read_file tool
+    # for non-Formatting categories; never listed in prompts.
+    if "data" in extraction_result:
+        data_path = output_dir / f"{safe_sheet_name}_data.csv"
+        data_path.write_text(extraction_result["data"], encoding="utf-8")
+        saved_files.append(str(data_path))
+        if not quiet:
+            logger.info(f"Saved: {data_path}")
 
     # Save additional format information (merged cells, frozen panes)
     if worksheet is not None:
@@ -1393,6 +1434,11 @@ def prepare_directory_files(directory_path: str) -> dict:
     csv_files = sorted(directory.glob("*.csv"), key=lambda f: f.stat().st_ctime)
 
     for csv_file in csv_files:
+        # *_data.csv is the format-stripped serving variant of *_full.csv —
+        # an internal indirection for the agentic read_file tool, never a
+        # prompt-facing file of its own.
+        if csv_file.name.endswith("_data.csv"):
+            continue
         files_dict[csv_file.name] = str(csv_file)
 
         base_name = csv_file.stem.replace("_full", "")

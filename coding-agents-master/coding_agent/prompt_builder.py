@@ -50,13 +50,14 @@ V8_RUBRIC_MD5 = "ff2e3d483da45b722ed1a39db07d1c14"
 V8_RUBRIC_LEN = 60470
 V8_RUBRIC_MARKER = "== FULL RUBRIC"
 
-# v9 (benchmark v2, Questions-sheet revision) embeds the same 132-check
-# rubric byte-exact from gui-agents-master/tasks_configs/prompts_v3/
-# step2_build.txt — deliberately identical to v8's (the revision must not
-# touch the rubric). Regenerate with tools/build_v9_template.py; never edit
-# the rubric section by hand.
-V9_RUBRIC_MD5 = "ff2e3d483da45b722ed1a39db07d1c14"
-V9_RUBRIC_LEN = 60470
+# v9 (benchmark v2, Questions-sheet revision) embeds the 132-check rubric
+# byte-exact from gui-agents-master/tasks_configs/prompts_v3/step2_build.txt.
+# Since the 2026-08 rubric revision (in-place text update from the canonical
+# checklist xlsx, Patrick-approved) it deliberately DIFFERS from v8's frozen
+# rubric. Regenerate with tools/build_v9_template.py; never edit the rubric
+# section by hand.
+V9_RUBRIC_MD5 = "b11e174d69a74d239437c572584041ab"
+V9_RUBRIC_LEN = 68761
 
 
 def _md5(path: Path) -> str:

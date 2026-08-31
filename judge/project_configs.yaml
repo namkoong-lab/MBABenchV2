@@ -46,9 +46,12 @@ judge:
   default_attempt_context_char_limit: 1_000_000
 
 agentic_judge:
-  version: 2
-  prompt_template: "prompts/agentic_judge_template_4.yaml"
-  prompt_version: "4"
+  # 3 (2026-08): rubric_9 in-place revision + per-task suitability gating +
+  # xlsx weight system + score-neutral answer check + category-keyed context
+  # views. Grades under version 3 are not comparable to version 2 rows.
+  version: 3
+  prompt_template: "prompts/agentic_judge_template_5.yaml"
+  prompt_version: "5"
   context_token_limit: 850000   # below GPT-5.6 Sol's 922k input cap so eviction fires before a 400
   max_rounds: 50
   read_file_max_cells: 2500     # drop to ~1200 for stubborn overflow cells

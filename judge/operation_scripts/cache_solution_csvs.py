@@ -8,7 +8,10 @@ A task is considered "valid" when:
 For each valid task the script:
   - Downloads the solution Excel file(s)
   - Extracts every sheet to CSV (no sheet filtering)
-  - Stores the result under  <scratch>/grade_cache/solution_csv_cache/task_id=<id>/
+  - Stores the result under
+    <scratch>/grade_cache/<db-name>/solution_csv_cache_v2/task_id=<id>/
+    (the exact location grade_from_db.py reads; "_v2" is the 2026-08 cache
+    generation whose extraction also writes the *_data.csv serving variants)
   - Writes a _summary.txt with per-task total character counts (desc) and
     a list of task IDs whose solution CSVs exceed 2 million characters.
 
@@ -262,7 +265,17 @@ def main():
         logger.error("BIZBENCHJUDGE_PATHS_SCRATCH_PATH not set.")
         sys.exit(1)
 
-    cache_base = Path(scratch_base) / "grade_cache" / "solution_csv_cache"
+    # Mirror grade_from_db.cache_namespace(): caches are namespaced by DB
+    # name (v1/v2 reuse task-id ranges), and the "_v2" generation carries the
+    # *_data.csv serving variants alongside *_full.csv.
+    import re as _re
+    from urllib.parse import urlparse as _urlparse
+
+    db_name = _urlparse(get_db_url()).path.lstrip("/").rsplit("/", 1)[-1]
+    namespace = _re.sub(r"[^A-Za-z0-9._-]", "_", db_name) or "default"
+    cache_base = (
+        Path(scratch_base) / "grade_cache" / namespace / "solution_csv_cache_v2"
+    )
     cache_base.mkdir(parents=True, exist_ok=True)
 
     conn = get_db_connection()

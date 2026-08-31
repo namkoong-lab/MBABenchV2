@@ -56,13 +56,23 @@ def test_registry_resolves_shared_sets():
             assert p.stat().st_size > 0, f"version {version} file is empty: {rel}"
 
 
-def test_202_rubric_body_unchanged_from_200():
+def test_202_rubric_body_revised_from_200():
+    # The 2026-08 rubric revision (Patrick-approved in-place text update from
+    # the canonical checklist xlsx) deliberately changed the live 202/203
+    # rubric bodies while leaving the frozen 200/201 sets untouched. The two
+    # live sets must carry the SAME revised rubric; the frozen 200 set must
+    # NOT match it.
     marker = b"== FULL RUBRIC"
     v2 = (MEMBER_ROOT / "tasks_configs/prompts_v2/step2_build.txt").read_bytes()
     v3 = (MEMBER_ROOT / "tasks_configs/prompts_v3/step2_build.txt").read_bytes()
-    assert v2[v2.index(marker):] == v3[v3.index(marker):], (
-        "the 202 rubric body drifted from 200's — the Questions-sheet "
-        "revision must not touch the rubric"
+    v2_2 = (MEMBER_ROOT / "tasks_configs/prompts/v2_2.txt").read_bytes()
+    assert v3[v3.index(marker):] == v2_2[v2_2.index(marker):], (
+        "the 202 (prompts_v3) and 203 (v2_2.txt) rubric bodies diverged — "
+        "rerun judge/operation_scripts/build_rubric_9_from_xlsx.py"
+    )
+    assert v2[v2.index(marker):] != v3[v3.index(marker):], (
+        "the live 202 rubric matches the frozen 200 rubric — the 2026-08 "
+        "revision text is missing"
     )
 
 
