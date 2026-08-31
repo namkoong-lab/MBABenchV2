@@ -61,6 +61,17 @@
   model: gpt-5.5
   effort: none                        # only effort chat/completions accepts with tools
 
+# Judge bake-off 2026-08, revised roster (Patrick 2026-08-31): the evaluation
+# is gemini-3.7-flash @low vs @high vs gpt-5.6-sol; gemini-3.5-flash and
+# claude-opus-5 arms are retired. 3.7-flash's effort scale is low / medium
+# (provider default) / high — both our lanes set it explicitly, so neither
+# rides the default. The stanza pins `low`; the high lane passes
+# --reasoning-effort high, recorded in gradings.grader_reasoning.
+- grader_model: google/gemini-3.7-flash
+  provider: openrouter                # keeps OpenRouter's exact per-call cost
+  model: google/gemini-3.7-flash
+  effort: low
+
 # Judge bake-off 2026-08 graders (judge_version 3; vs google/gemini-3.5-flash
 # above). Minimal/lowest effort posture for all three — no reasoning-plumbing.
 - grader_model: openai/gpt-5.6-sol

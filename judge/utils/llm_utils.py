@@ -109,6 +109,8 @@ _MODEL_PRICING = {
     "google/gemini-2.5-flash-lite": (0.075, 0.30),
     "google/gemini-3-flash-preview": (0.5, 3.0),
     "google/gemini-3.5-flash": (0.5, 3.0),
+    "google/gemini-3.7-flash": (0.75, 3.75),  # OpenRouter list 2026-08-31
+
     "google/gemini-3.6-flash": (0.5, 3.0),
     "google/gemini-3.1-pro-preview": (2.0, 12.0),
     "openai/gpt-5.5": (5.0, 30.0),   # judge-robustness study 2026-07-26 (OpenRouter)
