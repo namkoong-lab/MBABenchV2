@@ -906,7 +906,8 @@ class ClaudeWebAgent(WebAgent):
                 label = self._resolve_model_label(model)
                 logger.info(f"Configuring model={label!r}, effort={effort!r}...")
 
-                current = (await self._model_button_label()).lower()
+                raw = await self._model_button_label()
+                current = raw.lower()
                 if label.lower() not in current:
                     if not await self._open_model_dropdown():
                         return False
@@ -917,14 +918,21 @@ class ClaudeWebAgent(WebAgent):
                         return False
                     await self._close_model_dropdown()
 
-                    current = (await self._model_button_label()).lower()
+                    raw = await self._model_button_label()
+                    current = raw.lower()
                     if label.lower() not in current:
                         logger.error(
                             f"Model not set after selection: wanted {label!r}, "
                             f"button reads {current!r}"
                         )
                         return False
-                logger.info(f"Model verified: {label}")
+                # Log the button's OWN text, not the label we asked for. The
+                # checks above are substring/prefix tests, so a future
+                # "Fable 5.1" entry satisfies a "Fable 5" request; gui rows
+                # stamp no extra_configs, so this line is the only per-attempt
+                # record of which model actually served the run. Covers both
+                # the already-correct path and the after-selection path.
+                logger.info(f"Model verified: {label} — button reads {raw!r}")
                 # Model may have changed — re-probe the thinking switch.
                 self._thinking_switch_absent = False
             else:
