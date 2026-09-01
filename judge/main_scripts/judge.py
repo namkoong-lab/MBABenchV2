@@ -2674,12 +2674,13 @@ def _build_pressure_signal(
 # Token density assumed for a tool result the gate is ABOUT to add. The
 # global calibrated ratio reflects the context mix so far — mostly prose on
 # early rounds (~3.5-4 chars/token) — but big read results are dense CSV
-# with formulas (~2-2.5). Projecting CSV at the prose ratio understated a
-# 7-read burst by ~30% and let 1.02M real tokens through an 850K gate
-# (canary step 1, second failure). New content is therefore always
-# projected at CSV density; over-refusing a rare prose-dense result errs
-# safe and costs one recoverable retry.
-_READ_GATE_RESULT_CPT = 2.4
+# with formulas. MEASURED, not guessed: the canary's twice-crashed
+# conversation (attempt 353, 2.07M wire chars vs 1,022,753 real tokens)
+# tokenized at 2.03 chars/token; 2.4 was still ~18% optimistic and the
+# burst squeaked through again. 1.8 gives ~11% margin below the measured
+# density. Over-refusing a rare prose-dense result errs safe and costs one
+# recoverable retry.
+_READ_GATE_RESULT_CPT = 1.8
 # Tokens held back from the budget for the round's own overhead (the next
 # pressure note, nudges, the model's reply) and residual estimator error.
 _READ_GATE_RESERVE_TOKENS = 30_000

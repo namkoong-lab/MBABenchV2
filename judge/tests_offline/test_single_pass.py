@@ -353,16 +353,30 @@ check(
 # ---------------------------------------------------------------------------
 # signature: (result_chars, current_tokens_est, limit); additions convert at
 # CSV density (2.4 c/t) and the budget holds back a 30K reserve.
-refuse, proj, cur = judge._read_refusal_check(240_000, 500_000, 850_000)
+refuse, proj, cur = judge._read_refusal_check(180_000, 500_000, 850_000)
 check(refuse is False and proj == 600_000 and cur == 500_000,
-      "under budget -> served (500K + 240K chars @2.4 = 600K < 820K)")
-refuse, proj, cur = judge._read_refusal_check(840_000, 500_000, 850_000)
+      "under budget -> served (500K + 180K chars @1.8 = 600K < 820K)")
+refuse, proj, cur = judge._read_refusal_check(630_000, 500_000, 850_000)
 check(refuse is True and proj == 850_000,
       "over budget -> refused (500K + 350K = 850K >= 820K budget)")
-refuse, proj, cur = judge._read_refusal_check(48_001, 800_000, 850_000)
+refuse, proj, cur = judge._read_refusal_check(36_001, 800_000, 850_000)
 check(refuse is True, "reserve enforced (800K + 20K = 820K >= 820K budget)")
-check(judge._READ_GATE_RESULT_CPT == 2.4 and judge._READ_GATE_RESERVE_TOKENS == 30_000,
-      "gate constants: CSV density 2.4, reserve 30K")
+check(judge._READ_GATE_RESULT_CPT == 1.8 and judge._READ_GATE_RESERVE_TOKENS == 30_000,
+      "gate constants: measured CSV density floor 1.8, reserve 30K")
+# Replay the twice-crashed burst: start ~90K tokens, then the crashed run's
+# actual largest results — the gate must refuse BEFORE the provider's 922K.
+tok = 90_000
+served = refused = 0
+for size in (104_530, 109_950, 177_955, 178_884, 218_085, 218_783, 384_013, 401_994):
+    r, proj, _ = judge._read_refusal_check(size, tok, 850_000)
+    if r:
+        refused += 1
+    else:
+        served += 1
+        tok = proj
+check(refused >= 2 and tok < 850_000,
+      f"crashed-burst replay: {served} served, {refused} refused, "
+      f"peak est {tok:,} < 850K")
 msg_text = judge._read_refusal_message(800_000, 900_000, 500_000, 850_000, 7)
 check("REFUSED" in msg_text and "evict_tool_results(before_round=7)" in msg_text
       and "NOT added" in msg_text and "retryable" in msg_text,
