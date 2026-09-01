@@ -2671,6 +2671,50 @@ def _build_pressure_signal(
     return status, tier
 
 
+def _read_refusal_check(
+    result_chars: int, running_chars: int, chars_per_token: float, limit: int
+) -> tuple[bool, int, int]:
+    """Would serving a read of `result_chars` blow the context budget?
+
+    Returns (refuse, projected_tokens, current_tokens). Measured, not
+    estimated: the caller executes the read locally first (CSV slicing is
+    free) and gates on the ACTUAL result size, so the clamped-range trap —
+    refusing a request whose rectangle is huge but whose real content is
+    small — cannot occur. `chars_per_token` is the loop's live calibration
+    from usage.prompt_tokens; before calibration a conservative CSV-dense
+    2.5 applies.
+
+    Why this exists (canary step 1, 2026-09-01): a single-pass sol grading
+    issued a burst of parallel 5000-cell reads that took wire context from
+    85K to 722K tokens in ONE round, and the next request 400'd at the
+    provider's hard input cap (922K) — the pressure ladder warns between
+    rounds and can never stop an intra-round burst. This gate is the hard
+    guarantee; the refusal it produces is recoverable (evict, then re-read).
+    """
+    cpt = chars_per_token if chars_per_token and chars_per_token > 0 else 2.5
+    current_tokens = int(running_chars / cpt)
+    projected_tokens = int((running_chars + result_chars) / cpt)
+    return projected_tokens >= limit, projected_tokens, current_tokens
+
+
+def _read_refusal_message(
+    result_chars: int, projected_tokens: int, current_tokens: int,
+    limit: int, current_round: int,
+) -> str:
+    return (
+        f"REFUSED (context budget): this read returned ~{result_chars:,} "
+        f"characters, which would take the conversation to "
+        f"~{projected_tokens // 1000}K of the {limit // 1000}K-token limit "
+        f"(currently ~{current_tokens // 1000}K). The result was NOT added "
+        f"to context. To proceed: (1) record any findings you already have "
+        f"via record_check / append_mistake, (2) call "
+        f"evict_tool_results(before_round={current_round}) to drop old read "
+        f"results you no longer need, then (3) re-issue this read — it is "
+        f"always retryable after a successful eviction. Or request a "
+        f"smaller range instead."
+    )
+
+
 def _execute_read_file(tool_call, attempt_dir, solution_dir, category=None,
                        format_notes=None, starting_dir=None):
     """Execute a read_file tool call, extracting the specified row/column range from a CSV.
@@ -4250,6 +4294,13 @@ def single_pass_judge_case(
             return "Structure"
         return "_data_view"  # any non-Formatting label serves the data view
 
+    # Per-round flow bookkeeping for the read-refusal gate: `round_chars`
+    # accumulates the wire size of everything in flight THIS round (the
+    # request context plus each already-served tool result), so a burst of
+    # parallel reads is gated against its own running total, not against a
+    # stale start-of-round snapshot. Reset by _run_round.
+    flow = {"round_chars": 0, "refused": 0, "evicted": 0}
+
     def _dispatch_tool(tc, _args_parsed, phase: str) -> str:
         name = tc.function.name
         if name == "read_file":
@@ -4259,7 +4310,7 @@ def single_pass_judge_case(
                     "finalization. Only record_check / append_mistake / "
                     "get_working_judgement are allowed."
                 )
-            return _execute_read_file(
+            result = _execute_read_file(
                 tc,
                 ai_attempt_dir,
                 golden_solution_dir,
@@ -4267,6 +4318,27 @@ def single_pass_judge_case(
                 format_notes=format_notes_served,
                 starting_dir=starting_workbook_dir,
             )
+            # Context-budget gate on the MEASURED result (errors are tiny
+            # and always served). Recoverable: the model evicts and retries.
+            if not result.startswith("Error:"):
+                refuse, projected, current = _read_refusal_check(
+                    len(result),
+                    flow["round_chars"],
+                    chars_per_token,
+                    AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
+                )
+                if refuse:
+                    flow["refused"] += 1
+                    logger.info(
+                        f"      read_file REFUSED: +{len(result):,} chars "
+                        f"would reach ~{projected // 1000}K of "
+                        f"{AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT // 1000}K tokens"
+                    )
+                    return _read_refusal_message(
+                        len(result), projected, current,
+                        AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT, state.round,
+                    )
+            return result
         if name == "evict_tool_results":
             if phase == "forced_finalization":
                 return (
@@ -4279,7 +4351,13 @@ def single_pass_judge_case(
             except (ValueError, TypeError) as e:
                 return f"Error: invalid arguments for evict_tool_results: {e}"
             before_round = min(before_round, state.round)
-            return state.evict(before_round)
+            result = state.evict(before_round)
+            if result.startswith("Evicted "):
+                flow["evicted"] += 1
+                # The wire shrank; rebase the running round total on the
+                # post-eviction context so subsequent reads gate correctly.
+                flow["round_chars"] = _wire_char_total(state.messages)
+            return result
         if name in ("record_check", "append_mistake", "get_working_judgement"):
             return _execute_scratchpad_tool(tc, state.working)
         return f"Error: unknown tool '{name}'."
@@ -4288,6 +4366,7 @@ def single_pass_judge_case(
         """One API call + tool execution. Returns 'ok', 'stop', 'retry' or 'break'."""
         nonlocal chars_per_token, api_retries
         wire_chars_at_call = _wire_char_total(state.messages)
+        flow.update(round_chars=wire_chars_at_call, refused=0, evicted=0)
         _msgs = state.messages
         if identity.provider in ("anthropic", "openai"):
             _msgs = strip_unsupported_anthropic_images(_msgs)
@@ -4422,6 +4501,7 @@ def single_pass_judge_case(
         msg_size = _measure_message_chars(msg)
         cumulative_metrics["message_size"] += msg_size
         cumulative_metrics["message_size_with_images"] += msg_size
+        flow["round_chars"] += msg_size
 
         if msg.tool_calls:
             state.append_wire(msg, tag="model_tool_call")
@@ -4462,6 +4542,7 @@ def single_pass_judge_case(
                 tsize = _measure_message_chars(tool_msg)
                 cumulative_metrics["message_size"] += tsize
                 cumulative_metrics["message_size_with_images"] += tsize
+                flow["round_chars"] += tsize
             return "ok"
 
         if msg.content:
@@ -4484,6 +4565,12 @@ def single_pass_judge_case(
     api_retries = 0
     max_api_retries = 5
     chars_per_token = 0.0
+    # Rounds in a row where reads were refused for context budget and the
+    # model performed no successful eviction. A model that cannot fit its
+    # own context is in a broken state — after 3 such rounds the grading
+    # stops loudly (partial saved, row marked failed) instead of letting
+    # forced finalization dress truncated evidence up as a real grade.
+    consecutive_refusal_rounds = 0
 
     round_idx = 0
     while round_idx < max_tool_rounds:
@@ -4524,6 +4611,28 @@ def single_pass_judge_case(
         if outcome == "break":
             break
         if outcome == "ok":
+            if flow["refused"] and not flow["evicted"]:
+                consecutive_refusal_rounds += 1
+                if consecutive_refusal_rounds >= 3:
+                    logger.error(
+                        f"    Context-budget deadlock: reads refused for "
+                        f"{consecutive_refusal_rounds} consecutive rounds "
+                        f"with no eviction. Stopping; partial judgement "
+                        f"will be saved."
+                    )
+                    state.log_event(
+                        "read_refusal_deadlock",
+                        rounds=consecutive_refusal_rounds,
+                    )
+                    recorder.record_event(
+                        "read_refusal_deadlock",
+                        category=ALL,
+                        round=state.round,
+                        rounds=consecutive_refusal_rounds,
+                    )
+                    break
+            else:
+                consecutive_refusal_rounds = 0
             round_idx += 1
             continue
 

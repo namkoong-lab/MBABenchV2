@@ -347,6 +347,32 @@ check(
     "single_pass_judge_case round budget defaults to SINGLE_PASS_MAX_ROUNDS",
 )
 
+
+# ---------------------------------------------------------------------------
+# Read-refusal gate (added after canary step 1's 922K overflow, 2026-09-01)
+# ---------------------------------------------------------------------------
+refuse, proj, cur = judge._read_refusal_check(100_000, 1_000_000, 2.0, 850_000)
+check(refuse and proj == 550_000 + 0 or True, None) if False else None
+check(refuse is False and proj == 550_000 and cur == 500_000,
+      "under budget -> served (1.1M chars @2.0 cpt = 550K tokens)")
+refuse, proj, cur = judge._read_refusal_check(800_000, 1_000_000, 2.0, 850_000)
+check(refuse is True and proj == 900_000,
+      "over budget -> refused (projected 900K >= 850K)")
+refuse, proj, cur = judge._read_refusal_check(0, 2_125_000, 0.0, 850_000)
+check(refuse is True, "uncalibrated falls back to 2.5 chars/token")
+msg_text = judge._read_refusal_message(800_000, 900_000, 500_000, 850_000, 7)
+check("REFUSED" in msg_text and "evict_tool_results(before_round=7)" in msg_text
+      and "NOT added" in msg_text and "retryable" in msg_text,
+      "refusal message: size, eviction recipe, retryability")
+
+sp_src = (JUDGE / "main_scripts" / "judge.py").read_text()
+check("_read_refusal_check(" in sp_src.split("def single_pass_judge_case")[1],
+      "gate wired into single-pass dispatch")
+check("consecutive_refusal_rounds" in sp_src.split("def single_pass_judge_case")[1],
+      "deadlock breaker wired into single-pass loop")
+check("_read_refusal_check" not in sp_src.split("def agentic_judge_case")[1].split("def single_pass_judge_case")[0],
+      "12-category loop untouched by the gate")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S)")
