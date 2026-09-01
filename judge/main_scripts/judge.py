@@ -23,7 +23,7 @@ from utils.excel_utils import (
     shorten_attempt_csv_files,
     shorten_solution_csv_files,
 )
-from utils import formula_cache, rubric_guidance, rubric_suitability
+from utils import formula_cache, openai_responses, rubric_guidance, rubric_suitability
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import (
     calculate_cost,
@@ -4211,6 +4211,20 @@ def single_pass_judge_case(
     format_notes_served: set = set()
     fail_nudge_count = 0
 
+    # OpenAI + a real reasoning tier must route via /v1/responses (probed
+    # 2026-09-01: chat/completions rejects function tools with any
+    # reasoning_effort except 'none'). The adapter keeps the loop speaking
+    # chat shapes; this side-table carries reasoning items across rounds.
+    use_responses_api = openai_responses.wants_responses_api(
+        identity.provider, reasoning_effort
+    )
+    responses_state = openai_responses.ReasoningState()
+    if use_responses_api:
+        logger.info(
+            f"  [api] /v1/responses (OpenAI reasoning_effort="
+            f"{reasoning_effort!r} with tools)"
+        )
+
     cumulative_metrics = {
         "message_size": 0,
         "message_size_with_images": 0,
@@ -4282,13 +4296,31 @@ def single_pass_judge_case(
             "messages": _msgs,
             "tools": tools,
         }
-        if reasoning_effort is not None:
+        if reasoning_effort is not None and not use_responses_api:
             _create_kwargs["reasoning_effort"] = (
                 "none" if identity.provider == "openai" else reasoning_effort
             )
+        _request_params = {
+            "reasoning_effort": (
+                reasoning_effort
+                if use_responses_api
+                else _create_kwargs.get("reasoning_effort")
+            ),
+            "api": "responses" if use_responses_api else "chat_completions",
+        }
         _call_t0 = time.time()
         try:
-            response = client.chat.completions.create(**_create_kwargs)
+            if use_responses_api:
+                response = openai_responses.create(
+                    client,
+                    model=identity.model,
+                    messages=_msgs,
+                    chat_tools=tools,
+                    reasoning_effort=reasoning_effort,
+                    state=responses_state,
+                )
+            else:
+                response = client.chat.completions.create(**_create_kwargs)
         except Exception as e:
             recorder.record_call(
                 mode="single_pass",
@@ -4297,9 +4329,7 @@ def single_pass_judge_case(
                 purpose=phase,
                 model=model,
                 request_messages=_create_kwargs["messages"],
-                request_params={
-                    "reasoning_effort": _create_kwargs.get("reasoning_effort")
-                },
+                request_params=_request_params,
                 tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
                 error=str(e),
                 t0=_call_t0,
@@ -4341,9 +4371,7 @@ def single_pass_judge_case(
             purpose=phase,
             model=model,
             request_messages=_create_kwargs["messages"],
-            request_params={
-                "reasoning_effort": _create_kwargs.get("reasoning_effort")
-            },
+            request_params=_request_params,
             tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
             response=response,
             t0=_call_t0,

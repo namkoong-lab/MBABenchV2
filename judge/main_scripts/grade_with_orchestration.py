@@ -1033,7 +1033,7 @@ def main():
         "--reasoning-effort",
         type=str,
         default=None,
-        choices=["none", "minimal", "low", "medium", "high"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         help=(
             "Override the reasoning effort pinned by the grader's identity "
             "(default: the identity's effort). Models without thinking "

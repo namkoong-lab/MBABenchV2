@@ -96,3 +96,21 @@
                                       # _metadata.json grader_identity
   model: google/gemini-3.7-flash
   effort: high
+
+# Judge-effort canary graders (2026-09-01). One label per model — the low/high
+# arms run via --reasoning-effort overrides on the same label, recorded in
+# gradings.grader_reasoning, so each model stays ONE grader population.
+# Probed live with function tools before registration:
+#   sol/terra tiers on the wire: none | low | medium | high | xhigh
+#     ('minimal' and 'max' rejected; real tiers require /v1/responses —
+#     utils/openai_responses.py routes those; 'none' stays chat/completions)
+#   sonnet tiers via the compat endpoint: low | medium | high | xhigh | max
+#     (honored, verified by token/latency deltas; Anthropic default is high)
+- grader_model: openai/gpt-5.6-terra
+  provider: openai                    # policy: OpenAI graders never via openrouter
+  model: gpt-5.6-terra
+  effort: none                        # mirror of the sol entry's convention
+- grader_model: anthropic/claude-sonnet-5
+  provider: anthropic
+  model: claude-sonnet-5
+  effort: high                        # Anthropic's own default for Sonnet 5

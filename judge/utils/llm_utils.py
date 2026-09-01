@@ -124,6 +124,10 @@ _MODEL_PRICING = {
     # because the key was missing entirely. Recalibrate from a billed
     # credits-dashboard delta after the v4 canaries.
     "google/gemini-3.7-flash": (0.5, 3.0),
+    # Judge-effort canary graders (2026-09) — PROVISIONAL; the canary's
+    # before/after balance readings are the calibration for all of these.
+    "openai/gpt-5.6-terra": (5.0, 30.0),      # assume sol-tier until billed
+    "anthropic/claude-sonnet-5": (2.0, 10.0),  # Anthropic list price
 }
 _DEFAULT_PRICING = (10.0, 30.0)  # Fallback pricing per 1M tokens
 
