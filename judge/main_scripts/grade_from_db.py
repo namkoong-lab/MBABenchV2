@@ -57,6 +57,7 @@ _judge_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_judge_mod)
 judge_case = _judge_mod.judge_case
 agentic_judge_case = _judge_mod.agentic_judge_case
+single_pass_judge_case = _judge_mod.single_pass_judge_case
 
 ### Obtain constans
 AGENTIC_JUDGE_MAX_ROUNDS = int(
@@ -150,6 +151,18 @@ def add_agentic_cli_args(parser):
         help=(
             "Force the standard judge for ALL attempts in this run, overriding "
             "TASKS_TO_GRADE_WITH_AGENTIC_JUDGE."
+        ),
+    )
+    group.add_argument(
+        "--single-pass",
+        dest="single_pass",
+        action="store_true",
+        help=(
+            "Judge v4 experiment: grade ALL rubric checks in one conversation "
+            "instead of 12 per-category loops. Implies agentic mode; uses the "
+            "single_pass.* template/versions/round budget from "
+            "project_configs.yaml. Rows record judge_version "
+            "single_pass.version, so they never mix with 12-category rows."
         ),
     )
 
@@ -538,6 +551,35 @@ def setup_task_folder(attempt, scratch_run_dir, files_base_dir=None):
         logger.error(f"  No solution xlsx downloaded for task '{task_name}'")
         return None
 
+    # --- Starting workbook from tasks.task_starting_files (v2) ---
+    # Staged as starting/starting_workbook.xlsx: the subdirectory keeps it
+    # invisible to find_golden_solution_file's task-folder scan, and the
+    # fixed stem gives a deterministic extraction directory. The judge
+    # serves it as read_file source='starting' so guidance rules that turn
+    # on inherited-vs-agent-authored content can be checked, not guessed.
+    # Best-effort: a task without one grades exactly as before.
+    if current_benchmark(required=False) == "v2":
+        starting_xlsx_refs = [
+            (n, s)
+            for n, s in extract_file_refs(attempt.get("task_starting_files"))
+            if Path(n).suffix.lower() in _EXCEL_EXTS
+        ]
+        if starting_xlsx_refs:
+            name, source = starting_xlsx_refs[0]
+            try:
+                (task_folder / "starting").mkdir(parents=True, exist_ok=True)
+                download_file(
+                    source,
+                    task_folder / "starting" / "starting_workbook.xlsx",
+                    base_dir=files_base_dir,
+                )
+                logger.info(f"  starting/starting_workbook.xlsx <- {name}")
+            except Exception as e:
+                logger.warning(
+                    f"  Failed to download starting workbook '{name}': {e} "
+                    f"— grading without it"
+                )
+
     # --- Context PDFs from tasks.task_starting_files ---
     # Starting files often include a "Questions.pdf" while the solution side
     # has a "Questions with Answers.pdf". Both are staged here; the merger
@@ -581,9 +623,11 @@ def grade_single_attempt(
     total_char_limit=None,
     cached_solution_csv_dir=None,
     cached_attempt_csv_dir=None,
+    cached_starting_csv_dir=None,
     attempt_sheet_name_filter=False,
     ignore_sheets=None,
     agentic=False,
+    single_pass=False,
     carry_over_context=True,
     max_tool_rounds=20,
     no_s3_upload=False,
@@ -650,7 +694,28 @@ def grade_single_attempt(
     )
     try:
         # Step 2: Run judge
-        if agentic:
+        if single_pass:
+            logger.info("[Judge] Running single_pass_judge_case...")
+            result = single_pass_judge_case(
+                task_folder=str(task_folder),
+                client=client,
+                rubric_path=rubric_path,
+                template_path=agentic_template_path,
+                rubric_weight_path=rubric_weight_path,
+                model=model,
+                nocall=nocall,
+                noupload=noupload,
+                run_calculation=run_calculation,
+                attempt_model=attempt["agent_model_name"],
+                cached_solution_csv_dir=cached_solution_csv_dir,
+                cached_attempt_csv_dir=cached_attempt_csv_dir,
+                cached_starting_csv_dir=cached_starting_csv_dir,
+                attempt_sheet_name_filter=attempt_sheet_name_filter,
+                ignore_sheets=ignore_sheets,
+                max_tool_rounds=max_tool_rounds,
+                reasoning_effort=reasoning_effort,
+            )
+        elif agentic:
             logger.info("[Judge] Running agentic_judge_case...")
             agentic_kwargs = dict(
                 task_folder=str(task_folder),
@@ -665,6 +730,7 @@ def grade_single_attempt(
                 attempt_model=attempt["agent_model_name"],
                 cached_solution_csv_dir=cached_solution_csv_dir,
                 cached_attempt_csv_dir=cached_attempt_csv_dir,
+                cached_starting_csv_dir=cached_starting_csv_dir,
                 attempt_sheet_name_filter=attempt_sheet_name_filter,
                 ignore_sheets=ignore_sheets,
                 carry_over_context=carry_over_context,
@@ -856,6 +922,10 @@ def grade_single_attempt(
             "has_scoring_warnings": has_scoring_warnings,
             "solution_csv_dir": result.get("solution_csv_dir"),
             "attempt_csv_dir": result.get("attempt_csv_dir"),
+            "starting_csv_dir": result.get("starting_csv_dir"),
+            # The versions this grading actually ran under (single-pass rows
+            # carry their own); write_grading_to_db prefers these over env.
+            "versions": result.get("versions"),
             "auto_routed": bool(result.get("auto_routed")),
             # Effective reasoning effort (identity pin, or a --reasoning-effort
             # override). write_grading_to_db reads this for the
@@ -884,7 +954,16 @@ def grade_single_attempt(
 
 def write_grading_to_db(conn, attempt, result, model, agentic=False):
     """Persist a grading result to the gradings table."""
-    if agentic:
+    # Prefer the versions the grading itself reports (threaded through
+    # _finalize_case from the mode that ran). Re-reading the env here would
+    # stamp every agentic row with the 12-category AGENTIC_JUDGE_* values,
+    # mislabeling single-pass rows, which carry their own judge/prompt
+    # versions. The env fallback covers legacy result dicts.
+    versions = result.get("versions") or {}
+    if versions.get("PROMPT_VERSION") and versions.get("JUDGE_VERSION"):
+        PROMPT_VERSION = versions["PROMPT_VERSION"]
+        JUDGE_VERSION = versions["JUDGE_VERSION"]
+    elif agentic:
         PROMPT_VERSION = load_env_var("AGENTIC_JUDGE_PROMPT_VERSION", required=True)
         JUDGE_VERSION = load_env_var("AGENTIC_JUDGE_VERSION", required=True)
     else:
@@ -1008,6 +1087,28 @@ def main(args):
             )
         )
     )
+    # --single-pass: swap in the single-pass template and round budget, and
+    # force agentic routing (single-pass IS an agentic mode; only the loop
+    # shape differs). Versions come from the single_pass.* config keys via
+    # single_pass_judge_case itself.
+    single_pass = bool(getattr(args, "single_pass", False))
+    if single_pass:
+        args.agentic = True
+        agentic_template_path = str(
+            relative_path_from_project_root(
+                load_env_var(
+                    "SINGLE_PASS_PROMPT_TEMPLATE",
+                    default="./prompts/agentic_judge_template_7.yaml",
+                )
+            )
+        )
+        # The --max-tool-rounds default is sized for one category; if the
+        # user didn't override it, use the single-pass budget.
+        if args.max_tool_rounds == AGENTIC_JUDGE_MAX_ROUNDS:
+            args.max_tool_rounds = int(
+                load_env_var("SINGLE_PASS_MAX_ROUNDS", default=500)
+            )
+
     model = args.model
     # Fail fast on an unregistered grader label (also covers --dry-run).
     identity = resolve_judge_identity(model)
@@ -1087,6 +1188,10 @@ def main(args):
         solution_cache_base.mkdir(parents=True, exist_ok=True)
         attempt_cache_base = cache_root / "attempt_csv_cache_v2"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
+        # Starting-workbook CSVs are per task, like solution CSVs. New cache
+        # family (2026-09) — existing solution/attempt caches stay valid.
+        starting_cache_base = cache_root / "starting_csv_cache_v2"
+        starting_cache_base.mkdir(parents=True, exist_ok=True)
         # Phase A: per-task suitability annotations, fetched once per run and
         # staged into each task folder (the judge enforces the v2 rule).
         suitability_cache_dir = cache_root / "rubric_suitability"
@@ -1098,6 +1203,7 @@ def main(args):
         attempt_cache_suffix = "__sheet_filtered" if attempt_filter else ""
         solution_csv_cache = {}  # task_id -> cached dir path (in-memory index)
         attempt_csv_cache = {}  # attempt_id -> cached dir path (in-memory index)
+        starting_csv_cache = {}  # task_id -> cached dir path (in-memory index)
         results = []
         for i, attempt in enumerate(attempts):
             task_id = attempt["task_id"]
@@ -1128,6 +1234,17 @@ def main(args):
                     logger.info(
                         f"  Found persistent attempt CSV cache for attempt "
                         f"{attempt_id}: {attempt_cache_dir}"
+                    )
+
+            cached_starting_dir = starting_csv_cache.get(task_id)
+            if not cached_starting_dir:
+                start_cache_dir = starting_cache_base / f"task_id={task_id}"
+                if start_cache_dir.exists() and list(start_cache_dir.glob("*.csv")):
+                    cached_starting_dir = str(start_cache_dir)
+                    starting_csv_cache[task_id] = cached_starting_dir
+                    logger.info(
+                        f"  Found persistent starting CSV cache for task "
+                        f"{task_id}: {start_cache_dir}"
                     )
 
             cache_notes = []
@@ -1229,9 +1346,11 @@ def main(args):
                 total_char_limit=args.total_char_limit,
                 cached_solution_csv_dir=cached_dir,
                 cached_attempt_csv_dir=cached_attempt_dir,
+                cached_starting_csv_dir=cached_starting_dir,
                 attempt_sheet_name_filter=attempt_filter,
                 ignore_sheets=args.ignore_sheets,
                 agentic=agentic,
+                single_pass=single_pass,
                 carry_over_context=args.carry_over_context,
                 max_tool_rounds=args.max_tool_rounds,
                 no_s3_upload=args.no_s3_upload,
@@ -1265,6 +1384,30 @@ def main(args):
                             f"concurrently ({e.__class__.__name__}); using it"
                         )
                 solution_csv_cache[task_id] = str(task_cache_dir)
+
+            # Persist starting-workbook CSVs (per task, like solution CSVs)
+            if (
+                result["success"]
+                and not result.get("skipped")
+                and result.get("starting_csv_dir")
+                and task_id not in starting_csv_cache
+            ):
+                start_cache_dir = starting_cache_base / f"task_id={task_id}"
+                if not start_cache_dir.exists():
+                    try:
+                        shutil.copytree(
+                            result["starting_csv_dir"], str(start_cache_dir)
+                        )
+                        logger.info(
+                            f"  Persisted starting CSVs for task {task_id}: "
+                            f"{start_cache_dir}"
+                        )
+                    except (FileExistsError, shutil.Error) as e:
+                        logger.info(
+                            f"  Starting CSV cache for task {task_id} written "
+                            f"concurrently ({e.__class__.__name__}); using it"
+                        )
+                starting_csv_cache[task_id] = str(start_cache_dir)
 
             # Persist attempt CSVs to the cache directory for this attempt
             if (

@@ -29,6 +29,14 @@ judge:
 
   rubric_max_mistakes: 1
 
+  # Uncached-formula pre-flight (utils/formula_cache.py). The judge reads
+  # cached formula results, so a workbook saved without calculation reaches it
+  # as formulas with no values and Accuracy cannot be graded from evidence.
+  # A workbook whose uncached fraction is >= this ratio refuses to grade;
+  # re-run with --run-calculation, or JUDGE_SKIP_FORMULA_CACHE_CHECK=1 to
+  # grade anyway (recorded in scored_results.formula_cache).
+  uncached_formula_max_ratio: 0.5
+
   do_rounding: true
   float_rounding: 6
   percentage_rounding: 8
@@ -46,12 +54,33 @@ judge:
   default_attempt_context_char_limit: 1_000_000
 
 agentic_judge:
+  # 4 (2026-09): grading-guidance layer (rubric_9_guidance.yaml — scope
+  # rules for flip-prone checks), the starting workbook as a third readable
+  # source, read_file cap corrected to the 5000 the prompt always claimed,
+  # and pressure tiers moved 10/20/80 -> 65/80/90. Grades under version 4
+  # are not comparable to version 3 rows (which stay frozen — a "fixed" v3
+  # is version 4 by definition).
   # 3 (2026-08): rubric_9 in-place revision + per-task suitability gating +
   # xlsx weight system + score-neutral answer check + category-keyed context
   # views. Grades under version 3 are not comparable to version 2 rows.
-  version: 3
-  prompt_template: "prompts/agentic_judge_template_5.yaml"
-  prompt_version: "5"
+  version: 4
+  prompt_template: "prompts/agentic_judge_template_6.yaml"
+  prompt_version: "6"
   context_token_limit: 850000   # below GPT-5.6 Sol's 922k input cap so eviction fires before a 400
   max_rounds: 50
-  read_file_max_cells: 2500     # drop to ~1200 for stubborn overflow cells
+  read_file_max_cells: 5000     # matches the limit the prompt states; the old
+                                # 2500 caused 695 of sol's 740 refusals
+
+# Single-pass mode (judge v4 experiment): one conversation over every
+# applicable check instead of 12 per-category loops. Selected with
+# --single-pass on grade_from_db / grade_with_orchestration; rows record
+# these versions (agentic_mode stays true), so they never mix with
+# 12-category rows in the dedup key. max_rounds 500 is deliberately
+# effectively-unbound for the canaries — set the production value from
+# measured round usage, not by feel.
+single_pass:
+  version: 5
+  prompt_template: "prompts/agentic_judge_template_7.yaml"
+  prompt_version: "7"
+  max_rounds: 500
+  max_forced_rounds: 50         # 12-category's 15 is sized for one category

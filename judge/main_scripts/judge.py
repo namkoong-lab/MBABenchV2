@@ -23,7 +23,7 @@ from utils.excel_utils import (
     shorten_attempt_csv_files,
     shorten_solution_csv_files,
 )
-from utils import rubric_suitability
+from utils import formula_cache, rubric_guidance, rubric_suitability
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import (
     calculate_cost,
@@ -49,7 +49,9 @@ from utils.prompt_utils import (
     compile_prompt,
     encode_file_to_base64,
     format_file_section,
+    numbered_rubric_checks,
     render_rubric_checks,
+    render_rubric_checks_flat,
     render_rubric_checks_list,
 )
 from utils.trajectory import TrajectoryRecorder
@@ -77,6 +79,22 @@ AGENTIC_JUDGE_MAX_ROUNDS = int(
 )
 READ_FILE_MAX_CELLS = int(
     load_env_var("AGENTIC_JUDGE_READ_FILE_MAX_CELLS", default=5000),
+)
+# Single-pass mode (judge v4 experiment): one conversation over all gated
+# checks instead of 12 per-category loops. Versions are its own — rows are
+# distinguished from 12-category rows by judge_version + prompt_version
+# (agentic_mode is True for both). 500 rounds is deliberately high enough to
+# be effectively unbound for the canaries; set the production value from
+# measured usage, not by feel (deliberation is the one lever measured to
+# improve reproducibility).
+SINGLE_PASS_MAX_ROUNDS = int(
+    load_env_var("SINGLE_PASS_MAX_ROUNDS", default=500),
+)
+# Forced-finalization ceiling for single-pass. The 12-category value (15) is
+# sized for one category's pending checks; a single pass can enter forced
+# finalization with 100+ pending and models often record ~one per round.
+SINGLE_PASS_MAX_FORCED_ROUNDS = int(
+    load_env_var("SINGLE_PASS_MAX_FORCED_ROUNDS", default=50),
 )
 
 ### Custom Errors
@@ -1292,6 +1310,7 @@ def judge_case(
         reasoning_effort=reasoning_effort,
         grader_identity=identity.settings(),
         recorder=recorder,
+        formula_cache_provenance=prep.get("formula_cache_provenance"),
     )
 
 
@@ -1332,6 +1351,7 @@ def _prepare_case(
     run_calculation: bool = False,
     cached_solution_csv_dir: str = None,
     cached_attempt_csv_dir: str = None,
+    cached_starting_csv_dir: str = None,
     attempt_sheet_name_filter: bool = False,
     ignore_sheets: list[str] | None = None,
     agentic: bool = False,
@@ -1405,16 +1425,35 @@ def _prepare_case(
     if not cached_solution_csv_dir:
         files_to_process.append(str(golden_solution_path))
 
+    # The starting workbook (what the agent was handed before doing any work)
+    # is staged by grade_from_db.setup_task_folder as
+    # starting/starting_workbook.xlsx — the subdirectory keeps it invisible
+    # to find_golden_solution_file's task-folder scan, and the fixed stem
+    # gives it a deterministic extraction directory. It is optional: v1 rows
+    # and standalone judge runs without it grade exactly as before.
+    starting_workbook_path = task_path / "starting" / "starting_workbook.xlsx"
+    have_starting = bool(cached_starting_csv_dir) or starting_workbook_path.exists()
+    if have_starting and not cached_starting_csv_dir:
+        files_to_process.append(str(starting_workbook_path))
+
     if cached_solution_csv_dir:
         logger.info(f"  Using cached solution CSVs from: {cached_solution_csv_dir}")
     if cached_attempt_csv_dir:
         logger.info(f"  Using cached attempt CSVs from: {cached_attempt_csv_dir}")
+    if cached_starting_csv_dir:
+        logger.info(f"  Using cached starting CSVs from: {cached_starting_csv_dir}")
 
     # When a cache is used, the extraction for that file is skipped but
     # `use_existing` must still be True for the remaining file so prior
     # extractions are honored.
     effective_use_existing = (
-        True if (cached_solution_csv_dir or cached_attempt_csv_dir) else use_existing
+        True
+        if (
+            cached_solution_csv_dir
+            or cached_attempt_csv_dir
+            or cached_starting_csv_dir
+        )
+        else use_existing
     )
     result = process_case_files(
         files_to_process,
@@ -1458,6 +1497,15 @@ def _prepare_case(
         for fname in cached_files:
             logger.info(f"    {fname}")
 
+    if cached_starting_csv_dir:
+        dest_starting_dir = output_dir / "starting_workbook"
+        if not dest_starting_dir.exists():
+            shutil.copytree(cached_starting_csv_dir, str(dest_starting_dir))
+        workbook_dirs["starting_workbook"] = str(dest_starting_dir)
+        logger.info(
+            f"  Copied cached starting-workbook CSVs to: {dest_starting_dir}"
+        )
+
     logger.info(f"  Files processed and saved to: {output_dir}")
 
     copied_files = copy_support_files(
@@ -1469,12 +1517,13 @@ def _prepare_case(
 
     ai_attempt_dir = workbook_dirs.get("ai_attempt")
     golden_solution_dir = workbook_dirs.get(golden_solution_stem)
+    starting_workbook_dir = workbook_dirs.get("starting_workbook")
 
     # Drop sheets the caller asked to ignore (e.g. cover sheets). Applied
     # after both fresh extraction and cache copy so the artifact on disk
     # reflects exactly what the judge will see.
     _delete_ignored_sheet_files(
-        [ai_attempt_dir, golden_solution_dir], ignore_sheets
+        [ai_attempt_dir, golden_solution_dir, starting_workbook_dir], ignore_sheets
     )
 
     # Detect context file
@@ -1488,9 +1537,19 @@ def _prepare_case(
 
     rubric_json_path = output_dir / "rubric.json"
 
+    # Uncached-formula pre-flight. The judge reads cached formula results; a
+    # workbook saved without calculation reaches it as formulas with no values,
+    # which silently guts Accuracy. Refuse rather than produce a grade that
+    # looks real. JUDGE_SKIP_FORMULA_CACHE_CHECK=1 grades anyway (recorded).
+    logger.info("\n[Step 1b] Formula-cache pre-flight...")
+    formula_cache_provenance = formula_cache.check_case(
+        ai_attempt_dir, golden_solution_dir
+    )
+
     return {
         "cache_dir": cache_dir,
         "cache_log_path": cache_log_path,
+        "starting_workbook_dir": starting_workbook_dir,
         "task_folder_name": task_folder_name,
         "task_path": task_path,
         "output_dir": output_dir,
@@ -1502,6 +1561,7 @@ def _prepare_case(
         "weights_data": weights_data,
         "context_file_path": context_file_path,
         "rubric_json_path": rubric_json_path,
+        "formula_cache_provenance": formula_cache_provenance,
         "start_time": start_time,
         "versions": {
             "JUDGE_VERSION": JUDGE_VERSION,
@@ -1566,6 +1626,7 @@ def _finalize_case(
     versions,
     golden_solution_dir=None,
     ai_attempt_dir=None,
+    starting_workbook_dir=None,
     parse_failures=None,
     solution_context_reduced=False,
     attempt_context_reduced=False,
@@ -1576,6 +1637,7 @@ def _finalize_case(
     grader_identity=None,
     recorder=None,
     suitability_provenance=None,
+    formula_cache_provenance=None,
 ):
     """Shared finalization: save judgement, calculate scores, write metadata."""
     output_dir = Path(output_dir)
@@ -1629,6 +1691,11 @@ def _finalize_case(
             # Phase A provenance rides inside scored_results (and scores.json)
             # so every grading records exactly which checks were gated out.
             score_results["rubric_suitability"] = suitability_provenance
+        if formula_cache_provenance is not None:
+            # Same idea for the uncached-formula census: a row graded under
+            # JUDGE_SKIP_FORMULA_CACHE_CHECK=1 must stay identifiable, and the
+            # per-workbook counts explain any Accuracy anomaly after the fact.
+            score_results["formula_cache"] = formula_cache_provenance
         scores_path = output_dir / "scores.json"
         with open(scores_path, "w", encoding="utf-8") as f:
             json.dump(score_results, f, indent=2)
@@ -1690,6 +1757,8 @@ def _finalize_case(
         }
     if suitability_provenance is not None:
         metadata_dict["rubric_suitability"] = suitability_provenance
+    if formula_cache_provenance is not None:
+        metadata_dict["formula_cache"] = formula_cache_provenance
 
     if metadata_path.exists():
         try:
@@ -1746,12 +1815,18 @@ def _finalize_case(
         "output_dir": str(output_dir),
         "solution_csv_dir": golden_solution_dir,
         "attempt_csv_dir": ai_attempt_dir,
+        "starting_csv_dir": starting_workbook_dir,
         "solution_context_reduced": solution_context_reduced,
         "attempt_context_reduced": attempt_context_reduced,
         "context_reduced_details": context_reduced_details,
         "auto_routed": auto_routed,
         "judge_reasoning": reasoning_effort,
         "grader_identity": grader_identity,
+        # The versions this grading actually ran under. write_grading_to_db
+        # prefers these over re-reading the env — without this every agentic
+        # row would take the 12-category AGENTIC_JUDGE_* values, mislabeling
+        # single-pass rows (which carry their own judge/prompt versions).
+        "versions": versions,
     }
     if score_results:
         result["score_results"] = score_results
@@ -1842,8 +1917,9 @@ AGENTIC_JUDGE_TOOLS = [
         "function": {
             "name": "read_file",
             "description": (
-                "Read a rectangular range from a CSV file in the AI attempt or "
-                "golden solution directories. You must specify the row and column "
+                "Read a rectangular range from a CSV file in the AI attempt, "
+                "golden solution, or starting workbook directories. You must "
+                "specify the row and column "
                 "range to extract. Use the sheet dimensions and any formatting "
                 "metadata provided to decide which ranges to "
                 "inspect. HARD LIMIT: a single call may not cover more than "
@@ -1856,10 +1932,12 @@ AGENTIC_JUDGE_TOOLS = [
                 "properties": {
                     "source": {
                         "type": "string",
-                        "enum": ["attempt", "solution"],
+                        "enum": ["attempt", "solution", "starting"],
                         "description": (
                             "Which directory to read from: 'attempt' for the AI "
-                            "attempt workbook, 'solution' for the golden solution."
+                            "attempt workbook, 'solution' for the golden "
+                            "solution, 'starting' for the workbook the agent "
+                            "was given before doing any work (when available)."
                         ),
                     },
                     "filename": {
@@ -2015,6 +2093,64 @@ AGENTIC_JUDGE_TOOLS = [
         },
     },
 ]
+
+
+def _build_single_pass_tools() -> list[dict]:
+    """The single-pass toolset, derived from AGENTIC_JUDGE_TOOLS.
+
+    Same five tools; three deltas:
+      - read_file gains an optional `view` parameter. Twelve-category mode
+        keys the served view off the category being graded; a single pass
+        has no current category, so the model states what it is looking for
+        and the same serving rule applies (data view by default, styled view
+        for formatting work, structure metadata for structure work).
+      - record_check / append_mistake address checks by their global check
+        NUMBER (the rubric list is globally numbered, not lettered).
+    Derived programmatically so the range parameters and limits can never
+    drift from the shared definition.
+    """
+    import copy
+
+    tools = copy.deepcopy(AGENTIC_JUDGE_TOOLS)
+    by_name = {t["function"]["name"]: t["function"] for t in tools}
+
+    by_name["read_file"]["parameters"]["properties"]["view"] = {
+        "type": "string",
+        "enum": ["data", "formatting", "structure"],
+        "description": (
+            "Optional; default 'data'. 'data': values, formulas and number "
+            "formats with cell-style segments stripped — use for everything "
+            "except style/layout work. 'formatting': full cell-style "
+            "segments (font, size, colors, fill, alignment, borders), plus "
+            "the sheet's formatting metadata (merged ranges, frozen panes) "
+            "appended to the first read of each sheet — use when grading "
+            "Formatting checks. 'structure': the data view plus the sheet "
+            "formatting metadata — use when grading Structure checks."
+        ),
+    }
+
+    by_name["record_check"]["description"] = (
+        "Record (upsert) a pass/fail decision and summary for a rubric "
+        "check. Must be called for every check number before you stop. "
+        "Calling again for the same check number overwrites the "
+        "decision/summary but preserves any mistakes already appended via "
+        "append_mistake."
+    )
+    by_name["record_check"]["parameters"]["properties"]["check"][
+        "description"
+    ] = "The check's number as shown in the rubric list (e.g. '17')."
+    by_name["append_mistake"]["parameters"]["properties"]["check"][
+        "description"
+    ] = "The check's number as shown in the rubric list (e.g. '17')."
+    by_name["get_working_judgement"]["description"] = (
+        "Return the current working judgement state as JSON. Useful to "
+        "review what you've recorded so far and which check numbers are "
+        "still pending before finalizing."
+    )
+    return tools
+
+
+SINGLE_PASS_JUDGE_TOOLS = _build_single_pass_tools()
 
 
 def _build_file_metadata(directory: str) -> dict:
@@ -2495,8 +2631,12 @@ def _build_pressure_signal(
 ) -> tuple[str, str]:
     """Return (status_line, tier) for the current context pressure level.
 
-    Tier is one of 'low' (<10%), 'advisory' (10-20%), 'strong' (20-80%),
-    'forced' (>=80%).
+    Tier is one of 'low' (<65%), 'advisory' (65-80%), 'strong' (80-90%),
+    'forced' (>=90%). Thresholds moved 10/20/80 -> 65/80/90 (2026-09):
+    the old ladder told every observed run to wrap up from 20% of the
+    limit — sol's mean peak was 43%, so it spent effectively its whole
+    grading being told to finalize, which is a live candidate for why it
+    deliberated least and swung most between repeats.
     """
     pct = (prompt_tokens / limit * 100) if limit > 0 else 0.0
 
@@ -2507,11 +2647,11 @@ def _build_pressure_signal(
         f"[context: {_k(prompt_tokens)} / {_k(limit)} tokens "
         f"({pct:.0f}%). {rounds_elapsed} rounds elapsed.]"
     )
-    if pct < 10:
+    if pct < 65:
         tier = "low"
-    elif pct < 20:
-        tier = "advisory"
     elif pct < 80:
+        tier = "advisory"
+    elif pct < 90:
         tier = "strong"
     else:
         tier = "forced"
@@ -2532,7 +2672,7 @@ def _build_pressure_signal(
 
 
 def _execute_read_file(tool_call, attempt_dir, solution_dir, category=None,
-                       format_notes=None):
+                       format_notes=None, starting_dir=None):
     """Execute a read_file tool call, extracting the specified row/column range from a CSV.
 
     When `category` is given (prompt template 5+), requests for *_full.csv
@@ -2545,6 +2685,11 @@ def _execute_read_file(tool_call, attempt_dir, solution_dir, category=None,
     metadata (merged cells / frozen panes) once per sheet per category,
     tracked in `format_notes`. Presented filenames stay *_full.csv — the
     resolution is an internal indirection.
+
+    `starting_dir` (2026-09) serves the workbook the agent was given before
+    doing any work, so inherited content can be distinguished from the
+    agent's own — several guidance rules depend on that distinction. Absent
+    (v1, or an older staging), source='starting' returns a clear error.
     """
     import csv as csv_mod
 
@@ -2560,8 +2705,13 @@ def _execute_read_file(tool_call, attempt_dir, solution_dir, category=None,
         base_dir = attempt_dir
     elif source == "solution":
         base_dir = solution_dir
+    elif source == "starting":
+        base_dir = starting_dir
     else:
-        return f"Error: Invalid source '{source}'. Use 'attempt' or 'solution'."
+        return (
+            f"Error: Invalid source '{source}'. Use 'attempt', 'solution' "
+            f"or 'starting'."
+        )
 
     if not base_dir or not Path(base_dir).exists():
         return f"Error: {source} directory not available."
@@ -2727,6 +2877,7 @@ def agentic_judge_case(
     run_calculation: bool = False,
     cached_solution_csv_dir: str = None,
     cached_attempt_csv_dir: str = None,
+    cached_starting_csv_dir: str = None,
     attempt_sheet_name_filter: bool = False,
     ignore_sheets: list[str] | None = None,
     carry_over_context: bool = True,
@@ -2791,6 +2942,7 @@ def agentic_judge_case(
         run_calculation=run_calculation,
         cached_solution_csv_dir=cached_solution_csv_dir,
         cached_attempt_csv_dir=cached_attempt_csv_dir,
+        cached_starting_csv_dir=cached_starting_csv_dir,
         attempt_sheet_name_filter=attempt_sheet_name_filter,
         ignore_sheets=ignore_sheets,
         agentic=True,
@@ -2800,6 +2952,7 @@ def agentic_judge_case(
     cache_log_path = prep["cache_log_path"]
     golden_solution_dir = prep["golden_solution_dir"]
     ai_attempt_dir = prep["ai_attempt_dir"]
+    starting_workbook_dir = prep["starting_workbook_dir"]
     weights_data = prep["weights_data"]
     context_file_path = prep["context_file_path"]
     rubric_json_path = prep["rubric_json_path"]
@@ -2807,6 +2960,11 @@ def agentic_judge_case(
     versions = prep["versions"]
     CHECK_ORDER = prep["CHECK_ORDER"]
     task_folder_name = prep["task_folder_name"]
+
+    # Judge-only grading guidance (rubric_9_guidance.yaml beside the SOURCE
+    # rubric — the output_dir copy has no sibling). None for rubrics without
+    # a guidance file (v1/rubric_8), in which case rendering is unchanged.
+    guidance = rubric_guidance.load_guidance(rubric_path)
 
     logger.info("=" * 80)
     logger.info("Agentic Judge Evaluation Workflow")
@@ -2829,6 +2987,11 @@ def agentic_judge_case(
         prepare_directory_files(golden_solution_dir) if golden_solution_dir else {}
     )
     ai_attempt_files = prepare_directory_files(ai_attempt_dir) if ai_attempt_dir else {}
+    starting_workbook_files = (
+        prepare_directory_files(starting_workbook_dir)
+        if starting_workbook_dir
+        else {}
+    )
 
     # Exclude *_additional_format.txt — their content is already inlined under
     # the corresponding *_full.csv entry in the file metadata block.
@@ -2838,13 +3001,23 @@ def agentic_judge_case(
     solution_file_list = sorted(
         f for f in golden_solution_files if not f.endswith("_additional_format.txt")
     )
+    starting_file_list = sorted(
+        f
+        for f in starting_workbook_files
+        if not f.endswith("_additional_format.txt")
+    )
 
     logger.info(f"\n  Attempt files: {attempt_file_list}")
     logger.info(f"  Solution files: {solution_file_list}")
+    if starting_file_list:
+        logger.info(f"  Starting-workbook files: {starting_file_list}")
 
     # Build file metadata (dimensions + additional_format.txt content)
     attempt_file_metadata = _build_file_metadata(ai_attempt_dir)
     solution_file_metadata = _build_file_metadata(golden_solution_dir)
+    starting_file_metadata = (
+        _build_file_metadata(starting_workbook_dir) if starting_workbook_dir else {}
+    )
 
     # Build context messages (.txt → inline text; .pdf / other → base64 image_url)
     context_messages = _build_agentic_context_messages(context_file_path)
@@ -2888,6 +3061,7 @@ def agentic_judge_case(
         files={
             "golden_solution": sorted(golden_solution_files),
             "ai_attempt": sorted(ai_attempt_files),
+            "starting_workbook": sorted(starting_workbook_files),
             "context": context_file_path.name if context_file_path else None,
         },
     )
@@ -2980,7 +3154,9 @@ def agentic_judge_case(
 
         logger.info(f"\n  [Category] {category} (stage {stage_idx})...")
 
-        rubric_checks_text = render_rubric_checks_list(checks_for_category)
+        rubric_checks_text = render_rubric_checks_list(
+            checks_for_category, category=category, guidance=guidance
+        )
         num_checks = len(checks_for_category)
         check_letters = [check_letter(i) for i in range(num_checks)]
 
@@ -2997,6 +3173,14 @@ def agentic_judge_case(
             solution_files_text=_render_listing(
                 solution_file_list, solution_file_metadata
             ),
+            # template_6+ params; harmlessly unused by template_5 (extra
+            # kwargs are ignored, only missing ones raise).
+            starting_files_text=(
+                _render_listing(starting_file_list, starting_file_metadata)
+                if starting_file_list
+                else "  (starting workbook not available for this attempt)"
+            ),
+            general_guidance=(guidance or {}).get("general"),
             prior_findings=_render_prior_findings_block(
                 json.dumps(all_responses, indent=2)
                 if carry_over_context and all_responses
@@ -3255,6 +3439,7 @@ def agentic_judge_case(
                             golden_solution_dir,
                             category=category if serve_data_views else None,
                             format_notes=format_notes_served,
+                            starting_dir=starting_workbook_dir,
                         )
                     elif name == "evict_tool_results":
                         try:
@@ -3758,6 +3943,7 @@ def agentic_judge_case(
         versions=versions,
         golden_solution_dir=golden_solution_dir,
         ai_attempt_dir=ai_attempt_dir,
+        starting_workbook_dir=starting_workbook_dir,
         parse_failures=parse_failures,
         agentic=True,
         auto_routed=auto_routed,
@@ -3765,6 +3951,794 @@ def agentic_judge_case(
         grader_identity=identity.settings(),
         recorder=recorder,
         suitability_provenance=suitability_provenance,
+        formula_cache_provenance=prep.get("formula_cache_provenance"),
+    )
+
+
+def single_pass_judge_case(
+    task_folder: str,
+    client: OpenAI,
+    rubric_path: str,
+    template_path: str,
+    rubric_weight_path: str = None,
+    model: str = JUDGE_MODEL,
+    nocall: bool = False,
+    noupload: bool = False,
+    use_existing: bool = True,
+    attempt_model: str = None,
+    run_calculation: bool = False,
+    cached_solution_csv_dir: str = None,
+    cached_attempt_csv_dir: str = None,
+    cached_starting_csv_dir: str = None,
+    attempt_sheet_name_filter: bool = False,
+    ignore_sheets: list[str] | None = None,
+    max_tool_rounds: int = SINGLE_PASS_MAX_ROUNDS,
+    reasoning_effort: str | None = None,
+):
+    """Judge v4 experiment: ONE conversation over every applicable check.
+
+    Sibling of agentic_judge_case (which is not modified): same tools, same
+    suitability gating, same guidance notes, same scoring — the only design
+    difference is that the 12 per-category loops collapse into a single
+    tool-loop over globally-numbered checks (the rubric's flattened order,
+    the same 1..132 numbering the suitability annotations validate against;
+    gating leaves gaps rather than renumbering).
+
+    Records its own judge/prompt versions (config `single_pass.*`) so rows
+    are distinguishable from 12-category rows in the dedup key.
+    """
+    identity = resolve_judge_identity(model)
+    if reasoning_effort is None:
+        reasoning_effort = identity.effort
+    elif reasoning_effort != identity.effort:
+        logger.warning(
+            f"reasoning_effort {reasoning_effort!r} overrides the effort "
+            f"pinned by {model!r} ({identity.effort!r}); the effective value "
+            f"is what gets recorded"
+        )
+
+    prep = _prepare_case(
+        task_folder=task_folder,
+        rubric_path=rubric_path,
+        rubric_weight_path=rubric_weight_path,
+        use_existing=use_existing,
+        run_calculation=run_calculation,
+        cached_solution_csv_dir=cached_solution_csv_dir,
+        cached_attempt_csv_dir=cached_attempt_csv_dir,
+        cached_starting_csv_dir=cached_starting_csv_dir,
+        attempt_sheet_name_filter=attempt_sheet_name_filter,
+        ignore_sheets=ignore_sheets,
+        agentic=True,
+    )
+
+    output_dir = prep["output_dir"]
+    cache_log_path = prep["cache_log_path"]
+    golden_solution_dir = prep["golden_solution_dir"]
+    ai_attempt_dir = prep["ai_attempt_dir"]
+    starting_workbook_dir = prep["starting_workbook_dir"]
+    weights_data = prep["weights_data"]
+    context_file_path = prep["context_file_path"]
+    rubric_json_path = prep["rubric_json_path"]
+    start_time = prep["start_time"]
+    task_folder_name = prep["task_folder_name"]
+
+    # Single-pass rows carry their own versions (config single_pass.*);
+    # _finalize_case threads them into scores.json / _metadata.json and the
+    # DB write prefers them over the 12-category env values.
+    versions = dict(prep["versions"])
+    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="5")
+    versions["PROMPT_VERSION"] = load_env_var(
+        "SINGLE_PASS_PROMPT_VERSION", default="7"
+    )
+
+    guidance = rubric_guidance.load_guidance(rubric_path)
+
+    logger.info("=" * 80)
+    logger.info("Single-Pass Judge Evaluation Workflow")
+    logger.info("=" * 80)
+    logger.info(
+        f"Grading task: {task_folder_name}, model: {model}, "
+        f"rubric: {versions['RUBRIC_VERSION']}, "
+        f"judge version: {versions['JUDGE_VERSION']}"
+    )
+    logger.info("=" * 80)
+
+    if noupload:
+        logger.info("\n--noupload flag set. Skipping file preparation.")
+        remove_log_file(cache_log_path)
+        shutil.copy(cache_log_path, str(output_dir / "judge.log"))
+        return
+
+    golden_solution_files = (
+        prepare_directory_files(golden_solution_dir) if golden_solution_dir else {}
+    )
+    ai_attempt_files = prepare_directory_files(ai_attempt_dir) if ai_attempt_dir else {}
+    starting_workbook_files = (
+        prepare_directory_files(starting_workbook_dir)
+        if starting_workbook_dir
+        else {}
+    )
+
+    attempt_file_list = sorted(
+        f for f in ai_attempt_files if not f.endswith("_additional_format.txt")
+    )
+    solution_file_list = sorted(
+        f for f in golden_solution_files if not f.endswith("_additional_format.txt")
+    )
+    starting_file_list = sorted(
+        f
+        for f in starting_workbook_files
+        if not f.endswith("_additional_format.txt")
+    )
+
+    logger.info(f"\n  Attempt files: {attempt_file_list}")
+    logger.info(f"  Solution files: {solution_file_list}")
+    if starting_file_list:
+        logger.info(f"  Starting-workbook files: {starting_file_list}")
+
+    attempt_file_metadata = _build_file_metadata(ai_attempt_dir)
+    solution_file_metadata = _build_file_metadata(golden_solution_dir)
+    starting_file_metadata = (
+        _build_file_metadata(starting_workbook_dir) if starting_workbook_dir else {}
+    )
+
+    context_messages = _build_agentic_context_messages(context_file_path)
+    if context_file_path:
+        logger.info(f"  Context file: {context_file_path.name}")
+
+    if nocall:
+        logger.info("\n--nocall flag set. Skipping API calls.")
+        remove_log_file(cache_log_path)
+        shutil.copy(cache_log_path, str(output_dir / "judge.log"))
+        return
+
+    with open(str(rubric_json_path), "r", encoding="utf-8") as _rf:
+        _rubric_data = json.load(_rf)
+
+    # Same Phase A gating as 12-category mode; the flat list keeps each
+    # check's ORIGINAL global number, so gating produces gaps by design
+    # (numbers must be stable across tasks — do not renumber).
+    suitability = rubric_suitability.load_for_case(
+        prep["task_path"], _rubric_data, current_benchmark(required=False)
+    )
+    numbered_all = numbered_rubric_checks(_rubric_data)
+    if suitability is not None:
+        _applicable_names = {
+            cat: set(names) for cat, names in suitability["applicable"].items()
+        }
+        numbered_gated = [
+            (no, cat, check)
+            for no, cat, check in numbered_all
+            if check["name"] in _applicable_names.get(cat, set())
+        ]
+        weights_data = rubric_suitability.build_effective_weights(
+            weights_data, suitability["excluded"]
+        )
+        suitability_provenance = {"gated": True, **suitability["provenance"]}
+        logger.info(
+            f"  Suitability gating: {suitability_provenance['excluded_count']} "
+            f"not_applicable check(s) excluded; "
+            f"{suitability_provenance['applicable_count']} applicable"
+        )
+        _staged_annotation = prep["task_path"] / rubric_suitability.STAGED_FILENAME
+        if _staged_annotation.exists():
+            shutil.copy(
+                str(_staged_annotation),
+                str(output_dir / rubric_suitability.STAGED_FILENAME),
+            )
+    else:
+        numbered_gated = numbered_all
+        suitability_provenance = {"gated": False}
+        if rubric_suitability.skip_requested():
+            suitability_provenance["skipped_via_env"] = True
+
+    check_ids = [str(no) for no, _, _ in numbered_gated]
+    id_to_cat_name = {
+        str(no): (cat, check["name"]) for no, cat, check in numbered_gated
+    }
+
+    recorder = _make_recorder(
+        output_dir,
+        mode="single_pass",
+        model=model,
+        reasoning_effort=reasoning_effort,
+        attempt_model=attempt_model,
+        versions=versions,
+        check_order=prep["CHECK_ORDER"],
+        rubric={"path": str(rubric_json_path), "md5": _file_md5(rubric_json_path)},
+        weights={
+            "path": str(rubric_weight_path) if rubric_weight_path else None,
+            "md5": _file_md5(rubric_weight_path) if rubric_weight_path else None,
+        },
+        template_path=str(template_path),
+        limits={
+            "max_tool_rounds": max_tool_rounds,
+            "context_token_limit": AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
+        },
+        files={
+            "golden_solution": sorted(golden_solution_files),
+            "ai_attempt": sorted(ai_attempt_files),
+            "starting_workbook": sorted(starting_workbook_files),
+            "context": context_file_path.name if context_file_path else None,
+        },
+    )
+    recorder.record_event(
+        "rubric_suitability", **{k: v for k, v in suitability_provenance.items()
+                                 if k in ("gated", "s3_key", "excluded_count",
+                                          "skipped_via_env")}
+    )
+
+    token_tracking = {
+        "evaluations": {},
+        "total_message_size": 0,
+        "total_message_size_with_images": 0,
+        "total_tokens": 0,
+        "total_prompt_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_cost": 0.0,
+    }
+
+    logger.info(
+        f"\n[Single-pass] Starting evaluation over {len(check_ids)} checks..."
+    )
+
+    rubric_checks_text = render_rubric_checks_flat(numbered_gated, guidance)
+    compile_kwargs = dict(
+        rubric_checks_text=rubric_checks_text,
+        check_ids_text=", ".join(check_ids),
+        num_checks=str(len(check_ids)),
+        attempt_files_text=_render_files_text_dims_only(
+            attempt_file_list, attempt_file_metadata
+        ),
+        solution_files_text=_render_files_text_dims_only(
+            solution_file_list, solution_file_metadata
+        ),
+        starting_files_text=(
+            _render_files_text_dims_only(starting_file_list, starting_file_metadata)
+            if starting_file_list
+            else "  (starting workbook not available for this attempt)"
+        ),
+        general_guidance=(guidance or {}).get("general"),
+    )
+    if context_messages:
+        compile_kwargs["context_messages"] = context_messages
+
+    stages = compile_prompt(template_path, **compile_kwargs)
+    seed_messages = list(stages[0])
+
+    ALL = "all_checks"
+    state = AgenticCategoryLoop(ALL, check_ids, seed_messages)
+    format_notes_served: set = set()
+    fail_nudge_count = 0
+
+    cumulative_metrics = {
+        "message_size": 0,
+        "message_size_with_images": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    tool_call_stats: dict[str, int] = {
+        t["function"]["name"]: 0 for t in SINGLE_PASS_JUDGE_TOOLS
+    }
+    tool_call_args_log: list[dict] = []
+    for m in state.messages:
+        size = _measure_message_chars(m)
+        cumulative_metrics["message_size"] += size
+        cumulative_metrics["message_size_with_images"] += size
+
+    def _serving_category(parsed_args: dict) -> str:
+        """Map the model's declared view onto the category-keyed serving rule."""
+        view = str(parsed_args.get("view") or "").strip().lower()
+        if view == "formatting":
+            return "Formatting"
+        if view == "structure":
+            return "Structure"
+        return "_data_view"  # any non-Formatting label serves the data view
+
+    def _dispatch_tool(tc, _args_parsed, phase: str) -> str:
+        name = tc.function.name
+        if name == "read_file":
+            if phase == "forced_finalization":
+                return (
+                    "Error: tool 'read_file' is disabled in forced "
+                    "finalization. Only record_check / append_mistake / "
+                    "get_working_judgement are allowed."
+                )
+            return _execute_read_file(
+                tc,
+                ai_attempt_dir,
+                golden_solution_dir,
+                category=_serving_category(_args_parsed),
+                format_notes=format_notes_served,
+                starting_dir=starting_workbook_dir,
+            )
+        if name == "evict_tool_results":
+            if phase == "forced_finalization":
+                return (
+                    "Error: tool 'evict_tool_results' is disabled in forced "
+                    "finalization. Only record_check / append_mistake / "
+                    "get_working_judgement are allowed."
+                )
+            try:
+                before_round = int(_args_parsed.get("before_round", 0))
+            except (ValueError, TypeError) as e:
+                return f"Error: invalid arguments for evict_tool_results: {e}"
+            before_round = min(before_round, state.round)
+            return state.evict(before_round)
+        if name in ("record_check", "append_mistake", "get_working_judgement"):
+            return _execute_scratchpad_tool(tc, state.working)
+        return f"Error: unknown tool '{name}'."
+
+    def _run_round(phase: str, tools: list) -> str:
+        """One API call + tool execution. Returns 'ok', 'stop', 'retry' or 'break'."""
+        nonlocal chars_per_token, api_retries
+        wire_chars_at_call = _wire_char_total(state.messages)
+        _msgs = state.messages
+        if identity.provider in ("anthropic", "openai"):
+            _msgs = strip_unsupported_anthropic_images(_msgs)
+        _create_kwargs = {
+            "model": identity.model,
+            "messages": _msgs,
+            "tools": tools,
+        }
+        if reasoning_effort is not None:
+            _create_kwargs["reasoning_effort"] = (
+                "none" if identity.provider == "openai" else reasoning_effort
+            )
+        _call_t0 = time.time()
+        try:
+            response = client.chat.completions.create(**_create_kwargs)
+        except Exception as e:
+            recorder.record_call(
+                mode="single_pass",
+                category=ALL,
+                round=state.round,
+                purpose=phase,
+                model=model,
+                request_messages=_create_kwargs["messages"],
+                request_params={
+                    "reasoning_effort": _create_kwargs.get("reasoning_effort")
+                },
+                tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
+                error=str(e),
+                t0=_call_t0,
+            )
+            err_str = str(e)
+            if "maximum context length" in err_str or (
+                "400" in err_str and "context" in err_str.lower()
+            ):
+                logger.error(
+                    f"    Context-length overflow (round {state.round}): {e}. "
+                    f"Stopping; partial judgement will be saved."
+                )
+                state.log_event("context_overflow", error=err_str[:500])
+                recorder.record_event(
+                    "context_overflow", category=ALL, round=state.round,
+                    error=err_str[:500],
+                )
+                return "break"
+            api_retries += 1
+            if api_retries > max_api_retries:
+                logger.error(f"    Giving up after {max_api_retries} API retries: {e}")
+                return "break"
+            wait = min(2**api_retries + 1, 30)
+            logger.warning(
+                f"    API error (round {state.round}, retry "
+                f"{api_retries}/{max_api_retries}): {e}. Retrying in {wait}s..."
+            )
+            recorder.record_event(
+                "api_retry", category=ALL, round=state.round,
+                retry=api_retries, error=str(e)[:500],
+            )
+            time.sleep(wait)
+            return "retry"
+
+        recorder.record_call(
+            mode="single_pass",
+            category=ALL,
+            round=state.round,
+            purpose=phase,
+            model=model,
+            request_messages=_create_kwargs["messages"],
+            request_params={
+                "reasoning_effort": _create_kwargs.get("reasoning_effort")
+            },
+            tools=[t["function"]["name"] for t in _create_kwargs["tools"]],
+            response=response,
+            t0=_call_t0,
+        )
+
+        if not response.choices:
+            err_detail = (
+                (response.model_extra or {}).get("error")
+                or getattr(response, "error", None)
+                or "no error field"
+            )
+            api_retries += 1
+            if api_retries > max_api_retries:
+                logger.error(
+                    f"    Giving up after {max_api_retries} retries: "
+                    f"empty choices. err={err_detail}"
+                )
+                state.log_event(
+                    "empty_choices_giveup", error=str(err_detail)[:500]
+                )
+                return "break"
+            wait = min(2**api_retries + 1, 30)
+            logger.warning(
+                f"    Empty choices (round {state.round}, retry "
+                f"{api_retries}/{max_api_retries}): err={err_detail}. "
+                f"Retrying in {wait}s..."
+            )
+            state.log_event("empty_choices", error=str(err_detail)[:500])
+            recorder.record_event(
+                "empty_choices", category=ALL, round=state.round,
+                retry=api_retries, error=str(err_detail)[:500],
+            )
+            time.sleep(wait)
+            return "retry"
+        api_retries = 0
+
+        usage = response.usage
+        if usage:
+            cumulative_metrics["prompt_tokens"] += usage.prompt_tokens or 0
+            cumulative_metrics["completion_tokens"] += usage.completion_tokens or 0
+            cumulative_metrics["total_tokens"] += usage.total_tokens or 0
+            if usage.prompt_tokens:
+                state.last_prompt_tokens = usage.prompt_tokens
+                if wire_chars_at_call > 0:
+                    chars_per_token = wire_chars_at_call / usage.prompt_tokens
+
+        msg = response.choices[0].message
+        msg_size = _measure_message_chars(msg)
+        cumulative_metrics["message_size"] += msg_size
+        cumulative_metrics["message_size_with_images"] += msg_size
+
+        if msg.tool_calls:
+            state.append_wire(msg, tag="model_tool_call")
+            for tc in msg.tool_calls:
+                name = tc.function.name
+                args_preview = str(tc.function.arguments or "")[:200]
+                logger.info(f"      Tool call: {name}({args_preview})")
+                tool_call_stats[name] = tool_call_stats.get(name, 0) + 1
+                try:
+                    _args_parsed = json.loads(tc.function.arguments or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    _args_parsed = {"_raw": tc.function.arguments}
+                tool_call_args_log.append(
+                    {
+                        "round": state.round,
+                        "phase": phase,
+                        "tool": name,
+                        "tool_call_id": tc.id,
+                        "arguments": _args_parsed,
+                    }
+                )
+                tool_result = _dispatch_tool(tc, _args_parsed, phase)
+                tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tool_result,
+                }
+                state.append_wire(tool_msg, tag="tool_result")
+                recorder.record_event(
+                    "tool_exec",
+                    category=ALL,
+                    round=state.round,
+                    phase=phase,
+                    tool=name,
+                    args=_args_parsed,
+                    result=tool_result,
+                )
+                tsize = _measure_message_chars(tool_msg)
+                cumulative_metrics["message_size"] += tsize
+                cumulative_metrics["message_size_with_images"] += tsize
+            return "ok"
+
+        if msg.content:
+            state.append_wire(msg, tag="assistant_text")
+        return "stop"
+
+    def _nudge(content: str, phase: str, **event) -> None:
+        nudge_msg = {"role": "user", "content": content}
+        state.append_wire(nudge_msg, tag="nudge")
+        recorder.record_event(
+            "nudge", category=ALL, round=state.round, phase=phase, **event
+        )
+        nsize = _measure_message_chars(nudge_msg)
+        cumulative_metrics["message_size"] += nsize
+        cumulative_metrics["message_size_with_images"] += nsize
+
+    def _pending_ids() -> list[str]:
+        return [i for i in state.working.check_letters if i in state.working.pending]
+
+    api_retries = 0
+    max_api_retries = 5
+    chars_per_token = 0.0
+
+    round_idx = 0
+    while round_idx < max_tool_rounds:
+        state.round = round_idx + 1
+        if state.round % 25 == 0 or state.round == 1:
+            logger.info(
+                f"    Round {state.round}... "
+                f"(recorded {len(state.working.working)}/{len(check_ids)})"
+            )
+        else:
+            logger.info(f"    Round {state.round}...")
+
+        wire_chars_pre = _wire_char_total(state.messages)
+        wire_tokens_est = _estimate_wire_tokens(wire_chars_pre, chars_per_token)
+        status, tier = _build_pressure_signal(
+            wire_tokens_est,
+            AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
+            state.round - 1,
+        )
+        logger.info(f"      Pressure ({tier}): {status.splitlines()[0]}")
+        recorder.record_event(
+            "pressure",
+            category=ALL,
+            round=state.round,
+            tier=tier,
+            estimated_tokens=wire_tokens_est,
+            limit=AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
+        )
+        pressure_msg = {"role": "user", "content": status}
+        state.append_wire(pressure_msg, tag="pressure_note")
+        psize = _measure_message_chars(pressure_msg)
+        cumulative_metrics["message_size"] += psize
+        cumulative_metrics["message_size_with_images"] += psize
+
+        outcome = _run_round("main", SINGLE_PASS_JUDGE_TOOLS)
+        if outcome == "retry":
+            continue
+        if outcome == "break":
+            break
+        if outcome == "ok":
+            round_idx += 1
+            continue
+
+        # outcome == "stop": no tool calls — finalization rules
+        if state.working.pending:
+            missing = _pending_ids()
+            preview = ", ".join(missing[:40]) + (
+                f" (+{len(missing) - 40} more)" if len(missing) > 40 else ""
+            )
+            _nudge(
+                f"You haven't recorded decisions for {len(missing)} check(s): "
+                f"{preview}. Call record_check for each before concluding.",
+                "main",
+                pending_count=len(missing),
+            )
+            logger.info(f"      Nudged: {len(missing)} pending")
+            round_idx += 1
+            continue
+
+        missing_mistakes = state.working.fails_missing_mistakes()
+        if missing_mistakes and fail_nudge_count < 4:
+            fail_nudge_count += 1
+            _nudge(
+                f"You recorded {', '.join(missing_mistakes)} as 'fail' but "
+                f"appended no mistake. For each, either call append_mistake "
+                f"with the concrete cell/range location and description of "
+                f"the issue you found, or call record_check again with "
+                f"decision 'pass' if there is in fact no concrete issue.",
+                "fail_without_mistakes",
+                checks=missing_mistakes,
+            )
+            logger.info(f"      Nudged: fail without mistakes {missing_mistakes}")
+            round_idx += 1
+            continue
+
+        logger.info(
+            f"      Model stopped with all checks recorded: "
+            f"{len(state.working.working)}/{len(check_ids)}"
+        )
+        break
+
+    # Forced finalization — same escape hatch as 12-category mode, with a
+    # ceiling sized for the whole rubric rather than one category.
+    if round_idx >= max_tool_rounds and state.working.pending:
+        missing_initial = _pending_ids()
+        logger.warning(
+            f"    Max rounds ({max_tool_rounds}) exhausted with "
+            f"{len(missing_initial)} pending checks. Entering forced "
+            f"finalization."
+        )
+        state.log_event(
+            "forced_finalization_start",
+            pending=missing_initial,
+            max_tool_rounds=max_tool_rounds,
+        )
+        recorder.record_event(
+            "forced_finalization_start",
+            category=ALL,
+            round=state.round,
+            pending=missing_initial,
+        )
+        _nudge(
+            f"You have exhausted the maximum number of tool-calling rounds "
+            f"({max_tool_rounds}) but still have {len(missing_initial)} "
+            f"pending checks: {', '.join(missing_initial)}. You must now "
+            f"record your pass/fail decisions for ALL remaining pending "
+            f"checks immediately using record_check, based on the evidence "
+            f"you have already gathered. No further file reads or evictions "
+            f"are permitted; only record_check, append_mistake, and "
+            f"get_working_judgement tools are available. Output your best "
+            f"judgement now.",
+            "forced_finalization",
+            pending_count=len(missing_initial),
+        )
+
+        forced_round = 0
+        api_retries = 0
+        # Tool declarations stay IDENTICAL to the main loop's (Gemini binds
+        # thought signatures to the request config — a reduced tool list
+        # mid-conversation 400s). Restriction is enforced at execution time
+        # in _dispatch_tool.
+        while (
+            forced_round < SINGLE_PASS_MAX_FORCED_ROUNDS and state.working.pending
+        ):
+            forced_round += 1
+            state.round = max_tool_rounds + forced_round
+            logger.info(
+                f"    Forced finalization round "
+                f"{forced_round}/{SINGLE_PASS_MAX_FORCED_ROUNDS}..."
+            )
+            outcome = _run_round("forced_finalization", SINGLE_PASS_JUDGE_TOOLS)
+            if outcome == "retry":
+                forced_round -= 1
+                continue
+            if outcome == "break":
+                break
+            if outcome == "stop" and state.working.pending:
+                missing_now = _pending_ids()
+                _nudge(
+                    f"You still have not recorded decisions for "
+                    f"{len(missing_now)} check(s): "
+                    f"{', '.join(missing_now[:40])}. Call record_check for "
+                    f"each pending check now.",
+                    "forced_finalization",
+                    pending_count=len(missing_now),
+                )
+
+        state.log_event(
+            "forced_finalization_end",
+            pending_after=_pending_ids(),
+            forced_rounds_used=forced_round,
+        )
+        recorder.record_event(
+            "forced_finalization_end",
+            category=ALL,
+            round=state.round,
+            pending_after=_pending_ids(),
+            forced_rounds_used=forced_round,
+        )
+
+    # Regroup the flat verdicts by category — scoring is unchanged and keys
+    # on (category, check name), so after this point everything downstream
+    # behaves exactly as the 12-category path.
+    all_responses: dict[str, list] = {}
+    parse_failures: dict = {}
+
+    if state.working.pending:
+        missing = _pending_ids()
+        logger.warning(
+            f"    WARNING: finishing with {len(missing)} pending checks "
+            f"(round {state.round})"
+        )
+        by_cat: dict[str, list] = {}
+        for check_id in missing:
+            cat, name = id_to_cat_name[check_id]
+            by_cat.setdefault(cat, []).append(f"{check_id} ({name})")
+        for cat, entries in by_cat.items():
+            parse_failures[cat] = {
+                "success": False,
+                "count": len(entries),
+                "responses": [f"Missing decisions for checks: {entries}"],
+                "pending_checks": entries,
+            }
+
+    final_judgement = state.working.finalize()
+    for item in final_judgement:
+        check_id = item.get("check")
+        cat, name = id_to_cat_name[check_id]
+        item["name"] = name
+        all_responses.setdefault(cat, []).append(item)
+
+    state.append_synthetic_final(final_judgement)
+
+    recorder.record_outcome(
+        category=ALL,
+        judgement=final_judgement,
+        coverage=f"{len(state.working.working)}/{len(check_ids)}",
+        pending=_pending_ids(),
+        rounds_used=state.round,
+        tool_call_stats=tool_call_stats,
+    )
+
+    token_tracking["evaluations"][ALL] = cumulative_metrics
+    cost_info = calculate_cost(
+        model,
+        cumulative_metrics["prompt_tokens"],
+        cumulative_metrics["completion_tokens"],
+    )
+    token_tracking["evaluations"][ALL]["cost"] = cost_info["total_cost"]
+    token_tracking["evaluations"][ALL]["chars_per_token"] = (
+        round(
+            cumulative_metrics["message_size"] / cumulative_metrics["prompt_tokens"],
+            2,
+        )
+        if cumulative_metrics["prompt_tokens"] > 0
+        else 0
+    )
+    token_tracking["total_message_size"] = cumulative_metrics["message_size"]
+    token_tracking["total_message_size_with_images"] = cumulative_metrics[
+        "message_size_with_images"
+    ]
+    token_tracking["total_tokens"] = cumulative_metrics["total_tokens"]
+    token_tracking["total_prompt_tokens"] = cumulative_metrics["prompt_tokens"]
+    token_tracking["total_completion_tokens"] = cumulative_metrics[
+        "completion_tokens"
+    ]
+    token_tracking["total_cost"] = cost_info["total_cost"]
+
+    logger.info(
+        f"    Tokens: {cumulative_metrics['prompt_tokens']:,} prompt + "
+        f"{cumulative_metrics['completion_tokens']:,} completion | "
+        f"Cost: ${cost_info['total_cost']:.6f}"
+    )
+    logger.info(
+        f"    Final coverage: {len(state.working.working)}/{len(check_ids)} "
+        f"checks recorded"
+    )
+
+    conversation_logs_dir = output_dir / "judge_conversation_logs"
+    conversation_logs_dir.mkdir(parents=True, exist_ok=True)
+    conversation_path = conversation_logs_dir / "conversation_messages_all_checks.json"
+    with open(conversation_path, "w", encoding="utf-8") as f:
+        json.dump(state.transcript, f, indent=2)
+    dump_messages_yaml(state.transcript, conversation_path.with_suffix(".yaml"))
+
+    total_tool_calls = sum(tool_call_stats.values())
+    stats_str = (
+        ", ".join(f"{k}={v}" for k, v in sorted(tool_call_stats.items()))
+        if total_tool_calls
+        else "(none)"
+    )
+    logger.info(f"    Tool calls: {total_tool_calls} total | {stats_str}")
+
+    tool_calls_path = conversation_logs_dir / "tool_calls_all_checks.json"
+    with open(tool_calls_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"stats": tool_call_stats, "calls": tool_call_args_log}, f, indent=2
+        )
+
+    return _finalize_case(
+        all_responses=all_responses,
+        output_dir=output_dir,
+        weights_data=weights_data,
+        token_tracking=token_tracking,
+        model=model,
+        attempt_model=attempt_model,
+        task_folder_name=task_folder_name,
+        golden_solution_files=golden_solution_files,
+        ai_attempt_files=ai_attempt_files,
+        context_file_path=context_file_path,
+        start_time=start_time,
+        cache_log_path=cache_log_path,
+        versions=versions,
+        golden_solution_dir=golden_solution_dir,
+        ai_attempt_dir=ai_attempt_dir,
+        starting_workbook_dir=starting_workbook_dir,
+        parse_failures=parse_failures,
+        agentic=True,
+        reasoning_effort=reasoning_effort,
+        grader_identity=identity.settings(),
+        recorder=recorder,
+        suitability_provenance=suitability_provenance,
+        formula_cache_provenance=prep.get("formula_cache_provenance"),
     )
 
 

@@ -55,11 +55,14 @@ import psycopg2.extras
 _judge_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_judge_root))
 
+from utils import rubric_suitability
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
+    BENCHMARKS,
     add_benchmark_arg,
+    current_benchmark,
     load_env_var,
     load_project_configs,
     relative_path_from_project_root,
@@ -84,6 +87,7 @@ add_agentic_cli_args = _gfd.add_agentic_cli_args
 cache_namespace = _gfd.cache_namespace
 validate_benchmark_coherence = _gfd.validate_benchmark_coherence
 AGENTIC_JUDGE_MAX_ROUNDS = _gfd.AGENTIC_JUDGE_MAX_ROUNDS
+_get_s3_client = _gfd._get_s3_client
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +345,10 @@ class GradeOrchestrator:
         no_s3_upload,
         on_overflow,
         reasoning_effort,
+        single_pass=False,
     ):
         self.workers = workers
+        self.single_pass = single_pass
         self.model = model
         self.rubric_path = rubric_path
         self.template_path = template_path
@@ -372,11 +378,17 @@ class GradeOrchestrator:
 
         # Persistent CSV cache roots, namespaced by database name because
         # task/attempt ids collide across the v1 and v2 databases.
+        # "_v2" generation, matching grade_from_db (2026-08): extraction now
+        # writes the *_data.csv serving variants, and a pre-revision cache
+        # without them silently disables template 5+'s category-keyed
+        # serving. The unsuffixed dirs this script used before are ignored.
         cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
-        self.solution_cache_base = cache_root / "solution_csv_cache"
-        self.attempt_cache_base = cache_root / "attempt_csv_cache"
+        self.solution_cache_base = cache_root / "solution_csv_cache_v2"
+        self.attempt_cache_base = cache_root / "attempt_csv_cache_v2"
+        self.starting_cache_base = cache_root / "starting_csv_cache_v2"
         self.solution_cache_base.mkdir(parents=True, exist_ok=True)
         self.attempt_cache_base.mkdir(parents=True, exist_ok=True)
+        self.starting_cache_base.mkdir(parents=True, exist_ok=True)
 
         self._attempt_cache_suffix = (
             "__sheet_filtered" if attempt_sheet_name_filter else ""
@@ -385,7 +397,19 @@ class GradeOrchestrator:
         # In-memory lookup of published cache dirs.
         self._solution_csv_cache: dict[int, str] = {}
         self._attempt_csv_cache: dict[int, str] = {}
+        self._starting_csv_cache: dict[int, str] = {}
         self._cache_lock = threading.Lock()
+
+        # Phase A: per-task suitability annotations, fetched once per run and
+        # staged into each task folder by grade_single_attempt. Without this
+        # the judge refuses every v2 grading (the 2026-08-31 gating made the
+        # annotation mandatory; staging is a caller responsibility and this
+        # orchestrator never did it — grade_from_db was the only working
+        # driver until now).
+        self.suitability_cache_dir = cache_root / "rubric_suitability"
+        self._suitability_sources: dict[int, Path | None] = {}
+        self._suitability_lock = threading.Lock()
+        self._s3_suitability_client = None
 
         # Result queue drained by the writer thread
         self._result_queue: queue.Queue = queue.Queue()
@@ -459,6 +483,74 @@ class GradeOrchestrator:
                 )
         with self._cache_lock:
             self._attempt_csv_cache.setdefault(attempt_id, str(final))
+
+    def _lookup_starting_cache(self, task_id):
+        with self._cache_lock:
+            cached = self._starting_csv_cache.get(task_id)
+        if cached:
+            return cached
+        disk_dir = self.starting_cache_base / f"task_id={task_id}"
+        if disk_dir.exists() and list(disk_dir.glob("*.csv")):
+            with self._cache_lock:
+                self._starting_csv_cache.setdefault(task_id, str(disk_dir))
+                return self._starting_csv_cache[task_id]
+        return None
+
+    def _publish_starting_cache(self, task_id, src_dir):
+        final = self.starting_cache_base / f"task_id={task_id}"
+        if not final.exists():
+            try:
+                publish_cache_dir(src_dir, final)
+            except Exception as e:
+                logger.warning(
+                    f"  Failed to publish starting cache for task {task_id}: {e}"
+                )
+        with self._cache_lock:
+            self._starting_csv_cache.setdefault(task_id, str(final))
+
+    # ---- suitability annotations ----
+
+    def _get_suitability_src(self, task_id):
+        """Fetch + pin the task's suitability annotation (v2, memoized).
+
+        Mirrors grade_from_db.main's staging: fetch from S3 once per task,
+        write a *__staged.json beside the cache, hand the path to
+        grade_single_attempt (which copies it into the task folder). A
+        failure is logged and memoized as None so one bad task can't kill
+        the run — the judge itself enforces the v2 refusal rule.
+        """
+        if current_benchmark() != "v2":
+            return None
+        with self._suitability_lock:
+            if task_id in self._suitability_sources:
+                return self._suitability_sources[task_id]
+            try:
+                if self._s3_suitability_client is None:
+                    self._s3_suitability_client = _get_s3_client()
+                annotation, s3_key = rubric_suitability.fetch_annotation(
+                    self._s3_suitability_client,
+                    load_env_var("S3_RAW_FILES_BUCKET", required=True),
+                    BENCHMARKS[current_benchmark()]["s3_root"],
+                    task_id,
+                    self.suitability_cache_dir,
+                )
+                annotation["_staging"] = {"s3_key": s3_key}
+                staged_src = (
+                    self.suitability_cache_dir / f"task_id={task_id}__staged.json"
+                )
+                staged_src.write_text(json.dumps(annotation, indent=2))
+                self._suitability_sources[task_id] = staged_src
+                logger.info(
+                    f"  Suitability annotation for task {task_id}: {s3_key}"
+                )
+            except Exception as e:  # noqa: BLE001 — judge enforces
+                self._suitability_sources[task_id] = None
+                logger.warning(
+                    f"  No usable suitability annotation for task {task_id}: "
+                    f"{e} — the judge will refuse this grading unless "
+                    f"JUDGE_SKIP_SUITABILITY=1"
+                )
+            return self._suitability_sources[task_id]
 
     # ---- writer thread ----
 
@@ -534,14 +626,22 @@ class GradeOrchestrator:
 
         cached_solution = self._lookup_solution_cache(task_id)
         cached_attempt = self._lookup_attempt_cache(attempt_id)
+        cached_starting = self._lookup_starting_cache(task_id)
+        suitability_src = self._get_suitability_src(task_id)
 
         cache_notes = []
         if cached_solution:
             cache_notes.append(f"cached solution CSVs for task {task_id}")
         if cached_attempt:
             cache_notes.append(f"cached attempt CSVs for attempt {attempt_id}")
+        if cached_starting:
+            cache_notes.append(f"cached starting CSVs for task {task_id}")
         note = f" (using {'; '.join(cache_notes)})" if cache_notes else ""
-        mode = "agentic" if agentic else "standard"
+        mode = (
+            "single_pass"
+            if self.single_pass
+            else ("agentic" if agentic else "standard")
+        )
         logger.info(f"[start] attempt {attempt_id} task {task_id} mode={mode}{note}")
 
         try:
@@ -562,14 +662,17 @@ class GradeOrchestrator:
                 total_char_limit=self.total_char_limit,
                 cached_solution_csv_dir=cached_solution,
                 cached_attempt_csv_dir=cached_attempt,
+                cached_starting_csv_dir=cached_starting,
                 attempt_sheet_name_filter=self.attempt_sheet_name_filter,
                 ignore_sheets=self.ignore_sheets,
                 agentic=agentic,
+                single_pass=self.single_pass,
                 carry_over_context=self.carry_over_context,
                 max_tool_rounds=self.max_tool_rounds,
                 no_s3_upload=self.no_s3_upload,
                 on_overflow=self.on_overflow,
                 reasoning_effort=self.reasoning_effort,
+                suitability_source_path=suitability_src,
             )
         except Exception as e:
             logger.error(f"  [attempt {attempt_id}] grade_single_attempt raised: {e}")
@@ -590,6 +693,9 @@ class GradeOrchestrator:
             att_src = result.get("attempt_csv_dir")
             if att_src and not cached_attempt:
                 self._publish_attempt_cache(attempt_id, att_src)
+            start_src = result.get("starting_csv_dir")
+            if start_src and not cached_starting:
+                self._publish_starting_cache(task_id, start_src)
 
         # If judge_case auto-routed to the agentic judge due to context
         # overflow, the run that actually produced these scores was agentic.
@@ -980,6 +1086,24 @@ def main():
         )
     )
 
+    # --single-pass: swap in the single-pass template and round budget, and
+    # force agentic routing. Same resolution as grade_from_db.main.
+    single_pass = bool(getattr(args, "single_pass", False))
+    if single_pass:
+        args.agentic = True
+        agentic_template_path = str(
+            relative_path_from_project_root(
+                load_env_var(
+                    "SINGLE_PASS_PROMPT_TEMPLATE",
+                    default="./prompts/agentic_judge_template_7.yaml",
+                )
+            )
+        )
+        if args.max_tool_rounds == AGENTIC_JUDGE_MAX_ROUNDS:
+            args.max_tool_rounds = int(
+                load_env_var("SINGLE_PASS_MAX_ROUNDS", default=500)
+            )
+
     # Refuse to start if rubric, check_order and judge mode don't all belong
     # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
@@ -1085,6 +1209,7 @@ def main():
         no_s3_upload=args.no_s3_upload,
         on_overflow=args.on_overflow,
         reasoning_effort=args.reasoning_effort,
+        single_pass=single_pass,
     )
 
     orch.run(hydrated)

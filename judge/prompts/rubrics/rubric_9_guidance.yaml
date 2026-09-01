@@ -1,0 +1,102 @@
+# Judge-only grading guidance for rubric_9 (Patrick, 2026-09-01).
+#
+# These notes change how the JUDGE applies the rubric, not what agents are
+# asked to do. They are layered onto the rendered checks at prompt time by
+# utils/rubric_guidance.py, identically in both v2 grading modes (12-category
+# and single-pass), so mode comparisons share one standard.
+#
+# This file is validated against rubric_9.json at load: a note naming a
+# category or check the rubric doesn't contain refuses to grade. If the
+# rubric is regenerated/revised, update the names here to match.
+#
+# rubric_9.json itself is generated from the agent-facing build prompt —
+# never fold these notes into it (they'd be wiped by regeneration and would
+# leak into what agents are told).
+
+general: |
+  The starting workbook (source "starting") is the file the agent was given
+  before it did any work. Never deduct points for anything that was already
+  present in the starting workbook — pre-existing sheets, values, hardcodes,
+  formatting, or structure are not the agent's work and must not count
+  against it. When you are about to record a mistake, and it is plausible
+  the offending content was inherited, check the starting workbook first;
+  only penalize what the agent added or changed.
+
+categories:
+  Accuracy: |
+    Judge this category with a reasonable-person standard: if a reasonable
+    person comparing the attempt's answer with the golden solution's would
+    conclude they are the same, treat them as the same. NEVER penalize any
+    Accuracy check for formatting-related issues — how a value is displayed
+    (number format, font, alignment, sign styling) is the Formatting
+    category's domain, not Accuracy's.
+
+checks:
+  - category: Accuracy
+    name: Final calculation accuracy
+    note: |
+      Formatting must have no impact on this check. A negative shown as
+      (1) and one shown as -1 are the same value. An answer quoted as a
+      percentage counts as correct whether or not it is multiplied by 100
+      (0.42 and 42 for 42% are both correct). Compare underlying values,
+      not their rendering.
+
+  - category: Accuracy
+    name: Deliverable completeness
+    note: |
+      Do not deduct points because the attempt's supporting detail or
+      deliverables use fewer cells, fewer rows or columns, are more
+      concise, or take a different format than the golden solution. If the
+      answer to a question is correct and the attempt shows supporting
+      detail for how it was derived, that is sufficient. Do not deduct for
+      formatting differences here either — a zero shown as 0, 0.0, or --
+      is equally sufficient.
+
+  - category: Assumptions
+    name: Unique assumptions
+    note: |
+      Do not subtract points for anything found on assumption pages when
+      the assumptions were provided as part of the starting workbook. Only
+      assumptions the agent itself introduced are in scope.
+
+  - category: Flexibility
+    name: Driver-based, formula-linked architecture
+    note: |
+      Do not deduct points for hardcoded cells that were already hardcoded
+      in the starting workbook the agent received. Only hardcodes the agent
+      itself introduced count against this check.
+
+  - category: Formatting
+    name: Reasonable number formats
+    note: |
+      Dates must be formatted with NO timestamp: 2027-01-01 is fine;
+      2027-01-01 00:00:00 is not.
+
+  - category: Formatting
+    name: Blue font for hardcoded inputs
+    note: |
+      Blue font marks the model's drivers — the assumptions a user is
+      expected to change to test a different scenario. Judge this on the
+      cells the model presents as inputs or assumptions: an inputs or
+      assumptions sheet, or a clearly labelled assumptions block, plus any
+      other hardcoded value that a headline output is directly sensitive
+      to. Do NOT count against the model hardcoded values that are not
+      meant to be varied — labels, headers, dates in a timeline, units,
+      counters, section numbers, constants inside formulas, and historical
+      or actual figures presented as fact rather than as an assumption.
+      If it is unclear whether a cell is a driver the user is meant to
+      vary, do not treat it as a miss.
+
+  - category: Formatting
+    name: Black font for calculations
+    note: |
+      Do NOT deduct points when a formula that references cells on other
+      sheets is formatted in green font — green is the sanctioned color
+      for cross-sheet links, so either color is acceptable for such cells.
+
+  - category: Formatting
+    name: Green font for cross-sheet links
+    note: |
+      Do NOT deduct points when a formula that references cells on other
+      sheets is formatted in black font — black is the sanctioned color
+      for calculations, so either color is acceptable for such cells.

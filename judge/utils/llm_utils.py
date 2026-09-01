@@ -119,6 +119,11 @@ _MODEL_PRICING = {
     # ($/MTok = delta / token_tracking totals), then recalibrate here.
     "openai/gpt-5.6-sol": (5.0, 30.0),       # OpenAI list (matches cli models_config)
     "anthropic/claude-opus-5": (5.0, 25.0),  # Anthropic list price
+    # PROVISIONAL like the two above — flash-line list price (matches the
+    # 3.5/3.6 entries); the bake-off charged this arm _DEFAULT_PRICING
+    # because the key was missing entirely. Recalibrate from a billed
+    # credits-dashboard delta after the v4 canaries.
+    "google/gemini-3.7-flash": (0.5, 3.0),
 }
 _DEFAULT_PRICING = (10.0, 30.0)  # Fallback pricing per 1M tokens
 

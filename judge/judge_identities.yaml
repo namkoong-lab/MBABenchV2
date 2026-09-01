@@ -83,3 +83,16 @@
   provider: anthropic
   model: claude-opus-5
   effort: null                        # anthropic path drops reasoning_effort; Opus 5 thinking is always-on (its floor)
+
+# Bake-off arm that was run (2026-08-31, judge_version 3, 64 rows) from a
+# locally-edited registry and never committed — appended 2026-09-01 so the
+# recommended grader is runnable again. Label string matches the existing
+# gradings.grader_model EXACTLY so new rows join the old cohort. Both
+# efforts share this one entry: high is the pinned default (the
+# reproducibility recommendation); run low via --reasoning-effort low —
+# gradings.grader_reasoning records the effective value either way.
+- grader_model: google/gemini-3.7-flash
+  provider: openrouter                # verified from the bake-off bundles'
+                                      # _metadata.json grader_identity
+  model: google/gemini-3.7-flash
+  effort: high

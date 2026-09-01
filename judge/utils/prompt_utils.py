@@ -84,21 +84,93 @@ def _has_optional_data(entry: dict, kwargs: dict) -> bool:
     return True
 
 
-def render_rubric_checks_list(items: list[dict]) -> str:
+def render_rubric_checks_list(
+    items: list[dict], category: str = None, guidance: dict = None
+) -> str:
     """Render an explicit check list into prompt-ready text.
 
     Letters are assigned by position in `items`, so a suitability-filtered
     list stays contiguous (A..N over the applicable checks) and matches the
     letter->name mapping built from the same list.
+
+    `guidance` (utils.rubric_guidance.load_guidance) appends a "Guidance:"
+    block under each check that has a note, and a category note above the
+    checks; both need `category`. Omitted (the v3 / template_5 path), the
+    output is byte-identical to before guidance existed.
     """
     blocks = []
+    if guidance and category and category in guidance.get("categories", {}):
+        blocks.append(
+            f"Category guidance for {category}:\n"
+            f"{guidance['categories'][category]}"
+        )
     for i, item in enumerate(items):
         letter = check_letter(i)
-        blocks.append(
+        text = (
             f"Check {letter}: {item['description']}\n"
             f"Pass: {item['good']}\n"
             f"Fail: {item['bad']}"
         )
+        if guidance and category:
+            note = guidance.get("checks", {}).get((category, item["name"]))
+            if note:
+                text += f"\nGuidance: {note}"
+        blocks.append(text)
+    return "\n\n".join(blocks)
+
+
+def numbered_rubric_checks(rubric: dict) -> list[tuple[int, str, dict]]:
+    """Flatten a rubric into (global_no, category, check) triples.
+
+    The numbering is the rubric's flattened order — category key order, then
+    within-category order — i.e. exactly the 1..N sequence the suitability
+    annotations' `no` field is validated against
+    (utils.rubric_suitability.validate_annotation). IDs are therefore stable
+    across tasks; suitability gating removes entries WITHOUT renumbering, so
+    a gated list has gaps by design.
+    """
+    return [
+        (no, cat, check)
+        for no, (cat, check) in enumerate(
+            ((cat, c) for cat, checks in rubric.items() for c in checks), start=1
+        )
+    ]
+
+
+def render_rubric_checks_flat(
+    numbered_items: list[tuple[int, str, dict]], guidance: dict = None
+) -> str:
+    """Render globally-numbered checks for the single-pass judge.
+
+    Unlike the per-category renderer, the surrounding prompt supplies no
+    category frame — so every check carries its number, [category] and name
+    inline (`Check 17 [Formatting] Blue font for hardcoded inputs: ...`).
+    Category guidance notes are rendered above the first check of their
+    category; per-check guidance goes under its check.
+    """
+    blocks = []
+    seen_categories = set()
+    for no, category, item in numbered_items:
+        if (
+            guidance
+            and category not in seen_categories
+            and category in guidance.get("categories", {})
+        ):
+            blocks.append(
+                f"Category guidance for {category}:\n"
+                f"{guidance['categories'][category]}"
+            )
+        seen_categories.add(category)
+        text = (
+            f"Check {no} [{category}] {item['name']}: {item['description']}\n"
+            f"Pass: {item['good']}\n"
+            f"Fail: {item['bad']}"
+        )
+        if guidance:
+            note = guidance.get("checks", {}).get((category, item["name"]))
+            if note:
+                text += f"\nGuidance: {note}"
+        blocks.append(text)
     return "\n\n".join(blocks)
 
 
