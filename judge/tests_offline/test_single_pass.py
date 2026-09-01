@@ -351,15 +351,18 @@ check(
 # ---------------------------------------------------------------------------
 # Read-refusal gate (added after canary step 1's 922K overflow, 2026-09-01)
 # ---------------------------------------------------------------------------
-refuse, proj, cur = judge._read_refusal_check(100_000, 1_000_000, 2.0, 850_000)
-check(refuse and proj == 550_000 + 0 or True, None) if False else None
-check(refuse is False and proj == 550_000 and cur == 500_000,
-      "under budget -> served (1.1M chars @2.0 cpt = 550K tokens)")
-refuse, proj, cur = judge._read_refusal_check(800_000, 1_000_000, 2.0, 850_000)
-check(refuse is True and proj == 900_000,
-      "over budget -> refused (projected 900K >= 850K)")
-refuse, proj, cur = judge._read_refusal_check(0, 2_125_000, 0.0, 850_000)
-check(refuse is True, "uncalibrated falls back to 2.5 chars/token")
+# signature: (result_chars, current_tokens_est, limit); additions convert at
+# CSV density (2.4 c/t) and the budget holds back a 30K reserve.
+refuse, proj, cur = judge._read_refusal_check(240_000, 500_000, 850_000)
+check(refuse is False and proj == 600_000 and cur == 500_000,
+      "under budget -> served (500K + 240K chars @2.4 = 600K < 820K)")
+refuse, proj, cur = judge._read_refusal_check(840_000, 500_000, 850_000)
+check(refuse is True and proj == 850_000,
+      "over budget -> refused (500K + 350K = 850K >= 820K budget)")
+refuse, proj, cur = judge._read_refusal_check(48_001, 800_000, 850_000)
+check(refuse is True, "reserve enforced (800K + 20K = 820K >= 820K budget)")
+check(judge._READ_GATE_RESULT_CPT == 2.4 and judge._READ_GATE_RESERVE_TOKENS == 30_000,
+      "gate constants: CSV density 2.4, reserve 30K")
 msg_text = judge._read_refusal_message(800_000, 900_000, 500_000, 850_000, 7)
 check("REFUSED" in msg_text and "evict_tool_results(before_round=7)" in msg_text
       and "NOT added" in msg_text and "retryable" in msg_text,

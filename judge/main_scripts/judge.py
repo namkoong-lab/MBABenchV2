@@ -2671,8 +2671,22 @@ def _build_pressure_signal(
     return status, tier
 
 
+# Token density assumed for a tool result the gate is ABOUT to add. The
+# global calibrated ratio reflects the context mix so far — mostly prose on
+# early rounds (~3.5-4 chars/token) — but big read results are dense CSV
+# with formulas (~2-2.5). Projecting CSV at the prose ratio understated a
+# 7-read burst by ~30% and let 1.02M real tokens through an 850K gate
+# (canary step 1, second failure). New content is therefore always
+# projected at CSV density; over-refusing a rare prose-dense result errs
+# safe and costs one recoverable retry.
+_READ_GATE_RESULT_CPT = 2.4
+# Tokens held back from the budget for the round's own overhead (the next
+# pressure note, nudges, the model's reply) and residual estimator error.
+_READ_GATE_RESERVE_TOKENS = 30_000
+
+
 def _read_refusal_check(
-    result_chars: int, running_chars: int, chars_per_token: float, limit: int
+    result_chars: int, current_tokens: int, limit: int
 ) -> tuple[bool, int, int]:
     """Would serving a read of `result_chars` blow the context budget?
 
@@ -2680,21 +2694,25 @@ def _read_refusal_check(
     estimated: the caller executes the read locally first (CSV slicing is
     free) and gates on the ACTUAL result size, so the clamped-range trap —
     refusing a request whose rectangle is huge but whose real content is
-    small — cannot occur. `chars_per_token` is the loop's live calibration
-    from usage.prompt_tokens; before calibration a conservative CSV-dense
-    2.5 applies.
+    small — cannot occur.
 
-    Why this exists (canary step 1, 2026-09-01): a single-pass sol grading
-    issued a burst of parallel 5000-cell reads that took wire context from
-    85K to 722K tokens in ONE round, and the next request 400'd at the
+    `current_tokens` is the caller's running estimate for THIS round: the
+    start-of-round wire converted at the live usage calibration, plus every
+    in-round addition converted at CSV density as it lands — so a burst of
+    parallel reads gates each read against the true running total, in the
+    density of what was actually added. The budget is `limit` minus a
+    fixed reserve.
+
+    Why this exists (canary step 1, 2026-09-01): single-pass sol gradings
+    issued bursts of parallel 5000-cell reads that took wire context from
+    ~85K to 700K+ tokens in ONE round, and the next request 400'd at the
     provider's hard input cap (922K) — the pressure ladder warns between
     rounds and can never stop an intra-round burst. This gate is the hard
     guarantee; the refusal it produces is recoverable (evict, then re-read).
     """
-    cpt = chars_per_token if chars_per_token and chars_per_token > 0 else 2.5
-    current_tokens = int(running_chars / cpt)
-    projected_tokens = int((running_chars + result_chars) / cpt)
-    return projected_tokens >= limit, projected_tokens, current_tokens
+    projected_tokens = current_tokens + int(result_chars / _READ_GATE_RESULT_CPT)
+    budget = limit - _READ_GATE_RESERVE_TOKENS
+    return projected_tokens >= budget, projected_tokens, current_tokens
 
 
 def _read_refusal_message(
@@ -4294,12 +4312,14 @@ def single_pass_judge_case(
             return "Structure"
         return "_data_view"  # any non-Formatting label serves the data view
 
-    # Per-round flow bookkeeping for the read-refusal gate: `round_chars`
-    # accumulates the wire size of everything in flight THIS round (the
-    # request context plus each already-served tool result), so a burst of
-    # parallel reads is gated against its own running total, not against a
-    # stale start-of-round snapshot. Reset by _run_round.
-    flow = {"round_chars": 0, "refused": 0, "evicted": 0}
+    # Per-round flow bookkeeping for the read-refusal gate: `round_tokens`
+    # is the running token estimate of everything in flight THIS round —
+    # the request context at the calibrated ratio, plus each already-served
+    # addition at CSV density — so a burst of parallel reads is gated
+    # against its own running total, in the density of what was actually
+    # added (a prose-calibrated ratio understated a CSV burst by ~30% and
+    # let 1.02M real tokens through an 850K gate). Reset by _run_round.
+    flow = {"round_tokens": 0, "refused": 0, "evicted": 0}
 
     def _dispatch_tool(tc, _args_parsed, phase: str) -> str:
         name = tc.function.name
@@ -4323,8 +4343,7 @@ def single_pass_judge_case(
             if not result.startswith("Error:"):
                 refuse, projected, current = _read_refusal_check(
                     len(result),
-                    flow["round_chars"],
-                    chars_per_token,
+                    flow["round_tokens"],
                     AGENTIC_JUDGE_CONTEXT_TOKEN_LIMIT,
                 )
                 if refuse:
@@ -4356,7 +4375,9 @@ def single_pass_judge_case(
                 flow["evicted"] += 1
                 # The wire shrank; rebase the running round total on the
                 # post-eviction context so subsequent reads gate correctly.
-                flow["round_chars"] = _wire_char_total(state.messages)
+                flow["round_tokens"] = _estimate_wire_tokens(
+                    _wire_char_total(state.messages), chars_per_token
+                )
             return result
         if name in ("record_check", "append_mistake", "get_working_judgement"):
             return _execute_scratchpad_tool(tc, state.working)
@@ -4366,7 +4387,11 @@ def single_pass_judge_case(
         """One API call + tool execution. Returns 'ok', 'stop', 'retry' or 'break'."""
         nonlocal chars_per_token, api_retries
         wire_chars_at_call = _wire_char_total(state.messages)
-        flow.update(round_chars=wire_chars_at_call, refused=0, evicted=0)
+        flow.update(
+            round_tokens=_estimate_wire_tokens(wire_chars_at_call, chars_per_token),
+            refused=0,
+            evicted=0,
+        )
         _msgs = state.messages
         if identity.provider in ("anthropic", "openai"):
             _msgs = strip_unsupported_anthropic_images(_msgs)
@@ -4501,7 +4526,7 @@ def single_pass_judge_case(
         msg_size = _measure_message_chars(msg)
         cumulative_metrics["message_size"] += msg_size
         cumulative_metrics["message_size_with_images"] += msg_size
-        flow["round_chars"] += msg_size
+        flow["round_tokens"] += int(msg_size / _READ_GATE_RESULT_CPT)
 
         if msg.tool_calls:
             state.append_wire(msg, tag="model_tool_call")
@@ -4542,7 +4567,7 @@ def single_pass_judge_case(
                 tsize = _measure_message_chars(tool_msg)
                 cumulative_metrics["message_size"] += tsize
                 cumulative_metrics["message_size_with_images"] += tsize
-                flow["round_chars"] += tsize
+                flow["round_tokens"] += int(tsize / _READ_GATE_RESULT_CPT)
             return "ok"
 
         if msg.content:

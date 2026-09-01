@@ -1123,7 +1123,12 @@ def main(args):
         )
     )
 
-    run_id = time.strftime("%Y%m%d_%H%M%S")
+    # Second-granular alone collides: two same-second processes grading the
+    # same attempt shared one task folder and destroyed each other's
+    # artifacts (canary step 1 — one process's trajectory close deleted the
+    # file the other was about to seal). The uuid suffix makes every
+    # process's scratch tree its own.
+    run_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     scratch_run_dir = Path(scratch_base) / "grade_runs" / run_id
     scratch_run_dir.mkdir(parents=True, exist_ok=True)
 
