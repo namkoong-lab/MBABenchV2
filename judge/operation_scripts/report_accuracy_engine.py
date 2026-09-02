@@ -15,7 +15,7 @@ local run folders that were not written to the DB (smoke tests).
     python operation_scripts/report_accuracy_engine.py --local scratch/grade_runs/20260902_1530*
 
 Read-only. One row per grading:
-  id | attempt | grader (effort) | harness | LLM | agree | answers | total LLM | total harness | in DB
+  grading id | task | attempt | grader (effort) | harness | LLM | agree | answers | total LLM | total harness | in DB
 "harness"/"LLM" are the pass/fail decisions on `Accuracy / Final calculation
 accuracy`; "answers" is matched/total Questions-sheet answers; the two totals
 are the 0-100 grades under each engine; "in DB" says which engine's total the
@@ -36,7 +36,7 @@ from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs
 FA = "Accuracy/Final calculation accuracy"
 
 
-def _row_from_scored(gid, attempt_id, grader, effort, scored, in_db=True):
+def _row_from_scored(gid, attempt_id, grader, effort, scored, in_db=True, task_id=None):
     scored = scored or {}
     eng = scored.get("accuracy_engine") or {}
     fa = (eng.get("checks") or {}).get(FA) or {}
@@ -46,6 +46,7 @@ def _row_from_scored(gid, attempt_id, grader, effort, scored, in_db=True):
     harness = fa.get("decision") if fa.get("engine") == "harness" else f"n/a ({(fa.get('fallback_reason') or 'not measured')[:28]})"
     return {
         "id": gid,
+        "task": task_id if task_id is not None else "-",
         "attempt": attempt_id,
         "grader": f"{grader} ({effort})" if effort else str(grader),
         "harness": harness,
@@ -68,9 +69,9 @@ def _fmt(v):
 
 
 def _print(rows):
-    cols = ["id", "attempt", "grader", "harness", "llm", "agree", "answers",
+    cols = ["id", "task", "attempt", "grader", "harness", "llm", "agree", "answers",
             "total_llm", "total_harness", "in_db"]
-    heads = ["id", "attempt", "grader (effort)", "harness", "LLM", "agree", "answers",
+    heads = ["grading id", "task", "attempt", "grader (effort)", "harness", "LLM", "agree", "answers",
              "total LLM", "total harness", "in DB"]
     widths = [max(len(h), *(len(_fmt(r[c])) for r in rows)) if rows else len(h)
               for c, h in zip(cols, heads)]
@@ -103,13 +104,13 @@ def from_db(args):
             reasoning_col = "grader_reasoning" if has_reasoning else "NULL AS grader_reasoning"
             if args.grading_ids:
                 cur.execute(
-                    f"SELECT id, attempt_id, grader_model, {reasoning_col}, scored_results, "
+                    f"SELECT id, task_id, attempt_id, grader_model, {reasoning_col}, scored_results, "
                     f"judge_version, deprecated FROM gradings WHERE id = ANY(%s) ORDER BY id",
                     (args.grading_ids,),
                 )
             else:
                 cur.execute(
-                    f"SELECT id, attempt_id, grader_model, {reasoning_col}, scored_results, "
+                    f"SELECT id, task_id, attempt_id, grader_model, {reasoning_col}, scored_results, "
                     f"judge_version, deprecated FROM gradings "
                     f"WHERE judge_version >= 6 AND NOT deprecated ORDER BY id DESC LIMIT %s",
                     (args.latest,),
@@ -123,7 +124,7 @@ def from_db(args):
         if isinstance(scored, str):
             scored = json.loads(scored)
         out.append(_row_from_scored(r["id"], r["attempt_id"], r["grader_model"],
-                                    r.get("grader_reasoning"), scored))
+                                    r.get("grader_reasoning"), scored, task_id=r.get("task_id")))
     return list(reversed(out)) if not args.grading_ids else out
 
 
@@ -137,9 +138,10 @@ def from_local(paths):
                 scored = json.loads(scores.read_text())
                 folder = scores.parent.parent.name
                 attempt = next((seg.split("_")[-1] for seg in folder.split("__") if seg.startswith("attempt_")), folder)
+                task = next((seg.split("_")[-1] for seg in folder.split("__") if seg.startswith("task_")), None)
                 out.append(_row_from_scored(
                     scores.parent.parent.parent.name[:22], attempt, meta.get("grader_model", "?"),
-                    meta.get("judge_reasoning"), scored, in_db=False,
+                    meta.get("judge_reasoning"), scored, in_db=False, task_id=task,
                 ))
     return out
 
