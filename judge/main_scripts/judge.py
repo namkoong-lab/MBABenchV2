@@ -1661,7 +1661,8 @@ def _apply_harness_verdicts(all_responses, harness_verdicts, weights_data):
             "llm_mistake_count": len((llm_item or {}).get("mistakes") or []),
         }
         for stat in ("n_questions", "n_match", "n_mismatch", "n_missing",
-                     "n_unlocated", "n_answered", "n_hardcoded", "fraction_correct",
+                     "n_unlocated", "n_answered", "n_hardcoded", "n_unrounded",
+                     "rounding_directive", "fraction_correct",
                      "rules_fired", "flags", "hardcoded_counts", "rules_version"):
             if stat in hv:
                 prov[stat] = hv[stat]

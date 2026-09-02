@@ -143,11 +143,28 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
   (`single_pass.hardcoded_counts`).
 - **Answer-equivalence rulebook** — one module, two consumers: the checker
   applies it and template_8 renders it verbatim under the Accuracy category
-  standard. Tolerance = one unit of the requested precision (a penny at two
-  decimal places), sign flips accepted only on outflow rows (expense/cost/
-  spend/outflow/depreciation/amortization/capex/tax), percent and fraction
-  forms equal, values not rendered strings, sentinel synonyms, dates, zero
-  forms; unit-scale (x1000) differences are flagged, never accepted.
+  standard (`RULES_VERSION`, recorded per grading). Rules v6.4 (2026-09-02,
+  after a $0 sweep of the checker over all 454 v2 attempts): an attempt is
+  THE SAME number when it ROUNDS TO the golden — half a unit of the last
+  decimal the golden carries, whether or not the agent rounded (the old
+  "unrounded attempt gets only the noise band" clause failed 22 correct
+  attempts on presentation alone); a full unit only when both sides are
+  rounded figures. The decimals come from the golden's own `ROUND(...,n)`
+  when present — read from openpyxl ArrayFormula objects, which every golden
+  answer formula is (before v6.4 no golden ever counted as rounded) — else
+  from the header phrase. Sign flips accepted on outflow rows: the core
+  lexicon (expense/cost/spend/outflow/depreciation/amortization/capex/tax)
+  unconditionally, an extended P&L list (energy, raw materials, SG&A/G&A,
+  wages, R&D, marketing, interest, repayments, ...) unless an inflow/net/
+  change/balance word marks the row. Percent and fraction forms equal, values
+  not rendered strings, sentinel synonyms, dates, zero forms; unit-scale
+  (x1000) differences are flagged, never accepted.
+- **Rounding compliance is its own harness verdict** (v6.4): when the
+  Questions sheet states a precision, an answer whose STORED value carries
+  more decimals than asked (a display format alone does not round) fails
+  `Rounding / Rounded outputs` — overlaid like the Accuracy checks, with
+  `n_unrounded` and the directive recorded in `scored_results.accuracy_engine`.
+  It never touches Final calculation accuracy.
 - **Name-agnostic answer finder**: sheets are validated by the golden
   question TEXTS they contain (named Questions*/Answers* sheets win ties,
   decoys like "Answer Map" lose), rows are paired by text, the answer column

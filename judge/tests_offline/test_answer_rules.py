@@ -66,6 +66,20 @@ check(R.parse_precision_directive("Questions").dp is None, "no directive")
 check(R.round_dp_from_formula("=ROUND(Doctor!CG25-Trade!CG25,2)") == 2, "ROUND(...,2) in golden formula")
 check(R.round_dp_from_formula("=SUM(A1:A3)") is None, "no ROUND")
 
+
+class _AF:  # openpyxl ArrayFormula stand-in: the formula text lives in .text
+    def __init__(self, text):
+        self.text = text
+
+
+check(R.round_dp_from_formula(_AF("=ROUND(INDEX('Solution Model'!$F$31:$Y$50,_xlfn.XMATCH(1,A:A)),2)")) == 2,
+      "v6.4: ROUND read from an ArrayFormula object (every golden answer formula is one)")
+check(R.round_dp_from_formula(_AF('=_xlfn.LET(_xlpm.I,INDEX(A1:B2,1),_xlfn.IFNA(ROUND(_xlpm.I,4),"n/a"))')) == 4,
+      "v6.4: ROUND found inside LET()/IFNA() wrappers by walking to its own parenthesis")
+check(R.round_dp_from_formula("=ROUNDUP(A1,2)") is None and R.round_dp_from_formula("=MROUND(A1,5)") is None,
+      "ROUNDUP / MROUND are not ROUND")
+check(R.round_dp_from_formula("=ROUND(A1,2)+ROUND(B1,4)") == 2, "leftmost ROUND wins")
+
 # --- tolerance (rule 1): the grading-193 penny --------------------------------
 r = R.compare(480051.31, 480051.30, ctx("Total value", dp=2))
 check(r["verdict"] == "match" and r["rule"] == "tolerance", "penny on a six-figure answer is THE SAME (grading 193)")
@@ -86,8 +100,18 @@ check(r["verdict"] == "mismatch", "global fallback rejects a 0.002 difference wi
 r = R.compare(0.5, 0.51, ctx("ratio", dp=2))
 check(r["verdict"] == "mismatch", "0.51 vs 0.50 at two decimals is a 2% error -> mismatch")
 r = R.compare(0.5, 0.505, ctx("ratio", dp=2))
-check(r["verdict"] == "mismatch" and r["tolerance_source"] == "unrounded_attempt_strict",
-      "unrounded 0.505 gets no rounding allowance")
+check(r["verdict"] == "match" and r["attempt_rounded"] is False,
+      "v6.4: unrounded 0.505 rounds to 0.50 -> same number; recorded unrounded for the Rounding check")
+r = R.compare(0.5, 0.5051, ctx("ratio", dp=2))
+check(r["verdict"] == "mismatch", "0.5051 rounds to 0.51 -> different")
+r = R.compare(100.64, 100.63598814847582, ctx("implied share value", dp=2))
+check(r["verdict"] == "match" and r["attempt_rounded"] is False and r["requested_decimals"] == 2,
+      "SAP case: the golden's number before rounding is THE SAME number (sweep: 22 attempts failed on this)")
+r = R.compare(100.64, 100.646, ctx("implied share value", dp=2))
+check(r["verdict"] == "mismatch", "100.646 rounds to 100.65 -> different")
+check(R.is_rounded_to(-1890487.51, 2) and not R.is_rounded_to(-1890487.505, 2)
+      and not R.is_rounded_to(12779502.005323779, 2) and R.is_rounded_to(0.1 + 0.2, 2),
+      "is_rounded_to: large values keep their third decimal visible; float noise is forgiven")
 r = R.compare(5000.004, 5000.0, ctx("cash", dp=2))
 check(r["verdict"] == "match", "5,000.00 vs 5,000.004 is the same (correct rounding)")
 r = R.compare(5000.004, 5000.004, ctx("cash", dp=2))
@@ -110,8 +134,24 @@ check(r["verdict"] == "mismatch", "2 dp on a %-formatted fraction means 0.00005,
 r = R.compare(0.42127, 0.4213, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
 check(r["verdict"] == "match", "0.4213 is the correct 42.13% rounding of 0.42127")
 r = R.compare(0.4213, 0.42134, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
-check(r["verdict"] == "mismatch" and r["tolerance_source"] == "unrounded_attempt_strict",
-      "an unrounded 0.42134 is held to the noise band")
+check(r["verdict"] == "match" and r["attempt_rounded"] is False,
+      "v6.4: unrounded 0.42134 rounds to 42.13% -> same; recorded unrounded")
+r = R.compare(0.4213, 0.42136, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
+check(r["verdict"] == "mismatch", "0.42136 rounds to 42.14% -> different")
+af4 = _AF("=ROUND((B5-C5)/C5,4)")
+r = R.compare(-0.0872, -0.0871985157699443, ctx("relative difference between actuals and budget",
+                                                 unit="[%]", dp=4, fmt="0.0000%", formula=af4))
+check(r["verdict"] == "match" and r["requested_decimals"] == 4 and r["decimals_source"] == "round",
+      "TechVentures case: golden ROUND(x,4) sets 4 stored decimals (not 6 for the % format) -> same")
+r = R.compare(-0.0872, -8.7199, ctx("relative difference between actuals and budget",
+                                     unit="[%]", dp=4, fmt="0.0000%", formula=af4))
+check(r["verdict"] == "match" and r["rule"] == "percent_form" and r["attempt_rounded"] is True,
+      "percent-scale answer -8.7199 for -0.0872: same, and rounded in its own unit")
+r = R.compare(0.23, 0.24, ctx("Return on equity", dp=2, formula=_AF("=ROUND(INDEX(A1:A9,1),2)")))
+check(r["verdict"] == "match" and "coarse_rounding" in r["flags"],
+      "both sides rounded (golden ROUND via array formula): a full unit is allowed, flagged coarse")
+r = R.compare(0.23, 0.2359, ctx("Return on equity", dp=2, formula=_AF("=ROUND(INDEX(A1:A9,1),2)")))
+check(r["verdict"] == "mismatch", "unrounded 0.2359 rounds to 0.24, not 0.23 -> different")
 r = R.compare(0.000487, 0.0005, ctx("return", dp=2, scale="percent"))
 check(r["verdict"] == "match", "task-68 style: 0.05% is the correct rounding of 0.0487%")
 
@@ -125,6 +165,20 @@ check(r["verdict"] == "match", "depreciation is an outflow word")
 r = R.compare(-12.0, 12.0, ctx("Net income 2029"))
 check(r["verdict"] == "mismatch", "net income is not an outflow word")
 check(R.is_outflow_label("Capex in year 3") and not R.is_outflow_label("Costa Rica revenue"), "word-boundary lexicon (Costa != cost)")
+for lab in ("What is the amount for/of Energy in 11/2029?", "What is the amount for/of Raw material in 5/2029?",
+            "What is the amount for/of SG&A in 3/2030?", "What is the amount for/of Interest (Loan) in 2031?",
+            "What is the amount for/of Production wages in 5/2029?", "What is the amount for/of R&D in 2030?",
+            "What is the amount for/of Repayment Loans in 2032?", "Income tax for the year 2029"):
+    check(R.is_outflow_label(lab), f"v6.4 extended outflow lexicon: {lab[:45]!r}")
+for lab in ("Interest income 2029", "What is the amount for/of Changes in Net Working Capital in 2030?",
+            "What is the amount for/of Intangible Assets growth in 2030?", "Net income 2029",
+            "Equity value at valuation date", "What is the gross margin in 2030?"):
+    check(not R.is_outflow_label(lab), f"inflow guard / non-outflow: {lab[:45]!r}")
+r = R.compare(3361886.42, -3361886.42, ctx("What is the amount for/of Energy in 11/2029?", dp=2))
+check(r["verdict"] == "match" and r["rule"] == "sign_outflow", "Fixings energy row: flipped sign accepted (v6.4)")
+r = R.compare(-8172.42, 8172.42, ctx("What is the amount for/of Changes in Net Working Capital in 2030?", dp=2))
+check(r["verdict"] == "mismatch" and "sign_flip_not_outflow" in r["flags"],
+      "NWC change keeps its sign (Patrick: a flipped change is WRONG)")
 
 # --- percent form (rule 3) ------------------------------------------------
 r = R.compare(0.4213, 42.13, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
@@ -179,6 +233,8 @@ for word in ("scale-aware", "half a unit", "one part in a million", "outflow", "
              "parentheses", "Sentinel", "Unit scale", "Hardcoded"):
     check(word in txt, f"rulebook text mentions {word!r}")
 check("capex" in txt and "depreciation" in txt, "rulebook text lists the outflow lexicon")
+check("ROUNDS TO" in txt and "Rounded outputs" in txt and "energy" in txt,
+      "v6.4 text: rounds-to rule, rounding-compliance pointer, extended lexicon")
 
 print()
 if FAILS:

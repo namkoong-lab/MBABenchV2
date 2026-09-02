@@ -5,11 +5,15 @@ Two jobs:
 1. **Measure** every Questions-sheet answer of the attempt against the golden
    solution with the shared rulebook (utils/answer_rules.py) — the full
    per-question artifact rides with the grading as `answer_check.json`.
-2. **Decide** the two harness-decidable Accuracy checks and hand the verdicts
-   to the judge's scoring layer (`harness_verdicts`), where the grading's
-   `--accuracy-check harness|llm` flag chooses which engine's decision lands
-   in the recorded total. BOTH engines' verdicts are always recorded, so the
-   comparison never needs a re-run.
+2. **Decide** the harness-decidable checks — two under Accuracy (Final
+   calculation accuracy, Deliverable completeness in the zero-answers case)
+   and, since v6.4, Rounding / Rounded outputs (an answer whose stored value
+   carries more decimals than the sheet asked for; a display format alone
+   does not round) — and hand the verdicts to the judge's scoring layer
+   (`harness_verdicts`), where the grading's `--accuracy-check harness|llm`
+   flag chooses which engine's decisions land in the recorded total. BOTH
+   engines' verdicts are always recorded, so the comparison never needs a
+   re-run.
 
 Finding the golden's answers (67/68 goldens follow one convention; task 54
 has TWO sheets, "Questions Task 1"/"Questions Task 2", and both are read):
@@ -82,6 +86,7 @@ MEASURE_MIN_LOCATED_SHARE = 0.5
 
 CHECK_FINAL_ACCURACY = ("Accuracy", "Final calculation accuracy")
 CHECK_COMPLETENESS = ("Accuracy", "Deliverable completeness")
+CHECK_ROUNDED_OUTPUTS = ("Rounding", "Rounded outputs")   # v6.4
 
 
 def _is_number(v) -> bool:
@@ -496,8 +501,9 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
         )
         loc = attempt.answers.get(q.qid)
         got = loc.value if loc else None
-        if loc is not None and isinstance(loc.formula, str):
-            ctx.got_formula = loc.formula
+        got_formula = rules.formula_text(loc.formula) if loc is not None else None
+        if got_formula:
+            ctx.got_formula = got_formula
         cmp = rules.compare(q.value, got, ctx)
         item = {
             "qid": q.qid,
@@ -516,7 +522,9 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
             "tolerance": cmp.get("tolerance"),
             "abs_delta": cmp.get("abs_delta"),
             "attempt_is_formula": bool(loc and loc.is_formula),
-            "attempt_formula": (loc.formula if loc and isinstance(loc.formula, str) else None),
+            "attempt_formula": got_formula,
+            "requested_decimals": cmp.get("requested_decimals"),
+            "attempt_rounded": cmp.get("attempt_rounded"),
             "hardcoded": False,
         }
         if loc is None:
@@ -537,6 +545,13 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
     n_q = len(questions)
     n_match = verdicts.count("match")
     n_answered = sum(1 for q in questions if q["located"] and q["verdict"] != "missing")
+    # v6.4 — answers the sheet asked to round whose stored value carries more
+    # decimals than requested (in whichever unit the agent answered).
+    n_unrounded = sum(
+        1 for q in questions
+        if q["located"] and q["verdict"] != "missing"
+        and q.get("requested_decimals") is not None and q.get("attempt_rounded") is False
+    )
     result = {
         "status": "ok",
         "rules_version": rules.RULES_VERSION,
@@ -547,6 +562,10 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
         "n_unlocated": len(attempt.unlocated_qids),
         "n_answered": n_answered,
         "n_hardcoded": sum(1 for q in questions if q["hardcoded"]),
+        "n_unrounded": n_unrounded,
+        "rounding_directive": {
+            s["name"]: (golden.precision.get(s["name"]) or {}).get("dp") for s in golden.sheets
+        },
         "n_fuzzy_matched": sum(1 for q in questions if q["match_kind"] == "fuzzy"),
         "fraction_correct": (n_match / n_q) if n_q else None,
         "rules_fired": _count(q["rule"] for q in questions if q["rule"]),
@@ -581,9 +600,11 @@ def harness_verdicts(result: dict, hardcoded_counts: bool = True) -> dict:
     """
     fa_key = "/".join(CHECK_FINAL_ACCURACY)
     dc_key = "/".join(CHECK_COMPLETENESS)
+    ro_key = "/".join(CHECK_ROUNDED_OUTPUTS)
     base = {
         fa_key: {"engine": "llm", "fallback_reason": None},
         dc_key: {"engine": "llm", "fallback_reason": None},
+        ro_key: {"engine": "llm", "fallback_reason": None},
     }
     status = result.get("status")
     if status != "ok":
@@ -608,6 +629,7 @@ def harness_verdicts(result: dict, hardcoded_counts: bool = True) -> dict:
         "n_unlocated": result["n_unlocated"],
         "n_answered": result["n_answered"],
         "n_hardcoded": result["n_hardcoded"],
+        "n_unrounded": result.get("n_unrounded", 0),
         "fraction_correct": result["fraction_correct"],
         "rules_fired": result["rules_fired"],
         "flags": result["flags"],
@@ -684,6 +706,44 @@ def harness_verdicts(result: dict, hardcoded_counts: bool = True) -> dict:
             f"Questions sheet is the judge's call"
         )
     base[dc_key] = dc
+
+    # --- Rounding / Rounded outputs (v6.4): the sheet asked for a precision --
+    # Pat 2026-09-02: "if the instructions say to round, there should be a
+    # penalty for not rounding" — and it belongs here, not in the binary
+    # accuracy check. Decided only when the Questions sheet states a
+    # precision and the layout was trusted.
+    directive = result.get("rounding_directive") or {}
+    ro = dict(base[ro_key], n_questions=n_q, n_unrounded=result.get("n_unrounded", 0),
+              rounding_directive=directive)
+    if not any(v is not None for v in directive.values()):
+        ro["fallback_reason"] = "the Questions sheet states no rounding precision"
+    elif share < MEASURE_MIN_LOCATED_SHARE:
+        ro["fallback_reason"] = fa["fallback_reason"]
+    else:
+        mistakes = []
+        for q in result["questions"]:
+            if (q["located"] and q["verdict"] != "missing"
+                    and q.get("requested_decimals") is not None
+                    and q.get("attempt_rounded") is False):
+                mistakes.append({
+                    "location": q["attempt_cell"] or q["golden_cell"],
+                    "description": (
+                        f"Not rounded as instructed: \"{_short(q['label'])}\" holds "
+                        f"{q['got']!r} where the sheet asks for "
+                        f"{q['requested_decimals']} decimal places (a display format "
+                        f"alone does not round the stored value)."
+                    ),
+                    "severity": "minor",
+                })
+        ro["engine"] = "harness"
+        ro["decision"] = "pass" if not mistakes else "fail"
+        ro["mistakes"] = mistakes
+        ro["summary"] = (
+            f"Harness rounding check: {len(mistakes)} of {result['n_answered']} present "
+            f"answers are not rounded to the precision the Questions sheet asks for "
+            f"({', '.join(f'{k}: {v} dp' for k, v in directive.items() if v is not None)})."
+        )
+    base[ro_key] = ro
     return base
 
 
@@ -747,8 +807,8 @@ def run_answer_check(attempt_xlsx, solution_xlsx, output_json_path=None,
 def summary_block(result: dict) -> dict:
     """The compact block recorded in scored_results.answer_check."""
     keys = ("status", "reason", "n_questions", "n_match", "n_mismatch", "n_missing",
-            "n_unlocated", "n_answered", "n_hardcoded", "fraction_correct",
-            "rules_fired", "flags", "recalc_used", "rules_version")
+            "n_unlocated", "n_answered", "n_hardcoded", "n_unrounded", "rounding_directive",
+            "fraction_correct", "rules_fired", "flags", "recalc_used", "rules_version")
     out = {k: result.get(k) for k in keys if k in result}
     hv = result.get("harness_verdicts") or {}
     out["harness"] = {

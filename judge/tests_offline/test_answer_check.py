@@ -219,6 +219,9 @@ r = AC.run_answer_check(GOLD, GOLD)
 check(r["status"] == "ok" and r["n_questions"] == 6 and r["n_match"] == 6, "golden vs golden: 6/6 match")
 check(r["n_hardcoded"] == 0, "constants vs a constant golden are not 'hardcoded'")
 check(r["harness_verdicts"]["Accuracy/Final calculation accuracy"]["decision"] == "pass", "final accuracy pass")
+ro = r["harness_verdicts"]["Rounding/Rounded outputs"]
+check(ro["engine"] == "harness" and ro["decision"] == "fail" and ro["n_unrounded"] == 1,
+      "v6.4 Rounding/Rounded outputs: the fixture's own 1000.004 is unrounded at 2 dp -> harness fail, 1 mistake")
 
 # ---------------------------------------------------------------------------
 # 2. Standard layout, all correct via formulas (penny/percent/sign/sentinel forms)
@@ -236,6 +239,10 @@ fa = r["harness_verdicts"]["Accuracy/Final calculation accuracy"]
 check(fa["engine"] == "harness" and fa["decision"] == "pass", "harness decides pass")
 dc = r["harness_verdicts"]["Accuracy/Deliverable completeness"]
 check(dc["engine"] == "llm" and "6/6 answers present" in dc["fallback_reason"], "completeness falls back to LLM when answers exist")
+ro = r["harness_verdicts"]["Rounding/Rounded outputs"]
+check(ro["engine"] == "harness" and ro["decision"] == "fail" and len(ro["mistakes"]) == 1
+      and "-1890487.505" in ro["mistakes"][0]["description"],
+      "unrounded -1890487.505 fails Rounding/Rounded outputs while accuracy still passes")
 
 # ---------------------------------------------------------------------------
 # 3. Wrong, blank, hardcoded, reordered rows, decoy sheet
@@ -279,6 +286,8 @@ check(r["n_hardcoded"] == 4, f"4 numeric constants flagged hardcoded (got {r['n_
 fa = r["harness_verdicts"]["Accuracy/Final calculation accuracy"]
 check(fa["decision"] == "fail" and sum(1 for m in fa["mistakes"] if "Hardcoded" in m["description"]) == 4,
       "hardcoded answers fail Final calculation accuracy when hardcoded_counts=True")
+check(r["harness_verdicts"]["Rounding/Rounded outputs"]["decision"] == "pass",
+      "all answers rounded -> Rounding/Rounded outputs pass")
 r2 = AC.run_answer_check(A3, GOLD_F, hardcoded_counts=False)
 check(r2["harness_verdicts"]["Accuracy/Final calculation accuracy"]["decision"] == "pass",
       "hardcoded_counts=False: same attempt passes")
@@ -355,7 +364,21 @@ check(byrow["Questions!B3"]["verdict"] == "mismatch" and byrow["Questions!B4"]["
 art = TMP / "answer_check.json"
 r = AC.run_answer_check(A1, GOLD, output_json_path=art)
 sb = AC.summary_block(r)
-check(set(sb["harness"]) == {"Accuracy/Final calculation accuracy", "Accuracy/Deliverable completeness"}, "summary carries both harness checks")
+check(set(sb["harness"]) == {"Accuracy/Final calculation accuracy", "Accuracy/Deliverable completeness",
+                             "Rounding/Rounded outputs"}, "summary carries all three harness checks")
+check(sb.get("n_unrounded") == 1 and sb.get("rounding_directive") == {"Questions": 2}, "summary carries n_unrounded + directive")
+
+# ---------------------------------------------------------------------------
+# 9. No rounding instruction on the golden -> Rounding stays with the LLM
+# ---------------------------------------------------------------------------
+GND = TMP / "golden_nodirective.xlsx"
+write_golden(GND, header="Questions")
+r = AC.run_answer_check(A1, GND)
+ro = r["harness_verdicts"]["Rounding/Rounded outputs"]
+check(ro["engine"] == "llm" and "no rounding precision" in ro["fallback_reason"],
+      "no rounding instruction -> Rounding/Rounded outputs stays with the LLM")
+check(r["harness_verdicts"]["Accuracy/Final calculation accuracy"]["engine"] == "harness",
+      "accuracy is still measured without a directive (noise band only)")
 check(art.exists() and json.loads(art.read_text())["status"] == "ok", "artifact written")
 check("rules_version" in sb and sb["fraction_correct"] == 1.0, "summary carries rules_version + fraction_correct")
 
