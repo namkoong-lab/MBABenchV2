@@ -343,11 +343,24 @@ def extract_attempt(xlsx_path: Path, golden: GoldenAnswers,
     try:
         index = _index_text_cells(wb_v)
         located: dict[int, tuple[str, int, int, str]] = {}
-        # Pass 1 — normalised exact text.
+        # Pass 1 — normalised exact text. Questions sheets repeat labels
+        # (task 22 asks "What is the WACC rate?" once per company), so
+        # golden rows sharing a label are paired with the attempt's
+        # occurrences IN ORDER within the winning sheet — the k-th golden
+        # occurrence gets the k-th attempt occurrence — never all to the
+        # first hit.
+        by_label: dict[str, list[GoldenQuestion]] = {}
         for q in golden.questions:
-            cands = index.get(q.norm_label)
-            if cands:
-                located[q.qid] = (*_pick(cands)[:3], "exact")
+            by_label.setdefault(q.norm_label, []).append(q)
+        for label, group in by_label.items():
+            cands = index.get(label)
+            if not cands:
+                continue
+            best_sheet = _pick(cands)[0]
+            ordered = sorted((c for c in cands if c[0] == best_sheet), key=lambda c: (c[1], c[2]))
+            group_sorted = sorted(group, key=lambda g: (g.sheet, g.row))
+            for gq, cand in zip(group_sorted, ordered):
+                located[gq.qid] = (cand[0], cand[1], cand[2], "exact")
         # Pass 2 — conservative fuzzy on the leftovers, restricted to sheets
         # that already matched something (or named sheets if nothing did).
         leftovers = [q for q in golden.questions if q.qid not in located]

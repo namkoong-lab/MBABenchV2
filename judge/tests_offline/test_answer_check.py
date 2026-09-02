@@ -323,6 +323,33 @@ check(r["golden_sheets"][1]["unit_col"] is None, "'Number for reference' is not 
 check(r["n_match"] == 6, "split golden vs itself matches")
 
 # ---------------------------------------------------------------------------
+# 7b. Repeated question texts (task 22 asks "What is the WACC rate?" per
+#     company): k-th golden occurrence pairs with k-th attempt occurrence.
+# ---------------------------------------------------------------------------
+GDUP = TMP / "golden_dup.xlsx"
+wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Questions"
+ws["A1"], ws["B1"], ws["C1"] = "Questions (please round your answers to four decimal places)", "Answers", "Unit"
+for i, v in enumerate([0.0729, 0.0699, 0.075], start=2):
+    ws.cell(row=i, column=1, value="What is the WACC rate?"); ws.cell(row=i, column=2, value=v); ws.cell(row=i, column=3, value="[%]")
+ws.cell(row=5, column=1, value="What is the total company value?"); ws.cell(row=5, column=2, value=207257018.62)
+wb.save(GDUP)
+ADUP = TMP / "attempt_dup.xlsx"
+wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Questions"
+ws["A1"], ws["B1"], ws["C1"] = "Questions (please round your answers to four decimal places)", "Answers", "Unit"
+# second WACC wrong, others right; rows in the same order as the golden
+for i, v in enumerate([0.0729, 0.0766, 0.075], start=2):
+    ws.cell(row=i, column=1, value="What is the WACC rate?"); ws.cell(row=i, column=2, value=v)
+ws.cell(row=5, column=1, value="What is the total company value?"); ws.cell(row=5, column=2, value=207257018.62)
+wb.save(ADUP)
+r = AC.run_answer_check(ADUP, GDUP)
+byrow = {q["golden_cell"]: q for q in r["questions"]}
+check(r["n_questions"] == 4 and r["n_match"] == 3, f"repeated labels pair in order: 3/4 match (got {r['n_match']})")
+check(byrow["Questions!B2"]["attempt_cell"] == "Questions!B2" and byrow["Questions!B3"]["attempt_cell"] == "Questions!B3"
+      and byrow["Questions!B4"]["attempt_cell"] == "Questions!B4", "each repeated golden row maps to its own attempt row")
+check(byrow["Questions!B3"]["verdict"] == "mismatch" and byrow["Questions!B4"]["verdict"] == "match",
+      "only the genuinely wrong repeated answer mismatches")
+
+# ---------------------------------------------------------------------------
 # 8. summary block shape + artifact
 # ---------------------------------------------------------------------------
 art = TMP / "answer_check.json"
