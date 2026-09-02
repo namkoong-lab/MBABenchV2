@@ -483,6 +483,8 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
         )
         loc = attempt.answers.get(q.qid)
         got = loc.value if loc else None
+        if loc is not None and isinstance(loc.formula, str):
+            ctx.got_formula = loc.formula
         cmp = rules.compare(q.value, got, ctx)
         item = {
             "qid": q.qid,

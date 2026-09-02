@@ -25,12 +25,13 @@ def check(cond, msg):
         print("OK ", msg)
 
 
-def ctx(label="", unit=None, dp=None, scale="value", formula=None, fmt=None, directive=False):
+def ctx(label="", unit=None, dp=None, scale="value", formula=None, fmt=None, directive=False,
+        got_formula=None):
     return R.AnswerContext(
         label=label, unit=unit,
         precision=R.Precision(dp, scale, "header" if dp is not None else "none"),
         expected_formula=formula, expected_number_format=fmt,
-        percent_directive=directive,
+        percent_directive=directive, got_formula=got_formula,
     )
 
 
@@ -67,27 +68,52 @@ check(R.round_dp_from_formula("=SUM(A1:A3)") is None, "no ROUND")
 
 # --- tolerance (rule 1): the grading-193 penny --------------------------------
 r = R.compare(480051.31, 480051.30, ctx("Total value", dp=2))
-check(r["verdict"] == "match" and r["rule"] == "tolerance", "penny inside two-decimal precision is THE SAME (grading 193)")
-r = R.compare(480051.31, 480051.29, ctx("Total value", dp=2))
-check(r["verdict"] == "mismatch", "0.02 outside two-decimal precision is a mismatch")
+check(r["verdict"] == "match" and r["rule"] == "tolerance", "penny on a six-figure answer is THE SAME (grading 193)")
+r = R.compare(480051.31, 480050.31, ctx("Total value", dp=2))
+check(r["verdict"] == "mismatch", "1.00 off on a six-figure answer is a mismatch")
 r = R.compare(480051.3049, 480051.30, ctx("x", formula="=ROUND(A1,2)"))
-check(r["verdict"] == "match" and r["tolerance_source"] == "round_dp2", "per-answer ROUND sets the tolerance")
+check(r["verdict"] == "match" and r["tolerance_source"].startswith("round_dp2"), "per-answer ROUND sets the tolerance")
+r = R.compare(100.9, 101.0, ctx("x", dp=0))
+check(r["verdict"] == "match", "whole numbers: 101 is the correct rounding of 100.9")
 r = R.compare(100.9, 100.0, ctx("x", dp=0))
-check(r["verdict"] == "match", "whole numbers: within 1")
-r = R.compare(102.0, 100.0, ctx("x", dp=0))
-check(r["verdict"] == "mismatch", "whole numbers: 2 apart is a mismatch")
+check(r["verdict"] == "mismatch", "whole numbers: 100 is the WRONG rounding of 100.9")
 r = R.compare(1234.5678, 1234.5678001, ctx("x"))
 check(r["verdict"] == "match" and r["tolerance_source"] == "global_fallback", "global fallback 1e-6 relative")
 r = R.compare(1234.5678, 1234.57, ctx("x"))
 check(r["verdict"] == "mismatch", "global fallback rejects a 0.002 difference with no directive")
 
+# --- scale awareness (Patrick 2026-09-02): small answers are not forgiven -----
+r = R.compare(0.5, 0.51, ctx("ratio", dp=2))
+check(r["verdict"] == "mismatch", "0.51 vs 0.50 at two decimals is a 2% error -> mismatch")
+r = R.compare(0.5, 0.505, ctx("ratio", dp=2))
+check(r["verdict"] == "mismatch" and r["tolerance_source"] == "unrounded_attempt_strict",
+      "unrounded 0.505 gets no rounding allowance")
+r = R.compare(5000.004, 5000.0, ctx("cash", dp=2))
+check(r["verdict"] == "match", "5,000.00 vs 5,000.004 is the same (correct rounding)")
+r = R.compare(5000.004, 5000.004, ctx("cash", dp=2))
+check(r["verdict"] == "match" and r["rule"] == "exact", "identical unrounded values are exact")
+r = R.compare(5000.004, 5000.0041, ctx("cash", dp=2))
+check(r["verdict"] == "match", "unrounded but inside one-part-per-million noise")
+r = R.compare(0.5, 0.51, ctx("ratio", dp=2, formula="=ROUND(A1,2)"))
+check(r["verdict"] == "match" and "coarse_rounding" in r["flags"],
+      "both sides rounded: a full unit is allowed but flagged coarse on a small answer")
+r = R.compare(0.0537, 0.05, ctx("share", dp=2))
+check(r["verdict"] == "match" and "coarse_rounding" in r["flags"], "coarse rounding on a small answer is flagged")
+r = R.compare(1234.5678, 1234.57, ctx("x", dp=2))
+check(r["verdict"] == "match", "correctly rounded 1234.57 matches unrounded golden")
+r = R.compare(1234.5678, 1234.5, ctx("x", dp=2, got_formula="=ROUND(B2,1)"))
+check(r["verdict"] == "mismatch", "rounded to fewer places than asked, off by 0.07 -> mismatch")
+
 # --- percent scale of the precision --------------------------------------
 r = R.compare(0.4213, 0.42, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
-check(r["verdict"] == "mismatch", "2 dp on a %-formatted fraction means 0.0001, so 0.42 vs 0.4213 fails")
-r = R.compare(0.4213, 0.42138, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
-check(r["verdict"] == "match", "0.42138 vs 0.4213 inside 0.0001 (one unit of 0.01%)")
-r = R.compare(0.0005, 0.00049, ctx("return", dp=2, scale="percent"))
-check(r["verdict"] == "match", "task-68 style: 0.05% vs 0.049% inside 0.01 percentage points")
+check(r["verdict"] == "mismatch", "2 dp on a %-formatted fraction means 0.00005, so 0.42 vs 0.4213 fails")
+r = R.compare(0.42127, 0.4213, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
+check(r["verdict"] == "match", "0.4213 is the correct 42.13% rounding of 0.42127")
+r = R.compare(0.4213, 0.42134, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
+check(r["verdict"] == "mismatch" and r["tolerance_source"] == "unrounded_attempt_strict",
+      "an unrounded 0.42134 is held to the noise band")
+r = R.compare(0.000487, 0.0005, ctx("return", dp=2, scale="percent"))
+check(r["verdict"] == "match", "task-68 style: 0.05% is the correct rounding of 0.0487%")
 
 # --- sign convention (rule 2): outflow rows only --------------------------
 r = R.compare(-500.0, 500.0, ctx("Total operating expenses in 2028"))
@@ -111,6 +137,8 @@ r = R.compare(0.4213, 42.13, ctx("Total cash"))
 check(r["verdict"] == "mismatch", "no percent cue: x100 is a mismatch")
 r = R.compare(-0.05, 5.0, ctx("Interest expense rate", unit="%"))
 check(r["verdict"] == "match" and r["rule"] == "sign_outflow+percent_form", "percent + outflow sign combine")
+r = R.compare(0.4213, 42.1, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))
+check(r["verdict"] == "mismatch", "42.1 vs 42.13% is off by 0.03 points -> mismatch even in percent form")
 
 # --- unit scale (rule 9) is flagged, never accepted ------------------------
 r = R.compare(1234.0, 1234000.0, ctx("Revenue"))
@@ -147,7 +175,8 @@ check(r["verdict"] == "missing" and "missing_expected" in r["flags"], "blank gol
 # --- rendered text: one source, two consumers -----------------------------
 txt = R.render_rules_text()
 check(R.RULES_VERSION in txt, "rulebook text carries its version")
-for word in ("ONE unit", "outflow", "Percent form", "parentheses", "Sentinel", "Unit scale", "Hardcoded"):
+for word in ("scale-aware", "half a unit", "one part in a million", "outflow", "Percent form",
+             "parentheses", "Sentinel", "Unit scale", "Hardcoded"):
     check(word in txt, f"rulebook text mentions {word!r}")
 check("capex" in txt and "depreciation" in txt, "rulebook text lists the outflow lexicon")
 

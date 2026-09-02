@@ -41,7 +41,7 @@ TMP = Path(tempfile.mkdtemp(prefix="answer_check_test_"))
 
 QUESTIONS = [
     ("What will be the net worth difference (Doctor vs. Trade) in the final model period?", -1890487.51, "[$]"),
-    ("What will the YE amount for Cash on hand for the Doctor in the year 2028?", 1000.0, "[$]"),
+    ("What will the YE amount for Cash on hand for the Doctor in the year 2028?", 1000.004, "[$]"),
     ("What is the gross margin in 2030?", 0.4213, "[%]"),
     ("What are total operating expenses in 2031?", -500.25, "[$]"),
     ("Is the Doctor path better after tax?", "Yes", ""),
@@ -224,7 +224,7 @@ check(r["harness_verdicts"]["Accuracy/Final calculation accuracy"]["decision"] =
 # 2. Standard layout, all correct via formulas (penny/percent/sign/sentinel forms)
 # ---------------------------------------------------------------------------
 A1 = TMP / "a_standard.xlsx"
-write_attempt_standard(A1, [-1890487.505, 1000.004, 42.13, 500.25, "yes", "N/A"])
+write_attempt_standard(A1, [-1890487.505, 1000.0, 42.13, 500.25, "yes", "N/A"])
 r = AC.run_answer_check(A1, GOLD)
 check(r["status"] == "ok", "standard layout parsed")
 rules = r["rules_fired"]

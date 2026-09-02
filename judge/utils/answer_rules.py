@@ -12,11 +12,12 @@ mismatch no matter how it is dressed. Mined 2026-09-02 from 394 cited
 (tolerance / sign / percent-form / display / missing classes all attested).
 
 Rules (numbering matches render_rules_text and the v6 spec §3):
-  1. Tolerance follows the requested precision ("round to two decimal
-     places" => equal within one cent — one unit of the last requested
-     decimal, since two correctly-rounded floats can differ by a full unit),
-     else a per-answer ROUND() in the golden formula, else
-     |a-b| <= max(1e-9, 1e-6*max(|a|,|b|)).
+  1. Tolerance is scale-aware: max(1e-6 relative noise band, rounding band).
+     The rounding band ("round to two decimal places" => half a unit, a full
+     unit when the golden is itself ROUND()ed) is granted only when the
+     attempt's value is actually rounded to the requested places; an
+     unrounded answer is held to the noise band. Precision comes from the
+     header phrase, else a per-answer ROUND() in the golden formula.
   2. Sign convention, GUARDED by an outflow lexicon on the question text
      (expense/cost/spend/outflow/depreciation/amortization/capex/tax):
      |a| == |b| within tolerance is accepted ONLY for such rows. One-off
@@ -271,28 +272,61 @@ def percent_format(number_format: Any) -> bool:
     return isinstance(number_format, str) and "%" in number_format
 
 
-def tolerance_for(expected: float, got: float, precision: Precision,
-                  expected_pct_format: bool) -> tuple[float, str]:
-    """Absolute tolerance for one comparison plus a label of what set it."""
+def effective_decimals(precision: Precision, expected_pct_format: bool) -> Optional[int]:
+    """Decimal places the directive means on the STORED value: a %-formatted
+    fraction (0.4213 shown as 42.13%) carries two more than the header says."""
     if precision.dp is None:
-        # No stated precision: the locked Phase-B rule (abs 1e-9 / rel 1e-6).
-        return max(ABS_TOL, REL_TOL * max(abs(expected), abs(got))), "global_fallback"
-    # ONE unit of the last requested decimal place: two values that are
-    # "the same to two decimal places" can still differ by a full cent once
-    # each side rounds its own float path (x.xx49 vs x.xx51). Grading 193
-    # failed 480,051.30 vs .31 exactly this way. Two units is a real
-    # difference.
-    unit = 10.0 ** -precision.dp
-    if precision.scale == "percent" or (
-        precision.scale == "value" and expected_pct_format
-    ):
-        # The dp applies to the rendered percentage (42.13%); the stored
-        # value is the fraction (0.4213), so shrink the unit by 100.
-        unit /= 100.0
-    # A stated precision is THE tolerance (the relative 1e-6 rule would be
-    # looser than a cent on any six-figure answer). A hair of float slack
-    # keeps 0.01 vs 0.0100000001 from flipping on representation.
-    return max(ABS_TOL, unit * (1 + 1e-6)), f"{precision.source}_dp{precision.dp}"
+        return None
+    if precision.scale == "percent" or (precision.scale == "value" and expected_pct_format):
+        return precision.dp + 2
+    return precision.dp
+
+
+def is_rounded_to(value: float, decimals: int) -> bool:
+    """True when *value* carries no more than *decimals* decimal places
+    (up to float representation noise) — i.e. the agent actually rounded."""
+    scaled = value * (10.0 ** decimals)
+    return abs(scaled - round(scaled)) <= 1e-6 * max(1.0, abs(scaled))
+
+
+# Relative band beyond which a rounding allowance is "coarse" (flagged).
+COARSE_ROUNDING_REL = 0.01
+
+
+def tolerance_for(expected: float, got: float, precision: Precision,
+                  expected_pct_format: bool, got_rounded: bool = True,
+                  golden_rounded: bool = False) -> tuple[float, str]:
+    """Absolute tolerance for one comparison plus a label of what set it.
+
+    Scale-aware by construction (Patrick 2026-09-02: "if the answer is 0.5,
+    a .005 delta is a lot; if it is 5,000 it is not"):
+
+      tolerance = max( relative noise band, rounding band )
+
+      relative noise band = max(1e-9, 1e-6 * max(|a|,|b|)) — always applies;
+          on a six-figure answer this alone forgives a penny.
+      rounding band — granted ONLY when the attempt's value is actually
+          rounded to the requested places (an unrounded 0.505 gets no
+          allowance and is held to the noise band): half a unit of the
+          last requested decimal (a correctly rounded figure is within half
+          a unit of the truth), a full unit when the golden is itself a
+          ROUND()ed figure (both sides rounded can differ by a unit at a
+          boundary). For %-formatted fractions the unit is 100x smaller.
+    """
+    noise = max(ABS_TOL, REL_TOL * max(abs(expected), abs(got)))
+    dec = effective_decimals(precision, expected_pct_format)
+    if dec is None:
+        return noise, "global_fallback"
+    if not got_rounded:
+        return noise, "unrounded_attempt_strict"
+    unit = 10.0 ** -dec
+    band = unit if golden_rounded else unit / 2.0
+    # A hair of float slack keeps 0.005 vs 0.0050000001 from flipping.
+    band *= 1 + 1e-6
+    label = f"{precision.source}_dp{precision.dp}_{'full' if golden_rounded else 'half'}_unit"
+    if noise >= band:
+        return noise, f"{label}+noise"
+    return band, label
 
 
 def numbers_equal(a: float, b: float, tol_abs: float) -> bool:
@@ -312,6 +346,7 @@ class AnswerContext:
     expected_formula: Any = None          # golden formula text (for ROUND)
     expected_number_format: Any = None    # golden cell number format
     percent_directive: bool = False       # sheet header declares %-as-decimal
+    got_formula: Any = None               # attempt formula text (ROUND evidence)
 
 
 def is_outflow_label(label: Any) -> bool:
@@ -447,11 +482,39 @@ def _text_to_bool(v) -> Optional[bool]:
     return None
 
 
+def _attempt_rounded(value: float, ctx: AnswerContext, precision: Precision,
+                     e_pct_fmt: bool) -> bool:
+    """Did the attempt round to the requested places? Value-based (no more
+    decimals than requested) or a ROUND(...,n<=requested) in its formula."""
+    dec = effective_decimals(precision, e_pct_fmt)
+    if dec is None:
+        return False
+    if is_rounded_to(value, dec):
+        return True
+    n = round_dp_from_formula(ctx.got_formula)
+    return n is not None and n <= dec
+
+
+def _tol(a: float, b: float, ctx: AnswerContext, precision: Precision,
+         e_pct_fmt: bool) -> tuple[float, str]:
+    return tolerance_for(
+        a, b, precision, e_pct_fmt,
+        got_rounded=_attempt_rounded(b, ctx, precision, e_pct_fmt),
+        golden_rounded=round_dp_from_formula(ctx.expected_formula) is not None,
+    )
+
+
+def _coarse(a: float, tol: float, tol_src: str, out: dict) -> None:
+    """Flag a match that leaned on a rounding band wider than 1% of the answer."""
+    if "unit" in tol_src and a != 0 and tol / abs(a) > COARSE_ROUNDING_REL:
+        out["flags"].append("coarse_rounding")
+
+
 def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dict:
     a, b = float(e.value), float(g.value)
     precision = effective_precision(ctx)
     e_pct_fmt = percent_format(ctx.expected_number_format)
-    tol, tol_src = tolerance_for(a, b, precision, e_pct_fmt)
+    tol, tol_src = _tol(a, b, ctx, precision, e_pct_fmt)
     out["tolerance"] = tol
     out["tolerance_source"] = tol_src
     out["abs_delta"] = abs(a - b)
@@ -462,6 +525,7 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
     if numbers_equal(a, b, tol):
         out.update(verdict="match", rule="tolerance",
                    detail=f"|delta| {abs(a - b):.6g} <= tolerance {tol:.6g} ({tol_src})")
+        _coarse(a, tol, tol_src, out)
         return out
 
     pct_ctx, pct_why = is_percent_context(ctx, g)
@@ -471,10 +535,11 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
     if pct_ctx:
         for factor, form in ((100.0, "attempt_x100"), (0.01, "attempt_/100")):
             b2 = b * factor
-            tol2, _ = tolerance_for(a, b2, precision, e_pct_fmt)
+            tol2, src2 = _tol(a, b2, ctx, precision, e_pct_fmt)
             if numbers_equal(a, b2, tol2):
                 out.update(verdict="match", rule="percent_form",
                            detail=f"{form} equals golden ({pct_why})")
+                _coarse(a, tol2, src2, out)
                 return out
             if outflow and numbers_equal(abs(a), abs(b2), tol2):
                 out.update(verdict="match", rule="sign_outflow+percent_form",
@@ -506,7 +571,7 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
 # Prompt rendering (the second consumer)
 # ---------------------------------------------------------------------------
 
-RULES_VERSION = "v6.1"
+RULES_VERSION = "v6.2"  # v6.2: scale-aware tolerance (Patrick 2026-09-02)
 
 
 def render_rules_text() -> str:
@@ -514,7 +579,7 @@ def render_rules_text() -> str:
     judge and the harness share one definition of equality."""
     outflow = ", ".join(sorted({w for w in OUTFLOW_LEXICON if " " not in w}))
     return f"""Answer-equivalence rulebook ({RULES_VERSION}) — how to decide whether an attempt's answer equals the golden answer. These rules remove noise, not standards: a genuinely different value is wrong however it is dressed.
-  1. Tolerance follows the requested precision. If the Questions sheet asks for N decimal places, values that differ by no more than ONE unit of the Nth decimal are THE SAME (two decimal places => within 0.01, so 480,051.30 and 480,051.31 are the same answer; "whole numbers" => within 1). For a percentage stored as a fraction (0.4213 shown as 42.13%), the decimal places apply to the percentage rendering (within 0.0001 of the fraction). With no stated precision, use |a-b| <= max(1e-9, 1e-6*max(|a|,|b|)). Never fail an answer for a rounding difference inside the requested precision — a penny is not a mistake; two cents is.
+  1. Tolerance is scale-aware. Two numbers are THE SAME when they differ by no more than the LARGER of: (a) one part in a million of the value (noise — on 480,051 this alone forgives a penny), and (b) the rounding allowance the Questions sheet created — half a unit of the last requested decimal (two decimal places => 0.005; "whole numbers" => 0.5), a full unit when the golden is itself a rounded figure. The rounding allowance applies ONLY if the attempt's answer is actually rounded to the requested places: an unrounded 0.505 against 0.50 gets no allowance and is a mismatch, while a rounded 0.51 against 0.50 is a 2% error and also a mismatch. For a percentage stored as a fraction (0.4213 shown as 42.13%), the decimal places apply to the percentage rendering. So: 480,051.30 vs 480,051.31 — same; 5,000.00 vs 5,000.004 — same; 0.51 vs 0.50 — different; 101 vs 100.9 under "whole numbers" — same, but 100 vs 100.9 is the wrong rounding. Never fail an answer for a rounding difference inside the requested precision; never forgive a proportionally large error because the numbers are small.
   2. Sign convention is accepted ONLY on outflow rows. If the question names an outflow quantity ({outflow}), an answer equal in magnitude but opposite in sign is THE SAME. On every other row the sign is part of the answer — a flipped "difference", "net", or "change" is WRONG.
   3. Percent form. When the unit is %, the question asks for a percent/rate/margin/return/ratio, the golden cell is percent-formatted, or the answer carries a literal "%", then 0.42 and 42 (and "42%") are THE SAME answer.
   4. Compare values, never rendered strings. (1,890,487.51) shown in parentheses IS -1890487.51; $, commas and % are display only; number formats, fonts and alignment belong to Formatting, not Accuracy.
