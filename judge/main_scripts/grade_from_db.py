@@ -132,6 +132,30 @@ def resolve_agentic_mode(
     return task_id in TASKS_TO_GRADE_WITH_AGENTIC_JUDGE
 
 
+def add_accuracy_check_arg(parser):
+    """--accuracy-check harness|llm (judge v6). Shared by both drivers.
+
+    Which engine's verdict on the harness-decidable Accuracy checks (Final
+    calculation accuracy; the zero-answers case of Deliverable completeness)
+    counts in the recorded total. Both engines' verdicts and totals are
+    always recorded in scored_results.accuracy_engine, so this only picks
+    the number that lands in the DB — no re-run is needed to compare.
+    Single-pass mode only; the frozen 12-category path ignores it.
+    """
+    parser.add_argument(
+        "--accuracy-check",
+        dest="accuracy_check",
+        choices=["harness", "llm"],
+        default="harness",
+        help=(
+            "Which engine decides the harness-measurable Accuracy checks in "
+            "the recorded total: 'harness' (default) = the deterministic "
+            "Questions-sheet answer checker; 'llm' = the judge's own verdict. "
+            "Both are always recorded (single-pass mode)."
+        ),
+    )
+
+
 def add_agentic_cli_args(parser):
     """Attach the --agentic / --no-agentic mutex group to an argparse parser."""
     group = parser.add_mutually_exclusive_group()
@@ -634,8 +658,14 @@ def grade_single_attempt(
     on_overflow="route_to_agentic",
     reasoning_effort=None,
     suitability_source_path=None,
+    accuracy_check="harness",
 ):
-    """Grade a single attempt. Returns a result dict."""
+    """Grade a single attempt. Returns a result dict.
+
+    `accuracy_check` ("harness" | "llm"): which engine's verdict on the
+    harness-decidable Accuracy checks lands in the recorded total. Both are
+    always recorded (scored_results.accuracy_engine); single-pass only.
+    """
     attempt_id = attempt["attempt_id"]
     task_name = attempt["task_name"] or f"task_{attempt['task_id']}"
 
@@ -692,11 +722,37 @@ def grade_single_attempt(
             )
         )
     )
+    # Harness answer check (judge v6) runs BEFORE the judge: it only needs the
+    # two workbooks, and its verdicts are handed to the single-pass scoring
+    # layer. The artifact is written into the task folder now and copied into
+    # the grading's output_dir after the judge returns (so S3 carries it).
+    # Failures never block grading — the judge's own verdicts then stand.
+    ac_result = None
+    ac_artifact = task_folder / "answer_check.json"
+    try:
+        solution_xlsx = find_golden_solution_file(Path(task_folder))
+        hardcoded_counts = str(
+            load_env_var("SINGLE_PASS_HARDCODED_COUNTS", default="true")
+        ).strip().lower() in ("1", "true", "yes")
+        ac_result = run_answer_check(
+            Path(task_folder) / "ai_attempt.xlsx",
+            solution_xlsx,
+            output_json_path=ac_artifact,
+            hardcoded_counts=hardcoded_counts,
+        )
+        logger.info(f"  [answer_check] {summary_block(ac_result)}")
+    except Exception as e:  # noqa: BLE001 — score-neutral by design
+        logger.warning(f"  [answer_check] skipped on error: {e}")
+        ac_result = {"status": "error", "error": str(e), "harness_verdicts": {}}
+    harness_verdicts = ac_result.get("harness_verdicts") or {}
+
     try:
         # Step 2: Run judge
         if single_pass:
             logger.info("[Judge] Running single_pass_judge_case...")
             result = single_pass_judge_case(
+                harness_verdicts=harness_verdicts,
+                accuracy_engine=accuracy_check,
                 task_folder=str(task_folder),
                 client=client,
                 rubric_path=rubric_path,
@@ -803,23 +859,15 @@ def grade_single_attempt(
             with open(conversation_path) as f:
                 conversation = json.load(f)
 
-        # Phase B — harness answer check (score-neutral). Runs on the two
-        # workbooks in the task folder, writes its artifact into output_dir
-        # (so the S3 upload below carries it), and its summary rides in
-        # scored_results.answer_check. Failures never block grading.
-        answer_check_summary = None
+        # Answer-check artifact rides with the grading bundle; its summary
+        # lands in scored_results.answer_check (the harness verdicts and the
+        # engine that decided each check are in scored_results.accuracy_engine).
+        answer_check_summary = summary_block(ac_result) if ac_result else None
         try:
-            solution_xlsx = find_golden_solution_file(Path(task_folder))
-            ac_result = run_answer_check(
-                Path(task_folder) / "ai_attempt.xlsx",
-                solution_xlsx,
-                output_json_path=output_dir / "answer_check.json",
-            )
-            answer_check_summary = summary_block(ac_result)
-            logger.info(f"  [answer_check] {answer_check_summary}")
-        except Exception as e:  # noqa: BLE001 — score-neutral, never blocks
-            logger.warning(f"  [answer_check] skipped on error: {e}")
-            answer_check_summary = {"status": "error", "error": str(e)}
+            if ac_artifact.exists():
+                shutil.copy(str(ac_artifact), str(output_dir / "answer_check.json"))
+        except OSError as e:
+            logger.warning(f"  [answer_check] could not copy artifact: {e}")
 
         # Upload the full output_dir tree (files in subfolders included) to S3
         # under a unique {timestamp}_{uuid} prefix. Done before the DB write so
@@ -1098,7 +1146,7 @@ def main(args):
             relative_path_from_project_root(
                 load_env_var(
                     "SINGLE_PASS_PROMPT_TEMPLATE",
-                    default="./prompts/agentic_judge_template_7.yaml",
+                    default="./prompts/agentic_judge_template_8.yaml",
                 )
             )
         )
@@ -1189,13 +1237,13 @@ def main(args):
         # "_v2" cache generation (2026-08): extraction now also writes the
         # *_data.csv serving variants, so pre-revision caches (which lack
         # them) must never be reused. Old cache dirs are left untouched.
-        solution_cache_base = cache_root / "solution_csv_cache_v2"
+        solution_cache_base = cache_root / "solution_csv_cache_v3"
         solution_cache_base.mkdir(parents=True, exist_ok=True)
-        attempt_cache_base = cache_root / "attempt_csv_cache_v2"
+        attempt_cache_base = cache_root / "attempt_csv_cache_v3"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
         # Starting-workbook CSVs are per task, like solution CSVs. New cache
         # family (2026-09) — existing solution/attempt caches stay valid.
-        starting_cache_base = cache_root / "starting_csv_cache_v2"
+        starting_cache_base = cache_root / "starting_csv_cache_v3"
         starting_cache_base.mkdir(parents=True, exist_ok=True)
         # Phase A: per-task suitability annotations, fetched once per run and
         # staged into each task folder (the judge enforces the v2 rule).
@@ -1362,6 +1410,7 @@ def main(args):
                 on_overflow=args.on_overflow,
                 reasoning_effort=args.reasoning_effort,
                 suitability_source_path=suitability_src,
+                accuracy_check=args.accuracy_check,
             )
             results.append(result)
 
@@ -1728,6 +1777,7 @@ Examples:
             "support may reject the kwarg."
         ),
     )
+    add_accuracy_check_arg(parser)
 
     # Execution modes
     parser.add_argument(

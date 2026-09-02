@@ -23,13 +23,23 @@ from utils.excel_utils import (
     shorten_attempt_csv_files,
     shorten_solution_csv_files,
 )
-from utils import formula_cache, openai_responses, rubric_guidance, rubric_suitability
+from utils import (
+    answer_rules,
+    anthropic_native,
+    formula_cache,
+    openai_responses,
+    rubric_guidance,
+    rubric_suitability,
+    workbook_properties,
+)
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import (
     calculate_cost,
     get_client,
+    get_native_anthropic_client,
     robust_send_message,
     strip_unsupported_anthropic_images,
+    usage_breakdown,
 )
 from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
@@ -1610,6 +1620,88 @@ def _resolve_category_score(criteria_scores: dict, *names) -> float | None:
     return None
 
 
+def _apply_harness_verdicts(all_responses, harness_verdicts, weights_data):
+    """Overlay the harness's measured decisions onto a COPY of the judgement.
+
+    For every "<Category>/<name>" the harness measured (engine == "harness")
+    and that the weights file scores (suitability-gated checks are left
+    alone), the LLM's item is replaced by the harness item; the LLM's
+    decision/summary/mistakes are preserved on the item as `llm_*` so the
+    audit trail survives. A check the LLM never recorded is inserted.
+
+    Returns (overlaid_responses, provenance) where provenance maps each
+    harness-addressable check to {engine, decision, fallback_reason,
+    llm_decision, agreed, ...stats}.
+    """
+    import copy as _copy
+
+    overlaid = _copy.deepcopy(all_responses)
+    provenance: dict = {}
+    weighted = {
+        (cat, cw["name"])
+        for cat, entries in (weights_data or {}).items()
+        if cat != "CategoryWeights" and isinstance(entries, list)
+        for cw in entries
+        if isinstance(cw, dict) and "name" in cw
+    }
+    for key, hv in (harness_verdicts or {}).items():
+        cat, _, name = key.partition("/")
+        items = overlaid.setdefault(cat, []) if isinstance(overlaid.get(cat, []), list) else None
+        llm_item = None
+        if items is not None:
+            for it in items:
+                if isinstance(it, dict) and it.get("name") == name:
+                    llm_item = it
+                    break
+        prov = {
+            "engine": hv.get("engine", "llm"),
+            "decision": hv.get("decision"),
+            "fallback_reason": hv.get("fallback_reason"),
+            "llm_decision": (llm_item or {}).get("decision"),
+            "llm_mistake_count": len((llm_item or {}).get("mistakes") or []),
+        }
+        for stat in ("n_questions", "n_match", "n_mismatch", "n_missing",
+                     "n_unlocated", "n_answered", "n_hardcoded", "fraction_correct",
+                     "rules_fired", "flags", "hardcoded_counts", "rules_version"):
+            if stat in hv:
+                prov[stat] = hv[stat]
+        if hv.get("engine") != "harness":
+            provenance[key] = prov
+            continue
+        if (cat, name) not in weighted:
+            prov["engine"] = "llm"
+            prov["fallback_reason"] = "check not scored for this task (suitability-gated)"
+            provenance[key] = prov
+            continue
+        if items is None:
+            prov["engine"] = "llm"
+            prov["fallback_reason"] = "category judgement unparseable"
+            provenance[key] = prov
+            continue
+        prov["agreed"] = (
+            (llm_item or {}).get("decision") == hv.get("decision")
+            if llm_item else None
+        )
+        new_item = {
+            "check": (llm_item or {}).get("check"),
+            "name": name,
+            "decision": hv["decision"],
+            "summary": hv.get("summary", ""),
+            "mistakes": list(hv.get("mistakes") or []),
+            "decided_by": "harness",
+            "llm_decision": (llm_item or {}).get("decision"),
+            "llm_summary": (llm_item or {}).get("summary"),
+            "llm_mistakes": list((llm_item or {}).get("mistakes") or []),
+        }
+        if llm_item is not None:
+            idx = items.index(llm_item)
+            items[idx] = new_item
+        else:
+            items.append(new_item)
+        provenance[key] = prov
+    return overlaid, provenance
+
+
 def _finalize_case(
     all_responses,
     output_dir,
@@ -1638,8 +1730,19 @@ def _finalize_case(
     recorder=None,
     suitability_provenance=None,
     formula_cache_provenance=None,
+    harness_verdicts=None,
+    accuracy_engine="llm",
 ):
-    """Shared finalization: save judgement, calculate scores, write metadata."""
+    """Shared finalization: save judgement, calculate scores, write metadata.
+
+    `harness_verdicts` (judge v6, utils.answer_check.harness_verdicts) carries
+    the deterministic answer checker's decisions for the checks it could
+    measure. BOTH engines are always scored — `total_score_llm` and
+    `total_score_harness` ride in scored_results.accuracy_engine — and
+    `accuracy_engine` ("harness" | "llm") picks which one is THE score
+    (total_score, criteria_scores) that lands in the DB row. So the
+    harness-vs-LLM comparison never needs a second grading run.
+    """
     output_dir = Path(output_dir)
 
     # Seal the trajectory first so trajectory.jsonl.gz is on disk before the
@@ -1684,9 +1787,44 @@ def _finalize_case(
     score_results = None
     if weights_data:
         logger.info("\n[Score] Calculating scores...")
-        score_results = calculate_scores(
+        score_results_llm = calculate_scores(
             all_responses, weights_data, max_mistakes=RUBRIC_MAX_MISTAKES
         )
+        score_results = score_results_llm
+        engine_block = {
+            "mode": accuracy_engine,
+            "effective": "llm",
+            "checks": {},
+            "total_score_llm": score_results_llm["total_score"],
+            "total_score_harness": None,
+        }
+        if harness_verdicts:
+            harness_responses, applied = _apply_harness_verdicts(
+                all_responses, harness_verdicts, weights_data
+            )
+            engine_block["checks"] = applied
+            if any(v["engine"] == "harness" for v in applied.values()):
+                score_results_harness = calculate_scores(
+                    harness_responses, weights_data, max_mistakes=RUBRIC_MAX_MISTAKES
+                )
+                engine_block["total_score_harness"] = score_results_harness["total_score"]
+                with open(output_dir / "ai_judgement_harness.json", "w", encoding="utf-8") as f:
+                    json.dump(harness_responses, f, indent=2)
+                if accuracy_engine == "harness":
+                    score_results = score_results_harness
+                    engine_block["effective"] = "harness"
+                logger.info(
+                    f"  Accuracy engine: mode={accuracy_engine} -> effective="
+                    f"{engine_block['effective']}; total llm="
+                    f"{score_results_llm['total_score']:.2f} harness="
+                    f"{score_results_harness['total_score']:.2f}"
+                )
+            elif accuracy_engine == "harness":
+                logger.info(
+                    "  Accuracy engine: harness requested but nothing measurable "
+                    "— LLM verdicts stand (reasons in scored_results.accuracy_engine)"
+                )
+        score_results["accuracy_engine"] = engine_block
         if suitability_provenance is not None:
             # Phase A provenance rides inside scored_results (and scores.json)
             # so every grading records exactly which checks were gated out.
@@ -4037,6 +4175,8 @@ def single_pass_judge_case(
     ignore_sheets: list[str] | None = None,
     max_tool_rounds: int = SINGLE_PASS_MAX_ROUNDS,
     reasoning_effort: str | None = None,
+    harness_verdicts: dict | None = None,
+    accuracy_engine: str = "llm",
 ):
     """Judge v4 experiment: ONE conversation over every applicable check.
 
@@ -4089,9 +4229,9 @@ def single_pass_judge_case(
     # _finalize_case threads them into scores.json / _metadata.json and the
     # DB write prefers them over the 12-category env values.
     versions = dict(prep["versions"])
-    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="5")
+    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="6")
     versions["PROMPT_VERSION"] = load_env_var(
-        "SINGLE_PASS_PROMPT_VERSION", default="7"
+        "SINGLE_PASS_PROMPT_VERSION", default="8"
     )
 
     guidance = rubric_guidance.load_guidance(rubric_path)
@@ -4122,16 +4262,27 @@ def single_pass_judge_case(
         else {}
     )
 
-    attempt_file_list = sorted(
-        f for f in ai_attempt_files if not f.endswith("_additional_format.txt")
+    # Judge v6: list sheets in the workbook's TRUE tab order (the rubric
+    # grades tab order; an alphabetical listing made that check unjudgeable)
+    # and serve the properties block. Older caches without the properties
+    # file degrade to the alphabetical listing.
+    attempt_props = workbook_properties.load_properties(ai_attempt_dir)
+    solution_props = workbook_properties.load_properties(golden_solution_dir)
+    starting_props = workbook_properties.load_properties(starting_workbook_dir)
+    attempt_file_list = workbook_properties.order_file_list(
+        [f for f in ai_attempt_files if not f.endswith("_additional_format.txt")
+         and not f.endswith(".json")],
+        attempt_props,
     )
-    solution_file_list = sorted(
-        f for f in golden_solution_files if not f.endswith("_additional_format.txt")
+    solution_file_list = workbook_properties.order_file_list(
+        [f for f in golden_solution_files if not f.endswith("_additional_format.txt")
+         and not f.endswith(".json")],
+        solution_props,
     )
-    starting_file_list = sorted(
-        f
-        for f in starting_workbook_files
-        if not f.endswith("_additional_format.txt")
+    starting_file_list = workbook_properties.order_file_list(
+        [f for f in starting_workbook_files if not f.endswith("_additional_format.txt")
+         and not f.endswith(".json")],
+        starting_props,
     )
 
     logger.info(f"\n  Attempt files: {attempt_file_list}")
@@ -4245,11 +4396,36 @@ def single_pass_judge_case(
         f"\n[Single-pass] Starting evaluation over {len(check_ids)} checks..."
     )
 
-    rubric_checks_text = render_rubric_checks_flat(numbered_gated, guidance)
+    # Template 8+ (judge v6): guidance rendered as part of each check's
+    # standard, the answer-equivalence rulebook under the Accuracy category,
+    # and the workbook-properties block in the seed. Template 7 keeps the
+    # advisory footnote form byte-for-byte.
+    hardened = _prompt_version_at_least(versions["PROMPT_VERSION"], 8)
+    rubric_checks_text = render_rubric_checks_flat(
+        numbered_gated,
+        guidance,
+        guidance_style="standard" if hardened else "footnote",
+        category_extras=(
+            {"Accuracy": answer_rules.render_rules_text()} if hardened else None
+        ),
+    )
     compile_kwargs = dict(
         rubric_checks_text=rubric_checks_text,
         check_ids_text=", ".join(check_ids),
         num_checks=str(len(check_ids)),
+        attempt_properties_text=workbook_properties.render_properties_text(
+            attempt_props, set(attempt_file_list)
+        ),
+        solution_properties_text=workbook_properties.render_properties_text(
+            solution_props, set(solution_file_list)
+        ),
+        starting_properties_text=(
+            workbook_properties.render_properties_text(
+                starting_props, set(starting_file_list)
+            )
+            if starting_file_list
+            else "  (starting workbook not available for this attempt)"
+        ),
         attempt_files_text=_render_files_text_dims_only(
             attempt_file_list, attempt_file_metadata
         ),
@@ -4287,6 +4463,19 @@ def single_pass_judge_case(
             f"  [api] /v1/responses (OpenAI reasoning_effort="
             f"{reasoning_effort!r} with tools)"
         )
+    # Anthropic graders speak the native Messages API in single-pass mode
+    # (judge v6): the OpenAI-compat endpoint has no prompt caching, ignores
+    # reasoning_effort and reports no cached tokens. The adapter keeps the
+    # loop on chat shapes; this state replays thinking blocks across rounds.
+    use_native_anthropic = anthropic_native.wants_native_anthropic(identity.provider)
+    native_state = anthropic_native.NativeState()
+    native_client = None
+    if use_native_anthropic:
+        native_client = get_native_anthropic_client(identity)
+        logger.info(
+            f"  [api] anthropic native messages (effort="
+            f"{anthropic_native.map_effort(reasoning_effort)!r}, prompt caching on)"
+        )
 
     cumulative_metrics = {
         "message_size": 0,
@@ -4294,6 +4483,10 @@ def single_pass_judge_case(
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        # Prompt-cache detail (judge v6): cached input is billed at a
+        # fraction of the input rate; the cost meter needs these to be honest.
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
     }
     tool_call_stats: dict[str, int] = {
         t["function"]["name"]: 0 for t in SINGLE_PASS_JUDGE_TOOLS
@@ -4401,21 +4594,36 @@ def single_pass_judge_case(
             "messages": _msgs,
             "tools": tools,
         }
-        if reasoning_effort is not None and not use_responses_api:
+        if (
+            reasoning_effort is not None
+            and not use_responses_api
+            and not use_native_anthropic
+        ):
             _create_kwargs["reasoning_effort"] = (
                 "none" if identity.provider == "openai" else reasoning_effort
             )
-        _request_params = {
-            "reasoning_effort": (
-                reasoning_effort
-                if use_responses_api
-                else _create_kwargs.get("reasoning_effort")
-            ),
-            "api": "responses" if use_responses_api else "chat_completions",
-        }
+        if use_native_anthropic:
+            _api = "anthropic_messages"
+            _effective_effort = anthropic_native.map_effort(reasoning_effort)
+        elif use_responses_api:
+            _api = "responses"
+            _effective_effort = reasoning_effort
+        else:
+            _api = "chat_completions"
+            _effective_effort = _create_kwargs.get("reasoning_effort")
+        _request_params = {"reasoning_effort": _effective_effort, "api": _api}
         _call_t0 = time.time()
         try:
-            if use_responses_api:
+            if use_native_anthropic:
+                response = anthropic_native.create(
+                    native_client,
+                    model=identity.model,
+                    messages=_msgs,
+                    chat_tools=tools,
+                    reasoning_effort=reasoning_effort,
+                    state=native_state,
+                )
+            elif use_responses_api:
                 response = openai_responses.create(
                     client,
                     model=identity.model,
@@ -4515,13 +4723,19 @@ def single_pass_judge_case(
 
         usage = response.usage
         if usage:
-            cumulative_metrics["prompt_tokens"] += usage.prompt_tokens or 0
-            cumulative_metrics["completion_tokens"] += usage.completion_tokens or 0
-            cumulative_metrics["total_tokens"] += usage.total_tokens or 0
-            if usage.prompt_tokens:
-                state.last_prompt_tokens = usage.prompt_tokens
+            ub = usage_breakdown(usage)
+            cumulative_metrics["prompt_tokens"] += ub["prompt_tokens"]
+            cumulative_metrics["completion_tokens"] += ub["completion_tokens"]
+            cumulative_metrics["total_tokens"] += ub["total_tokens"]
+            cumulative_metrics["cached_tokens"] += ub["cached_tokens"]
+            cumulative_metrics["cache_write_tokens"] += ub["cache_write_tokens"]
+            if ub["prompt_tokens"]:
+                # prompt_tokens is the TOTAL input (cached included) on every
+                # path, so the chars/token calibration and the read gate are
+                # unaffected by caching.
+                state.last_prompt_tokens = ub["prompt_tokens"]
                 if wire_chars_at_call > 0:
-                    chars_per_token = wire_chars_at_call / usage.prompt_tokens
+                    chars_per_token = wire_chars_at_call / ub["prompt_tokens"]
 
         msg = response.choices[0].message
         msg_size = _measure_message_chars(msg)
@@ -4826,8 +5040,21 @@ def single_pass_judge_case(
         model,
         cumulative_metrics["prompt_tokens"],
         cumulative_metrics["completion_tokens"],
+        cached_tokens=cumulative_metrics.get("cached_tokens", 0),
+        cache_write_tokens=cumulative_metrics.get("cache_write_tokens", 0),
+        provider=identity.provider,
     )
     token_tracking["evaluations"][ALL]["cost"] = cost_info["total_cost"]
+    token_tracking["evaluations"][ALL]["cache_savings"] = cost_info["cache_savings"]
+    token_tracking["total_cached_tokens"] = cumulative_metrics.get("cached_tokens", 0)
+    token_tracking["total_cache_write_tokens"] = cumulative_metrics.get(
+        "cache_write_tokens", 0
+    )
+    token_tracking["cache_savings"] = cost_info["cache_savings"]
+    token_tracking["api"] = (
+        "anthropic_messages" if use_native_anthropic
+        else ("responses" if use_responses_api else "chat_completions")
+    )
     token_tracking["evaluations"][ALL]["chars_per_token"] = (
         round(
             cumulative_metrics["message_size"] / cumulative_metrics["prompt_tokens"],
@@ -4902,6 +5129,8 @@ def single_pass_judge_case(
         recorder=recorder,
         suitability_provenance=suitability_provenance,
         formula_cache_provenance=prep.get("formula_cache_provenance"),
+        harness_verdicts=harness_verdicts,
+        accuracy_engine=accuracy_engine,
     )
 
 

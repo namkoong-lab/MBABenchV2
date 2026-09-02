@@ -1071,6 +1071,7 @@ def process_all_worksheets(
 
     results = {}
     all_saved_files = []
+    name_map: Dict[str, Any] = {}  # original sheet name -> output name (None = filtered out)
 
     # Process each worksheet
     for sheet_name in sheet_names:
@@ -1083,8 +1084,10 @@ def process_all_worksheets(
                     logger.info(
                         f"\n=== Skipping sheet (filtered out): {sheet_name} ==="
                     )
+                name_map[sheet_name] = None
                 continue
             output_sheet_name = filtered_name
+        name_map[sheet_name] = output_sheet_name
 
         if not quiet:
             if output_sheet_name != sheet_name:
@@ -1123,6 +1126,22 @@ def process_all_worksheets(
         }
 
         all_saved_files.extend(saved_files)
+
+    # Workbook/sheet properties block (judge v6): tab order, hidden state,
+    # validation, widths, comments, ... saved beside the CSVs so the cache
+    # carries it. Never fatal — the judge degrades to the old listing.
+    try:
+        from . import workbook_properties as _wp
+    except ImportError:  # bare-module import path
+        import workbook_properties as _wp
+    try:
+        props = _wp.extract_workbook_properties(workbook, excel_file_path, name_map)
+        props_path = _wp.save_properties(output_dir, props)
+        all_saved_files.append(str(props_path))
+        if not quiet:
+            logger.info(f"Saved workbook properties: {props_path}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Workbook properties extraction failed for {excel_file_path}: {e}")
 
     # Summary
     if not quiet:

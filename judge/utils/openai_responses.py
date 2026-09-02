@@ -36,7 +36,7 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
     ChatCompletionMessageFunctionToolCall,
     Function,
 )
-from openai.types.completion_usage import CompletionUsage
+from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
 try:
     from .logger import logger
@@ -225,10 +225,18 @@ def create(client, *, model, messages, chat_tools, reasoning_effort,
     )
 
     u = response.usage
-    usage = CompletionUsage(
-        prompt_tokens=getattr(u, "input_tokens", 0) or 0,
-        completion_tokens=getattr(u, "output_tokens", 0) or 0,
-        total_tokens=getattr(u, "total_tokens", 0) or 0,
-    ) if u is not None else None
+    usage = None
+    if u is not None:
+        # Cached input is billed at 25% on OpenAI; surface it in the same
+        # prompt_tokens_details.cached_tokens slot chat/completions uses so
+        # the loop's cost accounting (llm_utils.usage_breakdown) sees it.
+        details = getattr(u, "input_tokens_details", None)
+        cached = getattr(details, "cached_tokens", 0) if details is not None else 0
+        usage = CompletionUsage(
+            prompt_tokens=getattr(u, "input_tokens", 0) or 0,
+            completion_tokens=getattr(u, "output_tokens", 0) or 0,
+            total_tokens=getattr(u, "total_tokens", 0) or 0,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=int(cached or 0)),
+        )
 
     return ResponsesShim(response, message, usage)

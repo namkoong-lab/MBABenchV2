@@ -39,7 +39,14 @@ checks:
       (1) and one shown as -1 are the same value. An answer quoted as a
       percentage counts as correct whether or not it is multiplied by 100
       (0.42 and 42 for 42% are both correct). Compare underlying values,
-      not their rendering.
+      not their rendering. Two answers are THE SAME whenever the
+      answer-equivalence rulebook (rendered under the Accuracy category
+      standard) says so — in particular, a difference inside the requested
+      rounding precision (a penny, when two decimal places were asked for)
+      is NOT a mistake, and a sign flip on an expense/cost/outflow row is a
+      convention, not an error. Outside those rules a different value is a
+      mistake, and an answer typed as a constant instead of a live formula
+      is a mistake even when the number is right.
 
   - category: Accuracy
     name: Deliverable completeness

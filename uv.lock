@@ -701,6 +701,7 @@ name = "excel-judge"
 version = "0.1.0"
 source = { editable = "judge" }
 dependencies = [
+    { name = "anthropic" },
     { name = "boto3" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -713,6 +714,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", specifier = ">=0.123" },
     { name = "boto3", specifier = ">=1.34" },
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.24" },

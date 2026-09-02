@@ -44,6 +44,7 @@ import threading
 import time
 import traceback
 import uuid
+import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -346,9 +347,11 @@ class GradeOrchestrator:
         on_overflow,
         reasoning_effort,
         single_pass=False,
+        accuracy_check="harness",
     ):
         self.workers = workers
         self.single_pass = single_pass
+        self.accuracy_check = accuracy_check
         self.model = model
         self.rubric_path = rubric_path
         self.template_path = template_path
@@ -383,9 +386,12 @@ class GradeOrchestrator:
         # without them silently disables template 5+'s category-keyed
         # serving. The unsuffixed dirs this script used before are ignored.
         cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
-        self.solution_cache_base = cache_root / "solution_csv_cache_v2"
-        self.attempt_cache_base = cache_root / "attempt_csv_cache_v2"
-        self.starting_cache_base = cache_root / "starting_csv_cache_v2"
+        # "_v3" (2026-09, judge v6): extraction now also writes
+        # _workbook_properties.json (tab order, hidden state, validation,
+        # widths, comments...) which the single-pass seed serves.
+        self.solution_cache_base = cache_root / "solution_csv_cache_v3"
+        self.attempt_cache_base = cache_root / "attempt_csv_cache_v3"
+        self.starting_cache_base = cache_root / "starting_csv_cache_v3"
         self.solution_cache_base.mkdir(parents=True, exist_ok=True)
         self.attempt_cache_base.mkdir(parents=True, exist_ok=True)
         self.starting_cache_base.mkdir(parents=True, exist_ok=True)
@@ -673,6 +679,7 @@ class GradeOrchestrator:
                 on_overflow=self.on_overflow,
                 reasoning_effort=self.reasoning_effort,
                 suitability_source_path=suitability_src,
+                accuracy_check=self.accuracy_check,
             )
         except Exception as e:
             logger.error(f"  [attempt {attempt_id}] grade_single_attempt raised: {e}")
@@ -1040,6 +1047,7 @@ def main():
             "support may reject the kwarg."
         ),
     )
+    _gfd.add_accuracy_check_arg(parser)
 
     # Execution modes
     parser.add_argument("--dry-run", action="store_true")
@@ -1095,7 +1103,7 @@ def main():
             relative_path_from_project_root(
                 load_env_var(
                     "SINGLE_PASS_PROMPT_TEMPLATE",
-                    default="./prompts/agentic_judge_template_7.yaml",
+                    default="./prompts/agentic_judge_template_8.yaml",
                 )
             )
         )
@@ -1108,7 +1116,10 @@ def main():
     # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
 
-    run_id = time.strftime("%Y%m%d_%H%M%S")
+    # uuid suffix (2026-09): two orchestrator processes launched in the same
+    # second used to share one grade_runs/<id> tree and destroy each other's
+    # per-attempt artifacts — the same collision 7266cdd fixed in grade_from_db.
+    run_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
     scratch_run_dir = Path(scratch_base) / "grade_runs" / run_id
     scratch_run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1210,6 +1221,7 @@ def main():
         on_overflow=args.on_overflow,
         reasoning_effort=args.reasoning_effort,
         single_pass=single_pass,
+        accuracy_check=args.accuracy_check,
     )
 
     orch.run(hydrated)

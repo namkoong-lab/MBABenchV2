@@ -138,7 +138,10 @@ def numbered_rubric_checks(rubric: dict) -> list[tuple[int, str, dict]]:
 
 
 def render_rubric_checks_flat(
-    numbered_items: list[tuple[int, str, dict]], guidance: dict = None
+    numbered_items: list[tuple[int, str, dict]],
+    guidance: dict = None,
+    guidance_style: str = "footnote",
+    category_extras: dict = None,
 ) -> str:
     """Render globally-numbered checks for the single-pass judge.
 
@@ -147,19 +150,30 @@ def render_rubric_checks_flat(
     inline (`Check 17 [Formatting] Blue font for hardcoded inputs: ...`).
     Category guidance notes are rendered above the first check of their
     category; per-check guidance goes under its check.
+
+    `guidance_style` (judge v6, item C): "footnote" renders per-check notes
+    as an advisory "Guidance:" line (template_7, frozen); "standard" folds
+    them into the check's standard as a "Standard:" line and labels the
+    category note "Category standard" — the wording the template_8 system
+    prompt declares part of the pass/fail definition. `category_extras`
+    ({category: text}) appends extra binding text under a category note
+    (template_8 puts the answer-equivalence rulebook under Accuracy).
     """
     blocks = []
     seen_categories = set()
+    hardened = guidance_style == "standard"
     for no, category, item in numbered_items:
-        if (
-            guidance
-            and category not in seen_categories
-            and category in guidance.get("categories", {})
-        ):
-            blocks.append(
-                f"Category guidance for {category}:\n"
-                f"{guidance['categories'][category]}"
-            )
+        if category not in seen_categories:
+            note = (guidance or {}).get("categories", {}).get(category)
+            extra = (category_extras or {}).get(category)
+            if note or extra:
+                head = (
+                    f"Category standard for {category} (binding for every check below):"
+                    if hardened
+                    else f"Category guidance for {category}:"
+                )
+                body = "\n".join(t for t in (note, extra) if t)
+                blocks.append(f"{head}\n{body}")
         seen_categories.add(category)
         text = (
             f"Check {no} [{category}] {item['name']}: {item['description']}\n"
@@ -169,7 +183,7 @@ def render_rubric_checks_flat(
         if guidance:
             note = guidance.get("checks", {}).get((category, item["name"]))
             if note:
-                text += f"\nGuidance: {note}"
+                text += f"\n{'Standard' if hardened else 'Guidance'}: {note}"
         blocks.append(text)
     return "\n\n".join(blocks)
 

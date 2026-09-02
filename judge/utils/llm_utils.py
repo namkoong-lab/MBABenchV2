@@ -93,6 +93,41 @@ def get_client(identity: JudgeIdentity) -> OpenAI:
         _clients[provider] = client
         return client
 
+
+_native_clients: dict = {}
+
+
+def get_native_anthropic_client(identity: JudgeIdentity):
+    """Cached native `anthropic.Anthropic` client for provider=anthropic.
+
+    Why native (2026-09-02): Anthropic's OpenAI-compat endpoint documents no
+    prompt caching, `reasoning_effort` ignored, and empty
+    prompt_tokens_details — so neither the cache savings nor real effort
+    arms are reachable through `get_client`. The single-pass loop routes
+    provider=anthropic here (utils/anthropic_native.py); the frozen
+    12-category path keeps the compat client.
+
+    The explicit timeout matters: the SDK refuses non-streaming requests
+    whose max_tokens implies more than ~10 minutes unless a timeout is set.
+    """
+    if identity.provider != "anthropic":
+        raise ValueError(f"native Anthropic client requested for provider {identity.provider!r}")
+    client = _native_clients.get("anthropic")
+    if client is not None:
+        return client
+    with _clients_lock:
+        client = _native_clients.get("anthropic")
+        if client is None:
+            import anthropic
+
+            client = anthropic.Anthropic(
+                api_key=resolve_api_key(identity.api_key_provider),
+                timeout=1800.0,
+                max_retries=2,
+            )
+            _native_clients["anthropic"] = client
+        return client
+
 # Pricing per 1M tokens (input, output) for common OpenRouter models
 _MODEL_PRICING = {
     "openai/gpt-4o": (5.0, 15.0),
@@ -119,11 +154,9 @@ _MODEL_PRICING = {
     # ($/MTok = delta / token_tracking totals), then recalibrate here.
     "openai/gpt-5.6-sol": (5.0, 30.0),       # OpenAI list (matches cli models_config)
     "anthropic/claude-opus-5": (5.0, 25.0),  # Anthropic list price
-    # PROVISIONAL like the two above — flash-line list price (matches the
-    # 3.5/3.6 entries); the bake-off charged this arm _DEFAULT_PRICING
-    # because the key was missing entirely. Recalibrate from a billed
-    # credits-dashboard delta after the v4 canaries.
-    "google/gemini-3.7-flash": (0.5, 3.0),
+    # (gemini-3.7-flash now priced above at the 2026-08-31 OpenRouter list —
+    # a stale duplicate entry here was silently shadowing it, since the
+    # LAST duplicate key in a dict literal wins.)
     # Judge-effort canary graders (2026-09) — PROVISIONAL; the canary's
     # before/after balance readings are the calibration for all of these.
     "openai/gpt-5.6-terra": (5.0, 30.0),      # assume sol-tier until billed
@@ -163,24 +196,80 @@ def calculate_message_size(messages):
     return {"text": text_size, "total": text_size + image_size}
 
 
-def calculate_cost(model, prompt_tokens, completion_tokens):
+# Prompt-cache billing multipliers per provider, applied to the input price:
+# (cache READ multiplier, cache WRITE multiplier). Measured/documented:
+#   openai    — cached input billed at 25% (sol canary step 2: 92% cached,
+#               balance delta agreed with 0.25 within 1%); no write premium.
+#   anthropic — cache reads 10%, 5-minute-TTL cache writes 125% (Anthropic
+#               prompt-caching pricing; reads are 2.5% on claude-fable-5-1,
+#               which is not a registered grader).
+# Any other provider: cached tokens priced at the full input rate (no
+# discount assumed until measured). OpenRouter/Gemini implicit caching shows
+# up in the provider's exact per-call cost, not in these estimates.
+_CACHE_PRICING = {
+    "openai": (0.25, 1.0),
+    "anthropic": (0.10, 1.25),
+}
+
+
+def calculate_cost(model, prompt_tokens, completion_tokens,
+                   cached_tokens=0, cache_write_tokens=0, provider=None):
     """Estimate cost for an LLM call based on model and token counts.
 
     Args:
-        model: Model identifier string
-        prompt_tokens: Number of input tokens
+        model: Model identifier string (pricing key)
+        prompt_tokens: TOTAL input tokens (uncached + cached + cache-write)
         completion_tokens: Number of output tokens
+        cached_tokens: input tokens served from the prompt cache (subset of
+            prompt_tokens), billed at the provider's read multiplier
+        cache_write_tokens: input tokens written to the cache this call
+            (subset of prompt_tokens), billed at the write multiplier
+        provider: identity.provider, selects the cache multipliers
 
     Returns:
-        dict: {"total_cost": float, "prompt_cost": float, "completion_cost": float}
+        dict: {"total_cost", "prompt_cost", "completion_cost",
+               "cached_tokens", "cache_write_tokens", "cache_savings"}
     """
     input_price, output_price = _MODEL_PRICING.get(model, _DEFAULT_PRICING)
-    prompt_cost = (prompt_tokens / 1_000_000) * input_price
+    cached_tokens = max(0, int(cached_tokens or 0))
+    cache_write_tokens = max(0, int(cache_write_tokens or 0))
+    read_mult, write_mult = _CACHE_PRICING.get(provider or "", (1.0, 1.0))
+    uncached = max(0, prompt_tokens - cached_tokens - cache_write_tokens)
+    per_tok = input_price / 1_000_000
+    prompt_cost = (
+        uncached * per_tok
+        + cached_tokens * per_tok * read_mult
+        + cache_write_tokens * per_tok * write_mult
+    )
     completion_cost = (completion_tokens / 1_000_000) * output_price
     return {
         "total_cost": prompt_cost + completion_cost,
         "prompt_cost": prompt_cost,
         "completion_cost": completion_cost,
+        "cached_tokens": cached_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        # what the same call would have cost with no cache accounting
+        "cache_savings": (prompt_tokens * per_tok) - prompt_cost,
+    }
+
+
+def usage_breakdown(usage) -> dict:
+    """Normalise a response.usage object (chat-completions, the responses
+    shim, or the native-Anthropic shim) into total / cached / cache-write
+    input tokens plus output tokens. Missing fields read as 0."""
+    if usage is None:
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                "cached_tokens": 0, "cache_write_tokens": 0}
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = getattr(details, "cached_tokens", None) if details is not None else None
+    if cached is None and isinstance(details, dict):
+        cached = details.get("cached_tokens")
+    return {
+        "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+        "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+        "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+        "cached_tokens": int(cached or 0),
+        "cache_write_tokens": int(getattr(usage, "cache_write_tokens", 0) or 0),
     }
 
 

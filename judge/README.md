@@ -119,6 +119,56 @@ are NOT comparable to judge_version 3 rows):
   key. Round budget `single_pass.max_rounds` (500 — effectively unbound for
   canaries; set the production value from measured usage).
 
+### judge v6 — single-pass 6 / template_8 (2026-09-02)
+
+The pipeline update after the v4/v5 canaries (single-pass only; the
+12-category path is frozen at version 4). Rows record `judge_version` 6 /
+`prompt_version` 8 and are not comparable to version 5 rows.
+
+- **Harness-decided answer accuracy** (`utils/answer_check.py`, rulebook
+  `utils/answer_rules.py`): the Questions-sheet answers are checked
+  deterministically BEFORE the judge runs, and the checker's verdict on
+  `Accuracy / Final calculation accuracy` (and the zero-answers case of
+  `Deliverable completeness`) is overlaid onto the judge's at the scoring
+  layer. `--accuracy-check harness|llm` (default `harness`, both drivers)
+  picks which engine's decision lands in the recorded total; BOTH are
+  always scored — `scored_results.accuracy_engine` carries
+  `total_score_llm`, `total_score_harness`, and per-check provenance
+  (engine, decision, rule fired, fallback reason, agreement with the LLM),
+  and `ai_judgement_harness.json` sits beside the pure-LLM
+  `ai_judgement.json`. The harness fails closed to the LLM verdict wherever
+  it cannot measure (no answer sheet, layout not trusted), with the reason
+  recorded. A numeric answer typed as a constant where the golden uses a
+  formula is `hardcoded` and counts as a mistake
+  (`single_pass.hardcoded_counts`).
+- **Answer-equivalence rulebook** — one module, two consumers: the checker
+  applies it and template_8 renders it verbatim under the Accuracy category
+  standard. Tolerance = one unit of the requested precision (a penny at two
+  decimal places), sign flips accepted only on outflow rows (expense/cost/
+  spend/outflow/depreciation/amortization/capex/tax), percent and fraction
+  forms equal, values not rendered strings, sentinel synonyms, dates, zero
+  forms; unit-scale (x1000) differences are flagged, never accepted.
+- **Name-agnostic answer finder**: sheets are validated by the golden
+  question TEXTS they contain (named Questions*/Answers* sheets win ties,
+  decoys like "Answer Map" lose), rows are paired by text, the answer column
+  is the header cell starting with "answer" in the block's header row.
+- **Workbook properties block** (`utils/workbook_properties.py`,
+  `_workbook_properties.json` beside the CSVs; caches move to
+  `*_csv_cache_v3`): true tab order (file listings now follow it), hidden
+  sheets/rows/cols, data validation, column widths / row heights, comments,
+  conditional formats, hyperlinks, defined names, calc mode, print setup —
+  rendered for attempt / solution / starting workbooks in the seed.
+- **Standards + strictness** (template_8): guidance notes render as
+  `Standard:` lines that are part of each check's definition; absence of
+  evidence is not a pass; genuinely undecided after inspection = fail with
+  the ambiguity described.
+- **Native Anthropic path** (`utils/anthropic_native.py`): provider
+  `anthropic` graders use the Messages API directly — real `effort` tiers
+  (the OpenAI-compat endpoint ignores `reasoning_effort`), prompt caching
+  (system-prefix breakpoint + automatic tail marker), thinking-block replay.
+  Cached input is priced on every path (`token_tracking.total_cached_tokens`
+  / `cache_savings`; OpenAI reads at 25%, Anthropic reads 10% / writes 125%).
+
   `grade_with_orchestration` also stages suitability annotations itself now
   (before 2026-09 it never passed them through, so it could not grade v2 at
   all) and shares the `*_csv_cache_v2` generation with grade_from_db.

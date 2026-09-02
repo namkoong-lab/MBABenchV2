@@ -284,7 +284,8 @@ check("merged: A1:B2" not in r2, "sheet metadata served only once per set")
 # ---------------------------------------------------------------------------
 import yaml  # noqa: E402
 
-for tpl in ("agentic_judge_template_6.yaml", "agentic_judge_template_7.yaml"):
+for tpl in ("agentic_judge_template_6.yaml", "agentic_judge_template_7.yaml",
+            "agentic_judge_template_8.yaml"):
     data = yaml.safe_load((JUDGE / "prompts" / tpl).read_text())
     check("judge_prompt" in data and data["judge_prompt"][0]["role"] == "system",
           f"{tpl} parses with a system message")
@@ -293,10 +294,12 @@ from utils.misc_utils import load_env_var  # noqa: E402
 
 check(str(load_env_var("AGENTIC_JUDGE_VERSION")) == "4",
       "config: agentic (12-category) judge version is 4")
-check(str(load_env_var("SINGLE_PASS_VERSION")) == "5",
-      "config: single_pass version is 5")
-check(str(load_env_var("SINGLE_PASS_PROMPT_VERSION")) == "7",
-      "config: single_pass prompt_version is 7")
+check(str(load_env_var("SINGLE_PASS_VERSION")) == "6",
+      "config: single_pass version is 6 (judge v6)")
+check(str(load_env_var("SINGLE_PASS_PROMPT_VERSION")) == "8",
+      "config: single_pass prompt_version is 8")
+check(str(load_env_var("JUDGE_VERSION")) != str(load_env_var("SINGLE_PASS_VERSION")),
+      "single-pass no longer shares a judge_version with the classic judge")
 check(
     str(load_env_var("AGENTIC_JUDGE_VERSION"))
     != str(load_env_var("SINGLE_PASS_VERSION")),
@@ -308,8 +311,10 @@ check(int(load_env_var("SINGLE_PASS_MAX_ROUNDS")) == 500,
       "config: single-pass round budget is 500")
 check("template_6" in str(load_env_var("AGENTIC_JUDGE_PROMPT_TEMPLATE")),
       "config: 12-category template is template_6")
-check("template_7" in str(load_env_var("SINGLE_PASS_PROMPT_TEMPLATE")),
-      "config: single-pass template is template_7")
+check("template_8" in str(load_env_var("SINGLE_PASS_PROMPT_TEMPLATE")),
+      "config: single-pass template is template_8")
+check(str(load_env_var("SINGLE_PASS_HARDCODED_COUNTS")).lower() in ("true", "1"),
+      "config: hardcoded answers count by default")
 
 # Pressure tiers
 _, tier = judge._build_pressure_signal(500_000, 1_000_000, 3)
@@ -327,8 +332,13 @@ check(tier == "forced", "95% pressure is 'forced'")
 orch_src = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
 check("suitability_source_path=suitability_src" in orch_src,
       "orchestrator forwards suitability_source_path (v2 blocker fixed)")
-check("solution_csv_cache_v2" in orch_src and "attempt_csv_cache_v2" in orch_src,
-      "orchestrator uses the _v2 cache generation")
+check("solution_csv_cache_v3" in orch_src and "attempt_csv_cache_v3" in orch_src
+      and "starting_csv_cache_v3" in orch_src,
+      "orchestrator uses the _v3 cache generation (properties block)")
+check("accuracy_check=self.accuracy_check" in orch_src and "add_accuracy_check_arg" in orch_src,
+      "orchestrator forwards --accuracy-check")
+check('uuid.uuid4().hex[:6]' in orch_src.split("def main")[1],
+      "orchestrator run_id carries a uuid suffix (same-second collision fix)")
 check("cached_starting_csv_dir=cached_starting" in orch_src,
       "orchestrator forwards the starting CSV cache")
 check("single_pass=self.single_pass" in orch_src,
@@ -389,6 +399,181 @@ check("consecutive_refusal_rounds" in sp_src.split("def single_pass_judge_case")
       "deadlock breaker wired into single-pass loop")
 check("_read_refusal_check" not in sp_src.split("def agentic_judge_case")[1].split("def single_pass_judge_case")[0],
       "12-category loop untouched by the gate")
+
+# ---------------------------------------------------------------------------
+# Judge v6 — harness-decided accuracy: both engines scored, flag picks the DB total
+# ---------------------------------------------------------------------------
+import copy  # noqa: E402
+import time  # noqa: E402
+
+from utils import answer_rules, workbook_properties  # noqa: E402
+
+FA = "Accuracy/Final calculation accuracy"
+DC = "Accuracy/Deliverable completeness"
+llm_responses = copy.deepcopy(per_category)  # every check recorded, decisions per _decide()
+fa_item = next(i for i in llm_responses["Accuracy"] if i["name"] == "Final calculation accuracy")
+fa_item["decision"] = "fail"
+fa_item["mistakes"] = [{"location": "Q!B2", "description": "off by a penny", "severity": "major"}]
+harness = {
+    FA: {"engine": "harness", "decision": "pass", "summary": "75/75 match", "mistakes": [],
+         "n_questions": 75, "n_match": 75, "fraction_correct": 1.0},
+    DC: {"engine": "llm", "fallback_reason": "75/75 answers present"},
+}
+overlaid, prov = judge._apply_harness_verdicts(llm_responses, harness, WEIGHTS)
+new_fa = next(i for i in overlaid["Accuracy"] if i["name"] == "Final calculation accuracy")
+check(new_fa["decision"] == "pass" and new_fa["decided_by"] == "harness"
+      and new_fa["llm_decision"] == "fail" and new_fa["llm_mistakes"] == fa_item["mistakes"],
+      "overlay replaces the LLM item and keeps its verdict as llm_*")
+check(fa_item["decision"] == "fail", "overlay does not mutate the LLM judgement")
+check(prov[FA]["engine"] == "harness" and prov[FA]["agreed"] is False and prov[FA]["llm_decision"] == "fail"
+      and prov[FA]["n_match"] == 75, "provenance: engine, agreement, llm decision, stats")
+check(prov[DC]["engine"] == "llm" and prov[DC]["fallback_reason"], "unmeasured check stays with the LLM, reason kept")
+gated_weights = copy.deepcopy(WEIGHTS)
+gated_weights["Accuracy"] = [w for w in gated_weights["Accuracy"] if w["name"] != "Final calculation accuracy"]
+_, prov_g = judge._apply_harness_verdicts(llm_responses, harness, gated_weights)
+check(prov_g[FA]["engine"] == "llm" and "suitability" in prov_g[FA]["fallback_reason"],
+      "a suitability-gated check is never overridden")
+no_fa = copy.deepcopy(llm_responses)
+no_fa["Accuracy"] = [i for i in no_fa["Accuracy"] if i["name"] != "Final calculation accuracy"]
+overlaid2, prov2 = judge._apply_harness_verdicts(no_fa, harness, WEIGHTS)
+check(any(i["name"] == "Final calculation accuracy" and i["decided_by"] == "harness"
+          for i in overlaid2["Accuracy"]) and prov2[FA]["llm_decision"] is None,
+      "a check the LLM never recorded is inserted from the harness")
+
+# _finalize_case: both totals recorded; flag picks the DB total
+def _finalize(engine, hv):
+    out = Path(tempfile.mkdtemp(prefix="sp_v6_"))
+    log = out / "cache.log"
+    log.write_text("")
+    tt = {"evaluations": {}, "total_message_size": 0, "total_message_size_with_images": 0,
+          "total_tokens": 0, "total_prompt_tokens": 0, "total_completion_tokens": 0, "total_cost": 0.0}
+    return judge._finalize_case(
+        all_responses=copy.deepcopy(llm_responses), output_dir=out, weights_data=WEIGHTS,
+        token_tracking=tt, model="test/model", attempt_model="agent", task_folder_name="t",
+        golden_solution_files={}, ai_attempt_files={}, context_file_path=None,
+        start_time=time.time(), cache_log_path=str(log),
+        versions={"JUDGE_VERSION": "6", "PROMPT_VERSION": "8", "RUBRIC_VERSION": "9",
+                  "RUBRIC_WEIGHT_VERSION": "9"},
+        agentic=True, harness_verdicts=hv, accuracy_engine=engine,
+    ), out
+
+res_h, out_h = _finalize("harness", harness)
+res_l, out_l = _finalize("llm", harness)
+sr_h, sr_l = res_h["score_results"], res_l["score_results"]
+check(sr_h["accuracy_engine"]["effective"] == "harness" and sr_l["accuracy_engine"]["effective"] == "llm",
+      "effective engine follows the flag")
+check(sr_h["accuracy_engine"]["total_score_llm"] == sr_l["accuracy_engine"]["total_score_llm"]
+      and sr_h["accuracy_engine"]["total_score_harness"] == sr_l["accuracy_engine"]["total_score_harness"],
+      "both totals recorded identically under either flag")
+check(sr_h["total_score"] == sr_h["accuracy_engine"]["total_score_harness"]
+      and sr_l["total_score"] == sr_l["accuracy_engine"]["total_score_llm"]
+      and sr_h["total_score"] > sr_l["total_score"],
+      "the DB total is the chosen engine's; harness pass on the 10-pt check lifts it")
+check((out_h / "ai_judgement_harness.json").exists() and (out_h / "ai_judgement.json").exists(),
+      "both judgement files written")
+check(json.loads((out_h / "ai_judgement.json").read_text())["Accuracy"][0]["decision"] in ("pass", "fail")
+      and "decided_by" not in json.loads((out_h / "ai_judgement.json").read_text())["Accuracy"][0],
+      "ai_judgement.json stays the pure LLM judgement")
+res_n, _ = _finalize("harness", {FA: {"engine": "llm", "fallback_reason": "layout not trusted"}})
+check(res_n["score_results"]["accuracy_engine"]["effective"] == "llm"
+      and res_n["score_results"]["accuracy_engine"]["total_score_harness"] is None,
+      "harness requested but nothing measurable -> LLM total, harness total None")
+
+# grade_from_db runs the checker BEFORE the judge and hands the verdicts over
+gsa = gfd_src.split("def grade_single_attempt")[1]
+check(gsa.index("run_answer_check(") < gsa.index("single_pass_judge_case("),
+      "answer check runs before the judge call")
+check("harness_verdicts=harness_verdicts" in gsa and "accuracy_engine=accuracy_check" in gsa,
+      "harness verdicts + engine flag passed into single-pass")
+check("add_accuracy_check_arg(parser)" in gfd_src, "grade_from_db exposes --accuracy-check")
+
+# ---------------------------------------------------------------------------
+# Judge v6 — hardened guidance + rulebook rendering, template_8 compile
+# ---------------------------------------------------------------------------
+guidance = rubric_guidance.load_guidance(RUBRIC_PATH)
+numbered = numbered_rubric_checks(RUBRIC)
+foot = render_rubric_checks_flat(numbered, guidance)
+foot_explicit = render_rubric_checks_flat(numbered, guidance, guidance_style="footnote")
+check(foot == foot_explicit and "Guidance:" in foot and "Standard:" not in foot,
+      "footnote style (template_7) is byte-identical to the pre-v6 renderer")
+hard = render_rubric_checks_flat(numbered, guidance, guidance_style="standard",
+                                 category_extras={"Accuracy": answer_rules.render_rules_text()})
+check("Standard:" in hard and "Guidance:" not in hard, "hardened style renders Standard: lines")
+check("Category standard for Accuracy" in hard and answer_rules.RULES_VERSION in hard,
+      "rulebook rendered under the Accuracy category standard")
+check(hard.index("Category standard for Accuracy") < hard.index("Check 1 [Accuracy]"),
+      "category standard precedes its first check")
+
+props_stub = {
+    "schema": 1,
+    "workbook": {"filename": "a.xlsx", "bytes": 2048, "calc_mode": None, "has_vba": False,
+                 "iterative_calc": False, "defined_names": [{"name": "Max_Age", "refers_to": "A!$B$1", "scope": None},
+                                                            {"name": "IQ_TODAY", "refers_to": "0", "scope": None}],
+                 "external_links": [], "active_sheet": "Cover"},
+    "sheets": [
+        {"name": "Cover", "output_name": "Cover", "index": 1, "kind": "worksheet", "state": "visible",
+         "max_row": 5, "max_column": 2, "used_range": "A1:B5", "n_values": 3, "n_formulas": 0,
+         "hidden_rows": [], "hidden_cols": [], "column_widths": [], "row_heights": [],
+         "data_validations": [], "conditional_formats": [], "comments": [], "hyperlinks": []},
+        {"name": "Zeta", "output_name": "Zeta", "index": 2, "kind": "worksheet", "state": "hidden",
+         "max_row": 50, "max_column": 90, "used_range": "A1:CL40", "n_values": 10, "n_formulas": 5,
+         "hidden_rows": [3, 4, 5, 9], "hidden_cols": [2], "column_widths": [{"first": 1, "last": 3, "value": 12.0}],
+         "row_heights": [], "data_validations": [{"sqref": "B4", "type": "list", "formula1": "=Lists!A1:A5"}],
+         "conditional_formats": [{"sqref": "C2:C20", "rules": [{"type": "cellIs"}]}],
+         "comments": [{"ref": "B4", "author": "x", "text": "hello"}], "hyperlinks": []},
+        {"name": "Alpha", "output_name": "Alpha", "index": 3, "kind": "worksheet", "state": "visible",
+         "max_row": 1, "max_column": 1, "used_range": None, "n_values": 0, "n_formulas": 0,
+         "hidden_rows": [], "hidden_cols": [], "column_widths": [], "row_heights": [],
+         "data_validations": [], "conditional_formats": [], "comments": [], "hyperlinks": []},
+        {"name": "Chart1", "output_name": "Chart1", "index": 4, "kind": "chartsheet", "state": "visible"},
+    ],
+}
+files = ["Alpha_full.csv", "Zeta_full.csv", "Cover_full.csv"]
+check(workbook_properties.order_file_list(files, props_stub) == ["Cover_full.csv", "Zeta_full.csv", "Alpha_full.csv"],
+      "file listing follows TRUE tab order, not the alphabet")
+check(workbook_properties.order_file_list(files, None) == sorted(files),
+      "no properties (old cache) -> alphabetical fallback")
+ptxt = workbook_properties.render_properties_text(props_stub, {"Zeta_full.csv", "Alpha_full.csv"})
+check("1. Cover" in ptxt and "not served (ignored sheet)" in ptxt.split("2. Zeta")[0],
+      "ignored sheet is marked not served")
+check("2. Zeta [HIDDEN]" in ptxt and "hidden rows: 3-5, 9; hidden cols: B" in ptxt,
+      "hidden sheet/rows/cols rendered")
+check("B4 list =Lists!A1:A5" in ptxt and "C2:C20 (cellIs)" in ptxt and 'B4: "hello"' in ptxt,
+      "validation / conditional format / comment rendered")
+check("Max_Age -> A!$B$1" in ptxt and "[+1 add-in/system names not listed]" in ptxt,
+      "defined names: user names listed, add-in names counted")
+check("chart sheet" in ptxt and "auto (Excel default, none set)" in ptxt,
+      "chartsheet + default calc mode rendered")
+check(workbook_properties.render_properties_text(props_stub) == workbook_properties.render_properties_text(props_stub),
+      "properties rendering is deterministic")
+
+stages = judge.compile_prompt(
+    str(JUDGE / "prompts" / "agentic_judge_template_8.yaml"),
+    rubric_checks_text=hard, check_ids_text="1, 2", num_checks="2",
+    attempt_files_text="  a", solution_files_text="  s", starting_files_text="  st",
+    attempt_properties_text=ptxt, solution_properties_text=ptxt, starting_properties_text="  (none)",
+    general_guidance=guidance["general"],
+)
+seed_text = "\n".join(str(m.get("content")) for m in stages[0] if isinstance(m, dict))
+check("Workbook properties — ATTEMPT" in seed_text and "2. Zeta [HIDDEN]" in seed_text,
+      "template_8 compiles with the properties blocks in the seed")
+check("genuinely undecided" in seed_text and "absence of evidence is not a pass" in seed_text,
+      "template_8 carries the strictness tie-break")
+check("Standard:" in seed_text and answer_rules.RULES_VERSION in seed_text,
+      "template_8 seed carries hardened standards and the rulebook")
+sp_body = sp_src.split("def single_pass_judge_case")[1]
+check("_prompt_version_at_least(versions[\"PROMPT_VERSION\"], 8)" in sp_body
+      and 'guidance_style="standard" if hardened' in sp_body,
+      "single-pass hardens the rendering only from prompt version 8")
+check("workbook_properties.order_file_list" in sp_body and "render_properties_text" in sp_body,
+      "single-pass orders listings by tab order and serves the properties block")
+check("workbook_properties" not in sp_src.split("def agentic_judge_case")[1].split("def single_pass_judge_case")[0],
+      "12-category path untouched by the properties block")
+check("anthropic_native.create(" in sp_body and "usage_breakdown(usage)" in sp_body
+      and "cached_tokens=cumulative_metrics" in sp_body,
+      "single-pass routes anthropic natively and prices cached tokens")
+check("anthropic_native" not in sp_src.split("def agentic_judge_case")[1].split("def single_pass_judge_case")[0],
+      "12-category path keeps the compat client")
 
 print()
 if FAILS:

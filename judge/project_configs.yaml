@@ -78,9 +78,22 @@ agentic_judge:
 # 12-category rows in the dedup key. max_rounds 500 is deliberately
 # effectively-unbound for the canaries — set the production value from
 # measured round usage, not by feel.
+#
+# 6 / template_8 (2026-09-02, judge v6 pipeline update): harness-decided
+# answer accuracy (--accuracy-check, both engines always recorded), the
+# answer-equivalence rulebook rendered into the prompt, guidance hardened
+# into each check's standard, the workbook-properties block (true tab
+# order, hidden state, validation, widths, comments...) in the seed, the
+# strictness tie-break, native Anthropic path with prompt caching. Grades
+# under version 6 are not comparable to version 5 rows (all deprecated).
+# 5 / template_7: the first single-pass build (2026-09-01).
 single_pass:
-  version: 5
-  prompt_template: "prompts/agentic_judge_template_7.yaml"
-  prompt_version: "7"
+  version: 6
+  prompt_template: "prompts/agentic_judge_template_8.yaml"
+  prompt_version: "8"
   max_rounds: 500
   max_forced_rounds: 50         # 12-category's 15 is sized for one category
+  # Whether a numeric answer typed as a constant (no live formula) counts as
+  # a mistake for the harness's Final-calculation-accuracy verdict. Recorded
+  # per grading in scored_results.accuracy_engine.
+  hardcoded_counts: true
