@@ -55,7 +55,14 @@ try:
 except ImportError:  # imported as a bare module (utils/ on sys.path)
     from logger import logger
 
-DEFAULT_MAX_TOKENS = 32000
+# 128K = the models' own output maximum (Sonnet 5 / Opus 5). The old 32K was
+# a hand-set cap inherited from the compat path (raised from 16K in August
+# when Opus 5 thinking truncated a JSON reply); the rung-1 handshake at
+# effort=max hit exactly 32,000 completion tokens and lost the turn's tool
+# calls. max_tokens is a ceiling, not a spend — only generated tokens bill —
+# and requests stream (see create()) so a long turn cannot trip an HTTP
+# timeout. The OpenAI paths set no output cap (model default = 128K).
+DEFAULT_MAX_TOKENS = 128000
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _OK_IMAGE_MEDIA = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 _DATA_URL_RE = re.compile(r"^data:(?P<mime>[^;]+);base64,(?P<data>.+)$", re.S)
@@ -388,7 +395,7 @@ def create(client, *, model, messages, chat_tools, reasoning_effort, state: Nati
         reasoning_effort=reasoning_effort, state=state, max_tokens=max_tokens,
     )
     try:
-        response = client.messages.create(**kwargs)
+        response = _send(client, kwargs)
     except Exception as e:  # noqa: BLE001 — targeted recovery, then re-raise
         text = str(e)
         if ("bound to a different conversation" in text or "Invalid `signature`" in text) \
@@ -402,13 +409,36 @@ def create(client, *, model, messages, chat_tools, reasoning_effort, state: Nati
                 model=model, messages=messages, chat_tools=chat_tools,
                 reasoning_effort=reasoning_effort, state=state, max_tokens=max_tokens,
             )
-            response = client.messages.create(**kwargs)
+            response = _send(client, kwargs)
         else:
             raise
-    if getattr(response, "stop_reason", None) == "refusal":
+    stop = getattr(response, "stop_reason", None)
+    if stop == "refusal":
         details = getattr(response, "stop_details", None)
         raise RuntimeError(
             f"Anthropic refusal (stop_reason=refusal, category="
             f"{getattr(details, 'category', None)!r})"
         )
+    if stop == "max_tokens":
+        logger.warning(
+            f"  [anthropic-native] reply truncated at max_tokens={kwargs['max_tokens']} "
+            f"(thinking + tool calls exceeded the output ceiling); tool calls "
+            f"after the cut are lost for this round"
+        )
     return _shim_from_response(response, state)
+
+
+def _send(client, kwargs):
+    """Stream the request and return the final Message.
+
+    Streaming is what the SDK requires for large max_tokens without an HTTP
+    timeout; the loop only needs the final message, so
+    `stream.get_final_message()` gives it the same object a non-streaming
+    call would. A client without `.stream` (test fakes) falls back to
+    `.create`.
+    """
+    stream_fn = getattr(client.messages, "stream", None)
+    if stream_fn is None:
+        return client.messages.create(**kwargs)
+    with stream_fn(**kwargs) as stream:
+        return stream.get_final_message()

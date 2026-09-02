@@ -154,6 +154,18 @@ def add_accuracy_check_arg(parser):
             "Both are always recorded (single-pass mode)."
         ),
     )
+    parser.add_argument(
+        "--max-forced-rounds",
+        dest="max_forced_rounds",
+        type=int,
+        default=None,
+        help=(
+            "(Single-pass) Cap on forced-finalization rounds after the main "
+            "round budget is exhausted (default: config "
+            "single_pass.max_forced_rounds). Smoke tests set this low along "
+            "with --max-tool-rounds so a capped run cannot keep spending."
+        ),
+    )
 
 
 def add_agentic_cli_args(parser):
@@ -659,6 +671,7 @@ def grade_single_attempt(
     reasoning_effort=None,
     suitability_source_path=None,
     accuracy_check="harness",
+    max_forced_rounds=None,
 ):
     """Grade a single attempt. Returns a result dict.
 
@@ -753,6 +766,7 @@ def grade_single_attempt(
             result = single_pass_judge_case(
                 harness_verdicts=harness_verdicts,
                 accuracy_engine=accuracy_check,
+                max_forced_rounds=max_forced_rounds,
                 task_folder=str(task_folder),
                 client=client,
                 rubric_path=rubric_path,
@@ -1411,6 +1425,7 @@ def main(args):
                 reasoning_effort=args.reasoning_effort,
                 suitability_source_path=suitability_src,
                 accuracy_check=args.accuracy_check,
+                max_forced_rounds=args.max_forced_rounds,
             )
             results.append(result)
 

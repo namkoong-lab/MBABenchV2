@@ -348,10 +348,12 @@ class GradeOrchestrator:
         reasoning_effort,
         single_pass=False,
         accuracy_check="harness",
+        max_forced_rounds=None,
     ):
         self.workers = workers
         self.single_pass = single_pass
         self.accuracy_check = accuracy_check
+        self.max_forced_rounds = max_forced_rounds
         self.model = model
         self.rubric_path = rubric_path
         self.template_path = template_path
@@ -680,6 +682,7 @@ class GradeOrchestrator:
                 reasoning_effort=self.reasoning_effort,
                 suitability_source_path=suitability_src,
                 accuracy_check=self.accuracy_check,
+                max_forced_rounds=self.max_forced_rounds,
             )
         except Exception as e:
             logger.error(f"  [attempt {attempt_id}] grade_single_attempt raised: {e}")
@@ -1222,6 +1225,7 @@ def main():
         reasoning_effort=args.reasoning_effort,
         single_pass=single_pass,
         accuracy_check=args.accuracy_check,
+        max_forced_rounds=args.max_forced_rounds,
     )
 
     orch.run(hydrated)

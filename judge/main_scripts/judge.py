@@ -4177,8 +4177,14 @@ def single_pass_judge_case(
     reasoning_effort: str | None = None,
     harness_verdicts: dict | None = None,
     accuracy_engine: str = "llm",
+    max_forced_rounds: int | None = None,
 ):
     """Judge v4 experiment: ONE conversation over every applicable check.
+
+    `max_forced_rounds` caps the forced-finalization phase (default: the
+    config's single_pass.max_forced_rounds). Smoke tests set it low together
+    with max_tool_rounds — the config loader overwrites env vars, so the env
+    override the README implies does not work; this parameter does.
 
     Sibling of agentic_judge_case (which is not modified): same tools, same
     suitability gating, same guidance notes, same scoring — the only design
@@ -4939,29 +4945,32 @@ def single_pass_judge_case(
             f"({max_tool_rounds}) but still have {len(missing_initial)} "
             f"pending checks: {', '.join(missing_initial)}. You must now "
             f"record your pass/fail decisions for ALL remaining pending "
-            f"checks immediately using record_check, based on the evidence "
-            f"you have already gathered. No further file reads or evictions "
-            f"are permitted; only record_check, append_mistake, and "
-            f"get_working_judgement tools are available. Output your best "
-            f"judgement now.",
+            f"checks using record_check, based on the evidence you have "
+            f"already gathered. No further file reads or evictions are "
+            f"permitted; only record_check, append_mistake, and "
+            f"get_working_judgement tools are available. Work in batches: "
+            f"record at most 20 checks per turn, then stop and wait for the "
+            f"next turn — do not deliberate over the whole list before "
+            f"emitting any tool call. Output your best judgement now.",
             "forced_finalization",
             pending_count=len(missing_initial),
         )
 
         forced_round = 0
         api_retries = 0
+        forced_cap = (
+            max_forced_rounds if max_forced_rounds is not None
+            else SINGLE_PASS_MAX_FORCED_ROUNDS
+        )
         # Tool declarations stay IDENTICAL to the main loop's (Gemini binds
         # thought signatures to the request config — a reduced tool list
         # mid-conversation 400s). Restriction is enforced at execution time
         # in _dispatch_tool.
-        while (
-            forced_round < SINGLE_PASS_MAX_FORCED_ROUNDS and state.working.pending
-        ):
+        while forced_round < forced_cap and state.working.pending:
             forced_round += 1
             state.round = max_tool_rounds + forced_round
             logger.info(
-                f"    Forced finalization round "
-                f"{forced_round}/{SINGLE_PASS_MAX_FORCED_ROUNDS}..."
+                f"    Forced finalization round {forced_round}/{forced_cap}..."
             )
             outcome = _run_round("forced_finalization", SINGLE_PASS_JUDGE_TOOLS)
             if outcome == "retry":
@@ -4975,7 +4984,8 @@ def single_pass_judge_case(
                     f"You still have not recorded decisions for "
                     f"{len(missing_now)} check(s): "
                     f"{', '.join(missing_now[:40])}. Call record_check for "
-                    f"each pending check now.",
+                    f"the next batch of at most 20 pending checks now, then "
+                    f"stop for the next turn.",
                     "forced_finalization",
                     pending_count=len(missing_now),
                 )
