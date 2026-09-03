@@ -71,12 +71,18 @@ adopted from the same sheet), a v2 agentic grading additionally:
   (`utils/formula_cache.py`): the judge reads *cached* formula results, so a
   workbook saved without calculation reaches it as formulas with no values and
   Accuracy cannot be graded from evidence. Both the attempt and the golden
-  solution are censused from the extracted CSVs; a workbook at or above
-  `judge.uncached_formula_max_ratio` (default 0.5) refuses before any API call.
-  Fix with `--run-calculation`, or set `JUDGE_SKIP_FORMULA_CACHE_CHECK=1` to
-  grade anyway — the skip and the per-workbook counts are recorded in
-  `scored_results.formula_cache`. Enforced in `_prepare_case`, so it applies to
-  every mode (classic and agentic alike, and both benchmarks).
+  solution are censused — from the staged workbook's XML when it is on disk
+  (since 2026-09-03: a formula whose calculated result is the empty string is
+  stored as `t="str"` with an empty value and counts as cached; only an
+  untyped empty/absent value is uncached, which is what openpyxl writes for a
+  never-calculated cell), falling back to the extracted CSVs when no workbook
+  is available; the deciding basis, both censuses and the empty-string count
+  are recorded. A workbook at or above `judge.uncached_formula_max_ratio`
+  (default 0.5) refuses before any API call. Fix with `--run-calculation`, or
+  set `JUDGE_SKIP_FORMULA_CACHE_CHECK=1` to grade anyway — the skip and the
+  per-workbook counts are recorded in `scored_results.formula_cache`. Enforced
+  in `_prepare_case`, so it applies to every mode (classic and agentic alike,
+  and both benchmarks).
 - **Runs the score-neutral answer check** (`utils/answer_check.py`): the
   Questions-sheet answers of attempt vs golden solution, compared with
   tolerance `|a-b| <= max(1e-9, 1e-6*max(|a|,|b|))`; full artifact

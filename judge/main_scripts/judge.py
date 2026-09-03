@@ -1551,9 +1551,16 @@ def _prepare_case(
     # workbook saved without calculation reaches it as formulas with no values,
     # which silently guts Accuracy. Refuse rather than produce a grade that
     # looks real. JUDGE_SKIP_FORMULA_CACHE_CHECK=1 grades anyway (recorded).
+    # The staged workbooks are passed so the decision rests on their XML,
+    # which (unlike the CSVs) tells a calculated empty-string result from a
+    # never-calculated cell; the CSV census decides only when no workbook is
+    # on disk (cached CSVs, standalone folders).
     logger.info("\n[Step 1b] Formula-cache pre-flight...")
     formula_cache_provenance = formula_cache.check_case(
-        ai_attempt_dir, golden_solution_dir
+        ai_attempt_dir,
+        golden_solution_dir,
+        attempt_xlsx=ai_attempt_path if ai_attempt_path.exists() else None,
+        solution_xlsx=golden_solution_path if golden_solution_path.exists() else None,
     )
 
     return {

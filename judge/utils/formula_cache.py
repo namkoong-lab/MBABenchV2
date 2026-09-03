@@ -15,20 +15,43 @@ behind it, and the grade that comes out looks exactly like a real one. Under a
 strictness rule ("undecided is a fail") it becomes a mechanical Accuracy zero —
 scoring the attempt's *save path* rather than its quality.
 
-This module refuses that grading instead. It censuses the extracted CSVs rather
-than the workbooks, which means it (a) measures precisely what the judge will
-read, and (b) still works when the CSVs came from cache and no workbook was
-opened at all.
+This module refuses that grading instead.
+
+Two censuses, workbook first
+----------------------------
+The CSV encoding cannot tell a formula that *legitimately returns the empty
+string* (``=IF($A215="","",...)`` in the spare rows of a schedule) from one
+that was never calculated — both print a blank display half. A workbook built
+that way (2026-09-03: a 10,251-formula bond schedule with 7,221 blank-result
+rows) was refused at "70% uncached" while being fully calculated.
+
+The workbook XML does tell them apart, and every producer we see agrees:
+
+    <c t="str"><f>..</f><v></v></c>   Excel / Excel Online / LibreOffice:
+                                      calculated, result is the empty string
+    <c><f>..</f><v /></c>             openpyxl: never calculated (no type,
+                                      empty value element)
+    <c t="n"><f>..</f><v>200</v></c>  calculated, numeric (or t="str"/"b"/"e"
+                                      with content)
+
+So when the source workbook is on disk, `check_case` decides on a *workbook*
+census: a formula cell is uncached iff its ``<v>`` is absent or empty AND the
+cell is not typed ``str``. The CSV census is still computed and recorded (it
+measures exactly what the judge reads, and it is the only census available
+when the CSVs came from cache and no workbook was staged), and it remains the
+deciding basis when no workbook path is given. ``provenance[label]["basis"]``
+says which one decided.
 
 Enforcement is wired in `judge._prepare_case`, so every mode inherits it —
-classic, agentic, and any future single-pass path. Set
-``JUDGE_SKIP_FORMULA_CACHE_CHECK=1`` to grade anyway; the skip is recorded in
-``scored_results.formula_cache`` so such rows stay identifiable.
+classic, agentic, and single-pass. Set ``JUDGE_SKIP_FORMULA_CACHE_CHECK=1`` to
+grade anyway; the skip is recorded in ``scored_results.formula_cache`` so such
+rows stay identifiable.
 
-The fix, when it fires, is to re-extract with ``--run-calculation`` (a
-LibreOffice recalculation pass), or to repair the source workbook.
+The fix, when it fires for real, is to re-extract with ``--run-calculation``
+(a LibreOffice recalculation pass), or to repair the source workbook.
 """
 
+import re
 from pathlib import Path
 
 try:
@@ -47,6 +70,13 @@ DEFAULT_MAX_RATIO = 0.5
 # thing being asked. Whitespace-only heads count as blank because
 # `create_enhanced_cell_variants` tests `display_value.strip()`.
 _FORMULA_MARKER = "FORMULA:"
+
+# Worksheet XML: one <c> element per cell, self-closing or with content. The
+# sheet parts are small enough (a few MB at most) to scan with a regex; no
+# openpyxl load, which is the thing that loses the str-vs-untyped distinction.
+_CELL_RE = re.compile(r"<c\b([^>]*?)(?:/>|>(.*?)</c>)", re.S)
+_TYPE_RE = re.compile(r'\bt="([^"]*)"')
+_VALUE_RE = re.compile(r"<v\b[^>]*?(?:/>|>(.*?)</v>)", re.S)
 
 
 class FormulaCacheError(Exception):
@@ -70,6 +100,9 @@ def max_ratio() -> float:
             f"using {DEFAULT_MAX_RATIO}"
         )
         return DEFAULT_MAX_RATIO
+
+
+# --------------------------------------------------------------- CSV census
 
 
 def _census_field(field: str) -> str | None:
@@ -129,16 +162,141 @@ def census_csv_dir(csv_dir) -> dict:
     return result
 
 
+# ---------------------------------------------------------- workbook census
+
+
+def _census_cell_xml(attrs: str, body: str | None) -> str | None:
+    """Classify one <c> element: 'cached', 'empty_string', 'uncached', or
+    None when the cell holds no formula."""
+    if not body or "<f" not in body:
+        return None
+    m = _VALUE_RE.search(body)
+    has_value = m is not None and bool((m.group(1) or "").strip())
+    if has_value:
+        return "cached"
+    t = _TYPE_RE.search(attrs)
+    if t and t.group(1) == "str":
+        # Excel / LibreOffice: a calculated formula whose result is "".
+        return "empty_string"
+    return "uncached"
+
+
+def census_workbook(xlsx_path) -> dict:
+    """Count formula cells, uncached formula cells and empty-string results by
+    reading the worksheet XML parts directly.
+
+    Returns ``{"available": False, ...}`` (with a reason) when the workbook is
+    missing or unreadable, so callers fall back to the CSV census instead of
+    treating an unreadable file as clean.
+    """
+    import zipfile
+
+    result = {
+        "available": False,
+        "sheets": {},
+        "formula_cells": 0,
+        "uncached_formula_cells": 0,
+        "empty_string_results": 0,
+    }
+    if not xlsx_path:
+        result["reason"] = "no workbook path"
+        return result
+    path = Path(xlsx_path)
+    if not path.is_file():
+        result["reason"] = f"not a file: {path}"
+        return result
+
+    try:
+        with zipfile.ZipFile(path) as z:
+            parts = sorted(
+                n
+                for n in z.namelist()
+                if n.startswith("xl/worksheets/") and n.endswith(".xml")
+            )
+            for part in parts:
+                xml = z.read(part).decode("utf-8", errors="replace")
+                formulas = uncached = empties = 0
+                for m in _CELL_RE.finditer(xml):
+                    kind = _census_cell_xml(m.group(1), m.group(2))
+                    if kind is None:
+                        continue
+                    formulas += 1
+                    if kind == "uncached":
+                        uncached += 1
+                    elif kind == "empty_string":
+                        empties += 1
+                if formulas:
+                    result["sheets"][part.rsplit("/", 1)[-1]] = {
+                        "formula_cells": formulas,
+                        "uncached_formula_cells": uncached,
+                        "empty_string_results": empties,
+                    }
+                result["formula_cells"] += formulas
+                result["uncached_formula_cells"] += uncached
+                result["empty_string_results"] += empties
+    except (OSError, zipfile.BadZipFile, KeyError, UnicodeDecodeError) as e:
+        logger.warning(f"  [formula_cache] could not census workbook {path.name}: {e}")
+        result["reason"] = f"unreadable: {e}"
+        return result
+
+    result["available"] = True
+    result["ratio"] = (
+        result["uncached_formula_cells"] / result["formula_cells"]
+        if result["formula_cells"]
+        else 0.0
+    )
+    return result
+
+
+# ------------------------------------------------------------------ decision
+
+
+def _census_label(csv_dir, xlsx_path) -> dict:
+    """Both censuses for one workbook, plus the deciding numbers.
+
+    Top-level `formula_cells` / `uncached_formula_cells` / `ratio` are the
+    DECIDING figures (workbook when available, else CSV); the raw censuses sit
+    under `csv` and `workbook` so a row's provenance shows both.
+    """
+    csv_census = census_csv_dir(csv_dir)
+    wb_census = census_workbook(xlsx_path)
+    if wb_census["available"]:
+        basis, deciding = "workbook", wb_census
+    else:
+        basis, deciding = "csv", csv_census
+    return {
+        "basis": basis,
+        "formula_cells": deciding["formula_cells"],
+        "uncached_formula_cells": deciding["uncached_formula_cells"],
+        "ratio": deciding.get("ratio", 0.0),
+        "csv": csv_census,
+        "workbook": wb_census,
+    }
+
+
 def _describe(label: str, census: dict) -> str:
-    return (
+    text = (
         f"{label}: {census['uncached_formula_cells']} of "
         f"{census['formula_cells']} formula cells have no cached value "
-        f"({census['ratio'] * 100:.0f}%)"
+        f"({census['ratio'] * 100:.0f}%, {census['basis']} census"
     )
+    wb = census.get("workbook") or {}
+    if wb.get("available") and wb.get("empty_string_results"):
+        text += f"; {wb['empty_string_results']} calculated empty-string results"
+    return text + ")"
 
 
-def check_case(attempt_csv_dir, solution_csv_dir=None) -> dict:
+def check_case(
+    attempt_csv_dir,
+    solution_csv_dir=None,
+    attempt_xlsx=None,
+    solution_xlsx=None,
+) -> dict:
     """Census both workbooks and refuse the grading if either is uncalculated.
+
+    Pass the staged ``.xlsx`` paths when they exist so the decision rests on the
+    workbook census (which recognises calculated empty-string results); the CSV
+    census decides only when no workbook is available.
 
     Returns provenance for `scored_results.formula_cache`. Raises
     FormulaCacheError when a census is at or above the configured ratio and the
@@ -147,8 +305,8 @@ def check_case(attempt_csv_dir, solution_csv_dir=None) -> dict:
     provenance = {
         "checked": True,
         "max_ratio": max_ratio(),
-        "attempt": census_csv_dir(attempt_csv_dir),
-        "solution": census_csv_dir(solution_csv_dir),
+        "attempt": _census_label(attempt_csv_dir, attempt_xlsx),
+        "solution": _census_label(solution_csv_dir, solution_xlsx),
     }
 
     offenders = [

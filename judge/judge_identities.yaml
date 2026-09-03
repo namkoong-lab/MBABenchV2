@@ -111,4 +111,4 @@
 - grader_model: anthropic/claude-sonnet-5
   provider: anthropic
   model: claude-sonnet-5
-  effort: high                        # Anthropic's own default for Sonnet 5
+  effort: high                        # Anthropic's own default for Sonnet 5 = the bake-off "Sonnet, high (default)" arm

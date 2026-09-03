@@ -199,5 +199,107 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         del os.environ[formula_cache.SKIP_ENV]
 
+    # ---------------------------------------------------- workbook census
+    print("\n[4] workbook census tells blank results from never-calculated cells")
+
+    import zipfile
+
+    import openpyxl
+
+    # openpyxl writes <f>..</f><v /> with no type attribute: never calculated.
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = 1
+    ws["A2"] = "=A1+1"
+    ws["A3"] = '=IF(A1>5,"x","")'
+    uncalc_path = Path(tmp) / "uncalc.xlsx"
+    wb.save(uncalc_path)
+    c = formula_cache.census_workbook(uncalc_path)
+    ok(c["available"] is True, "workbook census reads an openpyxl file")
+    ok(c["formula_cells"] == 2, f"counted 2 formula cells (got {c['formula_cells']})")
+    ok(c["ratio"] == 1.0, f"openpyxl never-calculated -> ratio 1.0 (got {c['ratio']})")
+
+    # Excel / LibreOffice write calculated empty-string results as
+    # <c t="str"><f>..</f><v></v></c>, and numeric results with a value.
+    # Rewrite the sheet XML the way those producers would have saved it.
+    excel_path = Path(tmp) / "excel_like.xlsx"
+    with zipfile.ZipFile(uncalc_path) as src, zipfile.ZipFile(excel_path, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                xml = data.decode("utf-8")
+                xml = xml.replace(
+                    '<c r="A2"><f>A1+1</f><v /></c>',
+                    '<c r="A2" t="n"><f>A1+1</f><v>2</v></c>',
+                )
+                xml = xml.replace(
+                    '<c r="A3"><f>IF(A1&gt;5,"x","")</f><v /></c>',
+                    '<c r="A3" t="str"><f>IF(A1&gt;5,"x","")</f><v></v></c>',
+                )
+                data = xml.encode("utf-8")
+            dst.writestr(item, data)
+    c = formula_cache.census_workbook(excel_path)
+    ok(c["formula_cells"] == 2, "rewritten workbook still has 2 formula cells")
+    ok(
+        c["uncached_formula_cells"] == 0 and c["empty_string_results"] == 1,
+        f"typed-str empty value counts as a calculated empty string, not uncached "
+        f"(uncached={c['uncached_formula_cells']}, empties={c['empty_string_results']})",
+    )
+    ok(c["ratio"] == 0.0, "calculated workbook with blank results -> ratio 0.0")
+
+    # A cell whose <v> is empty but untyped is still uncached (guard against
+    # the str rule being applied too broadly).
+    ok(
+        formula_cache._census_cell_xml(' r="B1"', "<f>1+1</f><v></v>") == "uncached",
+        "untyped empty <v></v> is uncached",
+    )
+    ok(
+        formula_cache._census_cell_xml(' r="B1" t="str"', "<f>T(1)</f><v></v>")
+        == "empty_string",
+        'typed str empty <v> is a calculated ""',
+    )
+    ok(
+        formula_cache._census_cell_xml(' r="B1" t="e"', "<f>1/0</f><v>#DIV/0!</v>")
+        == "cached",
+        "cached error value is cached",
+    )
+    ok(
+        formula_cache._census_cell_xml(' r="B1" t="n"', "<v>5</v>") is None,
+        "literal cell is not a formula",
+    )
+
+    ok(
+        formula_cache.census_workbook(Path(tmp) / "missing.xlsx")["available"] is False,
+        "missing workbook -> unavailable (falls back to CSV), not clean",
+    )
+
+    # ------------------------------------------ check_case picks the basis
+    print("\n[5] check_case decides on the workbook census when one is given")
+
+    # CSV says 'bad' (blank display halves) but the workbook says calculated:
+    # the 2026-09-03 TBondII false refusal. Workbook wins.
+    prov = formula_cache.check_case(bad, good, attempt_xlsx=excel_path)
+    ok(prov["offenders"] == [], "blank-result workbook is NOT refused")
+    ok(prov["attempt"]["basis"] == "workbook", "attempt basis recorded as workbook")
+    ok(prov["attempt"]["csv"]["ratio"] == 1.0, "CSV census still recorded alongside")
+
+    # Workbook genuinely uncalculated: refused regardless of CSV.
+    raised = None
+    try:
+        formula_cache.check_case(good, good, attempt_xlsx=uncalc_path)
+    except formula_cache.FormulaCacheError as e:
+        raised = str(e)
+    ok(raised is not None and "workbook census" in raised, "uncalculated workbook refused on the workbook census")
+
+    # No workbook path: CSV decides, as before.
+    prov = formula_cache.check_case(good, good)
+    ok(prov["attempt"]["basis"] == "csv", "no workbook -> CSV basis")
+    raised = None
+    try:
+        formula_cache.check_case(bad, good, attempt_xlsx=Path(tmp) / "missing.xlsx")
+    except formula_cache.FormulaCacheError as e:
+        raised = str(e)
+    ok(raised is not None and "csv census" in raised, "unreadable workbook -> CSV decides (refuses)")
+
 print("\n" + ("ALL FORMULA-CACHE CHECKS PASSED" if not failures else f"{len(failures)} FAILURE(S)"))
 sys.exit(1 if failures else 0)
