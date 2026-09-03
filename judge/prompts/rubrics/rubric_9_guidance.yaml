@@ -107,3 +107,151 @@ checks:
       Do NOT deduct points when a formula that references cells on other
       sheets is formatted in black font — black is the sanctioned color
       for calculations, so either color is acceptable for such cells.
+
+  # ---------------------------------------------------------------------
+  # Repeat-grading stability notes (Pat, 2026-09-02). Added after grading
+  # the same ten attempts twice with one judge (Sol@none): mean total swing
+  # 5.1%, max 10.1%, and every point of it traced to judgement checks
+  # flipping — never to a harness-decided check. The flips were opposite
+  # readings of identical evidence ("denominator guards prevent errors" vs
+  # "guards return zero, which is misleading"; "first-period exceptions are
+  # not flagged" vs "there are no first-period exceptions"). Each note below
+  # converts a two-way-readable check into a decision rule with a required
+  # citation, so a fail has to name the cell or formula that earns it.
+  # ---------------------------------------------------------------------
+
+  - category: Potential Dangers
+    name: No errors under extreme-but-plausible inputs
+    note: |
+      Fail ONLY when you can name a specific plausible input change AND the
+      specific cell that would then show an Excel error, a balance-sheet
+      imbalance, or an impossible value (negative useful life, negative
+      shares outstanding). A guard that returns 0, blank, "n/a" or a
+      sentinel for an invalid input is robust handling — it is a PASS, not
+      a "misleading result". The absence of a stress-test section, a
+      sensitivity table or documented scenario testing is NOT a failure of
+      this check; it is about whether the model breaks, not whether it
+      demonstrates that it doesn't.
+
+  - category: Assumptions
+    name: Single date driver
+    note: |
+      Pass when one labelled date cell exists and the date-dependent
+      formulas use it, directly or through cells derived from it. Year or
+      period LABELS in headers (FY2024, 2025, Q3-2026) are labels, not date
+      logic — never fail because headers are typed rather than computed.
+      A model with no date-dependent logic (no discounting, stub periods,
+      roll-forwards or mid-year conventions) passes by default. Fail ONLY
+      when you can cite two date-dependent formulas that rely on different
+      hardcoded dates, or a date-dependent formula with a hardcoded date
+      where an anchor cell exists.
+
+  - category: Flexibility
+    name: Time-period flexibility
+    note: |
+      Judge against the horizon the case actually asks for, not a longer
+      one you can imagine. A prebuilt timeline that covers the required
+      horizon, with dates driven by formulas and drivers changeable in one
+      place, is a PASS — needing to add columns to go beyond the required
+      horizon is not a failure. Fail ONLY when changing the start date, a
+      driver, or the number of periods WITHIN the required horizon forces
+      manual formula edits; cite the formula that would have to change.
+
+  - category: Formulas
+    name: No hardcoded numbers in formulas
+    note: |
+      Permitted constants (never a mistake): 0, 1, -1, 100, 12, 4, 3, 365,
+      360, 52, 24, rounding digit counts, unit conversions, index/offset/
+      counter arguments, and comparison thresholds of zero. Fail ONLY for a
+      BUSINESS assumption embedded in a formula — a rate, price, growth
+      percentage, margin, headcount, tax rate or similar that a user might
+      reasonably want to change — and cite the cell and the constant. If
+      the same number is also present as a labelled input cell elsewhere,
+      it is a duplication issue for Centralized assumptions, not this check.
+
+  - category: Assumptions
+    name: Centralized assumptions
+    note: |
+      A clearly labelled input block held on a build, summary or output
+      sheet is acceptable when it is the ONLY place that driver is set and
+      it is labelled or signposted. Fail ONLY when you can cite a driver
+      that is set in two different places, or a business assumption buried
+      inside a formula with no labelled input cell anywhere. Do not fail
+      because the block would be tidier on a dedicated sheet.
+
+  - category: Assumptions
+    name: Assumption sources
+    note: |
+      A citation passes when it names where the number came from — a case
+      section, the starting workbook, a document, a named data provider —
+      or explicitly labels the input as a judgement/estimate with an owner
+      and a date. Never fail for citation STYLE: brevity, a missing page
+      number, a missing URL, or a source that cannot be opened from here
+      are not failures, and neither is a citation that points at the sheet
+      the value was given on. Fail ONLY for an assumption carrying no
+      source and no judgement label at all; cite it.
+
+  - category: Formulas
+    name: Inconsistent formulas flagged
+    note: |
+      First establish whether an intentional formula break EXISTS — a cell
+      whose formula differs from the rest of its row or column (typically
+      a first-period roll-forward). If none exists, the check PASSES; never
+      fail it for a break you did not find. Where one exists, it passes if
+      marked in any way: distinctive fill or font, a cell comment, an
+      exception-marker column, an error-check flag, a note in adjacent
+      documentation, OR a formula that handles the first period with an
+      explicit period test so the row stays uniform. Fail ONLY for a silent
+      break — an unmarked, undocumented different formula in one cell of an
+      otherwise uniform range; cite that cell.
+
+  - category: Formulas
+    name: Simple, stepwise formulas
+    note: |
+      Count function NESTING DEPTH, not formula length or character count.
+      A long chain of simple terms (a+b+c+d), a single IFERROR/IFNA
+      wrapper, a LET, or a construction three functions deep all PASS.
+      Fail ONLY for a formula nesting four or more functions deep that a
+      helper row or column would clearly simplify; cite the cell and its
+      formula.
+
+  - category: Structure
+    name: Data-type designation (actuals vs. estimates)
+    note: |
+      This applies where a single table mixes actual and forecast columns.
+      A sheet or block holding only historical data, or only projections,
+      passes when the header, title or an adjacent note says which it is.
+      Fail ONLY when actual and projected columns sit in one table with no
+      A/E marking or equivalent designation; cite the header row.
+
+  - category: Formatting
+    name: Consistent color coding
+    note: |
+      Judge FONT colour on the sheets the agent built, against the
+      workbook's own stated convention. Fills, header shading, banded rows
+      and title styling are decoration, not colour coding — never count
+      them here. Colour inherited from the starting workbook is out of
+      scope. Fail ONLY when you can cite cells of the same kind carrying
+      different font colours, or a reserved colour used for the wrong kind
+      of cell.
+
+  - category: Formatting
+    name: Minimal non-standard color usage
+    note: |
+      This check is about visual CLUTTER — a rainbow of unexplained
+      colours. A consistent header fill, a single input-block fill, banded
+      rows, and a documented accent colour used systematically are all
+      fine, however many cells they cover; breadth of a consistent scheme
+      is not clutter. Fail ONLY when you can name three or more distinct
+      non-standard colours with no stated purpose.
+
+  - category: Formatting
+    name: No colors that mimic standard coding
+    note: |
+      Fails only when a RESERVED FONT colour (blue for inputs, black for
+      calculations, green for cross-sheet links, red for external links)
+      is applied to cells of another kind, so a reader would misread the
+      cell's purpose. Background FILLS never mimic font coding — a blue
+      header fill or a blue input-block fill is not a violation. Negative
+      numbers shown in red font are a standard accounting convention and
+      are never a violation of this check.
