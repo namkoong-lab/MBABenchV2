@@ -96,6 +96,31 @@ def get_client(identity: JudgeIdentity) -> OpenAI:
 
 _native_clients: dict = {}
 
+# Native Anthropic HTTP timeouts, in seconds. Requests stream (see
+# anthropic_native._send), so `read` is the longest silence tolerated
+# BETWEEN bytes, not the length of a turn: a Sonnet turn thinking for 11
+# minutes keeps sending thinking deltas the whole time. The old single
+# `timeout=1800.0` made every phase 30 minutes; on 2026-09-03 three parallel
+# gradings sat 44 minutes each on one dead read (last bytes ~14 min in, then
+# 30 minutes of silence before "The read operation timed out") and lost the
+# turn to a retry that then finished in seconds. Ten minutes of silence is
+# already far past anything a live stream produces.
+NATIVE_CONNECT_TIMEOUT_S = 30.0
+NATIVE_READ_TIMEOUT_S = 600.0
+NATIVE_WRITE_TIMEOUT_S = 120.0
+
+
+def native_anthropic_timeout():
+    """httpx.Timeout for the native client (connect / read / write / pool)."""
+    import httpx
+
+    return httpx.Timeout(
+        connect=NATIVE_CONNECT_TIMEOUT_S,
+        read=NATIVE_READ_TIMEOUT_S,
+        write=NATIVE_WRITE_TIMEOUT_S,
+        pool=NATIVE_CONNECT_TIMEOUT_S,
+    )
+
 
 def get_native_anthropic_client(identity: JudgeIdentity):
     """Cached native `anthropic.Anthropic` client for provider=anthropic.
@@ -109,6 +134,7 @@ def get_native_anthropic_client(identity: JudgeIdentity):
 
     The explicit timeout matters: the SDK refuses non-streaming requests
     whose max_tokens implies more than ~10 minutes unless a timeout is set.
+    See NATIVE_*_TIMEOUT_S for why the read phase is short.
     """
     if identity.provider != "anthropic":
         raise ValueError(f"native Anthropic client requested for provider {identity.provider!r}")
@@ -122,7 +148,7 @@ def get_native_anthropic_client(identity: JudgeIdentity):
 
             client = anthropic.Anthropic(
                 api_key=resolve_api_key(identity.api_key_provider),
-                timeout=1800.0,
+                timeout=native_anthropic_timeout(),
                 max_retries=2,
             )
             _native_clients["anthropic"] = client

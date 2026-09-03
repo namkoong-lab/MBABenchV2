@@ -192,6 +192,16 @@ check(abs(c3["prompt_cost"] - 1000 * 0.75 / 1e6) < 1e-12, "unknown provider cach
 c4 = calculate_cost("openai/gpt-5.6-sol", 100000, 1000)
 check(abs(c4["prompt_cost"] - 100000 * 5.0 / 1e6) < 1e-12 and c4["cached_tokens"] == 0, "legacy call shape unchanged")
 
+# --- native client timeouts ---------------------------------------------------
+# Streaming requests: `read` is the longest silence between bytes, and a
+# dead read must fail in minutes, not the 30-44 minutes seen on 2026-09-03.
+from utils import llm_utils as LU
+_t = LU.native_anthropic_timeout()
+check(_t.read == 600.0, f"native read timeout is 10 minutes (got {_t.read})")
+check(_t.connect == 30.0 and _t.pool == 30.0, "connect/pool timeouts are short")
+check(_t.write == 120.0, "write timeout is 2 minutes")
+check(_t.read < 1800.0, "read timeout is below the old 30-minute blanket value")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S)")
