@@ -887,6 +887,60 @@ class ExcelTaskExecutor:
             )
 
         print(f"📡 Calling Anthropic API (streaming): {self.model}")
+
+        # Transient server-side failures (529 overloaded, 429 rate limit, 5xx,
+        # dropped connections) can arrive as a stream error event minutes into
+        # a thinking phase. Without a retry the exception reaches
+        # _call_reasoning_engine's generic handler, becomes a
+        # request_clarification action, and the whole attempt is recorded as
+        # "needs_clarification" (seen live 2026-09-04: task 9, 881s of thinking
+        # then overloaded_error; attempt 959, trial burned). Retry the same
+        # request a few times with backoff; leave 4xx request errors (content
+        # filter, invalid request) and the max_tokens RuntimeError alone.
+        last_error = None
+        for attempt in range(1, self.ANTHROPIC_TRANSIENT_RETRIES + 1):
+            try:
+                return self._stream_anthropic_once(request_kwargs, task)
+            except Exception as e:
+                if not self._anthropic_error_is_transient(e) or attempt == self.ANTHROPIC_TRANSIENT_RETRIES:
+                    raise
+                last_error = e
+                backoff = self.ANTHROPIC_TRANSIENT_BACKOFF_SECONDS * attempt
+                print(
+                    f"⚠️ Transient Anthropic error on attempt "
+                    f"{attempt}/{self.ANTHROPIC_TRANSIENT_RETRIES}: {e}"
+                )
+                print(f"⏳ Waiting {backoff}s before retrying the same request...")
+                time.sleep(backoff)
+        raise RuntimeError(f"Anthropic retries exhausted: {last_error}")  # unreachable
+
+    ANTHROPIC_TRANSIENT_RETRIES = 4
+    ANTHROPIC_TRANSIENT_BACKOFF_SECONDS = 30
+
+    @staticmethod
+    def _anthropic_error_is_transient(e: Exception) -> bool:
+        """True for errors worth re-sending the identical request for.
+
+        Covers the SDK's connection errors, HTTP 408/429/5xx/529 status errors,
+        and stream-delivered error events (which surface with the error body
+        in their message rather than a status code)."""
+        try:
+            import anthropic
+            if isinstance(e, anthropic.APIConnectionError):
+                return True
+        except ImportError:
+            pass
+        status = getattr(e, "status_code", None)
+        if isinstance(status, int) and (status in (408, 429, 529) or status >= 500):
+            return True
+        text = str(e).lower()
+        return any(
+            marker in text
+            for marker in ("overloaded_error", "rate_limit_error", "'api_error'", "internal server error", "connection error", "server disconnected")
+        )
+
+    def _stream_anthropic_once(self, request_kwargs: dict, task: 'TaskExecution') -> Tuple[str, dict]:
+        """One streamed Anthropic call: returns (response_text, usage_info) or raises."""
         start_time = time.time()
 
         try:
