@@ -202,6 +202,65 @@ check(_t.connect == 30.0 and _t.pool == 30.0, "connect/pool timeouts are short")
 check(_t.write == 120.0, "write timeout is 2 minutes")
 check(_t.read < 1800.0, "read timeout is below the old 30-minute blanket value")
 
+# --- content-silence watchdog ------------------------------------------------
+# A stream that emits one event and then blocks forever (the API keeps it
+# alive with pings the SDK never surfaces) must be aborted after the silence
+# limit and surface as ContentSilenceTimeout for the caller's retry path.
+import threading as _th, time as _tm
+from types import SimpleNamespace
+
+class _BlockingStream:
+    """One event, then block until close() is called from another thread."""
+    def __init__(self):
+        self._closed = _th.Event(); self.closed_calls = 0
+    def __enter__(self): return self
+    def __exit__(self, *a): self.close()
+    def __iter__(self):
+        yield {"type": "message_start"}
+        self._closed.wait()           # the wedge: pings only, no events
+        raise RuntimeError("stream closed")  # what httpx raises after close()
+    def close(self):
+        self.closed_calls += 1; self._closed.set()
+    def get_final_message(self): raise AssertionError("should not be reached")
+
+class _WedgedClient:
+    class messages:
+        last = None
+        @staticmethod
+        def stream(**kwargs):
+            _WedgedClient.messages.last = _BlockingStream(); return _WedgedClient.messages.last
+
+_t0 = _tm.monotonic()
+try:
+    AN._send(_WedgedClient(), {"model": "m"}, silence_seconds=0.3)
+    check(False, "watchdog: wedged stream must not return")
+except AN.ContentSilenceTimeout as e:
+    _dt = _tm.monotonic() - _t0
+    check(_dt < 5.0, f"watchdog aborted a wedged stream in {_dt:.2f}s (limit 0.3s)")
+    check("pings excluded" in str(e), "watchdog error names the cause")
+    check(_WedgedClient.messages.last.closed_calls >= 1, "watchdog closed the stream")
+check(isinstance(AN.ContentSilenceTimeout("x"), TimeoutError), "ContentSilenceTimeout is a TimeoutError")
+
+class _HealthyStream:
+    """Events keep coming; the watchdog must never trip."""
+    def __init__(self): self.final = SimpleNamespace(stop_reason="end_turn", content=[], usage=None)
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def __iter__(self):
+        for _ in range(4):
+            _tm.sleep(0.1); yield {"type": "content_block_delta"}
+    def close(self): pass
+    def get_final_message(self): return self.final
+
+class _HealthyClient:
+    class messages:
+        @staticmethod
+        def stream(**kwargs): return _HealthyStream()
+
+_msg = AN._send(_HealthyClient(), {"model": "m"}, silence_seconds=0.3)
+check(getattr(_msg, "stop_reason", None) == "end_turn", "watchdog leaves a healthy slow stream alone (events every 0.1s, limit 0.3s)")
+check(AN.CONTENT_SILENCE_SECONDS == 600.0, f"default content-silence limit is 10 minutes (got {AN.CONTENT_SILENCE_SECONDS})")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S)")

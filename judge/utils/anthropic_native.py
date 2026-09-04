@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 
 from openai.types.chat import ChatCompletionMessage
@@ -428,17 +429,74 @@ def create(client, *, model, messages, chat_tools, reasoning_effort, state: Nati
     return _shim_from_response(response, state)
 
 
-def _send(client, kwargs):
+# Content-silence watchdog. The HTTP read timeout only catches a silent
+# wire; the API keeps a wedged stream alive with `ping` frames (which the SDK
+# swallows before they reach the event iterator), so a turn that has stopped
+# producing content can sit for hours without ever tripping it — twelve
+# Opus@max gradings did exactly that on 2026-09-03 (68-92 min each, killed by
+# hand). This watchdog measures silence in *events*: if no stream event
+# (thinking/text/tool-input delta, block start/stop, message delta) arrives
+# for CONTENT_SILENCE_SECONDS, the stream is closed from a helper thread,
+# the blocked read raises, and `_send` re-raises as ContentSilenceTimeout so
+# the caller's normal API-retry path resends the turn.
+CONTENT_SILENCE_SECONDS = float(os.environ.get("ANTHROPIC_CONTENT_SILENCE_SECONDS", "600"))
+_WATCHDOG_TICK_SECONDS = 5.0
+
+
+class ContentSilenceTimeout(TimeoutError):
+    """No stream event for CONTENT_SILENCE_SECONDS; the turn was aborted."""
+
+
+def _send(client, kwargs, silence_seconds=None):
     """Stream the request and return the final Message.
 
     Streaming is what the SDK requires for large max_tokens without an HTTP
     timeout; the loop only needs the final message, so
     `stream.get_final_message()` gives it the same object a non-streaming
     call would. A client without `.stream` (test fakes) falls back to
-    `.create`.
+    `.create`. Iteration is watched for content silence (see above).
     """
+    import threading
+    import time as _time
+
     stream_fn = getattr(client.messages, "stream", None)
     if stream_fn is None:
         return client.messages.create(**kwargs)
+    limit = CONTENT_SILENCE_SECONDS if silence_seconds is None else float(silence_seconds)
+    last_event = [_time.monotonic()]
+    tripped = threading.Event()
+    done = threading.Event()
+
     with stream_fn(**kwargs) as stream:
-        return stream.get_final_message()
+        def _watch():
+            tick = min(_WATCHDOG_TICK_SECONDS, max(limit / 4, 0.05))
+            while not done.wait(tick):
+                if _time.monotonic() - last_event[0] > limit:
+                    tripped.set()
+                    try:
+                        stream.close()
+                    except Exception:  # noqa: BLE001 — closing is best-effort
+                        pass
+                    return
+
+        watcher = threading.Thread(target=_watch, name="anthropic-silence-watchdog", daemon=True)
+        watcher.start()
+        try:
+            for _event in stream:
+                last_event[0] = _time.monotonic()
+            message = stream.get_final_message()
+        except Exception as e:  # noqa: BLE001 — translate the watchdog's close
+            if tripped.is_set():
+                raise ContentSilenceTimeout(
+                    f"no stream event for {limit:.0f}s (pings excluded); "
+                    f"stream closed by the content-silence watchdog"
+                ) from e
+            raise
+        finally:
+            done.set()
+        if tripped.is_set():
+            raise ContentSilenceTimeout(
+                f"no stream event for {limit:.0f}s (pings excluded); "
+                f"stream closed by the content-silence watchdog"
+            )
+        return message
