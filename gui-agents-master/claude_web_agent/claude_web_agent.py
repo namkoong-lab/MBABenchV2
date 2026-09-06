@@ -31,6 +31,7 @@ Configuration options (in claude_web section):
 
 import asyncio
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -256,8 +257,16 @@ class ClaudeWebAgent(WebAgent):
     # 2026-07-21). The selected model is a top-level menuitemradio; all
     # others live under the "More models" submenu. Unknown config values
     # fall back to underscores→spaces so future models still have a chance.
+    #
+    # Labels are matched as a whole model token (_model_label_matches), so
+    # "Fable 5" never satisfies "Fable 5.1" or vice versa — the dropdown
+    # grew a "Fable 5.1" entry (2026-09), and the wave's fable_5 cohort must
+    # keep running Fable 5. fable_5_1 is registered here only so the label
+    # resolves; it has no identity in infra/configs/agent_identity.py, so a
+    # run config naming it is refused before the browser opens.
     MODEL_LABELS = {
         "opus_5": "Opus 5",
+        "fable_5_1": "Fable 5.1",
         "fable_5": "Fable 5",
         "sonnet_5": "Sonnet 5",
         "haiku_4_5": "Haiku 4.5",
@@ -751,13 +760,35 @@ class ClaudeWebAgent(WebAgent):
             model.lower(), model.replace("_", " ").strip()
         )
 
+    @staticmethod
+    def _model_label_matches(label: str, text: str) -> bool:
+        """True when ``text`` names exactly the model ``label``.
+
+        Case-insensitive; the label may not be preceded by a word character
+        or a dot, and may not be continued by a digit or a dot-digit (a
+        longer version number). A following letter IS allowed: a radio's
+        text_content() is the model name glued to its description
+        ("Fable 5Most capable…"). So "Fable 5" matches "Model: Fable 5 Max"
+        and "Fable 5Most capable" but NOT "Fable 5.1 Max" or "Fable 50";
+        "Opus 4" does not match "Opus 4.8". The earlier substring/prefix
+        tests let a newer point release satisfy the request for its base
+        version (observed with Fable 5.1, 2026-09).
+        """
+        label = (label or "").strip()
+        if not label:
+            return False
+        pattern = r"(?<![\w.])" + re.escape(label) + r"(?!\d|\.\d)"
+        return re.search(pattern, text or "", flags=re.IGNORECASE) is not None
+
     async def _click_model_radio(self, label: str) -> bool:
-        """Click the menuitemradio whose text starts with ``label``.
+        """Click the menuitemradio whose text names exactly ``label``.
 
         Dropdown must be open. Checks the top level first, then the
         "More models" flyout. Uses JS dispatch throughout (flyouts
-        intercept real pointer events)."""
-        label_lower = label.lower()
+        intercept real pointer events). Matching is whole-token
+        (_model_label_matches): the radio text is the model name followed
+        by a description, and a "Fable 5.1" radio must not be taken for
+        "Fable 5"."""
 
         async def _try_click() -> bool:
             items = await self.page.query_selector_all('[role="menuitemradio"]')
@@ -765,8 +796,8 @@ class ClaudeWebAgent(WebAgent):
                 try:
                     if not await item.is_visible():
                         continue
-                    text = ((await item.text_content()) or "").strip().lower()
-                    if text.startswith(label_lower):
+                    text = ((await item.text_content()) or "").strip()
+                    if self._model_label_matches(label, text):
                         await item.evaluate(self._JS_CLICK)
                         logger.info(f"Selected model radio: {label}")
                         await asyncio.sleep(1.2)
@@ -907,8 +938,10 @@ class ClaudeWebAgent(WebAgent):
                 logger.info(f"Configuring model={label!r}, effort={effort!r}...")
 
                 raw = await self._model_button_label()
-                current = raw.lower()
-                if label.lower() not in current:
+                if not self._model_label_matches(label, raw):
+                    logger.info(
+                        f"Model button reads {raw!r}; selecting {label!r}"
+                    )
                     if not await self._open_model_dropdown():
                         return False
                     if not await self._click_model_radio(label):
@@ -919,19 +952,18 @@ class ClaudeWebAgent(WebAgent):
                     await self._close_model_dropdown()
 
                     raw = await self._model_button_label()
-                    current = raw.lower()
-                    if label.lower() not in current:
+                    if not self._model_label_matches(label, raw):
                         logger.error(
                             f"Model not set after selection: wanted {label!r}, "
-                            f"button reads {current!r}"
+                            f"button reads {raw!r}"
                         )
                         return False
-                # Log the button's OWN text, not the label we asked for. The
-                # checks above are substring/prefix tests, so a future
-                # "Fable 5.1" entry satisfies a "Fable 5" request; gui rows
-                # stamp no extra_configs, so this line is the only per-attempt
-                # record of which model actually served the run. Covers both
-                # the already-correct path and the after-selection path.
+                # Log the button's OWN text, not the label we asked for: gui
+                # rows stamp no extra_configs, so this line is the only
+                # per-attempt record of which model actually served the run.
+                # Covers both the already-correct path and the after-selection
+                # path. The checks above are whole-token matches, so a
+                # "Fable 5.1" button never passes as "Fable 5".
                 logger.info(f"Model verified: {label} — button reads {raw!r}")
                 # Model may have changed — re-probe the thinking switch.
                 self._thinking_switch_absent = False
