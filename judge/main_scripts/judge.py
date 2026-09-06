@@ -1556,12 +1556,30 @@ def _prepare_case(
     # never-calculated cell; the CSV census decides only when no workbook is
     # on disk (cached CSVs, standalone folders).
     logger.info("\n[Step 1b] Formula-cache pre-flight...")
+    # --run-calculation re-saves the attempt through LibreOffice into
+    # temp_recalculated/ (process_all_worksheets) and extracts the CSVs from
+    # THAT copy, so the census must read the same copy: censusing the original
+    # here refused every recalculated grading (2026-09-05, the three coding
+    # attempts the full run could not grade), which made the flag the error
+    # message recommends a no-op.
+    census_attempt_xlsx = ai_attempt_path if ai_attempt_path.exists() else None
+    recalculated_attempt = task_path / "temp_recalculated" / "ai_attempt.xlsx"
+    if run_calculation and recalculated_attempt.exists():
+        census_attempt_xlsx = recalculated_attempt
+        logger.info(
+            f"  [formula_cache] censusing the recalculated attempt workbook: "
+            f"{recalculated_attempt}"
+        )
     formula_cache_provenance = formula_cache.check_case(
         ai_attempt_dir,
         golden_solution_dir,
-        attempt_xlsx=ai_attempt_path if ai_attempt_path.exists() else None,
+        attempt_xlsx=census_attempt_xlsx,
         solution_xlsx=golden_solution_path if golden_solution_path.exists() else None,
     )
+    if run_calculation:
+        formula_cache_provenance["attempt"]["recalculated_workbook"] = (
+            recalculated_attempt.exists()
+        )
 
     return {
         "cache_dir": cache_dir,

@@ -11,11 +11,51 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import openpyxl
+import openpyxl.worksheet._reader as _openpyxl_reader
 
 from .logger import logger
 from .misc_utils import load_env_var
 
 NOGRADE_PREFIX = "_nograde_"
+
+
+# openpyxl casts every untyped <c> value with int()/float() and raises on
+# anything else, which aborts the whole workbook load. Excel Online has been
+# seen writing a time-formatted zero as the literal text "00:00:00" into a
+# numeric formula cell (attempt 362, 2026-09-05) — one cell that made the
+# attempt ungradeable by both the extractor and the answer checker. Keep such
+# a value as the text the file carries instead of failing; the cell then reads
+# as "00:00:00", which is what the sheet displays. Installed once per process
+# so every openpyxl load in the judge (extraction, answer check, properties)
+# behaves the same way.
+_openpyxl_cast_number = _openpyxl_reader._cast_number
+_openpyxl_from_excel = _openpyxl_reader.from_excel
+_tolerated_values_seen: set = set()
+
+
+def _tolerant_cast_number(value):
+    try:
+        return _openpyxl_cast_number(value)
+    except ValueError:
+        if value not in _tolerated_values_seen:  # one warning per distinct value
+            _tolerated_values_seen.add(value)
+            logger.warning(
+                f"openpyxl: non-numeric value {value!r} in a numeric cell; "
+                f"keeping it as text (further occurrences not logged)"
+            )
+        return value
+
+
+def _tolerant_from_excel(value, *args, **kwargs):
+    # The reader converts date-styled numeric cells right after the cast; a
+    # value kept as text above must skip that conversion, not crash in it.
+    if isinstance(value, str):
+        return value
+    return _openpyxl_from_excel(value, *args, **kwargs)
+
+
+_openpyxl_reader._cast_number = _tolerant_cast_number
+_openpyxl_reader.from_excel = _tolerant_from_excel
 
 
 def get_worksheet_info(workbook: openpyxl.Workbook, sheet_name: str) -> Dict[str, Any]:
