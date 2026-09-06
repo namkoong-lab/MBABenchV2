@@ -811,12 +811,20 @@ def _staging_dir(cfg: SimpleNamespace, task_name: str, started: datetime) -> Pat
     json_logs/ and logs/, plus the prompts JSON this module writes. The sink
     uploads the lot and _clear_staging removes the directory afterwards, so
     the only lasting copy is the one under paths.output_dir mirroring S3.
+
+    The name carries this runner's pid: two lanes on one machine running the
+    same task list (e.g. a fable and a sol cohort over the same ids) started
+    task 69 in the same second on 2026-09-06 and shared one directory — both
+    engines' logs and completion JSONs interleaved, either lane's
+    find_solution_file could have picked the OTHER cohort's workbook, and
+    the first lane to publish would have rmtree'd the other's live staging
+    dir. Timestamp + task name alone is not unique across concurrent runs.
     """
     stem = _sanitize_name(task_name)
     return (
         Path(cfg.paths.scratch_dir)
         / "attempts"
-        / f"{started.strftime('%Y%m%d_%H%M%S')}_{stem}"
+        / f"{started.strftime('%Y%m%d_%H%M%S')}_{stem}_p{os.getpid()}"
     )
 
 

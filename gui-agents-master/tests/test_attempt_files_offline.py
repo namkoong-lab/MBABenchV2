@@ -134,5 +134,9 @@ def test_staging_dir_is_per_attempt() -> None:
     a = _staging_dir(cfg, "Grapes of Wrath", datetime(2026, 8, 20, 12, 0, 0))
     b = _staging_dir(cfg, "Grapes of Wrath", datetime(2026, 8, 20, 12, 0, 1))
     assert a != b, "two attempts must not share a directory"
-    assert a.name == "20260820_120000_Grapes_of_Wrath", a
+    # The runner's pid is part of the name: two lanes on one machine that
+    # start the same task in the same second must not share a directory
+    # (2026-09-06: a fable and a sol lane did, and interleaved their files).
+    import os
+    assert a.name == f"20260820_120000_Grapes_of_Wrath_p{os.getpid()}", a
     assert a.parent == Path("scratch/gui-agents/attempts"), a
