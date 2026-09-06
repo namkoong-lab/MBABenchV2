@@ -1016,16 +1016,24 @@ class ChatGPTWebAgent(WebAgent):
             return False
         await asyncio.sleep(1.2)
         # The radios stay in the DOM after the view flips back — verify
-        # aria-checked without reopening the advanced view.
+        # aria-checked without reopening the advanced view. Accept the
+        # radio's first line as either the short ("5.6 Sol", 2026-08-28 UI)
+        # or the full ("GPT-5.6 Sol", 2026-09-06 UI) form — the click above
+        # already did; verifying on the short form alone failed every
+        # work-mode run once the UI restored the "GPT-" prefix.
         checked = await self.page.evaluate(
-            """(short) => {
+            """(args) => {
+                const [short, full] = args;
                 const radios = [...document.querySelectorAll(
                     '[role="menu"][data-state="open"] [role="menuitemradio"]')];
-                const t = radios.find(r => ((r.innerText || '').trim()
-                    .split('\\n')[0] || '').trim() === short);
+                const t = radios.find(r => {
+                    const first = ((r.innerText || '').trim()
+                        .split('\\n')[0] || '').trim();
+                    return first === short || first === full;
+                });
                 return t ? t.getAttribute('aria-checked') === 'true' : false;
             }""",
-            short,
+            [short, model_label],
         )
         if not checked:
             logger.error(
