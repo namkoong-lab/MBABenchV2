@@ -1573,17 +1573,71 @@ class ChatGPTWebAgent(WebAgent):
             await self.page.keyboard.press("Backspace")
             await self.page.wait_for_timeout(200)
 
-            # Fill prompt — try Playwright fill() first, fall back to clipboard paste
+            # Fill prompt. Playwright fill() first; on failure VERIFY what
+            # the composer holds before doing anything else. 2026-09-06
+            # (sol_B, task 86): fill() of the 77k-char prompt raised on its
+            # 30s timeout AFTER the text had landed in ProseMirror, and the
+            # unconditional clipboard-paste fallback then delivered a SECOND
+            # copy, which ChatGPT converts into a "Pasted text.txt"
+            # attachment — the turn went out as inline prompt + pasted-text
+            # document + workbook. No Aug-29 cohort row ever took the paste
+            # path (0/68), so a duplicated prompt is a cohort-integrity
+            # break, not a cosmetic one. Order of preference now: fill;
+            # else keyboard.insertText (inline, no paste-to-file
+            # conversion); else clipboard paste. Every step is checked by
+            # reading the composer's own text length.
+            target_len = len(prompt.split())
+            async def _composer_words() -> int:
+                try:
+                    return await editor.first.evaluate(
+                        "el => (el.innerText || '').trim().split(/\\s+/).filter(Boolean).length"
+                    )
+                except Exception:
+                    return -1
+            def _landed(n: int) -> bool:
+                return n >= 0 and abs(n - target_len) <= max(3, target_len // 100)
             try:
-                await editor.first.fill(prompt)
+                # 30s (the default) is not enough for a 77k-char prompt on the
+                # no-project composer (2026-09-06: raised at 30.6s with the
+                # text already landed; Aug-29 in-project fills took ~8s).
+                await editor.first.fill(prompt, timeout=120_000)
             except Exception:
-                logger.info("fill() failed, falling back to clipboard paste")
-                await self.page.evaluate(
-                    "(text) => navigator.clipboard.writeText(text)", prompt
-                )
-                await self.page.keyboard.press("Meta+v")
-                await self.page.wait_for_timeout(500)
+                n = await _composer_words()
+                if _landed(n):
+                    logger.info(
+                        f"fill() raised but the composer already holds the prompt "
+                        f"({n} words) — not pasting a second copy"
+                    )
+                else:
+                    logger.info(
+                        f"fill() failed (composer holds {n} words of {target_len}); "
+                        "clearing and retrying via insertText"
+                    )
+                    await editor.first.click()
+                    await self.page.keyboard.press("Meta+a")
+                    await self.page.keyboard.press("Backspace")
+                    await self.page.wait_for_timeout(200)
+                    try:
+                        await self.page.keyboard.insert_text(prompt)
+                    except Exception as e:
+                        logger.info(f"insertText failed ({e}); falling back to clipboard paste")
+                    await self.page.wait_for_timeout(1000)
+                    n = await _composer_words()
+                    if not _landed(n):
+                        logger.warning(
+                            f"insertText left {n} words of {target_len}; falling back "
+                            "to clipboard paste (ChatGPT may attach it as Pasted text)"
+                        )
+                        await self.page.keyboard.press("Meta+a")
+                        await self.page.keyboard.press("Backspace")
+                        await self.page.evaluate(
+                            "(text) => navigator.clipboard.writeText(text)", prompt
+                        )
+                        await self.page.keyboard.press("Meta+v")
+                        await self.page.wait_for_timeout(500)
             await self.page.wait_for_timeout(1000)
+            n = await _composer_words()
+            logger.info(f"Composer holds {n} words (prompt has {target_len})")
 
             # Select model + intelligence after files are attached and the
             # prompt is typed, but before sending (only on first prompt).
