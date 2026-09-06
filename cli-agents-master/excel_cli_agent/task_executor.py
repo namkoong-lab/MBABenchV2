@@ -922,21 +922,32 @@ class ExcelTaskExecutor:
         """True for errors worth re-sending the identical request for.
 
         Covers the SDK's connection errors, HTTP 408/429/5xx/529 status errors,
-        and stream-delivered error events (which surface with the error body
-        in their message rather than a status code)."""
+        raw httpx transport errors raised while iterating an open stream (the
+        SDK only wraps errors from the request phase — a connection dropped
+        mid-stream surfaces as httpx.RemoteProtocolError "peer closed
+        connection without sending complete message body", seen live
+        2026-09-06 on attempt 1061 and 2026-08-26 on attempt 459), and
+        stream-delivered error events (which surface with the error body in
+        their message rather than a status code)."""
         try:
             import anthropic
             if isinstance(e, anthropic.APIConnectionError):
                 return True
         except ImportError:
             pass
+        if isinstance(e, httpx.TransportError):
+            return True
         status = getattr(e, "status_code", None)
         if isinstance(status, int) and (status in (408, 429, 529) or status >= 500):
             return True
         text = str(e).lower()
         return any(
             marker in text
-            for marker in ("overloaded_error", "rate_limit_error", "'api_error'", "internal server error", "connection error", "server disconnected")
+            for marker in (
+                "overloaded_error", "rate_limit_error", "'api_error'", "internal server error",
+                "connection error", "server disconnected",
+                "peer closed connection", "incomplete chunked read",
+            )
         )
 
     def _stream_anthropic_once(self, request_kwargs: dict, task: 'TaskExecution') -> Tuple[str, dict]:
