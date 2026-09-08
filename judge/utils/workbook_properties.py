@@ -155,7 +155,12 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
     n_values = n_formulas = 0
     comments = []
     try:
-        for row in ws.iter_rows():
+        try:
+            from .sheet_extent import iter_rows_kwargs
+        except ImportError:  # bare-module import path
+            from sheet_extent import iter_rows_kwargs
+        _bounds, _ = iter_rows_kwargs(ws)
+        for row in ws.iter_rows(**_bounds):
             for cell in row:
                 v = cell.value
                 if v is None:

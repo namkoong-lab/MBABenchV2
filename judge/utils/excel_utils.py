@@ -15,6 +15,7 @@ import openpyxl.worksheet._reader as _openpyxl_reader
 
 from .logger import logger
 from .misc_utils import load_env_var
+from .sheet_extent import iter_rows_kwargs
 
 NOGRADE_PREFIX = "_nograde_"
 
@@ -816,6 +817,16 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
     """
     use_fast = load_env_var("JUDGE_FAST_CELL_EXTRACT", "true").lower() == "true"
 
+    # Guard against a declared extent inflated by styled-empty cells (see
+    # sheet_extent). Empty kwargs for every ordinary sheet.
+    bounds, narrowed = iter_rows_kwargs(worksheet)
+    if narrowed:
+        logger.warning(
+            f"Sheet '{worksheet.title}': declared extent {worksheet.max_row} x "
+            f"{worksheet.max_column} exceeds the cell budget; iterating "
+            f"{bounds['max_row']} x {bounds['max_col']} (last column holding a value)"
+        )
+
     enhanced_data = []
     data_view = []  # same encoding minus the style FORMAT segment
 
@@ -833,7 +844,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
         cached_config = (do_rounding, float_rounding, percentage_rounding)
 
         for row_idx, (row, row_data) in enumerate(
-            zip(worksheet.iter_rows(), worksheet_data.iter_rows()), 1
+            zip(worksheet.iter_rows(**bounds), worksheet_data.iter_rows(**bounds)), 1
         ):
             enhanced_row = []
             data_row = []
@@ -850,7 +861,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
             enhanced_data.append(enhanced_row)
             data_view.append(data_row)
     else:
-        for row_idx, row in enumerate(worksheet.iter_rows(), 1):
+        for row_idx, row in enumerate(worksheet.iter_rows(**bounds), 1):
             enhanced_row = []
             data_row = []
             for col_idx, cell in enumerate(row, 1):
