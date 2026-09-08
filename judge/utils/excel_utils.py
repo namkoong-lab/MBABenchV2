@@ -268,6 +268,12 @@ def _render_number_format(value, format_string: str) -> Optional[str]:
     if format_string in ("General", "@"):
         return None
 
+    # Path A2: non-finite or astronomically large values cannot be rounded to
+    # a fixed number of places (math.floor(inf) raises OverflowError; task 89's
+    # coding-fable attempt carried one, 2026-09-07) -> defer to the raw form.
+    if not math.isfinite(value) or abs(value) >= 1e300:
+        return None
+
     # Path B: color codes ([Red], [Blue], ...) or conditional ([>0]) -> defer.
     if "[" in format_string:
         return None
@@ -318,7 +324,13 @@ def _get_formatted_value(cell, cell_data_only, _cached_config=None) -> str:
     if isinstance(raw_value_for_render, (int, float)):
         fmt = getattr(cell, "number_format", None)
         if fmt:
-            rendered = _render_number_format(raw_value_for_render, fmt)
+            try:
+                rendered = _render_number_format(raw_value_for_render, fmt)
+            except (OverflowError, ValueError):
+                # Best-effort renderer: never let one pathological cell
+                # sink the whole extraction; the legacy form below still
+                # carries the raw value.
+                rendered = None
             if rendered is not None:
                 return rendered
 
