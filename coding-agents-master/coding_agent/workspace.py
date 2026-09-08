@@ -8,7 +8,7 @@ Layout handed to the agent:
 
 The seeded-file manifest (sha256 of every input) lives OUTSIDE the workspace,
 in the attempt dir, so validation can prove the agent produced new work.
-Template attachments (v10: House_Standards_v1.md) are seeded through the same
+Template attachments (v12: House_Standards_v1.md) are seeded through the same
 path and so appear in the manifest and the PROMPT.md listing — acceptable: an
 agent that hands back the standards file as solution.xlsx fails the hash
 check like any other copied input.

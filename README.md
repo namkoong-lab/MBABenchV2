@@ -30,9 +30,10 @@ How each pipeline selects the benchmark at launch:
   overrides).
 - **`coding-agents-master/`** — vendor coding agents (Claude Code, Codex),
   one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
-  config; v2 flips S3/DB and defaults `template_version` to v10 (the
+  config; v2 flips S3/DB and defaults `template_version` to v12 (the
   v2-rubric mirror with the house standards seeded into the workspace; v7
-  is the v1 pv9 mirror).
+  is the v1 pv9 mirror; v10/v11 are the frozen rubric-scrubbed experiment
+  templates).
 - **`judge/`** — grades attempts from either benchmark. Pass
   `--benchmark v1|v2`; it selects the DB (`database.{v1,v2}_url` in
   `config/config.yaml`), the S3 grading root and the rubric pair

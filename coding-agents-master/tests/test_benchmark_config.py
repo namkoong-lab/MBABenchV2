@@ -1,8 +1,8 @@
-"""Offline checks for the benchmark (v1|v2) switch and the v8/v9/v10
-templates, including v10's House_Standards_v1.md attachment.
+"""Offline checks for the benchmark (v1|v2) switch and the v8/v9/v12
+templates, including v12's House_Standards_v1.md attachment.
 
 Run from coding-agents-master:  python tests/test_benchmark_config.py
-(or pytest tests/). No Docker, DB, S3, or API keys needed; the v10 checks
+(or pytest tests/). No Docker, DB, S3, or API keys needed; the v12 checks
 need the monorepo (house_standards/, gui-agents-master/) around the checkout.
 """
 import hashlib
@@ -71,13 +71,13 @@ def main() -> int:
     assert v1.s3_root == "BizbenchV1"
     print("OK  benchmark v1 -> v7, BizbenchV1 root")
 
-    # v2: root/template flip together (v10 = the House Standards template).
+    # v2: root/template flip together (v12 = the House Standards template).
     v2 = load_config(_cfg("benchmark: v2\n"))
     assert v2.benchmark == "v2"
-    assert v2.template_version == "v10"
+    assert v2.template_version == "v12"
     assert v2.s3_root == "MBABenchV2"
     assert v2.s3_bucket  # from config/config.yaml aws.s3_bucket or the default
-    print("OK  benchmark v2 -> v10, MBABenchV2 root")
+    print("OK  benchmark v2 -> v12, MBABenchV2 root")
 
     # the old internal: stanza is refused, not silently honoured.
     try:
@@ -94,17 +94,17 @@ def main() -> int:
     except ValueError:
         print("OK  benchmark v3 refused")
 
-    # v10 template resolves for every task_source, passes the rubric
-    # checksum guard, and yields prompt_version 110.
+    # v12 template resolves for every task_source, passes the rubric
+    # checksum guard, and yields prompt_version 112.
     for src in ("fmwc", "modeloff", "wsp", "jp"):
-        assert template_name(src, "v10") == "task_template_shared_v10.txt"
+        assert template_name(src, "v12") == "task_template_shared_v12.txt"
     sys_path, tpl_path = prompt_file_paths(v2, "jp")
-    assert parse_prompt_version(sys_path.name, tpl_path.name) == 110
-    print("OK  v10 template: shared across sources, checksum guard passed, pv=110")
+    assert parse_prompt_version(sys_path.name, tpl_path.name) == 112
+    print("OK  v12 template: shared across sources, checksum guard passed, pv=112")
 
-    # v10 declares the house-standards attachment on the template, and it
+    # v12 declares the house-standards attachment on the template, and it
     # resolves to the canonical monorepo file.
-    assert TEMPLATE_ATTACHMENTS["v10"] == [STANDARDS_REL]
+    assert TEMPLATE_ATTACHMENTS["v12"] == [STANDARDS_REL]
     root = repo_config.monorepo_root()
     assert root is not None and (root / STANDARDS_REL).is_file(), root
     [standards] = template_attachments(v2)
@@ -113,23 +113,23 @@ def main() -> int:
     assert v2.extra_configs()["house_standards"] == {
         "version": 1, "file": "House_Standards_v1.md", "sha256": sha,
     }
-    print("OK  v10 attachment declared, resolvable, recorded in extra_configs")
+    print("OK  v12 attachment declared, resolvable, recorded in extra_configs")
 
-    # v10 = v9 + the directive, pointing at the workspace path (never
+    # v12 = v9 + the directive, pointing at the workspace path (never
     # "attached"), and QA item 9.
-    v10_text = tpl_path.read_text()
-    assert v10_text.count("in the workspace at starting_files/House_Standards_v1.md") == 2
-    assert "HOUSE STANDARDS\n- The file House_Standards_v1.md" in v10_text
-    assert "9. The workbook follows House_Standards_v1.md" in v10_text
-    assert "attached" not in v10_text.split(V8_RUBRIC_MARKER)[0]
-    print("OK  v10 template carries the house-standards directive")
+    v12_text = tpl_path.read_text()
+    assert v12_text.count("in the workspace at starting_files/House_Standards_v1.md") == 2
+    assert "HOUSE STANDARDS\n- The file House_Standards_v1.md" in v12_text
+    assert "9. The workbook follows House_Standards_v1.md" in v12_text
+    assert "attached" not in v12_text.split(V8_RUBRIC_MARKER)[0]
+    print("OK  v12 template carries the house-standards directive")
 
-    # v10's rubric is byte-identical to the GUI source it was generated from.
+    # v12's rubric is byte-identical to the GUI source it was generated from.
     gui_step2 = (root / GUI_STEP2_V4).read_text()
     gui_rubric = gui_step2[gui_step2.index(V8_RUBRIC_MARKER):].rstrip("\n")
-    tpl_rubric = v10_text[v10_text.index(V8_RUBRIC_MARKER):][:len(gui_rubric)]
-    assert tpl_rubric == gui_rubric, "v10 rubric drifted from prompts_v4/step2_build.txt"
-    print("OK  v10 rubric byte-identical to the GUI prompts_v4 source")
+    tpl_rubric = v12_text[v12_text.index(V8_RUBRIC_MARKER):][:len(gui_rubric)]
+    assert tpl_rubric == gui_rubric, "v12 rubric drifted from prompts_v4/step2_build.txt"
+    print("OK  v12 rubric byte-identical to the GUI prompts_v4 source")
 
     # v9 still selectable and guarded: pv 109, no attachments.
     v2_v9 = load_config(_cfg("benchmark: v2\ntemplate_version: v9\n"))
@@ -170,7 +170,7 @@ def main() -> int:
 
 
 def check_seeded_workspace() -> None:
-    """A v10 workspace holds starting_files/House_Standards_v1.md, PROMPT.md
+    """A v12 workspace holds starting_files/House_Standards_v1.md, PROMPT.md
     lists it, the prompts/ snapshot carries it, and a task input of the
     same name is refused rather than shadowed."""
     with tempfile.TemporaryDirectory() as td:
@@ -186,7 +186,7 @@ def check_seeded_workspace() -> None:
         )
         cfg = load_config(run_yaml)
         cfg.workspaces_dir = tmp / "workspaces"
-        assert cfg.template_version == "v10"
+        assert cfg.template_version == "v12"
 
         spec = ExternalSource(task).fetch(tmp / "_staging")
         seeded = seed_template_attachments(cfg, spec)
@@ -198,11 +198,11 @@ def check_seeded_workspace() -> None:
         assert ws_copy.read_bytes() == seeded[0].read_bytes()
         assert "starting_files/House_Standards_v1.md" in attempt.manifest
         prompt, pv = build_prompt(cfg, spec, attempt.workspace)
-        assert pv == 110
+        assert pv == 112
         assert "- starting_files/House_Standards_v1.md (" in prompt
         assert (attempt.attempt_dir / "prompts" / "House_Standards_v1.md").exists()
-        assert (attempt.attempt_dir / "prompts" / "task_template_shared_v10.txt").exists()
-        print("OK  v10 workspace seeded with House_Standards_v1.md; PROMPT.md lists it")
+        assert (attempt.attempt_dir / "prompts" / "task_template_shared_v12.txt").exists()
+        print("OK  v12 workspace seeded with House_Standards_v1.md; PROMPT.md lists it")
 
         (task / "starting_files" / "House_Standards_v1.md").write_bytes(b"impostor")
         spec2 = ExternalSource(task).fetch(tmp / "_staging2")
@@ -213,16 +213,16 @@ def check_seeded_workspace() -> None:
             print("OK  attachment/task-file name collision refused")
 
         # A declared-but-missing attachment fails before any workspace exists.
-        cfg.template_version = "v10"
+        cfg.template_version = "v12"
         try:
-            TEMPLATE_ATTACHMENTS["v10"] = ["house_standards/House_Standards_v999.md"]
+            TEMPLATE_ATTACHMENTS["v12"] = ["house_standards/House_Standards_v999.md"]
             try:
                 template_attachments(cfg)
                 raise AssertionError("missing attachment should be refused")
             except FileNotFoundError:
                 print("OK  missing declared attachment refused")
         finally:
-            TEMPLATE_ATTACHMENTS["v10"] = [STANDARDS_REL]
+            TEMPLATE_ATTACHMENTS["v12"] = [STANDARDS_REL]
 
 
 def test_benchmark_config():

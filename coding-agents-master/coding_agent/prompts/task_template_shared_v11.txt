@@ -15,6 +15,9 @@ ANSWERS (the 'Questions' sheet)
 - Your delivered workbook MUST contain every 'Questions' sheet, preserved exactly: same sheet name (never rename it), same questions in the same rows, no rows or columns inserted or deleted. solution.xlsx must contain this sheet - the simplest way is to start solution.xlsx as a copy of the starting workbook so the sheet carries over intact.
 - Enter each answer in its reserved cell in the 'Answers' column as a live formula referencing the model - never a typed constant (for Yes/No questions, use a formula that returns "Yes" or "No" from the model). Follow the header row's answer-format instructions and the stated units exactly, and leave no reserved answer cell empty.
 
+HOUSE STANDARDS
+- The workspace root contains HOUSE_STANDARDS.md, our firm's financial-modelling house standards. Read it before you build and conform to it throughout. Where the case's own instructions conflict with it, the case instructions govern.
+
 WORKING EFFICIENTLY
 - Do your work directly in the workbook; keep narration to one or two sentences per step. The workbook is the deliverable, not a written description of it.
 - Build efficiently: write whole sheets/ranges in as few operations as possible rather than cell-by-cell, and do not re-verify or repeat work you have already completed.
@@ -24,6 +27,7 @@ Build the model now.
 Step 3 - Verify and deliver. Before finishing:
 1. Re-open solution.xlsx and confirm it loads without errors or repair warnings and that every calculated value is stored as a live Excel formula, not a typed constant.
 2. Confirm every 'Questions' sheet is intact - same name, same questions in the same rows (each such sheet, where a task has more than one) - and that every reserved answer cell in the column headed 'Answers' (row 2 down, one per question; column B in most tasks, column C in a few) contains a live formula referencing the model whose result follows the header row's answer-format instructions and the 'Unit' column where given. No reserved answer cell is empty or hard-coded.
+3. Confirm the workbook conforms to HOUSE_STANDARDS.md in the workspace root.
 Fix everything you find. The deliverable is solution.xlsx in the workspace root — the .xlsx workbook itself, NOT a text summary, description, or list of steps. Finish all steps and leave the completed workbook at that path.
 
 EXCEL FILE VALIDITY REQUIREMENTS:

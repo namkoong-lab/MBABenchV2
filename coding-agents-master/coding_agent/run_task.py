@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .agents import agent_env, build_command
 from .config import load_config, load_dotenv_if_present, resolve_secrets, template_attachments
-from .prompt_builder import build_prompt, prompt_file_paths
+from .prompt_builder import build_prompt, prompt_extra_paths, prompt_file_paths
 from .recorder import has_extra_configs_column, record
 from .repo_config import describe_database_target
 from .sandbox import run_in_sandbox
@@ -48,6 +48,8 @@ def _snapshot_run_inputs(cfg, spec, attempt) -> None:
     prompts_dir.mkdir(exist_ok=True)
     for path in [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg)]:
         shutil.copy2(path, prompts_dir / path.name)
+    for src, _ws_name in prompt_extra_paths(cfg):
+        shutil.copy2(src, prompts_dir / src.name)
 
 
 def main(argv=None) -> int:
@@ -90,7 +92,7 @@ def main(argv=None) -> int:
     staging = cfg.workspaces_dir / f"_staging_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}"
     try:
         spec = source.fetch(staging)
-        # The template's attachments (v10: House_Standards_v1.md) ride into
+        # The template's attachments (v12: House_Standards_v1.md) ride into
         # starting_files/ with the task inputs in both modes; a missing one
         # is caught here, before any row can be written.
         seeded = seed_template_attachments(cfg, spec)
@@ -109,7 +111,7 @@ def main(argv=None) -> int:
         print(f"  seeded template attachments: {', '.join(p.name for p in seeded)}")
 
     # 2. Prompt.
-    prompt_text, prompt_version = build_prompt(cfg, spec, attempt.workspace)
+    prompt_text, prompt_version = build_prompt(cfg, spec, attempt.workspace, attempt=attempt)
     print(f"  prompt_version={prompt_version} ({len(prompt_text):,} chars)")
 
     # 3. Run the agent in the sandbox.

@@ -8,7 +8,7 @@ is the name the prompt directive uses.
 
 | Version | File | Introduced in |
 |---|---|---|
-| 1 | `House_Standards_v1.md` | gui/excel prompt versions 204/205, cli v14, coding template v10 (2026-09-10) |
+| 1 | `House_Standards_v1.md` | gui/excel prompt versions 204/205, cli v14, coding template v12 (2026-09-10) |
 
 ## Rules
 

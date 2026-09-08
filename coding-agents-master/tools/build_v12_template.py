@@ -1,4 +1,4 @@
-"""Generate coding_agent/prompts/task_template_shared_v10.txt — the benchmark-v2
+"""Generate coding_agent/prompts/task_template_shared_v12.txt — the benchmark-v2
 House Standards task template — from the v4 GUI prompt files, exactly as
 tools/build_v9_template.py generated v9 from the v3 GUI files.
 
@@ -6,7 +6,7 @@ Sources (single source of truth, shared with the GUI pipeline):
     gui-agents-master/tasks_configs/prompts_v4/step1_analyze.txt
     gui-agents-master/tasks_configs/prompts_v4/step2_build.txt   (embeds the
         132-check rubric — copied byte-exact; byte-identical to prompts_v3's,
-        so the v10 rubric guard equals v9's and any score delta vs v9 is
+        so the v12 rubric guard equals v9's and any score delta vs v9 is
         attributable to the house standards alone)
     gui-agents-master/tasks_configs/prompts_v4/step3_qa.txt
 
@@ -27,9 +27,9 @@ Harness-necessitated translations, the same rules v9 used plus the one above:
     solution.xlsx as a copy of the starting workbook so the 'Questions'
     sheet survives.
 Everything from the "== FULL RUBRIC" marker onward is copied byte-exact and
-md5-guarded by prompt_builder (V10_RUBRIC_MD5).
+md5-guarded by prompt_builder (V12_RUBRIC_MD5).
 
-Usage (from coding-agents-master):  python tools/build_v10_template.py
+Usage (from coding-agents-master):  python tools/build_v12_template.py
 """
 import hashlib
 import re
@@ -38,7 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROMPTS_V4 = ROOT.parent / "gui-agents-master/tasks_configs/prompts_v4"
 V7 = ROOT / "coding_agent/prompts/task_template_shared_v7.txt"
-OUT = ROOT / "coding_agent/prompts/task_template_shared_v10.txt"
+OUT = ROOT / "coding_agent/prompts/task_template_shared_v12.txt"
 
 # Where the agent finds the file (workspace-relative; the runner seeds it).
 STANDARDS_PATH = "starting_files/House_Standards_v1.md"
@@ -189,7 +189,7 @@ def main() -> int:
     print(f"Wrote {OUT.name}: {len(out)} chars")
     print(f"Rubric section: {len(rubric)} chars, {n_checks} Good-standards, "
           f"md5={rubric_md5}")
-    print("Set V10_RUBRIC_MD5 / V10_RUBRIC_LEN in prompt_builder.py to these.")
+    print("Set V12_RUBRIC_MD5 / V12_RUBRIC_LEN in prompt_builder.py to these.")
     return 0
 
 

@@ -4,14 +4,14 @@ Internal mode — same conventions as the CLI wave, root chosen by `benchmark`:
   S3:  s3://<bucket>/<root>/attempts/<agent_model_name>/task_source=<src>/task_id=<id>/<ts>_<file>
        s3://<bucket>/<root>/prompts/<agent_model_name>/<ts>_<promptfile>
        (<root> = BizbenchV1 for v1, MBABenchV2 for v2; the template's
-       attachments — v10's House_Standards_v1.md — upload with the prompt
-       files, so prompt_files says everything the agent was told)
+       attachments — v12's House_Standards_v1.md — and v11's workspace
+       extra (HOUSE_STANDARDS.md) upload with the prompt files, so prompt_files says everything the agent was told)
   DB:  INSERT INTO task_attempts (...)  — solution.xlsx is listed FIRST in
        attempt_files (the judge grades the first xlsx in the list). On
        MBABenchV2 the row's extra_configs (JSONB) then records the settings
        the attempt ran under (RunConfig.extra_configs(), including
        house_standards {version, file, sha256} for templates that ship
-       them); BizbenchV1 has no such column, so it is probed and skipped
+       them, prompt_extras for v11's staged file); BizbenchV1 has no such column, so it is probed and skipped
        there.
   Verdicts infra_failure / needs_review write NO row (no trial burned; held
   locally); success / timeout / agent_failure write a row.
@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import RunConfig, template_attachments
-from .prompt_builder import prompt_file_paths
+from .prompt_builder import prompt_extra_paths, prompt_extras_provenance, prompt_file_paths
 from .repo_config import s3_client
 from .sandbox import SandboxResult
 from .task_source import TaskSpec
@@ -32,6 +32,12 @@ from .validate import Verdict
 from .workspace import Attempt
 
 RECORDABLE = {"success", "timeout", "agent_failure"}
+
+
+def _extras_stamp(cfg: RunConfig) -> dict:
+    """{"prompt_extras": {...}} when the template stages extra files, else {}."""
+    extras = prompt_extras_provenance(cfg)
+    return {"prompt_extras": extras} if extras else {}
 
 
 def has_extra_configs_column(db_url: str) -> bool:
@@ -63,7 +69,7 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
         "prompt_version": prompt_version,
         "cost_usd": telemetry.get("cost_usd"),
         "tokens": telemetry.get("totals"),
-        "extra_configs": cfg.extra_configs(),
+        "extra_configs": {**cfg.extra_configs(), **_extras_stamp(cfg)},
         "recorded": False,
     }
 
@@ -97,7 +103,8 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
 
     # Prompt snapshot (system + the template actually used + its attachments).
     prompt_uris = []
-    for path in [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg)]:
+    for path in [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg),
+                 *[src for src, _ in prompt_extra_paths(cfg)]]:
         key = f"{root}/prompts/{cfg.agent_model_name}/{ts}_{path.name}"
         s3.upload_file(str(path), bucket, key)
         prompt_uris.append(f"s3://{bucket}/{key}")
@@ -153,7 +160,7 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
             if extra_supported:
                 cur.execute(
                     "UPDATE task_attempts SET extra_configs = %s WHERE id = %s",
-                    (Json(cfg.extra_configs()), attempt_id),
+                    (Json({**cfg.extra_configs(), **_extras_stamp(cfg)}), attempt_id),
                 )
         conn.commit()
     finally:

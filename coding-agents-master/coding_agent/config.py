@@ -98,11 +98,11 @@ class LimitsConfig:
 # aws.s3_bucket, and the prompt-template default.
 BENCHMARKS = {
     "v1": {"root": "BizbenchV1", "db_name": "BizbenchV1", "template": "v7"},
-    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v10"},
+    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v12"},
 }
 DEFAULT_S3_BUCKET = "mbabench"
 
-TEMPLATE_VERSIONS = ("v5", "v6", "v7", "v8", "v9", "v10")
+TEMPLATE_VERSIONS = ("v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12")
 
 # Files a template promises the agent, monorepo-root-relative. They are
 # seeded into starting_files/ beside the task inputs, snapshotted with the
@@ -110,7 +110,7 @@ TEMPLATE_VERSIONS = ("v5", "v6", "v7", "v8", "v9", "v10")
 # — never in a run config — so the recorded prompt_version and the file the
 # agent saw cannot disagree (<MBABenchV2>/house_standards/README.md).
 TEMPLATE_ATTACHMENTS = {
-    "v10": ["house_standards/House_Standards_v1.md"],
+    "v12": ["house_standards/House_Standards_v1.md"],
 }
 _HOUSE_STANDARDS_RE = re.compile(r"^House_Standards_v(\d+)\.md$")
 
@@ -124,7 +124,7 @@ class RunConfig:
     benchmark: str = "v1"  # "v1" | "v2"; required in internal run configs (no default)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
-    template_version: str = "v7"  # v10 = v9 + house standards (v2 default); v9 = v2 Questions-sheet mirror; v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
+    template_version: str = "v7"  # v12 = v9 + house standards (v2 default); v10/v11 = rubric-scrubbed experiment (2026-09-08); v9 = v2 Questions-sheet mirror; v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     workspaces_dir: Path = PACKAGE_DIR.parent / "workspaces"

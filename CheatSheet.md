@@ -4,7 +4,7 @@ How to configure, identify, and launch a run of each pipeline. One-time setup: `
 (uv workspace, installs every member). Secrets (DB URLs, AWS keys, API keys) live in the
 gitignored `config/config.yaml` (template: `config/config_default.yaml`). Every run sets
 `benchmark: v1|v2`, which selects DB + S3 root + prompts + rubric **together**; guards refuse
-mismatches. Every v2 prompt version (gui/excel 204/205, cli v14, coding v10) also attaches
+mismatches. Every v2 prompt version (gui/excel 204/205, cli v14, coding v12) also attaches
 `house_standards/House_Standards_v1.md` with the starting files — the version, not the run
 config, selects it — always check the logged `Database:` line (e.g. `Database: MBABenchV2 (from
 config/config.yaml database.v2_url)`) before letting a run proceed. All registries are
