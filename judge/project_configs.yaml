@@ -79,6 +79,14 @@ agentic_judge:
 # effectively-unbound for the canaries — set the production value from
 # measured round usage, not by feel.
 #
+# 7 (2026-09-09): the cover sheet is served (drivers no longer default to
+# --ignore-sheets cover; 85% of attempts name that sheet exactly "Cover"
+# and rubric_9 grades its content). Every further judge change lands under
+# version 7 until it is cut. Version 6 rows split on this: the orchestration
+# runs (2026-09-05/07 production Sol) passed --no-ignore-sheets and saw the
+# cover; grade_from_db launches without the flag (the 2026-09-08 rubric-effect
+# run, attempts 1175-1236) did not. Each grade log's parameter header records
+# which.
 # 6 / template_8 (2026-09-02, judge v6 pipeline update): harness-decided
 # answer accuracy (--accuracy-check, both engines always recorded), the
 # answer-equivalence rulebook rendered into the prompt, guidance hardened
@@ -88,7 +96,7 @@ agentic_judge:
 # under version 6 are not comparable to version 5 rows (all deprecated).
 # 5 / template_7: the first single-pass build (2026-09-01).
 single_pass:
-  version: 6
+  version: 7
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500

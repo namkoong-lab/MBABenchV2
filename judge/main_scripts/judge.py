@@ -1529,7 +1529,8 @@ def _prepare_case(
     golden_solution_dir = workbook_dirs.get(golden_solution_stem)
     starting_workbook_dir = workbook_dirs.get("starting_workbook")
 
-    # Drop sheets the caller asked to ignore (e.g. cover sheets). Applied
+    # Drop sheets the caller explicitly asked to ignore (--ignore-sheets;
+    # nothing by default — the cover sheet is graded content). Applied
     # after both fresh extraction and cache copy so the artifact on disk
     # reflects exactly what the judge will see.
     _delete_ignored_sheet_files(
@@ -4261,7 +4262,7 @@ def single_pass_judge_case(
     # _finalize_case threads them into scores.json / _metadata.json and the
     # DB write prefers them over the 12-category env values.
     versions = dict(prep["versions"])
-    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="6")
+    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="7")
     versions["PROMPT_VERSION"] = load_env_var(
         "SINGLE_PASS_PROMPT_VERSION", default="8"
     )

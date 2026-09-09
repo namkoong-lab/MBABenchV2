@@ -196,6 +196,24 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
   (before 2026-09 it never passed them through, so it could not grade v2 at
   all) and shares the `*_csv_cache_v2` generation with grade_from_db.
 
+### judge v7 — single-pass 7 / template_8 (2026-09-09)
+
+Rows record `judge_version` 7 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 6 rows. Every further judge change lands here until
+version 7 is cut.
+
+- **Cover sheet is graded content** (2026-09-09): `--ignore-sheets` now
+  defaults to nothing on both drivers. The port's `["cover"]` default deleted
+  the `Cover` sheet's CSV before grading while rubric_9 grades cover content
+  directly (cover sheet first, version history, master error flag, and any
+  glossary / how-to / purpose / scope / design notes placed there); 669 of
+  784 attempts name that sheet exactly `Cover`. The production orchestration
+  runs (2026-09-05/07) were launched with `--no-ignore-sheets` and saw the
+  cover; the 2026-09-08 rubric-effect `grade_from_db` run (attempts
+  1175-1236) was not and judged those checks with no evidence — each grade
+  log's parameter header records `"ignore_sheets"`. Ignoring is opt-in
+  (`--ignore-sheets NAME ...`); `--no-ignore-sheets` is a kept no-op.
+
 ## Grade a local task folder
 
 ```bash

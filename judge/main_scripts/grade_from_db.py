@@ -1736,14 +1736,23 @@ Examples:
         help="Enable attempt sheet name filtering (disabled by default). "
         "When enabled, only attempt sheets starting with 'answers_' or 'model_' are kept.",
     )
+    # No sheet is ignored by default (2026-09-09). The port's ["cover"] default
+    # deleted the Cover sheet's CSV before grading, but rubric_9 grades cover
+    # content directly (cover sheet first, version history, master error
+    # flag, purpose/scope/glossary/how-to when they live there) and 85% of
+    # attempts name that sheet exactly "Cover". Any launch that did not pass
+    # --no-ignore-sheets graded those checks with no evidence (the 2026-09-08
+    # rubric-effect grade_from_db run did that; the orchestration runs passed
+    # the flag). Ignoring is now opt-in.
     ignore_group = parser.add_mutually_exclusive_group()
     ignore_group.add_argument(
         "--ignore-sheets",
         nargs="+",
-        default=["cover"],
+        default=[],
         help=(
-            "Sheet names to drop from both attempt and solution before grading "
-            "(case-insensitive). Default: ['cover']."
+            "Sheet names to drop from attempt, solution and starting workbook "
+            "before grading (case-insensitive). Default: none — every sheet, "
+            "including the cover, is served to the judge."
         ),
     )
     ignore_group.add_argument(
@@ -1751,7 +1760,7 @@ Examples:
         dest="ignore_sheets",
         action="store_const",
         const=[],
-        help="Do not ignore any sheets (overrides the default ['cover']).",
+        help="Deprecated no-op: no sheet is ignored by default any more.",
     )
 
     # Agentic mode
