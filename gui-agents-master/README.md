@@ -156,7 +156,7 @@ claude_web:
   project_id: "your-project-id-here"
 ```
 
-`upload_files` paths are relative to `local_files_base` if set, else to the working directory.
+`upload_files` paths are relative to `local_files_base` if set, else to the working directory. You supply the starting workbook — the repo ships no sample `.xlsx` (the blanket `*.xlsx` gitignore rule keeps workbooks out), so edit the placeholder path in `sample_task.yaml` before the first run.
 
 To bundle several tasks in one file, use a `tasks:` list instead of top-level task fields — see [`sample_task.yaml`](infra/configs/run_configs/local_run_examples/sample_task.yaml) for the shape.
 
@@ -203,7 +203,7 @@ dispatch spinup --alias chatgpt-pro-1 \
   --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
 ```
 
-See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md) for the full CLI reference and [`infra/plan.md`](infra/plan.md) for the architecture and config-layering details.
+See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md) for the full CLI reference and [`infra/README.md`](infra/README.md) for the operator guide.
 
 ### BYO infrastructure (external users)
 
@@ -390,7 +390,7 @@ ps aux | grep remote-debugging-port  # all debugging Chrome instances
 
 **`Protocol error (Browser.setDownloadBehavior): Browser context management is not supported`.** Chrome Canary v148+ incompatibility — switch to regular Chrome.
 
-**`0 artifact preview cards found` (ChatGPT).** The model responded with text only and didn't produce an Excel file. Check the conversation in the browser; see [`docs/chatgpt_reliability_summary.md`](docs/chatgpt_reliability_summary.md) for why this happens more often on ChatGPT than on Claude.
+**`0 artifact preview cards found` (ChatGPT).** The model responded with text only and didn't produce an Excel file. Check the conversation in the browser. ChatGPT's non-agentic web UI sometimes describes the model in text instead of producing a workbook; Work mode is the surface that most reliably produces files.
 
 **`You don't have access to this project` (ChatGPT).** The `project_id` in the run config doesn't match the ChatGPT account logged into that browser. Each account has its own project IDs — update the config with the correct ID from your account's project URL.
 

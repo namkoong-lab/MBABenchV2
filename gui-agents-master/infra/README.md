@@ -2,11 +2,9 @@
 
 > **Audience: MBABenchV2 internal team.** This guide assumes access to our private Postgres database, our `mbabenchv2` S3 bucket, and our internal AWS account. **External users:** the local quickstart in [`../README.md`](../README.md) is the supported turnkey path. The dispatcher code below is reusable against your own AWS / Postgres / S3, but you'd need to provision those yourself — see "BYO infrastructure" in the main README.
 
-Operator guide for running gui-agents on EC2 boxes from your laptop. Two
-reference docs worth keeping open:
-
-- [dispatcher/common_commands.md](dispatcher/common_commands.md) — full `dispatch` CLI reference.
-- [plan.md](plan.md) — architecture, config layering, lifecycle details.
+Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
+[dispatcher/common_commands.md](dispatcher/common_commands.md) (the full
+`dispatch` CLI reference) open alongside it.
 
 ## Layout
 

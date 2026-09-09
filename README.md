@@ -37,57 +37,58 @@ How each pipeline selects the benchmark at launch:
 Cross-benchmark misconfiguration fails at startup in every pipeline (schema
 guards + DATABASE_URL checks) rather than writing to the wrong store.
 
-The rest of this README covers the V2 task-management scripts. Tasks live
-in the Neon `MBABenchV2` database (`tasks` table), with starting and
-solution files in S3 under `s3://mbabench/MBABenchV2/tasks/<task_name>/`.
+Tasks live in the Neon `MBABenchV2` database (`tasks` table), with starting
+and solution files in S3 under `s3://mbabench/MBABenchV2/tasks/<task_name>/`.
+Each pipeline and the judge has its own README; `CheatSheet.md` is the
+one-page "how do I launch a run" reference across all of them.
 
 ## Layout
 
 ```text
-pyproject.toml             Editable-install metadata; exposes `config` as a module.
-scripts/                   The runnable scripts.
-  add_task.py              Upload a new task's files to S3 and register it in
-                           the tasks table (the one WRITE script).
-  ingest_tasks.py          Download task folders from S3 + the table into a
-                           local directory (read-only on the DB).
-  estimate_task_times.py   For each local task folder: convert the starting file
-                           to CSV, ask Gemini for an expert time estimate, write
-                           it to ai_judgement.json (read-only on the DB).
-config/                    The two-tiered config system (ThomsonYen/config).
-  config_default.yaml      Committed defaults (bucket, model, persona, ...).
-  config.yaml              Local overrides (gitignored, auto-created).
-  python/                  Upstream package; config.py is installed as `config`.
+pyproject.toml             uv workspace root; exposes `config` as a module.
 setup.sh                   Environment setup: reads venv_path from the config,
                            then `uv sync` for the whole workspace.
 uv.lock                    The pinned resolution for every workspace member.
+config/                    The two-tiered config system (ThomsonYen/config).
+  config_default.yaml      Committed defaults (DB URLs, S3 bucket, API keys as
+                           ${env:VAR} references, EC2 fleet names).
+  config.yaml              Local overrides (gitignored, auto-created).
+  python/                  Upstream package; config.py is installed as `config`.
+scripts/
+  export_good_attempts.py  Export the banked good-attempt manifest per
+                           (pipeline, model, task) for the v2 study cohorts.
+operation/v1/              v1 results assembly and paper figures.
+gui-agents-master/         claude.ai / chatgpt.com via Playwright + CDP.
+cli-agents-master/         Raw model APIs + a local Excel MCP server.
+coding-agents-master/      Claude Code / Codex CLIs in Docker.
+excel-agents-master/       Claude / ChatGPT add-ins inside Excel Online.
+judge/                     Grades attempts against golden solutions.
+judge-annotator/           Human-annotation web app for judge output.
 ```
 
 [ThomsonYen/config](https://github.com/ThomsonYen/config) is the config system.
 
 ## Configuration
 
-Non-secret settings live in `config/config_default.yaml` (committed): the S3
-bucket and prefix, the Gemini model, persona, rate-limit settings, and the
-default task source. On first run a local `config/config.yaml` is created from
-the defaults — edit it for machine-specific overrides; it is gitignored and
-takes precedence over the defaults.
+Non-secret settings live in `config/config_default.yaml` (committed). On first
+run a local `config/config.yaml` is created from the defaults — edit it for
+machine-specific overrides; it is gitignored and takes precedence.
 
-Secrets are **not** stored in the YAML. The two secret values reference the
-environment via `${env:VAR}`:
+Secrets are **not** stored in the committed YAML. They are referenced through
+`${env:VAR}` and can be set either in your shell or directly in the gitignored
+`config/config.yaml`:
 
-- `DATABASE_URL` → `database.url`
-- `GEMINI_API_KEY` → `gemini.api_key`
-
-Set them in your shell (see the `${env:VAR}` references in
-`config/config_default.yaml`). AWS credentials are still read from
-the standard locations (`~/.aws/credentials` or `AWS_*` env vars).
+- `V1_DATABASE_URL` / `V2_DATABASE_URL` → `database.v1_url` / `database.v2_url`
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY` → `keys.*`
+- AWS keys → `aws.access_key_id` / `aws.secret_access_key` (or the standard
+  `~/.aws/credentials` / `AWS_*` locations)
 
 ## Prerequisites
 
-- Python 3.10+
-- An AWS profile that can read/write the `mbabench` S3 bucket
-- The Neon connection string for the MBABenchV2 database
-- A Gemini API key (https://ai.google.dev/)
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
+- An AWS identity that can read/write the `mbabench` S3 bucket
+- The Neon connection string(s) for the database(s) you will run against
+- LibreOffice (`soffice`) for formula recalculation in the CLI pipeline and judge
 
 ## Setup
 
@@ -102,110 +103,17 @@ that locked set, and installs every workspace member editable — including the
 #    Location comes from venv_path in config/config.yaml; default is .venv.
 ./setup.sh
 
-# [Optional] Confirm AWS access (credentials come from ~/.aws/credentials or AWS_* vars)
+# [Optional] Confirm AWS access
 aws sts get-caller-identity
-aws s3 ls s3://[bucket_name]/
+aws s3 ls s3://mbabench/
 ```
 
-## Adding a new task
-
-`add_task.py` uploads a task's files to S3 and registers the task in the DB.
-It is the only script that writes to the `tasks` table. Always dry-run first:
+## Exporting the good-attempt manifest
 
 ```bash
-python scripts/add_task.py --dry-run \
-    --task-name MyTask \
-    --starting-files /path/to/MyTask.xlsx \
-    --solution-files "/path/to/MyTask - Solution.xlsx"
-
-python scripts/add_task.py \
-    --task-name MyTask \
-    --task-source jp \
-    --starting-files /path/to/MyTask.xlsx \
-    --solution-files "/path/to/MyTask - Solution.xlsx"
+python scripts/export_good_attempts.py --out scripts/good_attempts_v2.json
 ```
 
-The script:
-1. Validates all local files exist before touching S3 or the DB.
-2. Uploads each file to `s3://mbabench/MBABenchV2/tasks/<task_name>/{starting,solution}_files/<filename>`.
-3. Inserts a row into `tasks` with the resulting S3 URIs.
-
-Useful flags:
-- `--task-source NAME` — `task_source` value in the DB (default: `tasks.default_source` from config).
-- `--force` — if the task already exists, re-upload and UPDATE instead of erroring.
-- `--dry-run` — preview everything without executing.
-
-## Downloading the tasks
-
-`ingest_tasks.py` reads the `tasks` table (read-only — it never alters it) and
-downloads each task's starting and solution files from S3 into a local folder:
-
-```bash
-python scripts/ingest_tasks.py --dry-run
-python scripts/ingest_tasks.py
-```
-
-Files download to `<repo root>/scratch/tasks` by default; override with
-`--out-dir`. This recreates each task as `<out-dir>/<task_name>/starting_files/`
-and `solution_files/`. Useful flags:
-
-- `--task-source NAME` — which task source to download (default from
-  `config/config_default.yaml`, `tasks.default_source`).
-- `--limit N` — download at most N tasks.
-- `--dry-run` — print every download without writing any files.
-
-## Running the time estimation
-
-`estimate_task_times.py` works on the local task folders produced above. It is
-read-only on the database: it writes the judgement to `ai_judgement.json` inside
-each task folder, not back to the table. Always dry-run first — it converts the
-starting files but does not call Gemini or write anything:
-
-It reads from `<repo root>/scratch/tasks` by default (override with
-`--tasks-dir`):
-
-```bash
-# Preview one task end to end
-python scripts/estimate_task_times.py --dry-run --limit 1
-
-# Estimate one task for real
-python scripts/estimate_task_times.py --limit 1
-
-# Estimate all tasks (skips any that already have ai_judgement.json)
-python scripts/estimate_task_times.py
-```
-
-Useful flags:
-
-- `--model NAME` — Gemini model to use (default from
-  `config/config_default.yaml`, `gemini.model`).
-- `--limit N` — process at most N tasks.
-- `--force` — re-estimate tasks that already have an `ai_judgement.json`.
-- `--skip TASK_NAME [...]` — skip specific tasks entirely (see Known limitations).
-- `--dry-run` — convert only; no Gemini calls, no writes.
-
-The script is idempotent: it skips tasks that already have an `ai_judgement.json`,
-so it is safe to stop (Ctrl+C) and re-run — it picks up where it left off.
-
-## ai_judgement.json
-
-For each task, the estimate is written to `<task_name>/ai_judgement.json`:
-
-```json
-{
-  "task_name": "<task_name>",
-  "ai_time_estimate_min": 42.0,
-  "ai_time_estimate_reasoning": "..."
-}
-```
-
-`ai_time_estimate_min` holds the point estimate in minutes; the model's reasoning
-is stored alongside it in `ai_time_estimate_reasoning`.
-
-## Known limitations
-
-Two tasks (`FundFun` and `MarketBalanced`) contain very large stock-price tables
-(1M+ cells), which exceed the Gemini free-tier per-minute token limit and so do
-not yet have an estimate. They are currently excluded with `--skip FundFun
-MarketBalanced`. Options to handle them later: send only a sample of the large
-sheet, or use a paid Gemini tier.
+Writes one entry per (pipeline, model, task) for the eight study cohorts,
+picking the latest non-deprecated, non-failed `task_attempts` row per cell.
+The output is DB-derived and should not be committed.

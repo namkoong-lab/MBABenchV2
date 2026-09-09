@@ -215,7 +215,7 @@ def _normalize_involved_weights(involved) -> dict[str, float]:
 def primary_category(case_classification) -> str | None:
     """Return the parent task category with the highest weight in
     case_classification.involved_tasks. Matches the parent-level taxonomy
-    from judge/experiment_scripts/plot_both_cat_difficulty.py.
+    used by the v1 paper difficulty plots (operation/v1/paper_scripts/).
     """
     if not isinstance(case_classification, dict):
         return None

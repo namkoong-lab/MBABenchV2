@@ -188,4 +188,4 @@ for log in Path("scratch/gui-agents/attempts").glob("*/json_logs/*.json"):
 | `claude_web_agent/completion_logger.py` | Crash-safe JSON logging |
 | `task_io/` | The source/sink protocols and their reference implementations |
 
-> Full setup, prerequisites, and troubleshooting are in the [README](../README.md). The cloud/EC2 stack is documented in [`infra/plan.md`](../infra/plan.md).
+> Full setup, prerequisites, and troubleshooting are in the [README](../README.md). The cloud/EC2 stack is documented in [`infra/README.md`](../infra/README.md).

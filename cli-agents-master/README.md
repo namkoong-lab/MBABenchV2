@@ -207,7 +207,7 @@ examples/
 ```
 
 ### Output Format
-- **Local mode**: `results_dir/attempts.jsonl` — one JSON line per attempt with model, cost, timing, status
+- **Local mode**: `results_dir/attempts.jsonl` — one JSON line per attempt with model, cost, timing, status. The per-batch `summary.md` / `aggregated_metrics.json` go to `batch_logs/` **under the current working directory**, so launch from the directory where you want them (e.g. alongside `results_dir`).
 - **Auto mode**: PostgreSQL `task_attempts` table + S3 file storage
 
 ## Documentation

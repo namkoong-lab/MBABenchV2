@@ -31,8 +31,11 @@
 task_name: "Sample_Task"
 task_source: "my_tasks"
 
+# You supply the starting files. Point these at your own task's workbook
+# (and any case PDF); absolute paths are simplest. The repo ships no sample
+# workbook — data/sample/ holds only a case PDF.
 upload_files:
-  - "data/sample/MO15 Round 1 - Sec 2 - Bread and Butter - Workbook.xlsx"
+  - "/path/to/your/task/starting_file.xlsx"
   - "data/sample/MO15 Round 1 - Sec 2 - Bread and Butter.pdf"
 
 solution_name: "Sample_Task: Bread and Butter Analysis"

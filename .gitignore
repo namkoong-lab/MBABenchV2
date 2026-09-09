@@ -16,3 +16,5 @@ judge/judge_results/
 
 operation/results/
 .claude/
+# DB-derived manifest written by scripts/export_good_attempts.py; never commit.
+scripts/good_attempts_v2.json

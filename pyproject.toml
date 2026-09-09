@@ -21,11 +21,9 @@ dependencies = [
     "gui-system",
     "excel-agents",
 
-    # scripts/ — ingest_tasks.py, add_task.py, estimate_task_times.py
+    # scripts/ — export_good_attempts.py
     "boto3>=1.34",
     "psycopg2-binary>=2.9",
-    "pandas>=2.0",
-    "google-genai",
     "pyyaml>=6.0",
 
     # operation/ — get_results.py and paper_scripts/ plots

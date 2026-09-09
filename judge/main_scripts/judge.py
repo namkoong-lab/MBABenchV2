@@ -65,6 +65,7 @@ from utils.prompt_utils import (
     render_rubric_checks_list,
 )
 from utils.trajectory import TrajectoryRecorder
+from utils.answer_check import run_answer_check, summary_block
 
 ### Obtain constants
 load_project_configs()
@@ -5210,11 +5211,72 @@ def main(args):
         )
     )
 
+    # --single-pass: swap in the single-pass template and round budget, and
+    # route through the agentic path (single-pass IS an agentic mode; only the
+    # loop shape differs). Mirrors grade_from_db.main so a local folder is
+    # graded by the same judge as a DB attempt.
+    single_pass = bool(getattr(args, "single_pass", False))
+    if single_pass:
+        args.agentic = True
+        agentic_template_path = str(
+            relative_path_from_project_root(
+                load_env_var(
+                    "SINGLE_PASS_PROMPT_TEMPLATE",
+                    default="./prompts/agentic_judge_template_8.yaml",
+                )
+            )
+        )
+        if args.max_tool_rounds == AGENTIC_JUDGE_MAX_ROUNDS:
+            args.max_tool_rounds = int(
+                load_env_var("SINGLE_PASS_MAX_ROUNDS", default=500)
+            )
+
     # Fail fast on an unregistered label, before any file work.
     identity = resolve_judge_identity(args.model)
     client = get_client(identity)
 
-    if args.agentic:
+    if single_pass:
+        # Harness answer check first (judge v6+): deterministic Questions-sheet
+        # comparison whose verdicts the judge can adopt for the Accuracy checks
+        # (--accuracy-check harness). Score-neutral on failure: the LLM's own
+        # verdicts then stand. Same wiring as grade_from_db.grade_single_attempt.
+        task_folder = Path(args.folder_to_grade)
+        harness_verdicts = {}
+        try:
+            solution_xlsx = find_golden_solution_file(task_folder)
+            hardcoded_counts = str(
+                load_env_var("SINGLE_PASS_HARDCODED_COUNTS", default="true")
+            ).strip().lower() in ("1", "true", "yes")
+            ac_result = run_answer_check(
+                task_folder / "ai_attempt.xlsx",
+                solution_xlsx,
+                output_json_path=task_folder / "answer_check.json",
+                hardcoded_counts=hardcoded_counts,
+            )
+            logger.info(f"  [answer_check] {summary_block(ac_result)}")
+            harness_verdicts = ac_result.get("harness_verdicts") or {}
+        except Exception as e:  # noqa: BLE001 — score-neutral by design
+            logger.warning(f"  [answer_check] skipped on error: {e}")
+
+        single_pass_judge_case(
+            task_folder=args.folder_to_grade,
+            client=client,
+            rubric_path=rubric_path,
+            template_path=agentic_template_path,
+            rubric_weight_path=rubric_weight_path,
+            model=args.model,
+            nocall=args.nocall,
+            noupload=args.noupload,
+            use_existing=not args.no_use_existing,
+            run_calculation=args.run_calculation,
+            attempt_sheet_name_filter=args.attempt_sheet_name_filter,
+            ignore_sheets=args.ignore_sheets,
+            max_tool_rounds=args.max_tool_rounds,
+            reasoning_effort=args.reasoning_effort,
+            harness_verdicts=harness_verdicts,
+            accuracy_engine=args.accuracy_check,
+        )
+    elif args.agentic:
         agentic_judge_case(
             task_folder=args.folder_to_grade,
             client=client,
@@ -5333,15 +5395,36 @@ if __name__ == "__main__":
         nargs="+",
         default=None,
         help=(
-            "Sheet names to drop from both attempt and solution before grading "
-            "(case-insensitive, matched against the safe sheet name). "
-            "Example: --ignore-sheets cover."
+            "Sheet names to drop from attempt, solution and starting workbook "
+            "before grading (case-insensitive). Default: none — every sheet, "
+            "including the cover, is served to the judge."
         ),
     )
     parser.add_argument(
         "--agentic",
         action="store_true",
-        help="Use the agentic judge (multi-turn tool-calling) instead of the standard judge",
+        help="Use the 12-category agentic judge (one tool-calling conversation per category) instead of the standard judge",
+    )
+    parser.add_argument(
+        "--single-pass",
+        action="store_true",
+        dest="single_pass",
+        help=(
+            "Use the single-pass judge (one tool-calling conversation over every "
+            "check; the production v2 judge). Implies --agentic and swaps in the "
+            "single_pass.* template and round budget from project_configs.yaml."
+        ),
+    )
+    parser.add_argument(
+        "--accuracy-check",
+        choices=["harness", "llm"],
+        default="harness",
+        help=(
+            "(Single-pass only) Which engine decides the answer-accuracy checks: "
+            "'harness' (default) adopts the deterministic Questions-sheet comparison "
+            "where it is confident, 'llm' keeps the judge's own verdicts. Both are "
+            "always recorded in scores.json."
+        ),
     )
     parser.add_argument(
         "--carry-over-context",
@@ -5376,7 +5459,7 @@ if __name__ == "__main__":
         "--reasoning-effort",
         type=str,
         default=None,
-        choices=["none", "minimal", "low", "medium", "high"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         help=(
             "Override the reasoning effort pinned by the grader's identity "
             "(default: the identity's effort). Models without thinking "

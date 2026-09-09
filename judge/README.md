@@ -88,7 +88,7 @@ adopted from the same sheet), a v2 agentic grading additionally:
   tolerance `|a-b| <= max(1e-9, 1e-6*max(|a|,|b|))`; full artifact
   `answer_check.json` rides with the raw files, summary in
   `scored_results.answer_check`. Never affects the 0-100 score. Side-by-side
-  view: `operation_scripts/report_answer_check.py`.
+  view: `operation_scripts/report_accuracy_engine.py`.
 - **Serves category-keyed context views** (template 5): extraction writes a
   format-stripped `<sheet>_data.csv` beside every `<sheet>_full.csv`;
   `read_file` serves the data view except in Formatting, and attaches
@@ -214,24 +214,59 @@ version 7 is cut.
   log's parameter header records `"ignore_sheets"`. Ignoring is opt-in
   (`--ignore-sheets NAME ...`); `--no-ignore-sheets` is a kept no-op.
 
-## Grade a local task folder
+## Grade a local task folder (no database, no S3)
 
-```bash
-python judge/main_scripts/judge.py --benchmark v1 -f judge/scratch/test_cases/Bread_And_Butter
-```
-
-Expected layout:
+This is the path for grading attempts produced outside the MBABench
+infrastructure — your own tasks, run through any of the agent pipelines in
+local mode. Assemble one folder per attempt:
 
 ```text
 <folder>/
-  ai_attempt.xlsx
-  solution/<solution>.xlsx
-  context.pdf | context.txt         # optional
+  ai_attempt.xlsx                   # the agent's workbook, renamed
+  solution/<golden>.xlsx            # your golden solution
+  starting/starting_workbook.xlsx   # optional: what the agent was given
+  context.pdf | context.txt         # optional: case text
   rubric.json | rubric_weights.json # optional, falls back to the benchmark's pair
 ```
 
-Results land in `<folder>/judge_results/`: extracted CSVs, per-category
-`judgement_*.json`, `scores.json`, and the run log.
+Where each pipeline leaves the agent's workbook in local mode:
+
+| Pipeline | Local output |
+|---|---|
+| gui-agents (`sink.kind: local`) | `<paths.scratch_dir>/attempts/<ts>_<task>_p<pid>/solutions/*.xlsx` |
+| cli-agents (`local_mode: true`) | `<results_dir>/<task folder name>/solution.xlsx` |
+| coding-agents (`mode: external`) | `<results_dir>/<task>_<ts>_<pid>/solution.xlsx` |
+| excel-agents (`sink.kind: local`) | `<paths.scratch_dir>/attempts/<ts>_<task>/solutions/*.xlsx` |
+
+Then grade it with the same judge the v2 benchmark uses (single-pass,
+harness answer check, OpenAI grader called directly — no OpenRouter):
+
+```bash
+export OPENAI_API_KEY=sk-...
+JUDGE_SKIP_SUITABILITY=1 python judge/main_scripts/judge.py \
+    --benchmark v2 --single-pass --model openai/gpt-5.6-sol -f /path/to/<folder>
+```
+
+- `--single-pass` is the production v2 judge (one conversation over all 132
+  checks). `--agentic` alone is the older 12-category judge (one conversation
+  per category); scores from the two are not comparable.
+- `JUDGE_SKIP_SUITABILITY=1` is required for tasks outside the MBABench task
+  pool: v2 grading otherwise expects a per-task rubric-suitability annotation
+  (fetched from S3 by the DB drivers, or placed in the folder as
+  `rubric_suitability.json`). Skipping grades every check ungated and records
+  that in `scores.json`.
+- `--model` takes any label in `judge_identities.yaml`; the provider and
+  reasoning effort are pinned there. Add `--reasoning-effort` to override the
+  pin, `--nocall` to test extraction without spending, `--run-calculation` to
+  recalculate formulas in LibreOffice first (needed when the attempt's cached
+  values are missing; the formula-cache gate refuses such workbooks).
+- Attempt workbooks must carry cached formula values. Workbooks saved by
+  openpyxl without a recalculation step have none — run with
+  `--run-calculation` or recalculate them yourself.
+
+Results land in `<folder>/judge_results/`: extracted CSVs,
+`ai_judgement.json`, `scores.json` (0–100 total and per-category),
+`answer_check.json`, and the run log.
 
 ## Operation scripts
 

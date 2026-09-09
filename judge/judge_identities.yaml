@@ -27,13 +27,6 @@
   model: google/gemini-2.5-flash
   effort: minimal
 
-# Fuzzy task search (operation_scripts/search_tasks.py), not a grader:
-# called without reasoning_effort, hence null.
-- grader_model: google/gemini-2.5-flash-lite
-  provider: openrouter                # was in judge.openrouter_models
-  model: google/gemini-2.5-flash-lite
-  effort: null
-
 - grader_model: google/gemini-3.5-flash
   provider: openrouter                # was in judge.openrouter_models
   model: google/gemini-3.5-flash
