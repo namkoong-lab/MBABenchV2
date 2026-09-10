@@ -63,6 +63,8 @@ from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
     BENCHMARKS,
     add_benchmark_arg,
+    apply_latest_prompt_guard,
+    latest_prompt_versions,
     current_benchmark,
     load_env_var,
     load_project_configs,
@@ -954,6 +956,14 @@ def main():
         help="Do not filter by DEFAULT_MODELS_PROMPT_VERSION.",
     )
     parser.add_argument(
+        "--all-prompt-versions",
+        action="store_true",
+        default=False,
+        help="Grade attempts on ANY prompt version. By default a v2 run keeps only "
+             "each pipeline's latest prompt generation (LATEST_PROMPT_VERSION_BY_TYPE "
+             "in utils/misc_utils.py) so no credits go to superseded prompts.",
+    )
+    parser.add_argument(
         "--prompt-versions-json",
         type=str,
         default=None,
@@ -1169,6 +1179,24 @@ def main():
             return
 
         logger.info(f"Matched {len(attempts)} attempts.")
+
+        # Latest-prompt guard (2026-09-10): never spend on superseded prompts.
+        latest = None if args.all_prompt_versions else latest_prompt_versions(args.benchmark)
+        if latest:
+            attempts, dropped = apply_latest_prompt_guard(attempts, latest)
+            if dropped:
+                by_pv = {}
+                for d in dropped:
+                    k = (d.get("agent_model_type"), d.get("prompt_version"))
+                    by_pv[k] = by_pv.get(k, 0) + 1
+                logger.info(
+                    f"Latest-prompt guard {latest}: dropped {len(dropped)} attempt(s) on "
+                    f"older prompt versions {sorted(by_pv.items())}. "
+                    f"Use --all-prompt-versions to grade them anyway."
+                )
+            if not attempts:
+                logger.info("No attempts on the latest prompt versions. Exiting.")
+                return
 
         if not args.no_dedup:
             before = len(attempts)

@@ -9,8 +9,8 @@ counts). Smoke rows (prompt_version 0) are excluded.
 
 Selection policy, per (pipeline, model, task):
   1. same pipeline type and exact agent_model_name (the cohort label);
-  2. prompt_version in the cohort's approved set (below) - smoke rows (pv 0)
-     and stray old-prompt runs never qualify;
+  2. prompt_version is the pipeline's LATEST (LATEST_PV below) - smoke rows
+     (pv 0/1) and every earlier prompt generation never qualify;
   3. not deprecated and not agent_failed (a run that hit the iteration cap is
      recorded agent_failed=False by the pipelines and counts);
   4. if more than one row survives, the most recent (highest id) wins and the
@@ -32,16 +32,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import Config  # noqa: E402
 import psycopg2  # noqa: E402
 
+# Latest prompt generation per pipeline (2026-09-10, House Standards set):
+# GUI/Excel 205 (single-pass + Questions sheet + house standards), CLI 1408
+# (system v14 + template v8), coding 112 (template v12). ONLY these count —
+# every earlier prompt version is ignored by this manifest, so a task is
+# "missing" until it has a good attempt on the current prompts.
+LATEST_PV = {"gui": 205, "excel": 205, "api": 1408, "coding_cli": 112}
+
 COHORTS = [
     # (pipeline, model, agent_model_type, agent_model_name, approved prompt versions)
-    ("gui",        "fable", "gui",        "claude_fable_5_cowork_max",              (201, 202, 203)),
-    ("gui",        "sol",   "gui",        "chatgpt_gpt_5_6_sol_work_ultra",         (201, 202, 203)),
-    ("api",        "fable", "api",        "openpyxl_anthropic/claude-fable-5-max",   (1307,)),
-    ("api",        "sol",   "api",        "openpyxl_openai/gpt-5.6-sol-xhigh",      (1307,)),
-    ("coding_cli", "fable", "coding_cli", "claudecode_anthropic/claude-fable-5-max", (109,)),
-    ("coding_cli", "sol",   "coding_cli", "codex_openai/gpt-5.6-sol-xhigh",         (109,)),
-    ("excel",      "fable", "excel",      "claude_excel_fable_5",                   (203,)),
-    ("excel",      "sol",   "excel",      "chatgpt_excel_gpt_5_6_sol_xhigh",        (203,)),
+    # TODO(2026-09-10): the 101-task rerun uses new model labels (GUI:
+    # claude_fable_5_1_cowork_max / chatgpt_gpt_6_astra_work_ultra are
+    # registered; CLI / coding / Excel labels pending). Update the labels
+    # below when each cohort's identity is registered.
+    ("gui",        "fable", "gui",        "claude_fable_5_cowork_max",              (LATEST_PV["gui"],)),
+    ("gui",        "sol",   "gui",        "chatgpt_gpt_5_6_sol_work_ultra",         (LATEST_PV["gui"],)),
+    ("api",        "fable", "api",        "openpyxl_anthropic/claude-fable-5-max",   (LATEST_PV["api"],)),
+    ("api",        "sol",   "api",        "openpyxl_openai/gpt-5.6-sol-xhigh",      (LATEST_PV["api"],)),
+    ("coding_cli", "fable", "coding_cli", "claudecode_anthropic/claude-fable-5-max", (LATEST_PV["coding_cli"],)),
+    ("coding_cli", "sol",   "coding_cli", "codex_openai/gpt-5.6-sol-xhigh",         (LATEST_PV["coding_cli"],)),
+    ("excel",      "fable", "excel",      "claude_excel_fable_5",                   (LATEST_PV["excel"],)),
+    ("excel",      "sol",   "excel",      "chatgpt_excel_gpt_5_6_sol_xhigh",        (LATEST_PV["excel"],)),
 ]
 
 def jsonable(v):

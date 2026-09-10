@@ -42,6 +42,8 @@ from utils.logger import add_log_file, logger, remove_log_file
 from utils.misc_utils import (
     BENCHMARKS,
     add_benchmark_arg,
+    apply_latest_prompt_guard,
+    latest_prompt_versions,
     current_benchmark,
     get_db_url,
     load_env_var,
@@ -320,6 +322,7 @@ def fetch_attempts_by_task_ids(conn, task_ids):
                 ta.attempt_files,
                 ta.agent_model_name,
                 ta.agent_model_type,
+                ta.prompt_version,
                 ta.agent_failed,
                 t.task_name,
                 t.task_starting_files,
@@ -1227,6 +1230,18 @@ def main(args):
             logger.info(
                 f"Fetched {len(attempts)} attempts for task IDs: {args.task_ids}"
             )
+            # Latest-prompt guard (2026-09-10): --task-ids grades every attempt
+            # of a task, so refuse the superseded prompt generations by default.
+            latest = None if args.all_prompt_versions else latest_prompt_versions(args.benchmark)
+            if latest:
+                attempts, dropped = apply_latest_prompt_guard(attempts, latest)
+                if dropped:
+                    logger.info(
+                        f"Latest-prompt guard {latest}: dropped {len(dropped)} attempt(s) "
+                        f"on older prompt versions "
+                        f"{sorted({(d.get('agent_model_type'), d.get('prompt_version')) for d in dropped})}. "
+                        f"Use --all-prompt-versions to grade them anyway."
+                    )
         else:
             logger.error("Must provide --attempt-ids or --task-ids")
             return
@@ -1699,7 +1714,15 @@ Examples:
         "--task-ids",
         type=int,
         nargs="+",
-        help="One or more task IDs (grades all non-deprecated attempts for each task)",
+        help="One or more task IDs (grades all non-deprecated attempts for each task "
+             "on the pipeline's latest prompt version; see --all-prompt-versions)",
+    )
+    parser.add_argument(
+        "--all-prompt-versions",
+        action="store_true",
+        default=False,
+        help="With --task-ids: also grade attempts on superseded prompt versions "
+             "(default keeps only LATEST_PROMPT_VERSION_BY_TYPE for the benchmark).",
     )
 
     # File resolution

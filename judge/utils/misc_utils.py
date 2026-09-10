@@ -45,6 +45,41 @@ BENCHMARKS = {
     },
 }
 
+# Latest agent prompt generation per pipeline (task_attempts.agent_model_type),
+# 2026-09-10 House Standards set: GUI/Excel 205, CLI 1408 (system v14 +
+# template v8), coding 112 (template v12). Both DB drivers refuse to spend on
+# older prompt versions for v2 by default (--all-prompt-versions overrides);
+# scripts/export_good_attempts.py carries the same numbers. Bump here when a
+# pipeline cuts a new prompt version.
+LATEST_PROMPT_VERSION_BY_TYPE = {
+    "v2": {"gui": 205, "excel": 205, "api": 1408, "coding_cli": 112},
+}
+
+
+def latest_prompt_versions(benchmark):
+    """{agent_model_type: prompt_version} for *benchmark*, or None when the
+    benchmark has no latest-prompt table (v1 is closed)."""
+    return LATEST_PROMPT_VERSION_BY_TYPE.get(benchmark)
+
+
+def apply_latest_prompt_guard(rows, latest_by_type, type_key="agent_model_type",
+                              pv_key="prompt_version"):
+    """Drop attempt rows whose prompt_version is not the pipeline's latest.
+
+    Rows whose type is not in the table (e.g. 'human') pass through. Returns
+    (kept, dropped) so the caller can log what it refused to grade."""
+    if not latest_by_type:
+        return list(rows), []
+    kept, dropped = [], []
+    for r in rows:
+        want = latest_by_type.get(r.get(type_key))
+        if want is None or r.get(pv_key) == want:
+            kept.append(r)
+        else:
+            dropped.append(r)
+    return kept, dropped
+
+
 # The benchmark this process is grading, set by load_project_configs(benchmark=...).
 _BENCHMARK = None
 

@@ -343,6 +343,8 @@ check("cached_starting_csv_dir=cached_starting" in orch_src,
       "orchestrator forwards the starting CSV cache")
 check("single_pass=self.single_pass" in orch_src,
       "orchestrator forwards single_pass")
+check("apply_latest_prompt_guard(" in orch_src and "--all-prompt-versions" in orch_src,
+      "orchestrator refuses superseded prompt versions by default (latest-prompt guard)")
 
 gfd_src = (JUDGE / "main_scripts" / "grade_from_db.py").read_text()
 check('result.get("versions")' in gfd_src,

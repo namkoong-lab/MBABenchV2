@@ -259,6 +259,18 @@ version 7 is cut.
   log's parameter header records `"ignore_sheets"`. Ignoring is opt-in
   (`--ignore-sheets NAME ...`); `--no-ignore-sheets` is a kept no-op.
 
+### Latest-prompt guard (2026-09-10)
+
+Both DB drivers refuse to spend on superseded agent prompts. For `--benchmark
+v2`, `grade_with_orchestration.py` and `grade_from_db.py --task-ids` keep only
+attempts whose `prompt_version` is the pipeline's latest —
+`LATEST_PROMPT_VERSION_BY_TYPE` in `utils/misc_utils.py` (gui/excel 205, api
+1408, coding_cli 112 as of the House Standards set) — and log what they
+dropped. `--all-prompt-versions` grades everything; `--attempt-ids` is always
+explicit and never filtered. `scripts/export_good_attempts.py` carries the same
+numbers (`LATEST_PV`) and an offline test keeps the two tables in agreement.
+Bump the table whenever a pipeline cuts a new prompt version.
+
 ## Grade a local task folder (no database, no S3)
 
 This is the path for grading attempts produced outside the MBABench
