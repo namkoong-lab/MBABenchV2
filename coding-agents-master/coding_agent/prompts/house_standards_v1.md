@@ -2,7 +2,7 @@
 
 September 2026
 
-These are the conventions particular to us. Ordinary professional practice is assumed and not restated here. Where the engagement brief/instructions conflicts with anything below, they govern; departures are fine with a reason noted on the cover.
+These are the conventions particular to us. Ordinary professional practice is assumed and not restated here. Where the engagement brief or instructions conflict with anything below, they govern; departures are fine with a reason noted on the cover.
 
 ---
 
@@ -40,7 +40,7 @@ Beyond the sheets any model needs, every model carries a linked contents page, a
 
 **Colour.** Blue font: hardcoded inputs · black: formulas · green: links to another sheet · red: links to another workbook. Inputs also carry a pale blue fill; key inputs carry data validation. Beyond these, at most two or three additional colours across fonts, fills and tab colours, none of them resembling the four. Yellow means "unfinished" or "review me" and nothing else — nothing unfinished ships, and any yellow left in the delivered file is explained in the legend.
 
-**Numbers.** Zeros as dashes. $mm to two decimal, percentages to one, multiples to one (7.5x), counts to none — held constant across comparable values.
+**Numbers.** Zeros as dashes. $mm to two decimals, percentages to one, multiples to one (7.5x), counts to none — held constant across comparable values.
 
 **Grid.** Arial 10 throughout. No merged cells — Center Across Selection instead. A buffer row inside every total range.
 
@@ -48,9 +48,7 @@ Beyond the sheets any model needs, every model carries a linked contents page, a
 
 # 4 · Delivery
 
-A single-entity model recalculates in under five seconds and stays under 10MB.
-
-Group rather than hide rows and columns, and nothing is hidden anywhere else either. Workbooks are self-contained: no links to other workbooks unless the brief/instructions require them, and no macros without disclosure on the cover and a reason native Excel cannot do the job.
+Group rather than hide rows and columns, and nothing is hidden anywhere else either. Workbooks are self-contained: no links to other workbooks unless the brief or instructions require them, and no macros without disclosure on the cover and a reason native Excel cannot do the job.
 
 Circularity only where the economics require it, each instance noted and fitted with a breaker switch, with iterative calculation enabled and stated.
 

@@ -89,3 +89,16 @@
   thinking_effort: "Extra High"
   agent_folder: chatgpt_excel_gpt_5_6_sol_xhigh
   agent_model_type: excel
+
+# 2026-09-10 (101-task rerun): Fable 5.1 in the Claude add-in. Probed live
+# the same day in Excel Online — model dropdown "Fable 5.1" / "Opus 5" /
+# "Sonnet 5" / "Fable 5" / "Opus 4.8", Fable 5.1 the default. The add-in
+# exposes no effort tiers; its only reasoning control is the "Toggle
+# extended thinking" button, which handle_initial_setup now pins ON and
+# verifies (an unverifiable toggle aborts the attempt as infra).
+- agent_model_name: claude_excel_fable_5_1
+  provider: claude_excel_agent
+  ui_model_label: "Fable 5.1"
+  thinking_effort: null
+  agent_folder: claude_excel_fable_5_1
+  agent_model_type: excel

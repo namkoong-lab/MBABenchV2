@@ -259,6 +259,33 @@ def test_attachment_provenance_and_v14_resolution():
                   "missing or empty")
 
 
+def test_v15_delivers_house_standards_under_the_directive_name():
+    """v15 lands the standards as HOUSE_STANDARDS.md — the name the prompt
+    points at and the coding pipeline uses — and provenance records both
+    the delivered name and the versioned source."""
+    import hashlib
+    from excel_cli_agent import prompt_versions, repo_config
+
+    assert prompt_versions.attachment_names_for("v14") == {}
+    names = prompt_versions.attachment_names_for("v15")
+    assert names == {"House_Standards_v1.md": "HOUSE_STANDARDS.md"}
+    with tempfile.TemporaryDirectory() as tmp:
+        src = _write_standards(Path(tmp))
+        runner = make_runner(Path(tmp) / "ws", GoodS3())
+        runner._attachments = [src]
+        runner._attachment_names = names
+        task = make_task(["s3://mbabench/MBABenchV2/tasks/x/starting_files/a.xlsx"])
+        workspace = Path(runner.setup_workspace(task))
+        assert (workspace / "HOUSE_STANDARDS.md").read_text() == src.read_text()
+        assert not (workspace / "House_Standards_v1.md").exists()
+        cfg = runner.detect_workspace_files(str(workspace))
+        assert cfg.detected_text_files == ["HOUSE_STANDARDS.md"]
+        prov = repo_config.attachment_extra_configs([src], names)["house_standards"]
+        assert prov == {"version": 1, "file": "HOUSE_STANDARDS.md", "source": "House_Standards_v1.md",
+                        "sha256": hashlib.sha256(src.read_bytes()).hexdigest()}
+        assert runner._attachment_extra_configs()["house_standards"]["file"] == "HOUSE_STANDARDS.md"
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

@@ -22,14 +22,14 @@ agent_model_name: "openpyxl_openai/gpt-5.2-none"
 
 # Which experiment this run belongs to (REQUIRED):
 #   v1 -> BizbenchV1 DB, s3://mbabench/BizbenchV1/..., v1-rubric prompts
-#   v2 -> MBABenchV2 DB, s3://mbabench/MBABenchV2/..., v2-rubric prompts (v14)
+#   v2 -> MBABenchV2 DB, s3://mbabench/MBABenchV2/..., v2 prompts (v15, rubric-scrubbed)
 # This key selects the database on its own: database.v1_url / v2_url in
 # <MBABenchV2>/config/config.yaml — no DATABASE_URL swapping in .env.
 # (DATABASE_URL remains the fallback for standalone runs, and is
 # sanity-checked against the benchmark at startup.) prompt_version (below)
 # defaults from the benchmark; an explicit value must embed the same
-# benchmark's rubric (v1..v11 = the 17-check v1 rubric, v12..v14 = the
-# 132-check v2 rubric) or the run refuses to start.
+# benchmark (v1..v11 = the 17-check v1 rubric, v12..v14 = the 132-check v2
+# rubric, v15 = v2 with the rubric scrubbed) or the run refuses to start.
 # EXCEL_AGENT_SKIP_RUBRIC_GUARD=1 forces a deliberate cross-benchmark run.
 benchmark: "v1"
 
@@ -48,8 +48,11 @@ benchmark: "v1"
 #          + Questions-sheet answers + house standards: the version also
 #          ships <MBABenchV2>/house_standards/House_Standards_v1.md into
 #          every workspace and embeds its text in the model context)
-# Omitting it defaults from the benchmark (v1 -> v10, v2 -> v14). Recorded in
-# the DB as system*100 + template (e.g. v11 = 1105, v14 = 1408).
+#   v15 -> system_prompt_v15.txt + task_template_shared_v9.txt         (v14 with
+#          every rubric passage scrubbed; the standards file is delivered
+#          as HOUSE_STANDARDS.md, matching the coding pipeline)
+# Omitting it defaults from the benchmark (v1 -> v10, v2 -> v15). Recorded in
+# the DB as system*100 + template (e.g. v11 = 1105, v15 = 1509).
 prompt_version: "v11"
 
 # Trials mode: max attempts per task+model combo

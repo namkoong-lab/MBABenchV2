@@ -20,6 +20,8 @@ foreign process on the port is an error to report, not something to kill.
 import asyncio
 import logging
 import os
+import json
+import re
 import platform
 import socket
 import subprocess
@@ -100,6 +102,36 @@ def is_cdp_port_open(port: int) -> bool:
     finally:
         sock.close()
 
+def ensure_cdp_page_target(port: int) -> bool:
+    """Make sure the automation Chrome has at least one page target.
+
+    A Chrome whose last tab was closed keeps listening on the CDP port but
+    Playwright's connect_over_cdp then fails with "Protocol error
+    (Browser.setDownloadBehavior): Browser context management is not
+    supported" (seen 2026-09-10 after a probe closed the final tab). Opening
+    a blank page through the HTTP endpoint restores the default context.
+    Returns True when a page target exists afterwards.
+    """
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=5) as r:
+            targets = json.loads(r.read().decode("utf-8") or "[]")
+        if any(t.get("type") == "page" for t in targets):
+            return True
+        logger.warning(
+            f"⚠️ Chrome on port {port} has no page target — opening a blank "
+            f"page so CDP attach can succeed"
+        )
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT"
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            r.read()
+        return True
+    except Exception as e:
+        logger.warning(f"⚠️ Could not verify/open a page target on port {port}: {e}")
+        return False
+
+
 def check_cdp_health(port: int, timeout: int = 10) -> bool:
     """Does the process on the port answer CDP's /json/version?"""
     try:
@@ -118,7 +150,13 @@ def kill_automation_chrome(profile_dir: str) -> None:
     browser's, so a -f match on it cannot touch the user's own Chrome,
     Firefox, or any sibling pipeline using a different profile.
     """
-    token = f"--user-data-dir={profile_dir}"
+    # No leading dashes in the pattern: macOS pkill parsed the old
+    # "--user-data-dir=..." token as an option ("illegal option -- -") and
+    # killed nothing, so every CDP-recovery retry found Chrome "already
+    # running" (2026-09-10). The trailing boundary keeps a sibling lane's
+    # profile that merely extends this one (chrome-excel vs
+    # chrome-excel-9227) out of reach.
+    pattern = f"user-data-dir={re.escape(profile_dir)}( |$)"
     logger.warning(f"🧹 Killing automation Chrome (profile {profile_dir})")
     if os.name == "nt":
         # No pkill on Windows; scoped kill needs WMI. Refuse rather than
@@ -128,7 +166,11 @@ def kill_automation_chrome(profile_dir: str) -> None:
             "the automation Chrome window manually."
         )
         return
-    subprocess.run(["pkill", "-f", token], check=False, capture_output=True)
+    result = subprocess.run(
+        ["pkill", "-f", pattern], check=False, capture_output=True, text=True
+    )
+    if result.returncode not in (0, 1):  # 1 = no process matched
+        logger.error(f"pkill failed (rc={result.returncode}): {result.stderr.strip()}")
 
 
 def launch_chrome_cdp(settings: dict) -> subprocess.Popen | None:
@@ -248,6 +290,7 @@ class BrowserManager:
         last_error: Exception | None = None
         for attempt in range(3):
             await self._ensure_chrome()
+            ensure_cdp_page_target(self.cdp_port)
             try:
                 browser = await playwright.chromium.connect_over_cdp(
                     self.cdp_url, timeout=30000

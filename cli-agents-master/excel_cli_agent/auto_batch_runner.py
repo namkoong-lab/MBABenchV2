@@ -33,7 +33,7 @@ from .repo_config import (
 )
 from .prompt_versions import (
     PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, DEFAULT_V2_PROMPT_VERSION,
-    attachments_for, parse_prompt_version, rubric_for_prompt_version,
+    attachment_names_for, attachments_for, parse_prompt_version, rubric_for_prompt_version,
 )
 
 # Resolved prompt paths (set by load_config based on prompt_version)
@@ -257,6 +257,7 @@ class AutoBatchRunner(BatchRunner):
         # with every workspace (house standards). Resolved now so a missing
         # file fails the batch before any task is claimed.
         self._attachments = resolve_attachments(attachments_for(prompt_ver))
+        self._attachment_names = attachment_names_for(prompt_ver)
 
         self.config = config
 
@@ -269,7 +270,7 @@ class AutoBatchRunner(BatchRunner):
         print(f"   Pinned by identity: {identity.settings()}")
         print(f"   extra_configs column: {'yes' if self._extra_configs_supported else 'NO'}")
         print(f"   Prompt version: {prompt_ver}")
-        print(f"   Attachments: {[p.name for p in self._attachments] or 'none'}")
+        print(f"   Attachments: {[self._delivered_name(p) for p in self._attachments] or 'none'}")
         print(f"   Max iterations: {config['max_iterations']}")
         print(f"   Max trials: {config['max_trials']}")
         print(f"   Trials since: {config['trials_since']}")
@@ -646,7 +647,7 @@ class AutoBatchRunner(BatchRunner):
         # Upload the attachments too: they are prompt text the agent saw, so
         # prompt_files must reproduce them alongside the system prompt.
         for attachment in self._attachments:
-            s3_key = f"{prompts_prefix}/{timestamp}_{attachment.name}"
+            s3_key = f"{prompts_prefix}/{timestamp}_{self._delivered_name(attachment)}"
             try:
                 self.s3_client.upload_file(str(attachment), self._s3_bucket, s3_key)
                 uri = f"s3://{self._s3_bucket}/{s3_key}"

@@ -127,9 +127,81 @@ async def _visible_row_names(page) -> set[str]:
     return names
 
 
-async def _folder_visible(page, name: str) -> bool:
-    await asyncio.sleep(1.0)
-    return _normalize_name(name) in await _visible_row_names(page)
+_SCROLL_LIST_JS = """(dy) => {
+  let moved = false;
+  for (const el of document.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+        && el.scrollHeight > el.clientHeight + 50
+        && el.querySelector('[role="row"]')) {
+      const before = el.scrollTop;
+      el.scrollTop = dy < 0 ? 0 : before + dy;
+      moved = moved || el.scrollTop !== before;
+    }
+  }
+  return moved;
+}"""
+
+
+async def _folder_visible(
+    page, name: str, max_scrolls: int = 40, step_px: int = 500
+) -> bool:
+    """True iff a row named `name` exists in the current OneDrive listing.
+
+    OneDrive virtualizes the list: only ~60 rows are in the DOM and the
+    rest render as its list container scrolls. Reading the rendered rows
+    once therefore reported every alphabetically-late task as missing once
+    the jp folder held more than ~60 entries (verify run 2026-09-10: 60 ok
+    / 41 "missing", the 8 late-alphabet originals among them). Mouse-wheel
+    events do not reliably reach the list container either, so scroll the
+    container itself (any scrollable element that holds [role=row]) in
+    steps and rescan; stop when the row set stops growing (end of list).
+    Scroll back to the top afterwards so the caller's own click scan starts
+    from a known position.
+    """
+    target = _normalize_name(name)
+    # Let the new listing render: wait until [role=row] is non-empty and
+    # its count holds steady across two samples (up to ~10 s). Scanning
+    # earlier reads the PREVIOUS folder's rows and finds no list to scroll.
+    last = -1
+    for _ in range(10):
+        await asyncio.sleep(1.0)
+        try:
+            count = await page.locator('[role="row"]').count()
+        except Exception:
+            count = 0
+        if count > 0 and count == last:
+            break
+        last = count
+    seen = await _visible_row_names(page)
+    if target in seen:
+        return True
+    found = False
+    stale = 0
+    for _ in range(max_scrolls):
+        try:
+            await page.evaluate(_SCROLL_LIST_JS, step_px)
+        except Exception:
+            break
+        await asyncio.sleep(0.6)
+        names = await _visible_row_names(page)
+        if target in names:
+            found = True
+            break
+        if names <= seen:
+            stale += 1
+            if stale >= 5:
+                break
+        else:
+            stale = 0
+        seen |= names
+    logger.debug(f"   scroll-scan for {name}: found={found} rows_seen={len(seen)}")
+    try:
+        await page.evaluate(_SCROLL_LIST_JS, -1)
+        await asyncio.sleep(0.5)
+    except Exception:
+        pass
+    return found
 
 
 async def _create_folder(page, name: str) -> bool:

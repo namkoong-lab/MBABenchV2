@@ -94,6 +94,17 @@ class AIAgentCore(ABC):
         """Return True if agent requires Add-ins menu (default: False)."""
         return False
 
+    def get_ribbon_launcher_name(self) -> str | None:
+        """Label of the add-in's OWN ribbon launcher, or None.
+
+        An installed add-in gets a RibbonButton of its own in the Home
+        ribbon ("Claude", "ChatGPT" — probed 2026-09-10); at narrow window
+        widths Excel Online collapses it into the "More Options" overflow
+        flyout as a menuitem with the same name. Clicking either opens the
+        panel directly, skipping the Add-ins -> My Add-ins popup.
+        """
+        return None
+
     def get_config_section(self) -> dict:
         """Get agent-specific config section (tabai, claude_excel_agent, etc.)."""
         return self.config.get(self.get_agent_type(), {})
@@ -151,9 +162,15 @@ class AIAgentCore(ABC):
     _JS_CLICK_ADDON_IN_LAYER = """
     (addonName) => {
         const lower = addonName.toLowerCase();
-        const layers = document.querySelectorAll(
+        let layers = Array.from(document.querySelectorAll(
             '.ms-Layer-content, [class*="Layer-content"]'
-        );
+        ));
+        // Prefer the My Add-ins popup: the ribbon overflow flyout is a
+        // layer too and lists the add-in's own launcher under the same
+        // name, so an unscoped scan can click the wrong layer.
+        const mine = layers.filter(l =>
+            (l.textContent || '').toLowerCase().includes('my add-ins'));
+        if (mine.length) layers = mine;
         let bestEl = null;
         let bestLen = Infinity;
         for (const layer of layers) {
@@ -176,6 +193,103 @@ class AIAgentCore(ABC):
         return -1;
     }
     """
+
+    # Ribbon overflow ("More Options") anchor, most to least stable.
+    _OVERFLOW_ANCHOR_SELECTORS = (
+        "#RibbonOverflowMenu-overflow",
+        '[data-unique-id="Overflow-RibbonOverflowMenu-overflow"]',
+        'button[data-automation-type="RibbonFlyoutAnchor"][aria-label="More Options"]',
+    )
+
+    def _frames_excel_first(self):
+        """Page frames with the Excel host frame first (where the ribbon lives)."""
+        frames = list(self.page.frames)
+        frames.sort(key=lambda f: (f.name or "") != "WacFrame_Excel_0")
+        return frames
+
+    async def _click_overflow_menuitem(self, name: str, wait_seconds: float = 4.0) -> bool:
+        """Open the ribbon's "More Options" overflow flyout and click the
+        menuitem whose name/label is exactly `name` (case-insensitive).
+
+        Excel Online collapses ribbon groups into this flyout at narrow
+        window widths (~960px); the collapsed items keep their names
+        (`[role=menuitem][name="Add-ins"]`, `[name="ChatGPT"]`, ...) but
+        their `data-unique-id` is `Overflow-AddinControlN` with N in
+        install order, so match on the name, never the id. Escape-closes
+        the flyout and returns False when the item is not there.
+        """
+        target = name.strip().lower()
+        for frame in self._frames_excel_first():
+            anchor = None
+            for sel in self._OVERFLOW_ANCHOR_SELECTORS:
+                try:
+                    el = await asyncio.wait_for(frame.query_selector(sel), timeout=3)
+                    if el and await el.is_visible() and await el.is_enabled():
+                        anchor = el
+                        break
+                except (Exception, asyncio.TimeoutError):
+                    continue
+            if not anchor:
+                continue
+            try:
+                await anchor.click(timeout=3000)
+            except Exception as e:
+                logger.debug(f"🔍 Overflow anchor click failed: {e}")
+                continue
+            deadline = asyncio.get_event_loop().time() + wait_seconds
+            while asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.3)
+                try:
+                    items = await frame.query_selector_all('[role="menuitem"]')
+                except Exception:
+                    items = []
+                for item in items:
+                    try:
+                        if not await item.is_visible():
+                            continue
+                        label = (
+                            await item.get_attribute("name")
+                            or await item.get_attribute("aria-label")
+                            or await item.text_content()
+                            or ""
+                        ).strip().lower()
+                        if label == target:
+                            await item.click(timeout=3000)
+                            return True
+                    except Exception:
+                        continue
+            try:
+                await frame.press("body", "Escape")
+            except Exception:
+                pass
+        return False
+
+    async def _click_ribbon_launcher(self, name: str, max_seconds: int) -> bool:
+        """Click the add-in's own launcher: the Home-ribbon RibbonButton
+        labelled `name` when visible, else the same entry inside the
+        "More Options" overflow flyout. Retries until `max_seconds` — the
+        ribbon can take tens of seconds to materialize on a fresh copy.
+        """
+        deadline = asyncio.get_event_loop().time() + max_seconds
+        selector = (
+            f'button[data-automation-type="RibbonButton"][aria-label="{name}"]'
+        )
+        while asyncio.get_event_loop().time() < deadline:
+            for frame in self._frames_excel_first():
+                try:
+                    el = await asyncio.wait_for(frame.query_selector(selector), timeout=3)
+                    if el and await el.is_visible() and await el.is_enabled():
+                        await el.click(timeout=3000)
+                        logger.info(f"✅ Clicked '{name}' ribbon button")
+                        return True
+                except (Exception, asyncio.TimeoutError):
+                    continue
+            if await self._click_overflow_menuitem(name):
+                logger.info(f"✅ Clicked '{name}' in the ribbon overflow menu")
+                return True
+            await asyncio.sleep(1.5)
+        logger.info(f"🔍 No '{name}' ribbon launcher found within {max_seconds}s")
+        return False
 
     async def _click_addon_in_layer(self, addon_name: str) -> bool:
         """Click an add-in tile in the My Add-ins Fluent UI popup.
@@ -233,6 +347,21 @@ class AIAgentCore(ABC):
         open_button_text = self.get_open_button_text()
         # Each step gets its own full budget — Step 1 can't starve Step 2
         step1_end = asyncio.get_event_loop().time() + max_seconds
+
+        # Step 0: the add-in's own ribbon launcher (direct button when the
+        # ribbon is wide, "More Options" overflow menuitem when it is
+        # collapsed). Both open the panel directly — no My Add-ins popup.
+        launcher = self.get_ribbon_launcher_name()
+        if launcher:
+            logger.info(f"🔍 Step 0: Looking for the '{launcher}' ribbon launcher...")
+            if await self._click_ribbon_launcher(launcher, max_seconds):
+                await asyncio.sleep(3.0)
+                if await self._verify_panel_opened():
+                    return True
+                logger.warning(
+                    f"⚠️ '{launcher}' launcher clicked but no panel — "
+                    f"falling back to the Add-ins menu path"
+                )
 
         # Step 1: Click either Add-ins (Claude) or addon ribbon tab (TabAI)
         if self.requires_addins_menu():
@@ -326,6 +455,13 @@ class AIAgentCore(ABC):
                 except Exception:
                     continue
 
+            if not menu_clicked and self.requires_addins_menu():
+                # Collapsed ribbon: "Add-ins" lives inside the "More
+                # Options" overflow flyout as a menuitem.
+                if await self._click_overflow_menuitem(target_name):
+                    logger.info(f"✅ Clicked {target_name} via the ribbon overflow menu")
+                    menu_clicked = True
+                    break
             if not menu_clicked:
                 await asyncio.sleep(1.5)
 

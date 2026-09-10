@@ -46,13 +46,13 @@ BENCHMARKS = {
 }
 
 # Latest agent prompt generation per pipeline (task_attempts.agent_model_type),
-# 2026-09-10 House Standards set: GUI/Excel 205, CLI 1408 (system v14 +
-# template v8), coding 112 (template v12). Both DB drivers refuse to spend on
+# 2026-09-10 House Standards set: GUI/Excel 205, CLI 1509 (system v15 +
+# template v9, rubric-scrubbed), coding 112 (template v12). Both DB drivers refuse to spend on
 # older prompt versions for v2 by default (--all-prompt-versions overrides);
 # scripts/export_good_attempts.py carries the same numbers. Bump here when a
 # pipeline cuts a new prompt version.
 LATEST_PROMPT_VERSION_BY_TYPE = {
-    "v2": {"gui": 205, "excel": 205, "api": 1408, "coding_cli": 112},
+    "v2": {"gui": 205, "excel": 205, "api": 1509, "coding_cli": 112},
 }
 
 

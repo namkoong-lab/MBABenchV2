@@ -146,7 +146,7 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 
 **prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
 
-**Prompt attachments** (`PROMPT_VERSIONS[ver]["attachments"]`, v14+) — Monorepo-root-relative files the version ships with every workspace; `repo_config.resolve_attachments` turns them into absolute paths at `load_config` time and refuses to start if one is missing. v14 attaches `house_standards/House_Standards_v1.md`: the runners copy it into the workspace, `detect_workspace_files` picks up `*.md` as text context, and `TaskExecutor._assemble_context` embeds the full text under a `HOUSE STANDARDS (<file>)` header — exempt from the reduced-context ladder (it is ~5 KB against a 20 K floor) and placed before the truncatable PDF text. The Excel-tool guard that refuses `.pdf` filenames covers `.md` too. Provenance: `upload_prompts` uploads the file alongside the system prompt (so `prompt_files` reproduces it) and `extra_configs.house_standards = {version, file, sha256}` is computed from the shipped file at run time.
+**Prompt attachments** (`PROMPT_VERSIONS[ver]["attachments"]`, v14+; `attachment_names` maps a source to the name delivered in the workspace, v15+: `HOUSE_STANDARDS.md`) — Monorepo-root-relative files the version ships with every workspace; `repo_config.resolve_attachments` turns them into absolute paths at `load_config` time and refuses to start if one is missing. v14 attaches `house_standards/House_Standards_v1.md`: the runners copy it into the workspace, `detect_workspace_files` picks up `*.md` as text context, and `TaskExecutor._assemble_context` embeds the full text under a `HOUSE STANDARDS (<file>)` header — exempt from the reduced-context ladder (it is ~5 KB against a 20 K floor) and placed before the truncatable PDF text. The Excel-tool guard that refuses `.pdf` filenames covers `.md` too. Provenance: `upload_prompts` uploads the file alongside the system prompt (so `prompt_files` reproduces it) and `extra_configs.house_standards = {version, file, sha256}` is computed from the shipped file at run time.
 
 ## Package Structure
 
@@ -395,7 +395,7 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `task_type` | string | `fmwc` | local | Template selection: `fmwc` or `wsp` |
 | **Execution** | | | | |
 | `max_iterations` | int | 30 | both | Max agent iterations per task |
-| `prompt_version` | string | `v10` (v1) / `v14` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
+| `prompt_version` | string | `v10` (v1) / `v15` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
 | `fresh_context_mode` | bool | — | registry | Reload xlsx each iteration. Pinned by the agent identity |
 | `enhanced_excel_context` | bool | — | registry | Grid format for Excel context. Pinned by the agent identity |
 | `recent_history_count` | int | — | registry | Recent tool calls replayed in fresh context. Pinned by the agent identity |

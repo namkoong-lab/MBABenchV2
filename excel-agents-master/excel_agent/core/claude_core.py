@@ -13,6 +13,26 @@ from .ai_agent_base import AIAgentCore, is_host_frame as _is_host_frame
 logger = logging.getLogger(__name__)
 
 
+def _label_matches(target_lower: str, shown_lower: str) -> bool:
+    """Whole-token model-label match.
+
+    Exact match, or `target` appearing in `shown` bounded by characters
+    that cannot continue a model name (letters, digits, '.'). A plain
+    substring test let "Fable 5" pass on a "Fable 5.1" button (and would
+    let "Opus 4" pass on "Opus 4.8"); the gui pipeline fixed the same
+    bug in 7ac76d6.
+    """
+    target_lower = target_lower.strip().lower()
+    shown_lower = shown_lower.strip().lower()
+    if not target_lower:
+        return False
+    if target_lower == shown_lower:
+        return True
+    return re.search(
+        rf"(?<![\w.]){re.escape(target_lower)}(?![\w.])", shown_lower
+    ) is not None
+
+
 class ClaudeCore(AIAgentCore):
     """Claude by Anthropic-specific implementation."""
 
@@ -36,6 +56,11 @@ class ClaudeCore(AIAgentCore):
 
     def requires_addins_menu(self) -> bool:
         return True
+
+    def get_ribbon_launcher_name(self) -> str:
+        # The installed add-in's own Home-ribbon button / overflow menuitem
+        # (probed 2026-09-10: "Claude", data-unique-id Ribbon-AddinControlN).
+        return "Claude"
 
     # Selectors for the Claude chat input, ordered by likelihood.
     _INPUT_SELECTORS = [
@@ -381,7 +406,7 @@ class ClaudeCore(AIAgentCore):
             current = (await model_btn.get_attribute("title") or "").strip().lower()
             if not current:
                 current = (await model_btn.text_content() or "").strip().lower()
-            if target_lower == current or target_lower in current:
+            if _label_matches(target_lower, current):
                 logger.info("Model '%s' already selected", target)
                 return True
 
@@ -435,9 +460,9 @@ class ClaudeCore(AIAgentCore):
                     if not await item.is_visible():
                         continue
                     text = (await item.text_content() or "").strip().lower()
-                    if target_lower in text:
+                    if _label_matches(target_lower, text):
                         await item.click()
-                        logger.info("Clicked model item '%s' (substring)", target)
+                        logger.info("Clicked model item '%s' (whole-token)", target)
                         await asyncio.sleep(0.5)
                         return await self._verify_selected_model(frame, target_lower)
                 except Exception:
@@ -467,7 +492,7 @@ class ClaudeCore(AIAgentCore):
             shown = (await btn.get_attribute("title") or "").strip().lower()
             if not shown:
                 shown = (await btn.text_content() or "").strip().lower()
-            if target_lower == shown or target_lower in shown:
+            if _label_matches(target_lower, shown):
                 logger.info("✅ Model verified: selector shows %r", shown)
                 return True
             logger.error(
@@ -492,8 +517,55 @@ class ClaudeCore(AIAgentCore):
             except Exception:
                 pass
 
+    async def _ensure_extended_thinking(self, frame) -> bool:
+        """Pin the add-in's "Toggle extended thinking" button ON.
+
+        The Claude add-in exposes no effort tiers (probed 2026-09-10);
+        extended thinking is its only reasoning control, so the cohort's
+        "highest effort" means this toggle pressed. Verified by re-reading
+        aria-pressed after any click; a toggle that cannot be read or
+        turned on is a setup failure (infra, unrecorded), never a run at
+        an unknown thinking setting. Returns True when pressed.
+        """
+        selector = (
+            '[data-testid="extended-thinking-toggle"], '
+            'button[aria-label="Toggle extended thinking"]'
+        )
+        try:
+            toggle = await frame.query_selector(selector)
+            if not toggle or not await toggle.is_visible():
+                logger.error(
+                    "Extended-thinking toggle not found — cannot pin "
+                    "thinking; aborting setup"
+                )
+                return False
+            pressed = (await toggle.get_attribute("aria-pressed") or "").lower()
+            if pressed == "true":
+                logger.info("✅ Extended thinking already ON")
+                return True
+            await toggle.click()
+            await asyncio.sleep(0.6)
+            toggle = await frame.query_selector(selector)
+            pressed = (
+                (await toggle.get_attribute("aria-pressed") or "").lower()
+                if toggle else ""
+            )
+            if pressed == "true":
+                logger.info("✅ Extended thinking turned ON and verified")
+                return True
+            logger.error(
+                "Extended thinking verification FAILED (aria-pressed=%r) — "
+                "aborting setup",
+                pressed,
+            )
+            return False
+        except Exception as e:
+            logger.error("Could not pin extended thinking: %s", e)
+            return False
+
     async def handle_initial_setup(self) -> bool:
-        """Select model, click 'Accept all edits', disable web search."""
+        """Select model, pin extended thinking, click 'Accept all edits',
+        disable web search."""
         if self._accepted_all_edits:
             return True
 
@@ -507,6 +579,8 @@ class ClaudeCore(AIAgentCore):
             # Select + verify the pinned model. A miss is a setup failure
             # (engine → PANEL_FAILED → infra retry, nothing recorded).
             if not await self._select_model():
+                return False
+            if not await self._ensure_extended_thinking(frame):
                 return False
 
             # Disable web search before anything else

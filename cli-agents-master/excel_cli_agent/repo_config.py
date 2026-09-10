@@ -181,22 +181,30 @@ def resolve_attachments(rel_paths: Iterable[str]) -> List[Path]:
     return out
 
 
-def attachment_extra_configs(paths: Iterable[Path]) -> Dict[str, Any]:
+def attachment_extra_configs(paths: Iterable[Path],
+                             names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """The provenance keys merged into task_attempts.extra_configs.
 
     House_Standards_v<n>.md -> house_standards: {version, file, sha256},
-    the record every pipeline writes (house_standards/README.md). The hash
-    is computed at run time from the file actually shipped, not copied from
-    a constant, so a silently edited file shows up as a different sha.
+    the record every pipeline writes (house_standards/README.md). `file` is
+    the name the agent saw in the workspace (v15+ delivers it as
+    HOUSE_STANDARDS.md; `source` then keeps the versioned source name). The
+    hash is computed at run time from the file actually shipped, not copied
+    from a constant, so a silently edited file shows up as a different sha.
     """
+    names = names or {}
     out: Dict[str, Any] = {}
     for path in paths:
         m = re.fullmatch(r"House_Standards_v(\d+)\.md", path.name)
         if not m:
             continue
-        out["house_standards"] = {
+        delivered = names.get(path.name, path.name)
+        rec = {
             "version": int(m.group(1)),
-            "file": path.name,
+            "file": delivered,
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
+        if delivered != path.name:
+            rec["source"] = path.name
+        out["house_standards"] = rec
     return out

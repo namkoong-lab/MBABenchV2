@@ -154,26 +154,31 @@ Versioned prompt files are bundled in `excel_cli_agent/prompts/`. Set the versio
 prompt_version: "v10"  # uses system_prompt_v10.txt + task_template_fmwc_v4.txt
 ```
 
-In auto mode the default follows the `benchmark` key (v1 → v10, v2 → v14),
-and an explicit choice must embed the matching grading rubric: v1..v11 carry
-the 17-check v1 rubric, v12..v14 the 132-check v2 rubric (generated from the
-GUI `prompts_v{2,3,4}/` sources by `tools/build_v1{2,3,4}_prompts.py`). A
-mismatched pairing fails at startup; `EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces
-a deliberate cross-benchmark run.
+In auto mode the default follows the `benchmark` key (v1 → v10, v2 → v15),
+and an explicit choice must belong to the same benchmark: v1..v11 carry the
+17-check v1 rubric; v12..v14 embed the 132-check v2 rubric (generated from
+the GUI `prompts_v{2,3,4}/` sources by `tools/build_v1{2,3,4}_prompts.py`);
+v15 is v14 with every rubric-derived passage scrubbed (`tools/
+build_v15_prompts.py`, the same scrub as coding template v11) — the agent
+gets the task, the Questions-sheet mechanics, the tool guidance and the house
+standards, nothing about grading. A mismatched pairing fails at startup;
+`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate cross-benchmark run.
 
 **Attachments (v14+).** A prompt version can declare `attachments` in
 `PROMPT_VERSIONS` — monorepo-root-relative files (v14:
 `house_standards/House_Standards_v1.md`, the house financial-modelling
 standards). The version, never the batch config, selects them, so the
 recorded `prompt_version` and the standards the agent saw cannot disagree.
-Both runners copy each attachment into the workspace under its bare name and
-fail the task if it is missing; `*.md` files in the workspace are detected as
+Both runners copy each attachment into the workspace — under its bare name
+(v14) or the name the version's `attachment_names` maps it to (v15+:
+`HOUSE_STANDARDS.md`, matching the coding pipeline) — and fail the task if
+it is missing; `*.md` files in the workspace are detected as
 text context and their full text is embedded in every model call under a
 `HOUSE STANDARDS (<file>)` header (the agent has no file-reading tool for
 `.md`, and Excel tools called on a `.md` name are refused like `.pdf`).
 Provenance: the file is uploaded with the prompt snapshot
 (`task_attempts.prompt_files`) and `extra_configs.house_standards` records
-`{version, file, sha256}` computed at run time. The MCP formula validator
+`{version, file, sha256}` computed at run time (`file` = the delivered name; `source` = the versioned source when they differ). The MCP formula validator
 whitelists `LET` and `XMATCH` from v14 on (the standards recommend them;
 LibreOffice 24.8+ evaluates both).
 

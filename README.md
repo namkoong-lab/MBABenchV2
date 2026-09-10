@@ -23,11 +23,11 @@ How each pipeline selects the benchmark at launch:
 - **`cli-agents-master/`** — our own harness on raw model APIs.
   Set `benchmark: v1|v2` in the batch config (S3 + a DATABASE_URL sanity
   check); `prompt_version` defaults from the benchmark and must embed its
-  rubric (v11 = the frozen pv1105 v1-wave prompts; v12/v13/v14 = the
+  benchmark (v11 = the frozen pv1105 v1-wave prompts; v12/v13/v14 = the
   v2-rubric sets generated from the GUI `prompts_v2/`, `prompts_v3/`,
-  `prompts_v4/` sources; v14, the default, embeds the house standards). A
-  mismatched pairing fails at startup (`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1`
-  overrides).
+  `prompts_v4/` sources; v15, the default, is v14 with the rubric scrubbed
+  and the house standards delivered as `HOUSE_STANDARDS.md`). A mismatched
+  pairing fails at startup (`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` overrides).
 - **`coding-agents-master/`** — vendor coding agents (Claude Code, Codex),
   one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
   config; v2 flips S3/DB and defaults `template_version` to v12 (the

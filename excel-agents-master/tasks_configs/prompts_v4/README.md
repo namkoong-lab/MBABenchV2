@@ -24,6 +24,6 @@ Precedence is stated in the text: the case instructions and this prompt
 
 `excel-agents-master/tasks_configs/prompts_v4/` holds byte-identical copies
 under the same number 204 (guarded by its `tests/test_prompt_parity.py`);
-the cli v14 and coding template v10 sets are generated from these files by
+the cli v14 (later scrubbed to v15) and coding template v12 sets are generated from these files by
 their `tools/build_*` scripts. Do not edit any of them in place — new text =
 new number, here and in every mirror.

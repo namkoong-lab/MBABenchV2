@@ -222,9 +222,14 @@ class BatchRunner:
                   "(allow_recalc_fallback set) — attempts will be recorded "
                   "with recalc_engine=fallback.")
 
+    def _delivered_name(self, src: Path) -> str:
+        """The filename an attachment lands under in the workspace: the
+        version's `attachment_names` mapping, else the source's own name."""
+        return getattr(self, "_attachment_names", {}).get(src.name, src.name)
+
     def _copy_attachments(self, workspace: Path) -> None:
         """Copy the prompt version's attachments into the workspace under
-        their bare filenames (the name the prompt directive uses).
+        the name the prompt directive uses (v15+: HOUSE_STANDARDS.md).
 
         Same spirit as the empty-context guards: an attachment that fails to
         land would run the agent against a prompt promising text it never
@@ -236,15 +241,15 @@ class BatchRunner:
                     f"Prompt attachment missing or empty: {src}; refusing to "
                     "run the agent without the text its prompt version promises"
                 )
-            dst = workspace / src.name
+            dst = workspace / self._delivered_name(src)
             shutil.copy2(src, dst)
             if not dst.is_file() or dst.stat().st_size == 0:
                 raise RuntimeError(f"Failed to copy prompt attachment {src.name} into {workspace}")
-            print(f"  📎 Attached: {src.name} ({dst.stat().st_size:,} bytes)")
+            print(f"  📎 Attached: {dst.name} ({dst.stat().st_size:,} bytes)")
 
     def _attachment_extra_configs(self) -> Dict[str, Any]:
         """The attachment-provenance keys merged into extra_configs per attempt."""
-        return attachment_extra_configs(self._attachments)
+        return attachment_extra_configs(self._attachments, getattr(self, "_attachment_names", {}))
 
     def _recalc_extra_configs(self) -> Dict[str, Any]:
         """The recalc-provenance keys merged into extra_configs per attempt."""

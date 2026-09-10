@@ -36,6 +36,11 @@ class ChatGPTCore(AIAgentCore):
     def requires_addins_menu(self) -> bool:
         return True
 
+    def get_ribbon_launcher_name(self) -> str:
+        # The installed add-in's own Home-ribbon button / overflow menuitem
+        # (probed 2026-09-10: "ChatGPT", data-unique-id Ribbon-AddinControlN).
+        return "ChatGPT"
+
     # ------------------------------------------------------------------
     # Selectors for the ChatGPT chat input, ordered by likelihood.
     # ------------------------------------------------------------------

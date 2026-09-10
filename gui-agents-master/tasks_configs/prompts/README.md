@@ -11,8 +11,8 @@
 | 201 | 1 | `v2_1.txt` — same 132-check rubric, single pass |
 | 202 | 3 | `prompts_v3/step1_analyze` → `step2_build` → `step3_qa` — 200 + Questions-sheet answers |
 | 203 | 1 | `v2_2.txt` — 201 + Questions-sheet answers |
-| 204 | 3 | `prompts_v4/step1_analyze` → `step2_build` → `step3_qa` — 202 + house standards; attaches `../house_standards/House_Standards_v1.md`. **Repo default.** |
-| 205 | 1 | `v2_3.txt` — 203 + house standards; same attachment |
+| 204 | 3 | `prompts_v4/step1_analyze` → `step2_build` → `step3_qa` — House Standards set, **rubric-free** (202 with every rubric passage removed + the house standards); attaches `../house_standards/House_Standards_v1.md` |
+| 205 | 1 | `v2_3.txt` — House Standards single-pass, **rubric-free** (203 scrubbed the same way); same attachment. **Repo default.** |
 
 Version 0 asks the agent to return the attached workbook unchanged plus one
 extra sheet named `TEST SHEET` with a large bold `TEST` in A1. It exercises
@@ -47,7 +47,7 @@ version (see `<monorepo>/house_standards/README.md`).
 Set `prompt_version` in the run config and nothing else:
 
 ```yaml
-prompt_version: 205        # single-pass; 204 (the default) for the 3-step set
+prompt_version: 205        # single-pass (the default); 204 for the 3-step set
 ```
 
 `infra/run.py` resolves it through `infra/configs/prompt_registry.py`,

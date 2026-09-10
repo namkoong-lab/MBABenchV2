@@ -19,7 +19,7 @@ from datetime import datetime
 from .agent_identity import resolve_agent_identity
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
 from .prompt_versions import (
-    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, attachments_for, parse_prompt_version,
+    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, attachment_names_for, attachments_for, parse_prompt_version,
 )
 from .repo_config import resolve_attachments
 
@@ -82,6 +82,7 @@ class LocalBatchRunner(BatchRunner):
         # Same rule as auto mode: the prompt version names the files shipped
         # with every workspace; a missing one fails here, before any run.
         self._attachments = resolve_attachments(attachments_for(prompt_ver))
+        self._attachment_names = attachment_names_for(prompt_ver)
 
         # Load task template
         if 'task_template' not in config:
@@ -96,7 +97,7 @@ class LocalBatchRunner(BatchRunner):
         print(f"   Agent model name: {config['agent_model_name']} (agent_identities.yaml)")
         print(f"   Model: {config['model']}")
         print(f"   Prompt version: {prompt_ver}")
-        print(f"   Attachments: {[p.name for p in self._attachments] or 'none'}")
+        print(f"   Attachments: {[self._delivered_name(p) for p in self._attachments] or 'none'}")
         print(f"   Max iterations: {config['max_iterations']}")
         print(f"   Workspaces: {len(config['workspaces'])}")
         print(f"   Results dir: {config['results_dir']}")

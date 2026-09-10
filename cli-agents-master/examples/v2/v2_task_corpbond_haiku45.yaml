@@ -8,9 +8,9 @@
 #
 # benchmark: v2 selects everything together: the MBABenchV2 DB
 # (database.v2_url in <MBABenchV2>/config/config.yaml), the
-# s3://mbabench/MBABenchV2/ root, and the v14 prompt default. prompt_version
-# is pinned explicitly below anyway; only v12..v14 embed the v2 grading
-# rubric, so v1..v11 would refuse to start.
+# s3://mbabench/MBABenchV2/ root, and the v15 prompt default. prompt_version
+# is pinned explicitly below anyway; only v12..v15 are v2 prompt sets, so
+# v1..v11 would refuse to start.
 #
 # Identity — agent_model_name is the ONLY model key. Its entry in
 # excel_cli_agent/agent_identities.yaml supplies model (claude-haiku-4-5),
@@ -34,16 +34,17 @@ benchmark: "v2"                               # MBABenchV2 DB + s3://mbabench/MB
 # logs directory, batch_logs/batch_{ts}/workspaces/{task}_{run_id}/
 
 # One key pins BOTH prompt files (see excel_cli_agent/prompt_versions.py):
-#   v14 -> prompts/system_prompt_v14.txt (system v14: the Questions-sheet
-#          answer convention + the house-standards directive)
-#        + prompts/task_template_shared_v8.txt (template v8, shared fmwc/wsp)
-#        + attachment house_standards/House_Standards_v1.md, copied into the
-#          workspace and embedded in the context (declared on the version,
-#          recorded in extra_configs.house_standards and prompt_files)
-# Recorded in the DB as prompt_version 1408 (system*100 + template). Same
+#   v15 -> prompts/system_prompt_v15.txt (system v15: the Questions-sheet
+#          answer convention + the house-standards directive, no rubric)
+#        + prompts/task_template_shared_v9.txt (template v9, shared fmwc/wsp)
+#        + attachment house_standards/House_Standards_v1.md, delivered into
+#          the workspace as HOUSE_STANDARDS.md and embedded in the context
+#          (declared on the version, recorded in extra_configs.house_standards
+#          and prompt_files)
+# Recorded in the DB as prompt_version 1509 (system*100 + template). Same
 # value the benchmark would default to; pinned so a future default change
 # can't silently move this cohort.
-prompt_version: "v14"
+prompt_version: "v15"
 
 max_trials: 7
 trials_since: "2020-01-01"

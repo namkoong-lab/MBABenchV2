@@ -83,17 +83,23 @@ versions:
       - "tasks_configs/prompts/v2_2.txt"
 
   204:
-    label: "rubric-v9 3-step + Questions-sheet answers + House Standards"
+    label: "House Standards 3-step (rubric-free) + Questions-sheet answers"
     description: >
-      Version 202 plus the house standards: a HOUSE STANDARDS block in step
-      2 (after the ANSWERS block), a read-it-now sentence in step 1, and QA
-      item 9 in step 3, all pointing at the attached House_Standards_v1.md.
+      The House Standards prompt set, three turns. Generated from the frozen
+      202 sources (prompts_v3/) by tools/build_house_standards_prompts.py:
+      every rubric passage is REMOVED (the graded-against paragraph and
+      category weights, the professional-services conventions summary, the
+      132-check rubric block, and the rubric-derived QA audit list, replaced
+      by a neutral verify-and-deliver step) and the house standards are
+      added instead - a read-it-now sentence in step 1, a HOUSE STANDARDS
+      block in step 2, and a "follows House_Standards_v1.md" check in step 3.
       The file itself is declared under `attachments` and is uploaded with
-      the case files on every run of this version - the version selects
-      the text AND the attachment. The 132-check rubric body is
-      byte-identical to version 200's from the `== FULL RUBRIC ==` marker
-      onward, so any score delta is attributable to the house standards
-      alone. Generated from prompts_v3/ - see prompts_v4/README.md.
+      the case files on every run of this version - the version selects the
+      text AND the attachment. Same design as the coding pipeline's
+      rubric-scrubbed v10/v11 templates (Patrick, 2026-09-10). The
+      Questions-sheet answer mechanics are unchanged from 202.
+      (Cut 2026-09-10 as "202 + house standards, rubric untouched" and
+      redefined the same day before any 204 run was recorded.)
     files:
       - "tasks_configs/prompts_v4/step1_analyze.txt"
       - "tasks_configs/prompts_v4/step2_build.txt"
@@ -102,14 +108,17 @@ versions:
       - "../house_standards/House_Standards_v1.md"
 
   205:
-    label: "rubric-v9 single-pass + Questions-sheet answers + House Standards"
+    label: "House Standards single-pass (rubric-free) + Questions-sheet answers"
     description: >
-      Version 203 plus the same house-standards addition as 204: the HOUSE
-      STANDARDS block before the graded-rubric sentence and QA item 9, with
-      House_Standards_v1.md declared under `attachments`. One chat turn;
-      rubric body byte-identical to 200/201/202/203's from the
-      `== FULL RUBRIC ==` marker onward. Same ~67k-char
-      truncation-continue caveat as 201/203.
+      The House Standards prompt, one turn: the same removals and additions
+      as 204 applied to the frozen 203 text (prompts/v2_2.txt) by
+      tools/build_house_standards_prompts.py - no rubric material at all,
+      a HOUSE STANDARDS block after the Questions item, and a neutral
+      VERIFY AND DELIVER step in place of the rubric-derived QA list. The
+      attachment is the same House_Standards_v1.md. The repo default.
+      (Cut 2026-09-10 as "203 + house standards, rubric untouched";
+      redefined the same day - the two attempts recorded under that text,
+      1239 and 1240, are deprecated.)
     files:
       - "tasks_configs/prompts/v2_3.txt"
     attachments:

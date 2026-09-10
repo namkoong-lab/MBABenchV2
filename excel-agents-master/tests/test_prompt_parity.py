@@ -92,24 +92,16 @@ def test_registry_entries_match_gui_registry():
         assert ours[version].attachments == ()
 
 
-def test_house_standards_versions_keep_rubric_body():
-    """204/205 add the house standards ABOVE the rubric only: the rubric
-    body must stay byte-identical to 202/203's so a score delta is
-    attributable to the standards alone."""
-    marker = b"== FULL RUBRIC"
-
-    def body(rel):
-        data = (MEMBER_ROOT / rel).read_bytes()
-        return data[data.index(marker):]
-
-    assert body("tasks_configs/prompts_v4/step2_build.txt") == body(
-        "tasks_configs/prompts_v3/step2_build.txt"
-    )
-    assert body("tasks_configs/prompts/v2_3.txt") == body(
-        "tasks_configs/prompts/v2_2.txt"
-    )
+def test_house_standards_versions_are_rubric_free():
+    """204/205 hand the agent the house standards INSTEAD of the rubric
+    (Patrick, 2026-09-10): no rubric block, no Good/Bad standards, no
+    rubric back-references — and the attachment is named in every file."""
     for rel in SHARED_SETS[204] + SHARED_SETS[205]:
-        assert b"House_Standards_v1.md" in (MEMBER_ROOT / rel).read_bytes(), rel
+        data = (MEMBER_ROOT / rel).read_bytes()
+        assert b"== FULL RUBRIC" not in data, rel
+        assert b"Good:" not in data, rel
+        assert b"rubric" not in data.lower(), rel
+        assert b"House_Standards_v1.md" in data, rel
 
 
 def test_202_rubric_body_revised_from_200():

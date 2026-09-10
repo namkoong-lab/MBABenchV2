@@ -131,6 +131,14 @@ def test_scrubbed_templates_v10_v11():
     assert template_name("fmwc", "v11") == template_name("wsp", "v11") == "task_template_shared_v11.txt"
     assert TEMPLATE_EXTRAS == {"v11": [("house_standards_v1.md", "HOUSE_STANDARDS.md")]}
     assert (prompts / "house_standards_v1.md").exists()
+    # One standards text everywhere: the copy staged into v11 workspaces must be
+    # byte-identical to the monorepo's canonical house_standards/ file (the
+    # one every other pipeline delivers). A drift here would hand the coding
+    # cohort different conventions from the rest of the study.
+    canonical = ROOT.parent / "house_standards" / "House_Standards_v1.md"
+    assert (prompts / "house_standards_v1.md").read_bytes() == canonical.read_bytes(), \
+        "coding_agent/prompts/house_standards_v1.md drifted from house_standards/House_Standards_v1.md"
+    assert "under five seconds" not in canonical.read_text()
     # generator is deterministic and the committed files match it
     r = subprocess.run([sys.executable, str(ROOT / "tools" / "build_v10_v11_templates.py"), "--check"],
                        capture_output=True, text=True)
