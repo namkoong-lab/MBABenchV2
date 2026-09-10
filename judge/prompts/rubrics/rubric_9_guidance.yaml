@@ -255,3 +255,15 @@ checks:
       header fill or a blue input-block fill is not a violation. Negative
       numbers shown in red font are a standard accounting convention and
       are never a violation of this check.
+
+  - category: Error Checks
+    name: No unresolved cell warnings
+    note: |
+      A cell served with [TEXT] is a constant stored as text that reads
+      like a number (the case Excel flags as "number stored as text").
+      Treat it as a defect only where the value is used as a quantity — an
+      input, a driver, or a figure that feeds or should feed a calculation.
+      Version labels, step and section numbers, codes with leading zeros
+      and similar identifiers are text on purpose and are not mistakes.
+      Formula results are never marked; a formula that returns text on
+      purpose (TEXT, concatenation) is judged from its formula, not here.
