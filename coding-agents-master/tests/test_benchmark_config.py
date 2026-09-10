@@ -31,7 +31,6 @@ from coding_agent.task_source import ExternalSource  # noqa: E402
 from coding_agent.workspace import create_attempt, seed_template_attachments  # noqa: E402
 
 STANDARDS_REL = "house_standards/House_Standards_v1.md"
-GUI_STEP2_V4 = "gui-agents-master/tasks_configs/prompts_v4/step2_build.txt"
 
 
 def _cfg(extra: str) -> str:
@@ -124,12 +123,9 @@ def main() -> int:
     assert "attached" not in v12_text.split(V8_RUBRIC_MARKER)[0]
     print("OK  v12 template carries the house-standards directive")
 
-    # v12's rubric is byte-identical to the GUI source it was generated from.
-    gui_step2 = (root / GUI_STEP2_V4).read_text()
-    gui_rubric = gui_step2[gui_step2.index(V8_RUBRIC_MARKER):].rstrip("\n")
-    tpl_rubric = v12_text[v12_text.index(V8_RUBRIC_MARKER):][:len(gui_rubric)]
-    assert tpl_rubric == gui_rubric, "v12 rubric drifted from prompts_v4/step2_build.txt"
-    print("OK  v12 rubric byte-identical to the GUI prompts_v4 source")
+    # (No byte-equality check against gui prompts_v4 any more: 204/205 were
+    # re-cut rubric-free on 2026-09-10, so that source no longer carries the
+    # rubric block v12 embeds. v12's own md5 guard above still pins its text.)
 
     # v9 still selectable and guarded: pv 109, no attachments.
     v2_v9 = load_config(_cfg("benchmark: v2\ntemplate_version: v9\n"))
