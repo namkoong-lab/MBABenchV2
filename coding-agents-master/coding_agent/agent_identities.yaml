@@ -61,3 +61,38 @@
   env:
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
     API_TIMEOUT_MS: "3600000"
+
+# ---------------------------------------------------------------------------
+# 2026-09-10: the 101-task MBABenchV2 rerun cohorts. Live-probed the same day:
+#
+#   claude-fable-5-1  listed by Anthropic /v1/models (128000 output ceiling);
+#                     output_config.effort accepts low/medium/high/xhigh/max
+#                     ("max" accepted on a live request). Claude Code's
+#                     --effort takes the same ladder (verified 2.1.223 in
+#                     agents.py), so max is the top tier here too. Same env
+#                     as the fable-5-max entry (128k output cap, 1h request
+#                     timeout — the mid-wave fixes) so the two Claude Code
+#                     cohorts differ only in model.
+#   gpt-6-astra       listed by OpenAI /v1/models; the Responses API accepts
+#                     reasoning.effort up to "max", but Codex's own config
+#                     enum for model_reasoning_effort is
+#                     minimal|low|medium|high|xhigh (config reference,
+#                     2026-09-10), so xhigh is the top tier reachable through
+#                     the Codex CLI. If a rung-0 run shows a newer Codex
+#                     accepting "max", register a separate -max entry rather
+#                     than editing this one.
+- agent_model_name: claudecode_anthropic/claude-fable-5-1-max
+  cli: claude
+  model: claude-fable-5-1
+  effort: max
+  extra_args: []
+  env:
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
+    API_TIMEOUT_MS: "3600000"
+
+- agent_model_name: codex_openai/gpt-6-astra-xhigh
+  cli: codex
+  model: gpt-6-astra
+  effort: xhigh
+  extra_args: []
+  env: {}

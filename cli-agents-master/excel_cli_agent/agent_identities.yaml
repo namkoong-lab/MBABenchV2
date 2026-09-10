@@ -130,3 +130,44 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+# ---------------------------------------------------------------------------
+# 2026-09-10: the 101-task MBABenchV2 rerun cohorts (prompt v15 / pv 1509).
+# Live-probed 2026-09-10 against both providers before registering:
+#
+#   claude-fable-5-1  listed by /v1/models (128000 output ceiling, 1M input);
+#                     output_config.effort accepts low/medium/high/xhigh/max
+#                     ("max" accepted on a live request; "ultra" 400).
+#                     Successor to claude-fable-5 at the same tier — the
+#                     counterpart of the GUI/Excel Fable 5.1 cohorts.
+#   gpt-6-astra       listed by /v1/models; 128000 completion ceiling
+#                     (200000 400s). Chat Completions — what this executor
+#                     calls — accepts reasoning_effort low/medium/high/xhigh
+#                     and REJECTS "max" (400 unsupported_value, same as the
+#                     gpt-5.6-sol lesson above); "max" exists only on the
+#                     Responses API. xhigh is therefore the top tier reachable
+#                     from this pipeline. Counterpart of the GUI
+#                     chatgpt_gpt_6_astra_work_ultra cohort.
+#
+# Harness settings match the two flagship entries above (128000 cap,
+# fresh context, recent_history_count 3) so the four flagship cohorts differ
+# only in model + effort.
+- agent_model_name: openpyxl_anthropic/claude-fable-5-1-max
+  model: claude-fable-5-1
+  reasoning_effort: max
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.anthropic.com
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
+
+- agent_model_name: openpyxl_openai/gpt-6-astra-xhigh
+  model: gpt-6-astra
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.openai.com/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
