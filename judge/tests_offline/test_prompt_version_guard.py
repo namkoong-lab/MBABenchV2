@@ -27,8 +27,8 @@ def test_guard_keeps_latest_drops_older_passes_unknown_types():
         {"attempt_id": 3, "agent_model_type": "gui", "prompt_version": 1},
         {"attempt_id": 4, "agent_model_type": "api", "prompt_version": 1509},
         {"attempt_id": 5, "agent_model_type": "api", "prompt_version": 1408},
-        {"attempt_id": 6, "agent_model_type": "coding_cli", "prompt_version": 112},
-        {"attempt_id": 7, "agent_model_type": "coding_cli", "prompt_version": 111},
+        {"attempt_id": 6, "agent_model_type": "coding_cli", "prompt_version": 113},
+        {"attempt_id": 7, "agent_model_type": "coding_cli", "prompt_version": 112},
         {"attempt_id": 8, "agent_model_type": "excel", "prompt_version": 205},
         {"attempt_id": 9, "agent_model_type": "human", "prompt_version": None},
     ]

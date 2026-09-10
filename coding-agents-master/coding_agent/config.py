@@ -98,17 +98,21 @@ class LimitsConfig:
 # aws.s3_bucket, and the prompt-template default.
 BENCHMARKS = {
     "v1": {"root": "BizbenchV1", "db_name": "BizbenchV1", "template": "v7"},
-    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v12"},
+    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v13"},
 }
 DEFAULT_S3_BUCKET = "mbabench"
 
-TEMPLATE_VERSIONS = ("v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12")
+TEMPLATE_VERSIONS = ("v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13")
 
 # Files a template promises the agent, monorepo-root-relative. They are
 # seeded into starting_files/ beside the task inputs, snapshotted with the
 # prompt files and uploaded to the prompts prefix. Declared on the template
 # — never in a run config — so the recorded prompt_version and the file the
 # agent saw cannot disagree (<MBABenchV2>/house_standards/README.md).
+# v11/v13 deliver the standards differently — staged into the WORKSPACE ROOT
+# as HOUSE_STANDARDS.md from prompts/house_standards_v1.md (a byte-identical
+# copy of the canonical file, pinned by tests/test_smoke.py); see
+# prompt_builder.TEMPLATE_EXTRAS. Both routes record house_standards below.
 TEMPLATE_ATTACHMENTS = {
     "v12": ["house_standards/House_Standards_v1.md"],
 }
@@ -124,7 +128,7 @@ class RunConfig:
     benchmark: str = "v1"  # "v1" | "v2"; required in internal run configs (no default)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
-    template_version: str = "v7"  # v12 = v9 + house standards (v2 default); v10/v11 = rubric-scrubbed experiment (2026-09-08); v9 = v2 Questions-sheet mirror; v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
+    template_version: str = "v7"  # v13 = rubric-free + house standards (v2 default, = v11 text); v12 = v9 + house standards (rubric-bearing, superseded); v10/v11 = rubric-scrubbed experiment (2026-09-08); v9 = v2 Questions-sheet mirror; v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     workspaces_dir: Path = PACKAGE_DIR.parent / "workspaces"
@@ -187,9 +191,13 @@ def template_attachments(cfg: RunConfig) -> list[Path]:
 
 
 def house_standards_provenance(cfg: RunConfig) -> dict:
-    """{"house_standards": {version, file, sha256}} for the standards file the
-    template attaches, else {}. The hash is taken at run time so the row
-    records the text actually delivered, not the version the name claims."""
+    """{"house_standards": {version, file, sha256[, delivered_as]}} for the
+    standards file the template delivers, else {}. The hash is taken at run
+    time so the row records the text actually delivered, not the version the
+    name claims. Two delivery routes: a declared attachment seeded into
+    starting_files/ (v12), or a workspace-root extra (v11/v13 stage
+    prompts/house_standards_v1.md as HOUSE_STANDARDS.md — `delivered_as`
+    records that name; `file` keeps the versioned source name)."""
     for path in template_attachments(cfg):
         m = _HOUSE_STANDARDS_RE.match(path.name)
         if m:
@@ -197,6 +205,16 @@ def house_standards_provenance(cfg: RunConfig) -> dict:
                 "version": int(m.group(1)),
                 "file": path.name,
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }}
+    from .prompt_builder import prompt_extra_paths  # local: prompt_builder imports this module
+    for src, ws_name in prompt_extra_paths(cfg):
+        m = _HOUSE_STANDARDS_RE.match(src.name.replace("house_standards_v", "House_Standards_v", 1))
+        if m:
+            return {"house_standards": {
+                "version": int(m.group(1)),
+                "file": f"House_Standards_v{m.group(1)}.md",
+                "delivered_as": ws_name,
+                "sha256": hashlib.sha256(src.read_bytes()).hexdigest(),
             }}
     return {}
 

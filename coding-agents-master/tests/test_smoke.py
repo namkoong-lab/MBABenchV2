@@ -129,7 +129,16 @@ def test_scrubbed_templates_v10_v11():
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v10.txt") == 110
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v11.txt") == 111
     assert template_name("fmwc", "v11") == template_name("wsp", "v11") == "task_template_shared_v11.txt"
-    assert TEMPLATE_EXTRAS == {"v11": [("house_standards_v1.md", "HOUSE_STANDARDS.md")]}
+    assert TEMPLATE_EXTRAS == {"v11": [("house_standards_v1.md", "HOUSE_STANDARDS.md")],
+                               "v13": [("house_standards_v1.md", "HOUSE_STANDARDS.md")]}
+    # v13 = v11 byte-identical under a new number (the rerun default)
+    v13 = (prompts / "task_template_shared_v13.txt").read_text()
+    assert v13 == v11 and SCRUBBED_MD5["task_template_shared_v13.txt"] == SCRUBBED_MD5["task_template_shared_v11.txt"]
+    assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v13.txt") == 113
+    assert template_name("jp", "v13") == "task_template_shared_v13.txt"
+    r13 = subprocess.run([sys.executable, str(ROOT / "tools" / "build_v13_template.py"), "--check"],
+                         capture_output=True, text=True)
+    assert r13.returncode == 0, r13.stdout + r13.stderr
     assert (prompts / "house_standards_v1.md").exists()
     # One standards text everywhere: the copy staged into v11 workspaces must be
     # byte-identical to the monorepo's canonical house_standards/ file (the
@@ -147,7 +156,7 @@ def test_scrubbed_templates_v10_v11():
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         spec = ExternalSource(make_external_task(tmp)).fetch(tmp / "_staging")
-        for version, pv in (("v10", 110), ("v11", 111)):
+        for version, pv in (("v10", 110), ("v11", 111), ("v13", 113)):
             cfg = load_config(ROOT / "run_configs" / "example_external.yaml")
             cfg.template_version = version
             cfg.workspaces_dir = tmp / f"ws_{version}"
@@ -156,7 +165,7 @@ def test_scrubbed_templates_v10_v11():
             assert got == pv
             assert "ACCURACY" not in prompt and "== FULL RUBRIC" not in prompt
             house = attempt.workspace / "HOUSE_STANDARDS.md"
-            if version == "v11":
+            if version in ("v11", "v13"):
                 assert house.exists() and house.read_text() == (prompts / "house_standards_v1.md").read_text()
                 assert "- HOUSE_STANDARDS.md (" in prompt  # listed under WORKSPACE FILES
                 assert "HOUSE_STANDARDS.md" in attempt.manifest  # seeded, so validation knows
@@ -166,13 +175,18 @@ def test_scrubbed_templates_v10_v11():
                 assert prov["HOUSE_STANDARDS.md"]["source"] == "house_standards_v1.md"
                 assert len(prov["HOUSE_STANDARDS.md"]["sha256"]) == 64
                 assert [ws for _, ws in prompt_extra_paths(cfg)] == ["HOUSE_STANDARDS.md"]
+                # the row also carries house_standards, like cli/excel rows do
+                hs = cfg.extra_configs()["house_standards"]
+                assert hs == {"version": 1, "file": "House_Standards_v1.md", "delivered_as": "HOUSE_STANDARDS.md",
+                              "sha256": hashlib.sha256((prompts / "house_standards_v1.md").read_bytes()).hexdigest()}
                 # the house file is not an xlsx, so validation still needs a real workbook
                 v = validate(attempt, sandbox_result(tmp, exit_code=1), junk_seconds=180)
                 assert v.status == "agent_failure", v
             else:
                 assert not house.exists() and "HOUSE_STANDARDS" not in prompt
                 assert prompt_extras_provenance(cfg) == {}
-    print("ok: scrubbed templates v10/v11 + house-standards staging")
+                assert "house_standards" not in cfg.extra_configs()
+    print("ok: scrubbed templates v10/v11/v13 + house-standards staging")
 
 
 def test_telemetry_parsers():

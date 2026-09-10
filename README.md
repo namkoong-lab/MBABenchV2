@@ -16,8 +16,8 @@ How each pipeline selects the benchmark at launch:
   Set `benchmark: v1|v2` in the run config; it gates identity labels, the
   source/sink schema (`bizbench` vs `mbabenchv2`), S3 defaults, and provider
   preflight. Prompts come from `prompt_version` via
-  `tasks_configs/prompts/registry.yaml` (default 204 = the v2 3-step set
-  with the house standards attached; 205 is its single-pass twin; v1
+  `tasks_configs/prompts/registry.yaml` (default 205 = the v2 single-pass
+  rubric-free set with the house standards attached; 204 is its 3-step twin; v1
   configs use 9, the pv9 payload). Examples:
   `infra/configs/run_configs/{bizbenchv1,mbabenchv2}_run_examples/`.
 - **`cli-agents-master/`** — our own harness on raw model APIs.
@@ -30,10 +30,12 @@ How each pipeline selects the benchmark at launch:
   pairing fails at startup (`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` overrides).
 - **`coding-agents-master/`** — vendor coding agents (Claude Code, Codex),
   one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
-  config; v2 flips S3/DB and defaults `template_version` to v12 (the
-  v2-rubric mirror with the house standards seeded into the workspace; v7
-  is the v1 pv9 mirror; v10/v11 are the frozen rubric-scrubbed experiment
-  templates).
+  config; v2 flips S3/DB and defaults `template_version` to v13 (rubric-free,
+  with the house standards staged into the workspace as `HOUSE_STANDARDS.md`;
+  v12 is the superseded rubric-bearing cut with the standards seeded into
+  `starting_files/`; v7 is the v1 pv9 mirror; v10/v11 are the frozen
+  rubric-scrubbed experiment templates, v13 being v11's text under a new
+  number).
 - **`judge/`** — grades attempts from either benchmark. Pass
   `--benchmark v1|v2`; it selects the DB (`database.{v1,v2}_url` in
   `config/config.yaml`), the S3 grading root and the rubric pair

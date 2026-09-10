@@ -265,7 +265,7 @@ Both DB drivers refuse to spend on superseded agent prompts. For `--benchmark
 v2`, `grade_with_orchestration.py` and `grade_from_db.py --task-ids` keep only
 attempts whose `prompt_version` is the pipeline's latest —
 `LATEST_PROMPT_VERSION_BY_TYPE` in `utils/misc_utils.py` (gui/excel 205, api
-1509, coding_cli 112 as of the House Standards set) — and log what they
+1509, coding_cli 113 as of the House Standards set) — and log what they
 dropped. `--all-prompt-versions` grades everything; `--attempt-ids` is always
 explicit and never filtered. `scripts/export_good_attempts.py` carries the same
 numbers (`LATEST_PV`) and an offline test keeps the two tables in agreement.

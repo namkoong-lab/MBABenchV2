@@ -8,12 +8,13 @@ is the name the prompt directive uses.
 
 | Version | File | Introduced in |
 |---|---|---|
-| 1 | `House_Standards_v1.md` | gui/excel prompt versions 204/205, cli v14 then v15 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed), coding template v11/v12 (2026-09-10) |
+| 1 | `House_Standards_v1.md` | gui/excel prompt versions 204/205, cli v14 then v15 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed), coding template v11/v12 then v13 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed, the v2 default) (2026-09-10) |
 
 ## Copies
 
 The coding pipeline stages its own copy, `coding-agents-master/coding_agent/
-prompts/house_standards_v1.md` (into the sandbox as `HOUSE_STANDARDS.md`);
+prompts/house_standards_v1.md` (into the sandbox as `HOUSE_STANDARDS.md` for
+templates v11/v13; v12 seeds this directory's file into `starting_files/`);
 its smoke test asserts that copy is byte-identical to the file here. Every
 other pipeline reads this directory directly. Edit here, then copy.
 

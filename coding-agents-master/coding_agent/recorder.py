@@ -4,14 +4,14 @@ Internal mode — same conventions as the CLI wave, root chosen by `benchmark`:
   S3:  s3://<bucket>/<root>/attempts/<agent_model_name>/task_source=<src>/task_id=<id>/<ts>_<file>
        s3://<bucket>/<root>/prompts/<agent_model_name>/<ts>_<promptfile>
        (<root> = BizbenchV1 for v1, MBABenchV2 for v2; the template's
-       attachments — v12's House_Standards_v1.md — and v11's workspace
+       attachments — v12's House_Standards_v1.md — and v11/v13's workspace
        extra (HOUSE_STANDARDS.md) upload with the prompt files, so prompt_files says everything the agent was told)
   DB:  INSERT INTO task_attempts (...)  — solution.xlsx is listed FIRST in
        attempt_files (the judge grades the first xlsx in the list). On
        MBABenchV2 the row's extra_configs (JSONB) then records the settings
        the attempt ran under (RunConfig.extra_configs(), including
        house_standards {version, file, sha256} for templates that ship
-       them, prompt_extras for v11's staged file); BizbenchV1 has no such column, so it is probed and skipped
+       them, prompt_extras for v11/v13's staged file); BizbenchV1 has no such column, so it is probed and skipped
        there.
   Verdicts infra_failure / needs_review write NO row (no trial burned; held
   locally); success / timeout / agent_failure write a row.

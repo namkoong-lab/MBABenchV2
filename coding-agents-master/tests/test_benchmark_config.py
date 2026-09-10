@@ -1,5 +1,6 @@
-"""Offline checks for the benchmark (v1|v2) switch and the v8/v9/v12
-templates, including v12's House_Standards_v1.md attachment.
+"""Offline checks for the benchmark (v1|v2) switch and the v8/v9/v12/v13
+templates, including v12's House_Standards_v1.md attachment and v13's
+HOUSE_STANDARDS.md workspace extra.
 
 Run from coding-agents-master:  python tests/test_benchmark_config.py
 (or pytest tests/). No Docker, DB, S3, or API keys needed; the v12 checks
@@ -70,13 +71,22 @@ def main() -> int:
     assert v1.s3_root == "BizbenchV1"
     print("OK  benchmark v1 -> v7, BizbenchV1 root")
 
-    # v2: root/template flip together (v12 = the House Standards template).
-    v2 = load_config(_cfg("benchmark: v2\n"))
-    assert v2.benchmark == "v2"
+    # v2: root/template flip together (v13 = the rubric-free House Standards template).
+    v2_default = load_config(_cfg("benchmark: v2\n"))
+    assert v2_default.benchmark == "v2"
+    assert v2_default.template_version == "v13"
+    assert v2_default.s3_root == "MBABenchV2"
+    assert v2_default.s3_bucket  # from config/config.yaml aws.s3_bucket or the default
+    sys_path, tpl_path = prompt_file_paths(v2_default, "jp")
+    assert parse_prompt_version(sys_path.name, tpl_path.name) == 113
+    assert template_attachments(v2_default) == []  # v13 stages a workspace extra instead
+    assert V8_RUBRIC_MARKER not in tpl_path.read_text()
+    assert v2_default.extra_configs()["house_standards"]["delivered_as"] == "HOUSE_STANDARDS.md"
+    print("OK  benchmark v2 -> v13 (pv 113, rubric-free, HOUSE_STANDARDS.md extra), MBABenchV2 root")
+
+    # v12 (superseded 2026-09-10) still selectable with its attachment route.
+    v2 = load_config(_cfg("benchmark: v2\ntemplate_version: v12\n"))
     assert v2.template_version == "v12"
-    assert v2.s3_root == "MBABenchV2"
-    assert v2.s3_bucket  # from config/config.yaml aws.s3_bucket or the default
-    print("OK  benchmark v2 -> v12, MBABenchV2 root")
 
     # the old internal: stanza is refused, not silently honoured.
     try:
@@ -99,7 +109,7 @@ def main() -> int:
         assert template_name(src, "v12") == "task_template_shared_v12.txt"
     sys_path, tpl_path = prompt_file_paths(v2, "jp")
     assert parse_prompt_version(sys_path.name, tpl_path.name) == 112
-    print("OK  v12 template: shared across sources, checksum guard passed, pv=112")
+    print("OK  v12 template still selectable: shared across sources, checksum guard passed, pv=112")
 
     # v12 declares the house-standards attachment on the template, and it
     # resolves to the canonical monorepo file.
@@ -160,6 +170,7 @@ def main() -> int:
     print("OK  v7 template unchanged, pv=107")
 
     check_seeded_workspace()
+    check_v13_workspace()
 
     print("ALL BENCHMARK CONFIG CHECKS PASSED")
     return 0
@@ -177,7 +188,7 @@ def check_seeded_workspace() -> None:
         (task / "starting_files" / "case.xlsx").write_bytes(b"not really xlsx")
         run_yaml = tmp / "run.yaml"
         run_yaml.write_text(
-            "mode: external\nbenchmark: v2\n"
+            "mode: external\nbenchmark: v2\ntemplate_version: v12\n"
             "agent_model_name: claudecode_anthropic/claude-haiku-4-5\n"
         )
         cfg = load_config(run_yaml)
@@ -219,6 +230,42 @@ def check_seeded_workspace() -> None:
                 print("OK  missing declared attachment refused")
         finally:
             TEMPLATE_ATTACHMENTS["v12"] = [STANDARDS_REL]
+
+
+def check_v13_workspace() -> None:
+    """The v2 default (v13) stages HOUSE_STANDARDS.md into the workspace root,
+    seeds nothing into starting_files/, lists it in PROMPT.md, snapshots the
+    source beside the prompt files, and carries no rubric."""
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        task = tmp / "task"
+        (task / "starting_files").mkdir(parents=True)
+        (task / "task.yaml").write_text("task_name: seeded13\ntask_source: jp\n")
+        (task / "starting_files" / "case.xlsx").write_bytes(b"not really xlsx")
+        run_yaml = tmp / "run.yaml"
+        run_yaml.write_text(
+            "mode: external\nbenchmark: v2\n"
+            "agent_model_name: claudecode_anthropic/claude-haiku-4-5\n"
+        )
+        cfg = load_config(run_yaml)
+        cfg.workspaces_dir = tmp / "workspaces"
+        assert cfg.template_version == "v13"
+        spec = ExternalSource(task).fetch(tmp / "_staging")
+        assert seed_template_attachments(cfg, spec) == []
+        attempt = create_attempt(cfg.workspaces_dir, spec)
+        _snapshot_run_inputs(cfg, spec, attempt)
+        prompt, pv = build_prompt(cfg, spec, attempt.workspace, attempt=attempt)
+        assert pv == 113
+        house = attempt.workspace / "HOUSE_STANDARDS.md"
+        canonical = ROOT.parent / STANDARDS_REL
+        assert house.read_bytes() == canonical.read_bytes()
+        assert not (attempt.workspace / "starting_files" / "House_Standards_v1.md").exists()
+        assert "- HOUSE_STANDARDS.md (" in prompt and "HOUSE_STANDARDS.md" in attempt.manifest
+        assert V8_RUBRIC_MARKER not in prompt and "ACCURACY" not in prompt
+        assert (attempt.attempt_dir / "prompts" / "house_standards_v1.md").exists()
+        assert (attempt.attempt_dir / "prompts" / "task_template_shared_v13.txt").exists()
+        assert cfg.extra_configs()["house_standards"]["sha256"] == hashlib.sha256(canonical.read_bytes()).hexdigest()
+        print("OK  v13 workspace: HOUSE_STANDARDS.md staged at root, PROMPT.md lists it, rubric-free, provenance stamped")
 
 
 def test_benchmark_config():
