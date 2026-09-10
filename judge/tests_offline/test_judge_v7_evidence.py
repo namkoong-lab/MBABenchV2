@@ -110,6 +110,7 @@ def _build(tmp_path):
     ws["L1"] = "2024"; ws["L2"] = 2024; ws["L3"] = "1,234.50"; ws["L4"] = "(1,234)"
     ws["L5"] = "45%"; ws["L6"] = "Q1 2024"; ws["L7"] = "1.0"; ws["L8"] = '=TEXT(L2,"0")'
     ws["L9"] = "$1,000"; ws["L10"] = " 12 "; ws["L11"] = "2024-01-01"; ws["L12"] = "007"
+    ws["L13"] = " "                                                            # whitespace-only text: blank, NOT hidden by format
     ws.freeze_panes = "B2"
     ws.sheet_view.pane.activePane = "bottomRight"
     for sel in ws.sheet_view.selection:
@@ -157,6 +158,10 @@ def test_cell_extractor(tmp_path):
     assert full["E21"].startswith("[E21]42 [DATA TABLE D20:F22")
     data = _cells(p)["data"]
     assert data["A6"] == "[A6]100 [FORMAT:;;;] [HIDDEN BY FORMAT]", "marker survives the data view"
+    assert "HIDDEN BY FORMAT" not in _cells(p)["full"].get("L13", ""), "a whitespace-only cell is not hidden by format"
+    grid = list(csv.reader(io.StringIO(extract_all_cell_data(
+        openpyxl.load_workbook(p)["Contents"], openpyxl.load_workbook(p, data_only=True, read_only=True)["Contents"])["full"])))
+    assert grid[12][11] == " ", "whitespace-only text keeps the pre-v7 encoding (served as itself, no ref, no tag)"
     assert "FORMAT:font" not in data["A7"]
 
 

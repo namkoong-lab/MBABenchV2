@@ -1089,8 +1089,15 @@ def create_enhanced_cell_variants(
         formula_text = None
 
     # Blank display but a populated cell: the number format is hiding it.
+    # A whitespace-only string is not hidden by anything — it is blank on
+    # screen because it is blank (canary 2026-09-10: Questions!D6 = " " was
+    # served as [HIDDEN BY FORMAT] and failed check 94).
     hidden_by_format = False
-    if not display_value.strip() and raw_value is not None and raw_value != "":
+    if (
+        not display_value.strip()
+        and raw_value is not None
+        and not (isinstance(raw_value, str) and not raw_value.strip())
+    ):
         hidden_by_format = True
     elif display_value.strip() and _format_hides_content(
         getattr(cell, "number_format", None), raw_value
