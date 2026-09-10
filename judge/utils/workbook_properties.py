@@ -13,9 +13,11 @@ text block for the judge's seed prompt.
 Where a property cannot be read the block says so explicitly ("unknown"),
 so the model can tell "absent" from "not provided".
 
-Cache generation: files written here ride in `*_csv_cache_v5` — a v2 cache
+Cache generation: files written here ride in `*_csv_cache_v6` — a v2 cache
 has no properties file and the loaders degrade to the old behaviour
 (alphabetical listing, no block), which is why the generation was bumped.
+`_v6` (2026-09-10 pm): light yellows at the 60-degree hue boundary are named
+`light_yellow`, not `olive` (canary on check 47); schema unchanged.
 `_v5` (2026-09-10, judge v7 tier 2): schema 3 adds the active cell per
 sheet, a count of styled-but-empty cells inside the used range, the number
 of spill/array ranges per sheet, and the resolved hex beside every theme

@@ -735,6 +735,10 @@ def _rgb_to_color_name(rgb_value: str) -> str:
         elif s < 0.4:  # Slightly increased threshold
             if h < 60:
                 color_name = "beige"
+            elif h < 75 and v > 0.8:
+                # Light yellows sit at exactly 60° (FFFFCC, FFFFE0) and fell
+                # into the olive bucket (2026-09-10, canary on check 47).
+                color_name = "light_yellow"
             elif h < 150:
                 color_name = "olive"
             elif h < 200:

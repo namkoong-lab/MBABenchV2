@@ -92,7 +92,8 @@ agentic_judge:
 # formats rendered, theme-palette colours resolved to hex with blue-family
 # names, styled-empty-cell counts, hidden add-in names folded into the
 # footnote, the true active cell per sheet, [TEXT] on numeric-looking
-# text constants.
+# text constants. Same day pm (caches -> *_csv_cache_v6): light yellows at
+# the 60-degree boundary named light_yellow, not olive (check-47 canary).
 # Every further judge change lands under version 7 until it is
 # cut. Version 6 rows split on this: the orchestration
 # runs (2026-09-05/07 production Sol) passed --no-ignore-sheets and saw the

@@ -276,6 +276,13 @@ def test_blue_family_names():
     assert _rgb_to_color_name("FF0000") == "bright_red (FF0000)"
     assert _rgb_to_color_name("00B0F0") == "bright_cyan (00B0F0)"
     assert _rgb_to_color_name("C6EFCE") == "olive (C6EFCE)"
+    # light yellows at the 60-degree boundary (canary 887, check 47)
+    assert _rgb_to_color_name("FFFFCC") == "light_yellow (FFFFCC)"
+    assert _rgb_to_color_name("FFFFFFCC") == "light_yellow (FFFFCC)"
+    assert _rgb_to_color_name("FFFFE0") == "light_yellow (FFFFE0)"
+    assert _rgb_to_color_name("999966") == "olive (999966)", "a true muted olive keeps its name"
+    assert _rgb_to_color_name("FFF2CC") == "beige (FFF2CC)", "Office gold 80% tint unchanged"
+    assert _rgb_to_color_name("FFFF00") == "bright_yellow (FFFF00)"
     assert _rgb_to_color_name("A5A5A5") == "gray (A5A5A5)"
 
 

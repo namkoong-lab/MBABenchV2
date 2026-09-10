@@ -9,9 +9,9 @@ For each valid task the script:
   - Downloads the solution Excel file(s)
   - Extracts every sheet to CSV (no sheet filtering)
   - Stores the result under
-    <scratch>/grade_cache/<db-name>/solution_csv_cache_v5/task_id=<id>/
-    (the exact location grade_from_db.py reads; "_v5" is the 2026-09-10 judge v7
-    tier-2 generation — spill/array tagging, theme colours resolved, [Red]/locale
+    <scratch>/grade_cache/<db-name>/solution_csv_cache_v6/task_id=<id>/
+    (the exact location grade_from_db.py reads; "_v6" renames light yellows
+    after the check-47 canary; "_v5" is the 2026-09-10 judge v7 tier-2 generation — spill/array tagging, theme colours resolved, [Red]/locale
     number formats rendered, styled-empty counts, active cell, hidden names
     folded into the footnote; "_v4" (2026-09-09) added hyperlinks/breaks/
     grouping/CF styles in the properties block plus Excel-style dates,
@@ -279,7 +279,7 @@ def main():
     db_name = _urlparse(get_db_url()).path.lstrip("/").rsplit("/", 1)[-1]
     namespace = _re.sub(r"[^A-Za-z0-9._-]", "_", db_name) or "default"
     cache_base = (
-        Path(scratch_base) / "grade_cache" / namespace / "solution_csv_cache_v5"
+        Path(scratch_base) / "grade_cache" / namespace / "solution_csv_cache_v6"
     )
     cache_base.mkdir(parents=True, exist_ok=True)
 

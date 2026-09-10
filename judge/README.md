@@ -95,7 +95,7 @@ adopted from the same sheet), a v2 agentic grading additionally:
   merged-cells/frozen-panes metadata once per sheet in Formatting and
   Structure. Listings show dimensions only, and the per-category user
   message keeps static blocks first so consecutive categories share a
-  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation (now `_v5`, see judge v7).
+  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation (now `_v6`, see judge v7).
 
 ### judge_version 4 / single-pass 5 (2026-09)
 
@@ -194,7 +194,7 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
 
   `grade_with_orchestration` also stages suitability annotations itself now
   (before 2026-09 it never passed them through, so it could not grade v2 at
-  all) and shares the CSV cache generation with grade_from_db (`_v5` today).
+  all) and shares the CSV cache generation with grade_from_db (`_v6` today).
 
 ### judge v7 — single-pass 7 / template_8 (2026-09-09)
 
@@ -220,7 +220,7 @@ version 7 is cut.
   on every member cell as `[DATA TABLE ref: {=TABLE(r,c)} anchored at X]`
   (90, 91, 99), and `wrap` restored in the formatting view (70). Test:
   `tests_offline/test_judge_v7_evidence.py`.
-- **Tier 2 evidence sweep** (2026-09-10, caches move to `*_csv_cache_v5`,
+- **Tier 2 evidence sweep** (2026-09-10, caches move to `*_csv_cache_v5`, then `_v6` the same day when the canaries showed light yellows (`FFFFCC`) named `olive` at the 60° hue boundary — now `light_yellow`;
   properties schema 3; same test file). Cell extractor: multi-cell array /
   dynamic-array spills tagged on the anchor as `[SPILL C6:C1025]` and on
   every filled cell as `[SPILLED FROM C6]` — those cells used to read as
