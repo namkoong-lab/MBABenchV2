@@ -22,8 +22,10 @@ which attaches to the automation Chrome over CDP and:
    workbook for a template task) and "Create a Copy" under a standard name
 3. opens the add-in panel, pins **and UI-verifies** the identity's model /
    thinking effort (an unverified pin aborts the attempt as infra)
-4. uploads the non-workbook starting files into the panel, sends the
-   registered prompt turns, waits each one out
+4. attaches the non-workbook starting files (and the version's attachments)
+   to the panel composer and sends them **with the first prompt turn** —
+   never as a text-less turn, which an agentic add-in treats as "go" on the
+   open workbook — then sends the remaining turns, waiting each one out
 5. downloads the workbook, validates it (openpyxl), records the exact path
 
 Attempt semantics (coding-agents style): successes and agent failures

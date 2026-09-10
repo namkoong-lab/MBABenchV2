@@ -1255,7 +1255,10 @@ class AIAgentCore(ABC):
         Process all prompts sequentially.
 
         Args:
-            files_to_upload: Optional list of files to upload BEFORE prompts
+            files_to_upload: Optional list of files to attach to the FIRST
+                prompt. They are never sent as a turn of their own — an
+                attachment-only send lets an agentic add-in start working the
+                open workbook before it has been told what the task is.
 
         Returns:
             True if all prompts processed successfully
@@ -1269,56 +1272,32 @@ class AIAgentCore(ABC):
             if isinstance(prompts, str):
                 prompts = [prompts]
 
-            # Step 1: If files exist, upload them FIRST with an empty prompt
+            # Step 1: If files exist, attach them to the composer now. They are
+            # sent WITH the first prompt, never as a text-less turn of their own.
+            # 2026-09-10 (rung 3, tasks 36/51): an empty send with only
+            # House_Standards_v1.md attached made both add-ins start building
+            # the model from the workbook's Instructions sheet before the task
+            # prompt had been delivered — Claude was already editing cells and
+            # dismissing permission dialogs three minutes in. The attachments
+            # must ride on prompt #1 so the model's first turn IS the prompt.
+            attach_to_first_prompt = False
             if files_to_upload:
                 logger.info(f"\n{'='*80}")
-                logger.info("📤 FILE UPLOAD (before prompts)")
+                logger.info("📤 FILE ATTACH (sent with prompt #1)")
                 logger.info(f"{'='*80}")
                 logger.info(
-                    f"📤 Uploading {len(files_to_upload)} file(s) before processing prompts..."
+                    f"📤 Attaching {len(files_to_upload)} file(s) to the first prompt..."
                 )
 
                 upload_success = await self.upload_files(files_to_upload)
                 if not upload_success:
                     logger.error("❌ File upload failed")
                     return False
-                logger.info("✅ Files uploaded successfully")
+                logger.info("✅ Files attached; they go out with prompt #1")
                 await asyncio.sleep(3)  # Give time for files to be processed
+                attach_to_first_prompt = True
 
-                # Submit empty prompt with files attached
-                logger.info("📝 Submitting files with empty prompt...")
-
-                # Start prompt logging for file submission
-                if self.completion_logger:
-                    self.completion_logger.start_prompt("(File upload only)")
-
-                # Get initial button counts
-                initial_counts = await self.get_button_count()
-
-                # Submit empty prompt with attachments
-                if not await self.submit_prompt("", 0, has_attachments=True):
-                    logger.error("❌ Failed to submit files")
-                    if self.completion_logger:
-                        self.completion_logger.end_prompt(success=False)
-                    return False
-
-                # Wait for file submission to complete
-                logger.info("⏳ Waiting for file submission to complete...")
-                if not await self.wait_for_completion(0, initial_counts):
-                    logger.error("❌ File submission did not complete")
-                    if self.completion_logger:
-                        self.completion_logger.end_prompt(success=False)
-                    return False
-
-                logger.info("✅ File submission completed successfully")
-
-                # End prompt logging for file submission
-                if self.completion_logger:
-                    self.completion_logger.end_prompt(success=True)
-
-                await asyncio.sleep(3)
-
-            # Step 2: Process all prompts normally (without attachments)
+            # Step 2: Send the prompts in order; #1 carries the attachments.
             logger.info(f"🚀 Processing {len(prompts)} prompt(s)")
 
             for i, prompt in enumerate(prompts, 1):
@@ -1340,8 +1319,11 @@ class AIAgentCore(ABC):
                 # Get initial button counts
                 initial_counts = await self.get_button_count()
 
-                # Submit prompt (no attachments - files already submitted)
-                if not await self.submit_prompt(prompt, i, has_attachments=False):
+                # Prompt #1 carries the attachments (if any); later prompts none.
+                has_attachments = attach_to_first_prompt and i == 1
+                if not await self.submit_prompt(
+                    prompt, i, has_attachments=has_attachments
+                ):
                     logger.error(f"❌ Failed to submit prompt {i}")
                     if self.completion_logger:
                         self.completion_logger.end_prompt(success=False)

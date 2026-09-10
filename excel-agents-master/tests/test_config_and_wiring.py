@@ -388,6 +388,17 @@ def test_addins_search_budget_covers_ribbon_race():
     assert "PANEL_OPEN_TIMEOUT_S = 480" in src
 
 
+def test_attachments_ride_on_first_prompt_never_alone():
+    # 2026-09-10 (rung 3): a text-less send carrying only the House Standards
+    # attachment made both add-ins start building from the workbook's
+    # Instructions sheet before the task prompt was delivered. Files must be
+    # attached to the composer and sent with prompt #1.
+    src = _src("excel_agent/core/ai_agent_base.py")
+    assert 'submit_prompt("", 0, has_attachments=True)' not in src
+    assert "(File upload only)" not in src
+    assert "attach_to_first_prompt and i == 1" in src
+
+
 def test_rescue_native_download_picks_newest_matching(tmp_path, monkeypatch):
     from datetime import datetime, timedelta
     import os
