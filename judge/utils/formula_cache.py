@@ -106,6 +106,9 @@ def max_ratio() -> float:
 
 
 _REF_PREFIX_RE = re.compile(r"^\[[A-Z]+\d+\]")
+# Tags the extractor appends to the display half (never part of the value):
+# spill anchors/children (tier 2, 2026-09-10) and what-if data tables (v7).
+_DISPLAY_TAG_RE = re.compile(r"\s*\[(?:SPILL [^\]]*|SPILLED FROM [^\]]*|DATA TABLE [^\]]*|TEXT)\]")
 
 
 def _census_field(field: str) -> str | None:
@@ -116,6 +119,9 @@ def _census_field(field: str) -> str | None:
     # Judge v7 (2026-09-09): a formula cell keeps its `[ref]` even when its
     # display is empty, so strip the address before deciding on the display.
     head = _REF_PREFIX_RE.sub("", head, count=1)
+    # An uncached spill anchor / data-table cell still carries its tag; the
+    # tag is not a value, so strip it too before deciding.
+    head = _DISPLAY_TAG_RE.sub("", head)
     return "cached" if head.strip() else "uncached"
 
 

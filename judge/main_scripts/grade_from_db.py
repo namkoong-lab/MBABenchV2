@@ -1268,13 +1268,13 @@ def main(args):
         # dates, accounting zeros, hidden-format and data-table tagging in
         # the cells. Older generations must never be reused; their dirs are
         # left untouched.
-        solution_cache_base = cache_root / "solution_csv_cache_v4"
+        solution_cache_base = cache_root / "solution_csv_cache_v5"
         solution_cache_base.mkdir(parents=True, exist_ok=True)
-        attempt_cache_base = cache_root / "attempt_csv_cache_v4"
+        attempt_cache_base = cache_root / "attempt_csv_cache_v5"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
         # Starting-workbook CSVs are per task, like solution CSVs. New cache
         # family (2026-09) — existing solution/attempt caches stay valid.
-        starting_cache_base = cache_root / "starting_csv_cache_v4"
+        starting_cache_base = cache_root / "starting_csv_cache_v5"
         starting_cache_base.mkdir(parents=True, exist_ok=True)
         # Phase A: per-task suitability annotations, fetched once per run and
         # staged into each task folder (the judge enforces the v2 rule).

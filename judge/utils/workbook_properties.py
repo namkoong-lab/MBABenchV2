@@ -13,9 +13,17 @@ text block for the judge's seed prompt.
 Where a property cannot be read the block says so explicitly ("unknown"),
 so the model can tell "absent" from "not provided".
 
-Cache generation: files written here ride in `*_csv_cache_v4` — a v2 cache
+Cache generation: files written here ride in `*_csv_cache_v5` — a v2 cache
 has no properties file and the loaders degrade to the old behaviour
 (alphabetical listing, no block), which is why the generation was bumped.
+`_v5` (2026-09-10, judge v7 tier 2): schema 3 adds the active cell per
+sheet, a count of styled-but-empty cells inside the used range, the number
+of spill/array ranges per sheet, and the resolved hex beside every theme
+colour (tab colours, CF styles); hidden defined names leave the rendered
+list for the footnote. The cell extractor changed alongside (theme colours
+tokenised, `[Red]`/locale number formats rendered, spill anchors and
+children tagged, blue-family colour names, `[TEXT]` on numeric-looking
+text constants).
 `_v4` (2026-09-09, judge v7): schema 2 adds cell hyperlinks (openpyxl fills
 `ws._hyperlinks` only when writing), page breaks, row/column grouping,
 conditional-format styling, hidden defined names, a zip-based VBA test and
@@ -38,7 +46,8 @@ except ImportError:  # imported as a bare module (utils/ on sys.path)
     from logger import logger
 
 FILENAME = "_workbook_properties.json"
-SCHEMA_VERSION = 2   # 2 (2026-09-09): hyperlinks, page breaks, grouping, CF styles, hidden names, vba, origin
+SCHEMA_VERSION = 3   # 3 (2026-09-10): active cell, styled empty cells, spill counts, theme hex on colours
+                     # 2 (2026-09-09): hyperlinks, page breaks, grouping, CF styles, hidden names, vba, origin
 _MAX_LIST = 25          # per-list cap in the rendered text (JSON keeps everything)
 _MAX_COMMENT_CHARS = 160
 
@@ -98,11 +107,14 @@ def _ranges_text(indexes: list[int], col: bool) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _color_text(color) -> Optional[str]:
-    """openpyxl Color -> 'rgb:FFC000' / 'theme:4' / 'indexed:12' / None.
+def _color_text(color, palette=None) -> Optional[str]:
+    """openpyxl Color -> 'rgb:FFC000' / 'theme:4 tint +0.40 (8FAADC)' /
+    'indexed:12' / None.
 
     `.rgb` on a theme colour is a descriptor ERROR STRING in openpyxl
-    ("Values must be of type <class 'str'>"), so read the type first.
+    ("Values must be of type <class 'str'>"), so read the type first. With a
+    `palette` (theme_palette.load_palette) the resolved hex is shown beside
+    the theme slot.
     """
     if color is None:
         return None
@@ -112,7 +124,16 @@ def _color_text(color) -> Optional[str]:
         return f"rgb:{rgb}" if isinstance(rgb, str) and len(rgb) in (6, 8) else None
     if ctype == "theme":
         tint = getattr(color, "tint", 0) or 0
-        return f"theme:{getattr(color, 'theme', '?')}" + (f" tint {tint:+.2f}" if tint else "")
+        text = f"theme:{getattr(color, 'theme', '?')}" + (f" tint {tint:+.2f}" if tint else "")
+        if palette is not None:
+            try:
+                from . import theme_palette as _theme
+            except ImportError:  # bare-module import path
+                import theme_palette as _theme
+            hx = _safe(lambda: _theme.resolve_color(palette, color), None)
+            if hx:
+                text += f" ({hx})"
+        return text
     if ctype == "indexed":
         return f"indexed:{getattr(color, 'indexed', '?')}"
     return None
@@ -123,7 +144,7 @@ def _color_text(color) -> Optional[str]:
 _SYSTEM_NAME_PREFIXES = ("IQ_", "IQB_", "Risk", "Pal_", "_xlnm", "solver_", "_xlfn", "Slicer_")
 
 
-def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
+def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None) -> dict:
     kind = "chartsheet" if type(ws).__name__ == "Chartsheet" else "worksheet"
     props: dict[str, Any] = {
         "name": ws.title,
@@ -131,7 +152,7 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
         "index": index,
         "kind": kind,
         "state": _safe(lambda: ws.sheet_state, "visible"),
-        "tab_color": _safe(lambda: _color_text(ws.sheet_properties.tabColor), None),
+        "tab_color": _safe(lambda: _color_text(ws.sheet_properties.tabColor, palette), None),
     }
     if kind == "chartsheet":
         return props
@@ -158,9 +179,10 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
     # used range + comments + hyperlinks + counts in one pass over the cells
     min_r = min_c = None
     max_r = max_c = 0
-    n_values = n_formulas = 0
+    n_values = n_formulas = n_spills = 0
     comments = []
     links = []
+    styled_empty: list[tuple[int, int, str]] = []  # (row, col, coordinate), row-major
     try:
         try:
             from .sheet_extent import iter_rows_kwargs
@@ -171,15 +193,23 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
             for cell in row:
                 v = cell.value
                 if v is None:
+                    if _is_styled_empty(cell):
+                        styled_empty.append((cell.row, cell.column, cell.coordinate))
                     continue
                 r, c = cell.row, cell.column
                 min_r = r if min_r is None or r < min_r else min_r
                 min_c = c if min_c is None or c < min_c else min_c
                 max_r, max_c = max(max_r, r), max(max_c, c)
                 n_values += 1
-                if isinstance(v, str) and v.startswith("="):
+                if isinstance(v, str) and v.startswith("=") and v != "=":
+                    # a bare "=" is a spilled child (<f ca="1"/>), not a formula
                     n_formulas += 1
-                elif type(v).__name__ in ("ArrayFormula", "DataTableFormula"):
+                elif type(v).__name__ == "ArrayFormula":
+                    n_formulas += 1
+                    ref = str(getattr(v, "ref", "") or "")
+                    if ":" in ref and ref.split(":")[0] != ref.split(":")[1]:
+                        n_spills += 1
+                elif type(v).__name__ == "DataTableFormula":
                     n_formulas += 1
             for cell in row:
                 cm = getattr(cell, "comment", None)
@@ -204,12 +234,25 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
         )
         props["n_values"] = n_values
         props["n_formulas"] = n_formulas
+        props["n_spill_anchors"] = n_spills
         props["comments"] = comments
         props["hyperlinks"] = sorted(links, key=lambda d: d["ref"])
+        # Styled cells with no value INSIDE the used range (rubric_9 check 28,
+        # "no unused formatting"): the extractor skips them, so this count is
+        # the only place the judge can see leftover formatting sprawl.
+        if min_r is not None:
+            inside = [
+                coord for (r, c, coord) in styled_empty
+                if min_r <= r <= max_r and min_c <= c <= max_c
+            ]
+        else:
+            inside = []
+        props["styled_empty_cells"] = {"count": len(inside), "examples": inside[:10]}
     except Exception:  # noqa: BLE001
         props["used_range"] = "unknown"
         props["comments"] = "unknown"
         props["hyperlinks"] = "unknown"
+        props["styled_empty_cells"] = "unknown"
 
     # hidden rows / cols, widths / heights, outline grouping
     try:
@@ -261,6 +304,31 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
         props["column_widths"] = "unknown"
         props["col_groups"] = "unknown"
 
+    # active cell (rubric_9 check 62). openpyxl stores one <selection> per
+    # pane; on a frozen-pane sheet the first one belongs to a corner pane, so
+    # the cursor is the selection whose pane is the view's activePane.
+    try:
+        sv = ws.sheet_view
+        sels = list(getattr(sv, "selection", None) or [])
+        pane = getattr(sv, "pane", None)
+        active_pane = getattr(pane, "activePane", None) if pane is not None else None
+        chosen = next((sel for sel in sels if getattr(sel, "pane", None) == active_pane), None)
+        if chosen is None and sels:
+            chosen = sels[-1]
+        ac = None
+        if chosen is not None:
+            ac = getattr(chosen, "activeCell", None)
+            if not ac:
+                sq = str(getattr(chosen, "sqref", "") or "")
+                ac = sq.split()[0].split(":")[0] if sq else None
+        # No <selection> element at all is Excel's default: cursor on A1.
+        props["active_cell"] = ac or ("A1" if not sels else "unknown")
+        tlc = getattr(sv, "topLeftCell", None)
+        props["top_left_cell"] = str(tlc) if tlc else None
+    except Exception:  # noqa: BLE001
+        props["active_cell"] = "unknown"
+        props["top_left_cell"] = None
+
     # page breaks (manual breaks only; automatic ones are not stored)
     try:
         props["row_breaks"] = sorted(int(b.id) for b in ws.row_breaks.brk)
@@ -292,7 +360,7 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
                 "rules": [
                     {"type": r.type, "operator": getattr(r, "operator", None),
                      "formula": list(getattr(r, "formula", []) or []),
-                     "style": _dxf_style(getattr(r, "dxf", None))}
+                     "style": _dxf_style(getattr(r, "dxf", None), palette)}
                     for r in cf.rules
                 ],
             })
@@ -302,7 +370,34 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
     return props
 
 
-def _dxf_style(dxf) -> Optional[dict]:
+def _is_styled_empty(cell) -> bool:
+    """A value-less cell carrying visible formatting: any border side, bold,
+    a fill with a fill type, or a number format other than General.
+    `cell.has_style` alone is too broad (every cell touched by a style row)."""
+    try:
+        if not getattr(cell, "has_style", False):
+            return False
+        font = cell.font
+        if font is not None and getattr(font, "bold", None):
+            return True
+        fill = cell.fill
+        if fill is not None and getattr(fill, "fill_type", None):
+            return True
+        nf = cell.number_format
+        if nf and nf != "General":
+            return True
+        border = cell.border
+        if border is not None and any(
+            getattr(getattr(border, side, None), "style", None)
+            for side in ("top", "bottom", "left", "right")
+        ):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def _dxf_style(dxf, palette=None) -> Optional[dict]:
     """The style a conditional-format rule applies (openpyxl resolves dxfId
     on load): font colour, fill and bold. None when the rule carries none.
     Solid dxf fills usually store the colour in bgColor, so both are read."""
@@ -312,15 +407,15 @@ def _dxf_style(dxf) -> Optional[dict]:
     try:
         font = getattr(dxf, "font", None)
         if font is not None:
-            fc = _color_text(getattr(font, "color", None))
+            fc = _color_text(getattr(font, "color", None), palette)
             if fc and not fc.endswith(":00000000"):
                 out["font"] = fc
             if getattr(font, "bold", None):
                 out["bold"] = True
         fill = getattr(dxf, "fill", None)
         if fill is not None:
-            bg = _color_text(getattr(fill, "bgColor", None))
-            fg = _color_text(getattr(fill, "fgColor", None))
+            bg = _color_text(getattr(fill, "bgColor", None), palette)
+            fg = _color_text(getattr(fill, "fgColor", None), palette)
             chosen = None
             for cand in (bg, fg):
                 if cand and not cand.endswith(":00000000"):
@@ -378,10 +473,16 @@ def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None
     except Exception:  # noqa: BLE001
         wb["external_links"] = "unknown"
 
+    try:
+        from . import theme_palette as _theme
+    except ImportError:  # bare-module import path
+        import theme_palette as _theme
+    palette = _safe(lambda: _theme.load_palette(workbook), None)
+
     sheets = []
     name_map = name_map or {}
     for i, ws in enumerate(workbook._sheets if hasattr(workbook, "_sheets") else workbook.worksheets, 1):
-        sheets.append(_sheet_properties(ws, i, name_map.get(ws.title, ws.title)))
+        sheets.append(_sheet_properties(ws, i, name_map.get(ws.title, ws.title), palette))
     return {"schema": SCHEMA_VERSION, "workbook": wb, "sheets": sheets}
 
 
@@ -556,17 +657,24 @@ def render_properties_text(
     )
     dn = wb.get("defined_names")
     if isinstance(dn, list):
+        # Hidden names (add-ins such as @RISK plant dozens per file) are
+        # counted, not listed, so the model's own names keep the slots
+        # (rubric_9 checks 9/29: hidden add-in names do not count against
+        # the Name Manager). The JSON keeps every name.
         user_names = [d for d in dn if not str(d.get("name", "")).startswith(_SYSTEM_NAME_PREFIXES)]
         n_sys = len(dn) - len(user_names)
+        visible = [d for d in user_names if not d.get("hidden")]
+        n_hidden = len(user_names) - len(visible)
+        footnote = [f"+{n_sys} add-in/system"] * bool(n_sys) + [f"+{n_hidden} hidden"] * bool(n_hidden)
         lines.append(
             "Defined names: " + _fmt_list(
-                user_names,
+                visible,
                 fn=lambda d: (
                     f"{d['name']}{' (' + d['scope'] + ')' if d.get('scope') else ''}"
-                    f"{' (hidden)' if d.get('hidden') else ''} -> {d.get('refers_to')}"
+                    f" -> {d.get('refers_to')}"
                 ),
             )
-            + (f" [+{n_sys} add-in/system names not listed]" if n_sys else "")
+            + (f" [{', '.join(footnote)} names not listed]" if footnote else "")
         )
     else:
         lines.append("Defined names: unknown")
@@ -591,7 +699,8 @@ def render_properties_text(
         head = (
             f"  {s['index']}. {s['name']}{tag}{served}: "
             f"{s.get('max_row')}x{s.get('max_column')} (used {s.get('used_range') or 'empty'}; "
-            f"{s.get('n_values', '?')} values, {s.get('n_formulas', '?')} formulas)"
+            f"{s.get('n_values', '?')} values, {s.get('n_formulas', '?')} formulas"
+            f"{', ' + str(s['n_spill_anchors']) + ' spill/array ranges' if s.get('n_spill_anchors') else ''})"
         )
         lines.append(head)
         fp = s.get("freeze_panes")
@@ -602,8 +711,21 @@ def render_properties_text(
             f"tab color: {s.get('tab_color') or 'none'}",
             f"protected: {'yes' if s.get('protected') else 'no'}",
             f"merged ranges: {len(s.get('merged_ranges') or []) if s.get('merged_ranges') != 'unknown' else 'unknown'}",
+            "active cell: " + str(s.get("active_cell") or "unknown")
+            + (f" (opens scrolled to {s['top_left_cell']})"
+               if s.get("top_left_cell") and s.get("top_left_cell") != "A1" else ""),
         ]
         lines.append("     " + "; ".join(detail))
+        se = s.get("styled_empty_cells")
+        if isinstance(se, dict):
+            n_se = int(se.get("count", 0) or 0)
+            ex = list(se.get("examples") or [])
+            se_txt = "none" if n_se == 0 else (
+                f"{n_se} (e.g. {', '.join(ex)}{', ...' if n_se > len(ex) else ''})"
+            )
+        else:
+            se_txt = "unknown" if se == "unknown" else "none"
+        lines.append("     styled empty cells in used range: " + se_txt)
         hr, hc = s.get("hidden_rows", []), s.get("hidden_cols", [])
         rg, cg = s.get("row_groups", []), s.get("col_groups", [])
         lines.append(

@@ -95,7 +95,7 @@ adopted from the same sheet), a v2 agentic grading additionally:
   merged-cells/frozen-panes metadata once per sheet in Formatting and
   Structure. Listings show dimensions only, and the per-category user
   message keeps static blocks first so consecutive categories share a
-  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation.
+  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation (now `_v5`, see judge v7).
 
 ### judge_version 4 / single-pass 5 (2026-09)
 
@@ -194,7 +194,7 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
 
   `grade_with_orchestration` also stages suitability annotations itself now
   (before 2026-09 it never passed them through, so it could not grade v2 at
-  all) and shares the `*_csv_cache_v2` generation with grade_from_db.
+  all) and shares the CSV cache generation with grade_from_db (`_v5` today).
 
 ### judge v7 — single-pass 7 / template_8 (2026-09-09)
 
@@ -220,6 +220,33 @@ version 7 is cut.
   on every member cell as `[DATA TABLE ref: {=TABLE(r,c)} anchored at X]`
   (90, 91, 99), and `wrap` restored in the formatting view (70). Test:
   `tests_offline/test_judge_v7_evidence.py`.
+- **Tier 2 evidence sweep** (2026-09-10, caches move to `*_csv_cache_v5`,
+  properties schema 3; same test file). Cell extractor: multi-cell array /
+  dynamic-array spills tagged on the anchor as `[SPILL C6:C1025]` and on
+  every filled cell as `[SPILLED FROM C6]` — those cells used to read as
+  hardcodes, or as `FORMULA:=` where Excel wrote `<f ca="1"/>` (41, 48-50,
+  81, 83, 85-86, 129, 21, 27); the standard `[Red]` / `[$$-409]` number
+  formats render like any other (zero `-`, negative `(1,235)`) instead of
+  punting the whole format (45, 46, 65-67); theme-palette colours are
+  resolved from the workbook's own `theme1.xml` (`utils/theme_palette.py`,
+  tint applied in HLS) and emitted as ordinary `textcolor:` / `bgcolor:`
+  tokens — before this every theme-coloured cell read as default black on
+  no fill (43, 47-56, 59); the default text slot (theme 1, no tint) stays
+  untokenised, matching the "missing key = Excel default" convention; blue
+  hues 200-260° are named `blue` / `light_blue` / `muted_blue` /
+  `dark_blue` instead of `pale_blue` / `muted_purple` / `slate_blue` (48,
+  52, 55). Properties block: `styled empty cells in used range: N (e.g. …)`
+  per sheet (28); hidden defined names leave the listed set for the
+  footnote `[+N add-in/system, +M hidden names not listed]` (9, 29); the
+  true `active cell` per sheet, read from the selection of the view's
+  active pane on frozen sheets (62); `N spill/array ranges` in each sheet's
+  header and a bare `=` no longer counted as a formula. Numbers stored as
+  text: a typed constant that reads like a number (`2024`, `1,234.50`,
+  `(1,234)`, `45%`) is served as `[A4]2024 [TEXT]` (23, 63, 64) — a fact,
+  not a verdict: version labels and list numbers are text on purpose, and
+  the judge decides from context; formula results are never marked (the
+  formula is visible). Measured cost: 13 marked cells across 6 sample
+  attempts, 0 across 4 goldens.
 - **Cover sheet is graded content** (2026-09-09): `--ignore-sheets` now
   defaults to nothing on both drivers. The port's `["cover"]` default deleted
   the `Cover` sheet's CSV before grading while rubric_9 grades cover content

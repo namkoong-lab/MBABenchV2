@@ -87,7 +87,13 @@ agentic_judge:
 # extractor renders dates and accounting zeros like Excel, marks cells
 # blanked by their format, keeps the [ref] on empty-display formula cells
 # and tags what-if data tables (caches -> *_csv_cache_v4, properties
-# schema 2). Every further judge change lands under version 7 until it is
+# schema 2). 2026-09-10 (tier 2, caches -> *_csv_cache_v5, schema 3):
+# spill/array ranges tagged on anchor and children, [Red]/locale number
+# formats rendered, theme-palette colours resolved to hex with blue-family
+# names, styled-empty-cell counts, hidden add-in names folded into the
+# footnote, the true active cell per sheet, [TEXT] on numeric-looking
+# text constants.
+# Every further judge change lands under version 7 until it is
 # cut. Version 6 rows split on this: the orchestration
 # runs (2026-09-05/07 production Sol) passed --no-ignore-sheets and saw the
 # cover; grade_from_db launches without the flag (the 2026-09-08 rubric-effect

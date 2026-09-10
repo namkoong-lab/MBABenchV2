@@ -120,6 +120,24 @@ ok(
     formula_cache._census_field("   |FORMULA:=T(1)") == "uncached",
     "whitespace-only display half counts as uncached",
 )
+ok(
+    formula_cache._census_field("[C6]1 [SPILL C6:C10]|FORMULA:=SEQUENCE(10)") == "cached",
+    "a cached spill anchor keeps its tag and counts as cached",
+)
+ok(
+    formula_cache._census_field("[C6] [SPILL C6:C10]|FORMULA:=SEQUENCE(10)") == "uncached",
+    "an UNCACHED spill anchor is not rescued by its [SPILL] tag (tier 2)",
+)
+ok(
+    formula_cache._census_field("[C7]2 [SPILLED FROM C6]") is None,
+    "a spilled child carries no formula and is not censused",
+)
+ok(
+    formula_cache._census_field(
+        "[E21] [DATA TABLE D20:F22: what-if table {=TABLE(A1,A2)} anchored at D20]|FORMULA:{=TABLE(A1,A2)}"
+    ) == "uncached",
+    "an uncached data-table cell is not rescued by its tag",
+)
 
 
 # ------------------------------------------------------------------- census

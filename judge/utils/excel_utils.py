@@ -17,6 +17,7 @@ import openpyxl.worksheet._reader as _openpyxl_reader
 from .logger import logger
 from .misc_utils import load_env_var
 from .sheet_extent import iter_rows_kwargs
+from . import theme_palette as _theme
 
 NOGRADE_PREFIX = "_nograde_"
 
@@ -297,9 +298,19 @@ def _render_number_format(value, format_string: str) -> Optional[str]:
     if not math.isfinite(value) or abs(value) >= 1e300:
         return None
 
-    # Path B: color codes ([Red], [Blue], ...) or conditional ([>0]) -> defer.
+    # Path B: bracket tags. Colour tags ([Red], [Color 10]) and locale tags
+    # ([$-409], [$$-409] — the currency symbol survives) are stripped so the
+    # standard three-section styles render like any other format (judge v7
+    # tier 2, 2026-09-10: before this the whole format was punted and zero
+    # read `0` where Excel shows `-`). Only a real condition ([>100], [=0])
+    # or an elapsed-time code ([h], [mm], [ss]) still defers.
     if "[" in format_string:
-        return None
+        if _ELAPSED_TIME_TAG_RE.search(format_string):
+            return None
+        stripped = _strip_format_brackets(format_string)
+        if "[" in stripped or not stripped.strip():
+            return None
+        format_string = stripped
 
     # Path C: scientific notation ('0.00E+00') -> defer.
     if "E+" in format_string or "E-" in format_string:
@@ -335,9 +346,18 @@ _DATE_TOKEN_RE = re.compile(
 )
 
 
+_LOCALE_TAG_RE = re.compile(r"\[\$([^\]\-]*)(?:-[^\]]*)?\]")  # [$-409] / [$$-409] / [$€-x-euro2]
+_COLOR_TAG_RE = re.compile(r"\[[A-Za-z]+(?:\s*\d+)?\]")            # [Red] / [Color 10] / [DBNum1]
+_ELAPSED_TIME_TAG_RE = re.compile(r"\[(?:h+|m+|s+)\]", re.IGNORECASE)  # [h]:mm:ss durations
+
+
 def _strip_format_brackets(segment: str) -> str:
-    """Drop `[$-409]` locale / `[Red]` colour prefixes (never conditions)."""
-    return re.sub(r"\[(?:\$[^\]]*|[A-Za-z]+\d*)\]", "", segment)
+    """Drop `[$-409]` locale and `[Red]` colour tags (never conditions).
+
+    A locale tag that carries a currency symbol (`[$$-409]`, `[$€-x-euro2]`)
+    leaves the symbol in place, the way Excel displays it."""
+    segment = _LOCALE_TAG_RE.sub(lambda m: m.group(1), segment)
+    return _COLOR_TAG_RE.sub("", segment)
 
 
 def _tokenize_date_format(segment: str) -> List[Tuple[str, str]]:
@@ -606,8 +626,13 @@ def _get_excel_cell_reference(row_idx: int, col_idx: int) -> str:
     return f"{col_letters}{row_idx}"
 
 
-def _cell_has_value_or_color(cell, cell_data_only) -> bool:
-    """Check if cell has value or color formatting."""
+def _cell_has_value_or_color(cell, cell_data_only, palette=None) -> bool:
+    """Check if cell has value or color formatting.
+
+    With a `palette`, a painted theme-colour fill on an empty cell counts
+    (header bands are usually theme fills); a theme font colour on an empty
+    cell does not — it is invisible and sits on every styled cell.
+    """
     # Check for actual value
     display_value = (
         str(cell_data_only.value) if cell_data_only.value is not None else ""
@@ -646,6 +671,13 @@ def _cell_has_value_or_color(cell, cell_data_only) -> bool:
                     and cell.fill.start_color.indexed is not None
                 ):
                     return True  # We'll convert indexed to RGB
+                elif (
+                    palette is not None
+                    and getattr(cell.fill.start_color, "type", None) == "theme"
+                    and getattr(cell.fill, "fill_type", None)
+                    and _theme_hex(cell.fill.start_color, palette)
+                ):
+                    return True
         except (AttributeError, TypeError):
             pass
 
@@ -705,8 +737,12 @@ def _rgb_to_color_name(rgb_value: str) -> str:
                 color_name = "beige"
             elif h < 150:
                 color_name = "olive"
-            elif h < 210:
+            elif h < 200:
                 color_name = "slate_blue"
+            elif h < 260:
+                # Blue family (2026-09-10): Office's light blue fills such as
+                # DDEBF7 / 8FAADC landed here and were named muted_purple.
+                color_name = "light_blue" if v > 0.8 else "muted_blue"
             else:
                 color_name = "muted_purple"
 
@@ -742,7 +778,9 @@ def _rgb_to_color_name(rgb_value: str) -> str:
             elif h < 200:
                 color_name = "pale_cyan"
             elif h < 260:
-                color_name = "pale_blue"
+                # Office blue 4472C4 (s 0.65) is a mid blue, not a pale one;
+                # the low-saturation half of this band stays light.
+                color_name = "blue" if s >= 0.55 else "light_blue"
             elif h < 310:
                 color_name = "lavender"
             else:
@@ -797,8 +835,26 @@ def _convert_indexed_to_rgb(indexed_val: int) -> str:
     return "000000"  # Default to black if conversion fails
 
 
-def extract_cell_formatting(cell) -> str:
-    """Extract formatting information from a cell."""
+def _theme_hex(color, palette) -> Optional[str]:
+    """RRGGBB for an openpyxl theme colour under *palette*, else None."""
+    if palette is None:
+        return None
+    try:
+        return _theme.resolve_color(palette, color)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def extract_cell_formatting(cell, palette=None) -> str:
+    """Extract formatting information from a cell.
+
+    `palette` (judge v7 tier 2, 2026-09-10) is the workbook's resolved theme
+    palette from theme_palette.load_palette; with it, theme-slot colours
+    produce the same `textcolor:` / `bgcolor:` tokens as RGB ones. Theme
+    slot 1 (dk1, Excel's default text colour) with no tint is left out for
+    fonts, matching the "missing key = Excel default" convention the judge
+    is told about — every Excel-authored cell carries it.
+    """
     formatting_parts = []
 
     try:
@@ -851,6 +907,18 @@ def extract_cell_formatting(cell) -> str:
                             formatting_parts.append(f"textcolor:{color_name}")
                         except (ValueError, TypeError):
                             pass  # Skip if conversion fails
+                        else:
+                            color_added = True
+
+                    # Theme slot + tint (most Excel-authored colours).
+                    if not color_added and getattr(font.color, "type", None) == "theme":
+                        is_default_text = (
+                            str(getattr(font.color, "theme", "")) == "1"
+                            and not (getattr(font.color, "tint", 0) or 0)
+                        )
+                        hx = None if is_default_text else _theme_hex(font.color, palette)
+                        if hx:
+                            formatting_parts.append(f"textcolor:{_rgb_to_color_name(hx)}")
 
                 except (AttributeError, TypeError):
                     pass  # Skip problematic color values
@@ -892,6 +960,18 @@ def extract_cell_formatting(cell) -> str:
                             formatting_parts.append(f"bgcolor:{color_name}")
                         except (ValueError, TypeError):
                             pass  # Skip if conversion fails
+                        else:
+                            bg_color_added = True
+
+                    # Theme fill (only when the fill is actually painted).
+                    if (
+                        not bg_color_added
+                        and getattr(cell.fill.start_color, "type", None) == "theme"
+                        and getattr(cell.fill, "fill_type", None)
+                    ):
+                        hx = _theme_hex(cell.fill.start_color, palette)
+                        if hx:
+                            formatting_parts.append(f"bgcolor:{_rgb_to_color_name(hx)}")
             except (AttributeError, TypeError):
                 pass  # Skip problematic fill values
 
@@ -903,7 +983,7 @@ def extract_cell_formatting(cell) -> str:
                 formatting_parts.append(f"halign:{align.horizontal}")
             if align.vertical and align.vertical != "bottom":
                 formatting_parts.append(f"valign:{align.vertical}")
-            if align.wrap_text:
+            if getattr(align, "wrap_text", None):
                 formatting_parts.append("wrap")
 
         # Borders
@@ -931,6 +1011,21 @@ def extract_cell_formatting(cell) -> str:
     return ";".join(formatting_parts)
 
 
+# A constant stored as TEXT that reads like a number: optional sign or
+# opening paren, optional currency symbol, digits with thousands separators,
+# optional decimals, optional percent, optional closing paren. Excel's own
+# "number stored as text" warning fires on these cells (rubric_9 checks 23
+# and 63/64: such a cell sits left-aligned and drops out of arithmetic).
+_NUMERIC_TEXT_RE = re.compile(
+    r"^\s*[-+(]?\s*[$€£¥]?\s*(?:\d[\d,]*(?:\.\d+)?|\.\d+)\s*%?\s*\)?\s*$"
+)
+
+
+def _is_numeric_text(value) -> bool:
+    """True for a str constant such as "2024", "1,234.50", "(1,234)", "45%"."""
+    return isinstance(value, str) and bool(value.strip()) and bool(_NUMERIC_TEXT_RE.match(value))
+
+
 def _format_hides_content(format_string, value) -> bool:
     """True when the number format blanks a populated cell (rubric_9 check
     94): `;;;` hides everything; a fourth section that is empty hides text;
@@ -953,6 +1048,7 @@ def create_enhanced_cell_variants(
     col_idx: int,
     _cached_config=None,
     extra_tag: Optional[str] = None,
+    palette=None,
 ) -> tuple:
     """(full, data) encodings of one cell.
 
@@ -986,6 +1082,11 @@ def create_enhanced_cell_variants(
         formula_text = cell.value.text
     elif isinstance(cell.value, openpyxl.worksheet.formula.DataTableFormula):
         formula_text = _data_table_formula_text(cell.value)
+    # A spilled/array child stored as `<f ca="1"/>` reaches openpyxl as the
+    # bare string "=" — no formula of its own. Tagged children render as the
+    # tag alone, never as an empty formula (judge v7 tier 2, 2026-09-10).
+    if formula_text == "=" and extra_tag and "SPILLED FROM" in extra_tag:
+        formula_text = None
 
     # Blank display but a populated cell: the number format is hiding it.
     hidden_by_format = False
@@ -997,11 +1098,16 @@ def create_enhanced_cell_variants(
         hidden_by_format = True
 
     cell_ref = _get_excel_cell_reference(row_idx, col_idx)
+    # Numbers stored as text (2026-09-10): a typed constant such as "2024"
+    # served identically to the number 2024 until now. Marked on constants
+    # only — a formula returning text (=TEXT(...)) shows its formula, and the
+    # marker states a fact, not a verdict (version labels are text on purpose).
+    text_tag = " [TEXT]" if formula_text is None and _is_numeric_text(raw_value) else ""
     if hidden_by_format:
         fmt = getattr(cell, "number_format", None) or ""
-        cell_parts = [f"[{cell_ref}]{raw_value} [FORMAT:{fmt}] [HIDDEN BY FORMAT]"]
+        cell_parts = [f"[{cell_ref}]{raw_value}{text_tag} [FORMAT:{fmt}] [HIDDEN BY FORMAT]"]
     elif display_value.strip() or formula_text is not None:
-        cell_parts = [f"[{cell_ref}]{display_value}"]
+        cell_parts = [f"[{cell_ref}]{display_value}{text_tag}"]
     else:
         cell_parts = [display_value]
     if extra_tag and (cell_parts[0] or formula_text is not None):
@@ -1013,8 +1119,8 @@ def create_enhanced_cell_variants(
     data_variant = "|".join(cell_parts)
 
     # Add formatting if present and cell has value or color formatting
-    if _cell_has_value_or_color(cell, cell_data_only):
-        formatting = extract_cell_formatting(cell)
+    if _cell_has_value_or_color(cell, cell_data_only, palette):
+        formatting = extract_cell_formatting(cell, palette)
         if formatting:
             cell_parts.append(f"FORMAT:{formatting}")
 
@@ -1061,6 +1167,50 @@ def _data_table_tags(worksheet) -> Dict[Tuple[int, int], str]:
     return tags
 
 
+def _spill_tags(worksheet) -> Dict[Tuple[int, int], str]:
+    """(row, col) -> tag for every cell of every multi-cell array / dynamic
+    spill on the sheet (2026-09-10, rubric_9 checks 41, 48-50, 81, 83, 85-86,
+    129, 21, 27). Excel stores the formula on the anchor only; openpyxl gives
+    the anchor an ArrayFormula whose `.ref` is the filled range and the
+    filled cells plain values (or a bare `=`), which read as hardcodes.
+
+    Anchor: `[SPILL C6:C1025]`; every other member: `[SPILLED FROM C6]`."""
+    tags: Dict[Tuple[int, int], str] = {}
+    try:
+        from openpyxl.utils import range_boundaries
+
+        cells = getattr(worksheet, "_cells", None) or {}
+        for cell in list(cells.values()):
+            v = getattr(cell, "value", None)
+            if not isinstance(v, openpyxl.worksheet.formula.ArrayFormula):
+                continue
+            ref = getattr(v, "ref", None)
+            if not ref or ":" not in str(ref):
+                continue  # single-cell CSE array: nothing spills
+            anchor = cell.coordinate
+            c1, r1, c2, r2 = range_boundaries(str(ref))
+            if (r2 - r1 + 1) * (c2 - c1 + 1) <= 1:
+                continue
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    if (r, c) == (cell.row, cell.column):
+                        tags[(r, c)] = f"[SPILL {ref}]"
+                    else:
+                        tags.setdefault((r, c), f"[SPILLED FROM {anchor}]")
+    except Exception:  # noqa: BLE001 — tagging is best-effort
+        return tags
+    return tags
+
+
+def _merge_tags(*tag_maps: Dict[Tuple[int, int], str]) -> Dict[Tuple[int, int], str]:
+    """Union of per-cell tag maps; a cell in several maps gets them space-joined."""
+    merged: Dict[Tuple[int, int], str] = {}
+    for m in tag_maps:
+        for key, tag in m.items():
+            merged[key] = f"{merged[key]} {tag}" if key in merged else tag
+    return merged
+
+
 def create_enhanced_cell(
     cell,
     cell_data_only,
@@ -1082,12 +1232,16 @@ def list_to_csv(data: List[List[str]]) -> str:
     return output.getvalue()
 
 
-def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
+def extract_all_cell_data(worksheet, worksheet_data, palette=None) -> Dict[str, Any]:
     """Extract everything into one CSV.
 
     JUDGE_FAST_CELL_EXTRACT (default "true") selects between:
       - fast: parallel iter_rows() on both sheets + one-time env var load
       - slow: original per-cell worksheet_data.cell() lookup (kept for parity)
+
+    `palette` is the workbook's theme palette (theme_palette.load_palette);
+    None keeps theme colours untokenised (pre-tier-2 behaviour, used by tests
+    that build cells without a workbook context).
     """
     use_fast = load_env_var("JUDGE_FAST_CELL_EXTRACT", "true").lower() == "true"
 
@@ -1103,7 +1257,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
 
     enhanced_data = []
     data_view = []  # same encoding minus the style FORMAT segment
-    dt_tags = _data_table_tags(worksheet)
+    dt_tags = _merge_tags(_spill_tags(worksheet), _data_table_tags(worksheet))
 
     if use_fast:
         # In read-only mode, worksheet_data.cell(r, c) re-scans the XML from the
@@ -1131,6 +1285,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
                     col_idx,
                     _cached_config=cached_config,
                     extra_tag=dt_tags.get((row_idx, col_idx)) if dt_tags else None,
+                    palette=palette,
                 )
                 enhanced_row.append(full_cell)
                 data_row.append(data_cell)
@@ -1148,6 +1303,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
                     row_idx,
                     col_idx,
                     extra_tag=dt_tags.get((row_idx, col_idx)) if dt_tags else None,
+                    palette=palette,
                 )
                 enhanced_row.append(full_cell)
                 data_row.append(data_cell)
@@ -1391,6 +1547,11 @@ def process_all_worksheets(
 
     # Load workbooks
     workbook, workbook_data_only = load_workbooks(excel_file_path)
+    # Theme palette, resolved once per workbook (judge v7 tier 2).
+    try:
+        palette = _theme.load_palette(workbook)
+    except Exception:  # noqa: BLE001
+        palette = _theme.DEFAULT_PALETTE
 
     # Get all sheet names
     sheet_names = workbook.sheetnames
@@ -1439,7 +1600,7 @@ def process_all_worksheets(
             logger.info(f"Dimensions: {sheet_info['dimensions']}")
 
         # Extract data
-        extraction_result = extract_all_cell_data(worksheet, worksheet_data)
+        extraction_result = extract_all_cell_data(worksheet, worksheet_data, palette=palette)
 
         # Save files
         saved_files = save_sheet_csv_files(
