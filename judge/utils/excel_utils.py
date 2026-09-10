@@ -2,6 +2,7 @@ import argparse
 import base64
 import colorsys
 import csv
+import datetime
 import io
 import math
 import os
@@ -144,9 +145,15 @@ def _is_date_or_time_format(format_string: str) -> bool:
 
 def _tokenize_format_segment(segment: str) -> List[Tuple[str, str]]:
     """Tokenize a segment into ('number', text) and ('literal', text) parts.
-    Number tokens are contiguous runs of #, 0, ., , and %. Everything
+    Number tokens are contiguous runs of #, 0, ?, ., , and %. Everything
     else (escaped chars, quoted strings, $, parens, dashes, letters)
-    becomes a literal."""
+    becomes a literal.
+
+    Accounting padding (2026-09-09): `_x` reserves the width of x — emitted
+    as one space; `*x` repeats x to fill the cell — emitted as nothing. Both
+    are trimmed away by _apply_format_segment when they sit at the ends, so
+    `_(* #,##0_)` renders 12345.678 as `12,346` and the zero section
+    `_(* "-"??_)` as `-`, the way the cell reads on screen."""
     tokens: List[Tuple[str, str]] = []
     cur_lit: List[str] = []
     cur_num: List[str] = []
@@ -169,6 +176,15 @@ def _tokenize_format_segment(segment: str) -> List[Tuple[str, str]]:
             cur_lit.append(segment[i + 1])
             i += 2
             continue
+        if c == "_" and i + 1 < len(segment):
+            flush_num()
+            cur_lit.append(" ")
+            i += 2
+            continue
+        if c == "*" and i + 1 < len(segment):
+            flush_num()
+            i += 2
+            continue
         if c == '"':
             flush_num()
             i += 1
@@ -177,7 +193,7 @@ def _tokenize_format_segment(segment: str) -> List[Tuple[str, str]]:
                 i += 1
             i += 1
             continue
-        if c in "#0.,%":
+        if c in "#0?.,%":
             flush_lit()
             cur_num.append(c)
             i += 1
@@ -209,13 +225,19 @@ def _format_number_template(value: float, template: str) -> str:
 
     if "." in template_no_pct:
         int_part, frac_part = template_no_pct.split(".", 1)
-        decimals = sum(1 for c in frac_part if c in "0#")
+        decimals = sum(1 for c in frac_part if c in "0#?")
     else:
         int_part = template_no_pct
         decimals = 0
 
     use_thousands = "," in int_part
     rounded = _round_half_away_from_zero(rendered_value, decimals)
+
+    # A template with no forced digit ('#' / '?' placeholders only) shows
+    # nothing for zero — Excel's accounting zero section `"-"??` reads as
+    # `-`, not `-0` (2026-09-09).
+    if rounded == 0 and "0" not in template_no_pct:
+        return ""
 
     if decimals > 0:
         formatted = (
@@ -237,7 +259,7 @@ def _apply_format_segment(value: float, segment: str) -> str:
     number_template = next((t for k, t in tokens if k == "number"), None)
     if number_template is None:
         # Pure-literal segment, e.g. '\-' for zero -> just emit the literals.
-        return "".join(t for _, t in tokens)
+        return "".join(t for _, t in tokens).strip()
 
     formatted_number = _format_number_template(value, number_template)
 
@@ -251,7 +273,8 @@ def _apply_format_segment(value: float, segment: str) -> str:
             # additional number tokens (rare) are dropped
         else:
             out.append(text)
-    return "".join(out)
+    # Padding tokens (`_x`) become spaces; the cell reads without them.
+    return "".join(out).strip()
 
 
 def _render_number_format(value, format_string: str) -> Optional[str]:
@@ -300,6 +323,148 @@ def _render_number_format(value, format_string: str) -> Optional[str]:
     return _apply_format_segment(value, segments[0])
 
 
+### Excel-style date/time rendering (2026-09-09, judge v7) ##################
+# Cached datetime / date / time values used to fall through to str(value),
+# so every date read `2027-01-01 00:00:00` whatever its number format and
+# rubric_9 check 45 ("no timestamp on a date") failed on evidence the file
+# never carried. These helpers render the way Excel displays the cell.
+
+_DATE_TOKEN_RE = re.compile(
+    r"(AM/PM|A/P|am/pm|a/p|yyyy|yy|mmmmm|mmmm|mmm|mm|m|dddd|ddd|dd|d|hh|h|ss|s)",
+    re.IGNORECASE,
+)
+
+
+def _strip_format_brackets(segment: str) -> str:
+    """Drop `[$-409]` locale / `[Red]` colour prefixes (never conditions)."""
+    return re.sub(r"\[(?:\$[^\]]*|[A-Za-z]+\d*)\]", "", segment)
+
+
+def _tokenize_date_format(segment: str) -> List[Tuple[str, str]]:
+    """('code', 'yyyy') / ('literal', '-') tokens for one date/time segment."""
+    tokens: List[Tuple[str, str]] = []
+    i = 0
+    seg = _strip_format_brackets(segment)
+    while i < len(seg):
+        c = seg[i]
+        if c == "\\" and i + 1 < len(seg):
+            tokens.append(("literal", seg[i + 1]))
+            i += 2
+            continue
+        if c == '"':
+            j = seg.find('"', i + 1)
+            j = len(seg) if j < 0 else j
+            tokens.append(("literal", seg[i + 1:j]))
+            i = j + 1
+            continue
+        if c in "_*" and i + 1 < len(seg):
+            tokens.append(("literal", " " if c == "_" else ""))
+            i += 2
+            continue
+        m = _DATE_TOKEN_RE.match(seg, i)
+        if m:
+            tokens.append(("code", m.group(0)))
+            i = m.end()
+            continue
+        tokens.append(("literal", c))
+        i += 1
+    return tokens
+
+
+def _render_date_format(value, format_string: str) -> Optional[str]:
+    """Render a datetime/date/time the way Excel would under *format_string*,
+    or None to defer to the legacy fallback. `m`/`mm` are minutes when the
+    previous code is an hour or the next code is a second; otherwise months."""
+    import datetime as _dt
+
+    if isinstance(value, _dt.datetime):
+        d, t = value.date(), value.time()
+    elif isinstance(value, _dt.date):
+        d, t = value, None
+    elif isinstance(value, _dt.time):
+        d, t = None, value
+    else:
+        return None
+
+    if format_string in (None, "", "General", "@"):
+        # General: ISO date, time only when it carries information.
+        if d is not None and t is not None:
+            return d.isoformat() if t == _dt.time(0, 0) else f"{d.isoformat()} {t.strftime('%H:%M:%S')}"
+        if d is not None:
+            return d.isoformat()
+        return t.strftime("%H:%M:%S")
+
+    segment = _split_format_segments(format_string)[0]
+    if not _is_date_or_time_format(segment):
+        return None
+    tokens = _tokenize_date_format(segment)
+    codes = [(idx, tok.lower()) for idx, (kind, tok) in enumerate(tokens) if kind == "code"]
+    has_ampm = any(c in ("am/pm", "a/p") for _, c in codes)
+
+    # Resolve month-vs-minute for every m / mm token.
+    resolved: dict[int, str] = {}
+    for pos, (idx, code) in enumerate(codes):
+        if code in ("m", "mm"):
+            prev_code = codes[pos - 1][1] if pos > 0 else None
+            next_code = codes[pos + 1][1] if pos + 1 < len(codes) else None
+            if prev_code in ("h", "hh") or next_code in ("s", "ss"):
+                resolved[idx] = "minute"
+            else:
+                resolved[idx] = "month"
+
+    out: List[str] = []
+    for idx, (kind, tok) in enumerate(tokens):
+        if kind == "literal":
+            out.append(tok)
+            continue
+        code = tok.lower()
+        if code in ("yyyy", "yy", "mmmmm", "mmmm", "mmm", "dddd", "ddd", "dd", "d") or (
+            code in ("m", "mm") and resolved.get(idx) == "month"
+        ):
+            if d is None:
+                return None
+            if code == "yyyy":
+                out.append(f"{d.year:04d}")
+            elif code == "yy":
+                out.append(f"{d.year % 100:02d}")
+            elif code == "mmmmm":
+                out.append(d.strftime("%b")[0])
+            elif code == "mmmm":
+                out.append(d.strftime("%B"))
+            elif code == "mmm":
+                out.append(d.strftime("%b"))
+            elif code == "mm":
+                out.append(f"{d.month:02d}")
+            elif code == "m":
+                out.append(str(d.month))
+            elif code == "dddd":
+                out.append(d.strftime("%A"))
+            elif code == "ddd":
+                out.append(d.strftime("%a"))
+            elif code == "dd":
+                out.append(f"{d.day:02d}")
+            else:  # d
+                out.append(str(d.day))
+            continue
+        # time codes
+        tt = t if t is not None else _dt.time(0, 0)
+        if code in ("h", "hh"):
+            hour = tt.hour
+            if has_ampm:
+                hour = hour % 12 or 12
+            out.append(f"{hour:02d}" if code == "hh" else str(hour))
+        elif code in ("m", "mm"):  # minute
+            out.append(f"{tt.minute:02d}" if code == "mm" else str(tt.minute))
+        elif code in ("s", "ss"):
+            out.append(f"{tt.second:02d}" if code == "ss" else str(tt.second))
+        elif code in ("am/pm", "a/p"):
+            ampm = "AM" if tt.hour < 12 else "PM"
+            if tok.islower():
+                ampm = ampm.lower()
+            out.append(ampm if code == "am/pm" else ampm[0])
+    return "".join(out)
+
+
 ### End Excel-style number rendering ########################################
 
 
@@ -319,9 +484,22 @@ def _get_formatted_value(cell, cell_data_only, _cached_config=None) -> str:
     to skip per-cell env/YAML reads when the caller has already loaded them.
     """
 
-    # --- Path 1: render-as-displayed (numeric values only) ----------------
+    # --- Path 0: dates / times rendered like Excel (2026-09-09) ------------
     raw_value_for_render = cell_data_only.value
-    if isinstance(raw_value_for_render, (int, float)):
+    if isinstance(raw_value_for_render, (datetime.datetime, datetime.date, datetime.time)):
+        try:
+            rendered = _render_date_format(
+                raw_value_for_render, getattr(cell, "number_format", None)
+            )
+        except Exception:  # noqa: BLE001 — best-effort, never abort extraction
+            rendered = None
+        if rendered is not None:
+            return rendered
+
+    # --- Path 1: render-as-displayed (numeric values only) ----------------
+    if isinstance(raw_value_for_render, (int, float)) and not isinstance(
+        raw_value_for_render, bool
+    ):
         fmt = getattr(cell, "number_format", None)
         if fmt:
             try:
@@ -717,14 +895,16 @@ def extract_cell_formatting(cell) -> str:
             except (AttributeError, TypeError):
                 pass  # Skip problematic fill values
 
-        # Alignment (removed wrap_text to exclude 'wrap' from formatting)
+        # Alignment ('wrap' restored 2026-09-09: rubric_9 check 70 grades
+        # wrapped text and only the formatting view carries it)
         if cell.alignment:
             align = cell.alignment
             if align.horizontal and align.horizontal != "general":
                 formatting_parts.append(f"halign:{align.horizontal}")
             if align.vertical and align.vertical != "bottom":
                 formatting_parts.append(f"valign:{align.vertical}")
-            # Removed: if align.wrap_text: formatting_parts.append("wrap")
+            if align.wrap_text:
+                formatting_parts.append("wrap")
 
         # Borders
         if cell.border:
@@ -751,12 +931,28 @@ def extract_cell_formatting(cell) -> str:
     return ";".join(formatting_parts)
 
 
+def _format_hides_content(format_string, value) -> bool:
+    """True when the number format blanks a populated cell (rubric_9 check
+    94): `;;;` hides everything; a fourth section that is empty hides text;
+    the general case for numbers is detected by the renderer producing an
+    empty display, handled by the caller."""
+    if not format_string:
+        return False
+    segments = _split_format_segments(format_string)
+    if all(not s.strip() for s in segments) and len(segments) >= 3:
+        return True
+    if isinstance(value, str) and len(segments) >= 4 and not segments[3].strip():
+        return True
+    return False
+
+
 def create_enhanced_cell_variants(
     cell,
     cell_data_only,
     row_idx: int,
     col_idx: int,
     _cached_config=None,
+    extra_tag: Optional[str] = None,
 ) -> tuple:
     """(full, data) encodings of one cell.
 
@@ -766,25 +962,51 @@ def create_enhanced_cell_variants(
     the display value, so Rounding/Accuracy still read display precision.
     Stripping happens here, at part level, because display text may itself
     contain '|' or literal '[FORMAT:' number-format annotations.
+
+    2026-09-09 (judge v7):
+      - a formula cell always carries its `[ref]`, even when its display is
+        empty (uncached, or a formula returning ""), so the judge can cite it;
+      - a populated cell whose number format blanks it is served as
+        `[ref]<raw> [FORMAT:<pattern>] [HIDDEN BY FORMAT]` (check 94);
+      - `extra_tag` (e.g. a what-if data-table membership note) is appended
+        to the display part.
     """
     # Start with formatted display value (includes number formatting)
     display_value = _get_formatted_value(cell, cell_data_only, _cached_config)
+    raw_value = cell_data_only.value
 
-    # For non-empty cells, start with cell reference
-    if display_value.strip():
-        cell_ref = _get_excel_cell_reference(row_idx, col_idx)
-        cell_parts = [f"[{cell_ref}]{display_value}"]
-    else:
-        cell_parts = [display_value]
-
-    # Add formula if present. Plain formulas come back as strings starting
-    # with "="; array formulas (Ctrl+Shift+Enter) come back as ArrayFormula
-    # objects whose .text is the formula and .ref is the spilled range.
+    # Formula text. Plain formulas come back as strings starting with "=";
+    # array formulas (Ctrl+Shift+Enter / dynamic arrays) as ArrayFormula
+    # objects whose .text is the formula; what-if data tables as
+    # DataTableFormula objects (no text — Excel stores only the inputs).
     formula_text = None
     if isinstance(cell.value, str) and cell.value.startswith("="):
         formula_text = cell.value
     elif isinstance(cell.value, openpyxl.worksheet.formula.ArrayFormula):
         formula_text = cell.value.text
+    elif isinstance(cell.value, openpyxl.worksheet.formula.DataTableFormula):
+        formula_text = _data_table_formula_text(cell.value)
+
+    # Blank display but a populated cell: the number format is hiding it.
+    hidden_by_format = False
+    if not display_value.strip() and raw_value is not None and raw_value != "":
+        hidden_by_format = True
+    elif display_value.strip() and _format_hides_content(
+        getattr(cell, "number_format", None), raw_value
+    ):
+        hidden_by_format = True
+
+    cell_ref = _get_excel_cell_reference(row_idx, col_idx)
+    if hidden_by_format:
+        fmt = getattr(cell, "number_format", None) or ""
+        cell_parts = [f"[{cell_ref}]{raw_value} [FORMAT:{fmt}] [HIDDEN BY FORMAT]"]
+    elif display_value.strip() or formula_text is not None:
+        cell_parts = [f"[{cell_ref}]{display_value}"]
+    else:
+        cell_parts = [display_value]
+    if extra_tag and (cell_parts[0] or formula_text is not None):
+        cell_parts[0] = f"{cell_parts[0]} {extra_tag}"
+
     if formula_text is not None:
         cell_parts.append(f"FORMULA:{formula_text}")
 
@@ -797,6 +1019,46 @@ def create_enhanced_cell_variants(
             cell_parts.append(f"FORMAT:{formatting}")
 
     return "|".join(cell_parts), data_variant
+
+
+def _data_table_formula_text(dtf) -> str:
+    """Excel's on-screen form of a what-if data table: `{=TABLE(row, col)}`."""
+    r1 = getattr(dtf, "r1", None) or ""
+    r2 = getattr(dtf, "r2", None) or ""
+    if getattr(dtf, "dt2D", False):
+        return f"{{=TABLE({r1},{r2})}}"
+    # one-variable table: dtr=True means the input is a row input
+    return f"{{=TABLE({r1},)}}" if getattr(dtf, "dtr", False) else f"{{=TABLE(,{r1})}}"
+
+
+def _data_table_tags(worksheet) -> Dict[Tuple[int, int], str]:
+    """(row, col) -> tag for every cell of every what-if data table on the
+    sheet (2026-09-09, rubric_9 checks 90/91/99). Excel stores the table
+    formula on its first cell only; the other cells hold computed values
+    that would otherwise read as hardcodes."""
+    tags: Dict[Tuple[int, int], str] = {}
+    try:
+        from openpyxl.utils import range_boundaries
+
+        cells = getattr(worksheet, "_cells", None) or {}
+        for cell in list(cells.values()):
+            v = getattr(cell, "value", None)
+            if not isinstance(v, openpyxl.worksheet.formula.DataTableFormula):
+                continue
+            ref = getattr(v, "ref", None)
+            if not ref:
+                continue
+            anchor = cell.coordinate
+            inputs = _data_table_formula_text(v)
+            c1, r1, c2, r2 = range_boundaries(ref)
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    tags[(r, c)] = (
+                        f"[DATA TABLE {ref}: what-if table {inputs} anchored at {anchor}]"
+                    )
+    except Exception:  # noqa: BLE001 — tagging is best-effort
+        return tags
+    return tags
 
 
 def create_enhanced_cell(
@@ -841,6 +1103,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
 
     enhanced_data = []
     data_view = []  # same encoding minus the style FORMAT segment
+    dt_tags = _data_table_tags(worksheet)
 
     if use_fast:
         # In read-only mode, worksheet_data.cell(r, c) re-scans the XML from the
@@ -867,6 +1130,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
                     row_idx,
                     col_idx,
                     _cached_config=cached_config,
+                    extra_tag=dt_tags.get((row_idx, col_idx)) if dt_tags else None,
                 )
                 enhanced_row.append(full_cell)
                 data_row.append(data_cell)
@@ -883,6 +1147,7 @@ def extract_all_cell_data(worksheet, worksheet_data) -> Dict[str, Any]:
                     cell_data_only,
                     row_idx,
                     col_idx,
+                    extra_tag=dt_tags.get((row_idx, col_idx)) if dt_tags else None,
                 )
                 enhanced_row.append(full_cell)
                 data_row.append(data_cell)

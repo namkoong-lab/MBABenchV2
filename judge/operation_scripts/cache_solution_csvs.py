@@ -9,10 +9,12 @@ For each valid task the script:
   - Downloads the solution Excel file(s)
   - Extracts every sheet to CSV (no sheet filtering)
   - Stores the result under
-    <scratch>/grade_cache/<db-name>/solution_csv_cache_v3/task_id=<id>/
-    (the exact location grade_from_db.py reads; "_v3" is the 2026-09 cache
-    generation whose extraction also writes _workbook_properties.json; "_v2"
-    added the *_data.csv serving variants)
+    <scratch>/grade_cache/<db-name>/solution_csv_cache_v4/task_id=<id>/
+    (the exact location grade_from_db.py reads; "_v4" is the 2026-09-09 judge v7
+    generation — hyperlinks/breaks/grouping/CF styles in the properties block,
+    Excel-style dates and accounting zeros, hidden-format and data-table
+    tagging in the cells; "_v3" added _workbook_properties.json, "_v2" the
+    *_data.csv serving variants)
   - Writes a _summary.txt with per-task total character counts (desc) and
     a list of task IDs whose solution CSVs exceed 2 million characters.
 
@@ -275,7 +277,7 @@ def main():
     db_name = _urlparse(get_db_url()).path.lstrip("/").rsplit("/", 1)[-1]
     namespace = _re.sub(r"[^A-Za-z0-9._-]", "_", db_name) or "default"
     cache_base = (
-        Path(scratch_base) / "grade_cache" / namespace / "solution_csv_cache_v3"
+        Path(scratch_base) / "grade_cache" / namespace / "solution_csv_cache_v4"
     )
     cache_base.mkdir(parents=True, exist_ok=True)
 

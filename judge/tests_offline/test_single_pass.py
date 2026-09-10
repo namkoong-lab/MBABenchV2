@@ -332,9 +332,9 @@ check(tier == "forced", "95% pressure is 'forced'")
 orch_src = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
 check("suitability_source_path=suitability_src" in orch_src,
       "orchestrator forwards suitability_source_path (v2 blocker fixed)")
-check("solution_csv_cache_v3" in orch_src and "attempt_csv_cache_v3" in orch_src
-      and "starting_csv_cache_v3" in orch_src,
-      "orchestrator uses the _v3 cache generation (properties block)")
+check("solution_csv_cache_v4" in orch_src and "attempt_csv_cache_v4" in orch_src
+      and "starting_csv_cache_v4" in orch_src,
+      "orchestrator uses the _v4 cache generation (judge v7 evidence)")
 check("accuracy_check=self.accuracy_check" in orch_src and "add_accuracy_check_arg" in orch_src,
       "orchestrator forwards --accuracy-check")
 check('uuid.uuid4().hex[:6]' in orch_src.split("def main")[1],

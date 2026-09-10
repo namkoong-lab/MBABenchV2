@@ -105,11 +105,17 @@ def max_ratio() -> float:
 # --------------------------------------------------------------- CSV census
 
 
+_REF_PREFIX_RE = re.compile(r"^\[[A-Z]+\d+\]")
+
+
 def _census_field(field: str) -> str | None:
     """Classify one CSV field: 'cached', 'uncached', or None (not a formula)."""
     if _FORMULA_MARKER not in field:
         return None
     head = field.split("|", 1)[0]
+    # Judge v7 (2026-09-09): a formula cell keeps its `[ref]` even when its
+    # display is empty, so strip the address before deciding on the display.
+    head = _REF_PREFIX_RE.sub("", head, count=1)
     return "cached" if head.strip() else "uncached"
 
 

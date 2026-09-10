@@ -388,12 +388,14 @@ class GradeOrchestrator:
         # without them silently disables template 5+'s category-keyed
         # serving. The unsuffixed dirs this script used before are ignored.
         cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
-        # "_v3" (2026-09, judge v6): extraction now also writes
-        # _workbook_properties.json (tab order, hidden state, validation,
-        # widths, comments...) which the single-pass seed serves.
-        self.solution_cache_base = cache_root / "solution_csv_cache_v3"
-        self.attempt_cache_base = cache_root / "attempt_csv_cache_v3"
-        self.starting_cache_base = cache_root / "starting_csv_cache_v3"
+        # "_v4" (2026-09-09, judge v7): the properties block gained
+        # hyperlinks, page breaks, grouping, CF styles and hidden names, and
+        # the cell extractor renders dates / accounting zeros like Excel and
+        # tags hidden-format and data-table cells ("_v3" introduced
+        # _workbook_properties.json).
+        self.solution_cache_base = cache_root / "solution_csv_cache_v4"
+        self.attempt_cache_base = cache_root / "attempt_csv_cache_v4"
+        self.starting_cache_base = cache_root / "starting_csv_cache_v4"
         self.solution_cache_base.mkdir(parents=True, exist_ok=True)
         self.attempt_cache_base.mkdir(parents=True, exist_ok=True)
         self.starting_cache_base.mkdir(parents=True, exist_ok=True)

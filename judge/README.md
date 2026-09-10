@@ -176,8 +176,8 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
   decoys like "Answer Map" lose), rows are paired by text, the answer column
   is the header cell starting with "answer" in the block's header row.
 - **Workbook properties block** (`utils/workbook_properties.py`,
-  `_workbook_properties.json` beside the CSVs; caches move to
-  `*_csv_cache_v3`): true tab order (file listings now follow it), hidden
+  `_workbook_properties.json` beside the CSVs; caches moved to
+  `*_csv_cache_v3`, now `_v4`): true tab order (file listings now follow it), hidden
   sheets/rows/cols, data validation, column widths / row heights, comments,
   conditional formats, hyperlinks, defined names, calc mode, print setup —
   rendered for attempt / solution / starting workbooks in the seed.
@@ -202,6 +202,24 @@ Rows record `judge_version` 7 / `prompt_version` 8 (template unchanged) and are
 not comparable to version 6 rows. Every further judge change lands here until
 version 7 is cut.
 
+- **Evidence the rubric grades on is now served** (2026-09-09, caches move
+  to `*_csv_cache_v4`, properties schema 2). Properties block: cell
+  hyperlinks (check 14 — `ws._hyperlinks` is empty after a load, links live
+  on `cell.hyperlink`), manual page breaks (76), row/column outline groups
+  with hidden ranges marked `(grouped)` (93), the style each
+  conditional-format rule applies (32, 57), `(hidden)` defined names (29),
+  VBA detected from the zip listing (96, 97), and the attempt's delivered
+  filename from the `_attempt_origin.json` sidecar `setup_task_folder`
+  writes (77). Cell extractor: dates/times rendered like Excel under their
+  number format (45 — `2027-01-01`, `Jan-27`, `2:07 PM`, never a spurious
+  timestamp), accounting padding `_x` / `*x` / `?` so zeros read `-` and
+  negatives `(12,346)` (66, 65), populated cells blanked by their format
+  served as `[ref]<raw> [FORMAT:<pattern>] [HIDDEN BY FORMAT]` for numbers
+  and text (94), a formula cell always carries its `[ref]` even with an
+  empty display (uncached or returning `""`), what-if data tables tagged
+  on every member cell as `[DATA TABLE ref: {=TABLE(r,c)} anchored at X]`
+  (90, 91, 99), and `wrap` restored in the formatting view (70). Test:
+  `tests_offline/test_judge_v7_evidence.py`.
 - **Cover sheet is graded content** (2026-09-09): `--ignore-sheets` now
   defaults to nothing on both drivers. The port's `["cover"]` default deleted
   the `Cover` sheet's CSV before grading while rubric_9 grades cover content

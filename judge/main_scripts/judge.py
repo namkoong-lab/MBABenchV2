@@ -4448,7 +4448,9 @@ def single_pass_judge_case(
         check_ids_text=", ".join(check_ids),
         num_checks=str(len(check_ids)),
         attempt_properties_text=workbook_properties.render_properties_text(
-            attempt_props, set(attempt_file_list)
+            attempt_props,
+            set(attempt_file_list),
+            origin=workbook_properties.load_origin(prep["task_path"]),
         ),
         solution_properties_text=workbook_properties.render_properties_text(
             solution_props, set(solution_file_list)

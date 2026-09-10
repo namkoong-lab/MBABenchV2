@@ -33,7 +33,7 @@ sys.path.insert(0, str(_judge_root))
 
 import psycopg2
 import psycopg2.extras
-from utils import repo_config, rubric_suitability
+from utils import repo_config, rubric_suitability, workbook_properties
 from utils.answer_check import run_answer_check, summary_block
 from utils.excel_utils import find_golden_solution_file
 from utils.judge_identity import resolve_judge_identity
@@ -550,6 +550,19 @@ def setup_task_folder(attempt, scratch_run_dir, files_base_dir=None):
     except Exception as e:
         logger.error(f"  Failed to download attempt file '{name}': {e}")
         return None
+    # Provenance sidecar (judge v7): the staged name is always
+    # ai_attempt.xlsx, so the delivered filename / extension (rubric check
+    # 77) is only recoverable from here. Best-effort; never blocks grading.
+    try:
+        (task_folder / workbook_properties.ORIGIN_FILENAME).write_text(
+            json.dumps(
+                {"original_filename": name, "source": str(source), "attempt_id": attempt_id},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"  Could not write attempt origin sidecar: {e}")
 
     # --- Solution xlsx + context PDFs from tasks.task_solution_files ---
     solution_refs = extract_file_refs(attempt.get("task_solution_files"))
@@ -1248,16 +1261,20 @@ def main(args):
         # runs. Namespaced by database name because task/attempt ids collide
         # across the v1 and v2 databases.
         cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
-        # "_v2" cache generation (2026-08): extraction now also writes the
-        # *_data.csv serving variants, so pre-revision caches (which lack
-        # them) must never be reused. Old cache dirs are left untouched.
-        solution_cache_base = cache_root / "solution_csv_cache_v3"
+        # Cache generations: "_v2" (2026-08) added the *_data.csv serving
+        # variants; "_v3" (2026-09) _workbook_properties.json; "_v4"
+        # (2026-09-09, judge v7) hyperlinks / page breaks / grouping / CF
+        # styles / hidden names in the properties block and Excel-style
+        # dates, accounting zeros, hidden-format and data-table tagging in
+        # the cells. Older generations must never be reused; their dirs are
+        # left untouched.
+        solution_cache_base = cache_root / "solution_csv_cache_v4"
         solution_cache_base.mkdir(parents=True, exist_ok=True)
-        attempt_cache_base = cache_root / "attempt_csv_cache_v3"
+        attempt_cache_base = cache_root / "attempt_csv_cache_v4"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
         # Starting-workbook CSVs are per task, like solution CSVs. New cache
         # family (2026-09) — existing solution/attempt caches stay valid.
-        starting_cache_base = cache_root / "starting_csv_cache_v3"
+        starting_cache_base = cache_root / "starting_csv_cache_v4"
         starting_cache_base.mkdir(parents=True, exist_ok=True)
         # Phase A: per-task suitability annotations, fetched once per run and
         # staged into each task folder (the judge enforces the v2 rule).

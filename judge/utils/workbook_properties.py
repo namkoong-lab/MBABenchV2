@@ -13,9 +13,15 @@ text block for the judge's seed prompt.
 Where a property cannot be read the block says so explicitly ("unknown"),
 so the model can tell "absent" from "not provided".
 
-Cache generation: files written here ride in `*_csv_cache_v3` — a v2 cache
+Cache generation: files written here ride in `*_csv_cache_v4` — a v2 cache
 has no properties file and the loaders degrade to the old behaviour
 (alphabetical listing, no block), which is why the generation was bumped.
+`_v4` (2026-09-09, judge v7): schema 2 adds cell hyperlinks (openpyxl fills
+`ws._hyperlinks` only when writing), page breaks, row/column grouping,
+conditional-format styling, hidden defined names, a zip-based VBA test and
+the attempt's original filename; the cell extractor changed alongside
+(dates rendered like Excel, accounting padding, blank-format hiding, array /
+data-table tagging). A v3 cache lacks all of that, so the generation moved.
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ except ImportError:  # imported as a bare module (utils/ on sys.path)
     from logger import logger
 
 FILENAME = "_workbook_properties.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2 (2026-09-09): hyperlinks, page breaks, grouping, CF styles, hidden names, vba, origin
 _MAX_LIST = 25          # per-list cap in the rendered text (JSON keeps everything)
 _MAX_COMMENT_CHARS = 160
 
@@ -149,11 +155,12 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
         ),
     })
 
-    # used range + comments + counts in one pass over the cells
+    # used range + comments + hyperlinks + counts in one pass over the cells
     min_r = min_c = None
     max_r = max_c = 0
     n_values = n_formulas = 0
     comments = []
+    links = []
     try:
         try:
             from .sheet_extent import iter_rows_kwargs
@@ -182,6 +189,15 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
                         "author": getattr(cm, "author", None),
                         "text": (getattr(cm, "text", "") or "")[:_MAX_COMMENT_CHARS],
                     })
+                # Hyperlink objects live on the cell after a load; the
+                # sheet-level ws._hyperlinks list is only populated on write.
+                hl = getattr(cell, "hyperlink", None)
+                if hl is not None:
+                    links.append({
+                        "ref": cell.coordinate,
+                        "target": getattr(hl, "target", None) or getattr(hl, "location", None),
+                        "display": getattr(hl, "display", None),
+                    })
         props["used_range"] = (
             f"{get_column_letter(min_c)}{min_r}:{get_column_letter(max_c)}{max_r}"
             if min_r is not None else None
@@ -189,27 +205,34 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
         props["n_values"] = n_values
         props["n_formulas"] = n_formulas
         props["comments"] = comments
+        props["hyperlinks"] = sorted(links, key=lambda d: d["ref"])
     except Exception:  # noqa: BLE001
         props["used_range"] = "unknown"
         props["comments"] = "unknown"
+        props["hyperlinks"] = "unknown"
 
-    # hidden rows / cols, widths / heights
+    # hidden rows / cols, widths / heights, outline grouping
     try:
-        hidden_rows, heights = [], []
+        hidden_rows, heights, row_groups = [], [], []
         for idx, dim in ws.row_dimensions.items():
             if getattr(dim, "hidden", False):
                 hidden_rows.append(int(idx))
             h = getattr(dim, "height", None)
             if h is not None and getattr(dim, "customHeight", None) is not False:
                 heights.append((int(idx), round(float(h), 1)))
+            lvl = getattr(dim, "outlineLevel", 0) or 0
+            if lvl:
+                row_groups.append((int(idx), int(lvl)))
         props["hidden_rows"] = sorted(hidden_rows)
         props["row_heights"] = _runs(heights)
+        props["row_groups"] = _runs(row_groups)
         props["default_row_height"] = _safe(lambda: ws.sheet_format.defaultRowHeight, None)
     except Exception:  # noqa: BLE001
         props["hidden_rows"] = "unknown"
         props["row_heights"] = "unknown"
+        props["row_groups"] = "unknown"
     try:
-        hidden_cols, widths = [], []
+        hidden_cols, widths, col_groups = [], [], []
         for key, dim in ws.column_dimensions.items():
             lo = int(getattr(dim, "min", None) or 0) or None
             hi = int(getattr(dim, "max", None) or 0) or None
@@ -225,12 +248,26 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
             if w is not None and getattr(dim, "customWidth", True):
                 for c in range(lo, hi + 1):
                     widths.append((c, round(float(w), 2)))
+            lvl = getattr(dim, "outlineLevel", 0) or 0
+            if lvl:
+                for c in range(lo, hi + 1):
+                    col_groups.append((c, int(lvl)))
         props["hidden_cols"] = sorted(set(hidden_cols))
         props["column_widths"] = _runs(widths)
+        props["col_groups"] = _runs(col_groups)
         props["default_col_width"] = _safe(lambda: ws.sheet_format.defaultColWidth, None)
     except Exception:  # noqa: BLE001
         props["hidden_cols"] = "unknown"
         props["column_widths"] = "unknown"
+        props["col_groups"] = "unknown"
+
+    # page breaks (manual breaks only; automatic ones are not stored)
+    try:
+        props["row_breaks"] = sorted(int(b.id) for b in ws.row_breaks.brk)
+        props["col_breaks"] = sorted(int(b.id) for b in ws.col_breaks.brk)
+    except Exception:  # noqa: BLE001
+        props["row_breaks"] = "unknown"
+        props["col_breaks"] = "unknown"
 
     # data validation / conditional formatting / hyperlinks
     try:
@@ -254,21 +291,46 @@ def _sheet_properties(ws, index: int, output_name: Optional[str]) -> dict:
                 "sqref": str(cf.sqref),
                 "rules": [
                     {"type": r.type, "operator": getattr(r, "operator", None),
-                     "formula": list(getattr(r, "formula", []) or [])}
+                     "formula": list(getattr(r, "formula", []) or []),
+                     "style": _dxf_style(getattr(r, "dxf", None))}
                     for r in cf.rules
                 ],
             })
         props["conditional_formats"] = sorted(cfs, key=lambda d: d["sqref"])
     except Exception:  # noqa: BLE001
         props["conditional_formats"] = "unknown"
-    try:
-        links = []
-        for hl in ws._hyperlinks:
-            links.append({"ref": hl.ref, "target": hl.target or hl.location})
-        props["hyperlinks"] = sorted(links, key=lambda d: d["ref"])
-    except Exception:  # noqa: BLE001
-        props["hyperlinks"] = "unknown"
     return props
+
+
+def _dxf_style(dxf) -> Optional[dict]:
+    """The style a conditional-format rule applies (openpyxl resolves dxfId
+    on load): font colour, fill and bold. None when the rule carries none.
+    Solid dxf fills usually store the colour in bgColor, so both are read."""
+    if dxf is None:
+        return None
+    out: dict[str, Any] = {}
+    try:
+        font = getattr(dxf, "font", None)
+        if font is not None:
+            fc = _color_text(getattr(font, "color", None))
+            if fc and not fc.endswith(":00000000"):
+                out["font"] = fc
+            if getattr(font, "bold", None):
+                out["bold"] = True
+        fill = getattr(dxf, "fill", None)
+        if fill is not None:
+            bg = _color_text(getattr(fill, "bgColor", None))
+            fg = _color_text(getattr(fill, "fgColor", None))
+            chosen = None
+            for cand in (bg, fg):
+                if cand and not cand.endswith(":00000000"):
+                    chosen = cand
+                    break
+            if chosen:
+                out["fill"] = chosen
+    except Exception:  # noqa: BLE001
+        return out or None
+    return out or None
 
 
 def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None = None) -> dict:
@@ -281,7 +343,9 @@ def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None
     wb: dict[str, Any] = {
         "filename": path.name,
         "bytes": _safe(lambda: path.stat().st_size, None),
-        "has_vba": _safe(lambda: workbook.vba_archive is not None, None),
+        # load_workbooks never sets keep_vba, so vba_archive is always None;
+        # the zip listing is the reliable test and needs no load-flag change.
+        "has_vba": _safe(lambda: _zip_has_vba(path), None),
         "calc_mode": _safe(lambda: workbook.calculation.calcMode, None),
         "full_calc_on_load": _safe(lambda: workbook.calculation.fullCalcOnLoad, None),
         "iterative_calc": _safe(lambda: workbook.calculation.iterate, None),
@@ -294,13 +358,15 @@ def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None
         dn = workbook.defined_names
         items = dn.items() if hasattr(dn, "items") else [(d.name, d) for d in dn.definedName]
         for name, d in items:
-            names.append({"name": name, "refers_to": getattr(d, "attr_text", None), "scope": None})
+            names.append({"name": name, "refers_to": getattr(d, "attr_text", None), "scope": None,
+                          "hidden": bool(getattr(d, "hidden", False))})
         for ws in workbook.worksheets:
             local = getattr(ws, "defined_names", None)
             if local and hasattr(local, "items"):
                 for name, d in local.items():
                     names.append({"name": name, "refers_to": getattr(d, "attr_text", None),
-                                  "scope": ws.title})
+                                  "scope": ws.title,
+                                  "hidden": bool(getattr(d, "hidden", False))})
         wb["defined_names"] = sorted(names, key=lambda d: (d["scope"] or "", d["name"]))
     except Exception:  # noqa: BLE001
         wb["defined_names"] = "unknown"
@@ -317,6 +383,32 @@ def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None
     for i, ws in enumerate(workbook._sheets if hasattr(workbook, "_sheets") else workbook.worksheets, 1):
         sheets.append(_sheet_properties(ws, i, name_map.get(ws.title, ws.title)))
     return {"schema": SCHEMA_VERSION, "workbook": wb, "sheets": sheets}
+
+
+def _zip_has_vba(path: Path) -> Optional[bool]:
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            return "xl/vbaProject.bin" in z.namelist()
+    except (zipfile.BadZipFile, OSError):
+        return None
+
+
+ORIGIN_FILENAME = "_attempt_origin.json"
+
+
+def load_origin(directory) -> Optional[dict]:
+    """The attempt's provenance sidecar written by grade_from_db.setup_task_folder
+    (original filename + source URI); None when absent (v1, local folders)."""
+    if not directory:
+        return None
+    p = Path(directory) / ORIGIN_FILENAME
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def save_properties(output_dir: Path, props: dict) -> Path:
@@ -364,6 +456,63 @@ def order_file_list(file_list: list[str], props: Optional[dict]) -> list[str]:
     return known + unknown
 
 
+def _group_text(runs, col: bool) -> str:
+    """Outline runs -> `12-20=L1, 25-30=L2` / `C:F=L1`; 'none' / 'unknown'."""
+    if runs == "unknown":
+        return "unknown"
+    if not runs:
+        return "none"
+    return (_col_runs_text if col else _row_runs_text)(
+        runs[:_MAX_LIST], fmt=lambda lvl: f"L{lvl}"
+    ) + (f", (+{len(runs) - _MAX_LIST} more runs)" if len(runs) > _MAX_LIST else "")
+
+
+def _hidden_text(indexes, groups, col: bool) -> str:
+    """Hidden ranges, each marked `(grouped)` when it sits inside an outline
+    group — the rubric prefers collapsed groups to plain hiding (check 93)."""
+    if indexes == "unknown":
+        return "unknown"
+    if not indexes:
+        return "none"
+    grouped: set = set()
+    if isinstance(groups, list):
+        for g in groups:
+            grouped.update(range(int(g["first"]), int(g["last"]) + 1))
+    parts = []
+    for r in _runs([(i, True) for i in indexes]):
+        a, b = r["first"], r["last"]
+        if col:
+            a_t, b_t = get_column_letter(a), get_column_letter(b)
+            label = a_t if a == b else f"{a_t}:{b_t}"
+        else:
+            label = str(a) if a == b else f"{a}-{b}"
+        if all(i in grouped for i in range(a, b + 1)):
+            label += " (grouped)"
+        parts.append(label)
+    return ", ".join(parts)
+
+
+def _cf_rule_text(rule: dict) -> str:
+    """`cellIs equal "MODEL OK" -> fill rgb:C6EFCE font rgb:9C0006 bold`."""
+    bits = [rule.get("type") or "?"]
+    if rule.get("operator"):
+        bits.append(str(rule["operator"]))
+    formulas = rule.get("formula") or []
+    if formulas:
+        bits.append(", ".join(str(f)[:40] for f in formulas[:2]))
+    style = rule.get("style")
+    if isinstance(style, dict) and style:
+        st = []
+        if style.get("fill"):
+            st.append(f"fill {style['fill']}")
+        if style.get("font"):
+            st.append(f"font {style['font']}")
+        if style.get("bold"):
+            st.append("bold")
+        bits.append("-> " + " ".join(st))
+    return " ".join(bits)
+
+
 def _fmt_list(items, limit=_MAX_LIST, fn=str) -> str:
     if items == "unknown":
         return "unknown"
@@ -374,12 +523,19 @@ def _fmt_list(items, limit=_MAX_LIST, fn=str) -> str:
     return "; ".join(shown) + (f"; (+{more} more)" if more > 0 else "")
 
 
-def render_properties_text(props: Optional[dict], listed_files: Optional[set] = None) -> str:
+def render_properties_text(
+    props: Optional[dict],
+    listed_files: Optional[set] = None,
+    origin: Optional[dict] = None,
+) -> str:
     """Compact deterministic text for the seed prompt.
 
     `listed_files` (the `*_full.csv` names actually served) marks sheets
     whose CSV was dropped (ignored/filtered) so the judge is not sent
-    looking for a file that is not there.
+    looking for a file that is not there. `origin` (attempt only) is the
+    provenance sidecar from setup_task_folder: the attempt is staged as
+    ai_attempt.xlsx, so the delivered filename/extension (check 77) is
+    only known from it.
     """
     if not props:
         return "  (workbook properties not available — older extraction cache)"
@@ -388,8 +544,10 @@ def render_properties_text(props: Optional[dict], listed_files: Optional[set] = 
     size = wb.get("bytes")
     size_txt = f"{size / 1024:.0f} KB" if isinstance(size, (int, float)) else "unknown size"
     calc_mode = wb.get("calc_mode")
+    original = (origin or {}).get("original_filename")
     lines.append(
-        f"Workbook {wb.get('filename', '?')} ({size_txt}); calc mode: "
+        f"Workbook {wb.get('filename', '?')} ({size_txt})"
+        f"{f'; original filename: {original}' if original else ''}; calc mode: "
         f"{calc_mode if calc_mode and calc_mode != 'unknown' else 'auto (Excel default, none set)'}"
         f"{' (full calc on load)' if wb.get('full_calc_on_load') else ''}; iterative calc: "
         f"{'on' if wb.get('iterative_calc') else ('off' if wb.get('iterative_calc') is not None else 'unknown')}; "
@@ -403,7 +561,10 @@ def render_properties_text(props: Optional[dict], listed_files: Optional[set] = 
         lines.append(
             "Defined names: " + _fmt_list(
                 user_names,
-                fn=lambda d: f"{d['name']}{' (' + d['scope'] + ')' if d.get('scope') else ''} -> {d.get('refers_to')}",
+                fn=lambda d: (
+                    f"{d['name']}{' (' + d['scope'] + ')' if d.get('scope') else ''}"
+                    f"{' (hidden)' if d.get('hidden') else ''} -> {d.get('refers_to')}"
+                ),
             )
             + (f" [+{n_sys} add-in/system names not listed]" if n_sys else "")
         )
@@ -444,9 +605,19 @@ def render_properties_text(props: Optional[dict], listed_files: Optional[set] = 
         ]
         lines.append("     " + "; ".join(detail))
         hr, hc = s.get("hidden_rows", []), s.get("hidden_cols", [])
+        rg, cg = s.get("row_groups", []), s.get("col_groups", [])
         lines.append(
-            "     hidden rows: " + (_ranges_text(hr, col=False) if hr != "unknown" else "unknown")
-            + "; hidden cols: " + (_ranges_text(hc, col=True) if hc != "unknown" else "unknown")
+            "     hidden rows: " + _hidden_text(hr, rg, col=False)
+            + "; hidden cols: " + _hidden_text(hc, cg, col=True)
+        )
+        lines.append(
+            "     grouped rows: " + _group_text(rg, col=False)
+            + "; grouped cols: " + _group_text(cg, col=True)
+        )
+        rb, cb = s.get("row_breaks", []), s.get("col_breaks", [])
+        lines.append(
+            "     page breaks: rows " + ("unknown" if rb == "unknown" else (", ".join(str(b) for b in rb) if rb else "none"))
+            + "; cols " + ("unknown" if cb == "unknown" else (", ".join(get_column_letter(b) for b in cb) if cb else "none"))
         )
         cw = s.get("column_widths")
         dcw = s.get("default_col_width")
@@ -472,7 +643,7 @@ def render_properties_text(props: Optional[dict], listed_files: Optional[set] = 
         lines.append(
             "     conditional formats: " + _fmt_list(
                 s.get("conditional_formats"),
-                fn=lambda d: f"{d['sqref']} ({', '.join(r.get('type') or '?' for r in d.get('rules', []))})",
+                fn=lambda d: f"{d['sqref']} ({'; '.join(_cf_rule_text(r) for r in d.get('rules', []))})",
             )
         )
         lines.append(
