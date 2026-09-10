@@ -9,6 +9,7 @@ from .prompt_registry import (
     PromptVersionError,
     describe_prompt_version,
     load_registry,
+    resolve_prompt_attachments,
     resolve_prompt_files,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "load_configs",
     "load_registry",
     "resolve_agent_identity",
+    "resolve_prompt_attachments",
     "resolve_prompt_files",
 ]

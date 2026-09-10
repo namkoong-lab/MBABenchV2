@@ -142,7 +142,7 @@ solution_name: "My_Analysis_Solution"   # optional
 
 # ── below: project-wide overrides for this run ──
 benchmark: v2
-prompt_version: 200          # see "Prompts and prompt_version"
+prompt_version: 204          # see "Prompts and prompt_version"
 
 provider:
   kind: "claude"
@@ -229,8 +229,14 @@ The prompt text the agent receives is **not** written in the run config. A run s
 | `9` | The BizbenchV1 (benchmark v1) single-turn payload with the 17-check rubric. |
 | `200` | The v2 3-step set: analyze → build (132-check rubric) → QA + download. |
 | `201` | The same v2 deliverables and rubric folded into one large turn. |
+| `202` | 200 + the Questions-sheet convention: answers go into the starting workbook's `Questions` sheet as live formulas. |
+| `203` | 201 + the same Questions-sheet convention, one turn. |
+| `204` | 202 + the house standards: the prompts point at `House_Standards_v1.md`, which the version **attaches**. |
+| `205` | 203 + the same house standards and attachment, one turn. The usual ChatGPT choice. |
 
 The same number is written to `task_attempts.prompt_version`, so a row always names the text it was produced from. Registry entries are immutable — new text gets a new number, never an edit to an existing one. See [`tasks_configs/prompts/README.md`](tasks_configs/prompts/README.md).
+
+**Attachments.** A registry entry may declare `attachments:` — files uploaded to the chat after the task's own starting files, on every task of every run of that version (204 and 205 attach `<monorepo>/house_standards/House_Standards_v1.md`). The version selects them; a run config never names the file, so the recorded `prompt_version` and the files the agent saw cannot disagree. The runner resolves them once at startup and refuses to run if one is missing, lists them in `--dry-run` output (the trailing entries of `upload_files`, and a `prompt_attachments` key), and records each one's name, sha256 and full text in the per-attempt `prompts_*.json` that the sink uploads — evidence, not a pointer.
 
 `prompt_version` is the only way to choose prompts. To send different text, add it to the registry under a new version — there is no per-run prompt override.
 

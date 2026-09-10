@@ -12,7 +12,9 @@ Secrets are never stored in run configs:
   * The agent's API key comes from the environment (or a local .env next to
     this package), falling back to config/config.yaml keys.*.
 """
+import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -96,9 +98,21 @@ class LimitsConfig:
 # aws.s3_bucket, and the prompt-template default.
 BENCHMARKS = {
     "v1": {"root": "BizbenchV1", "db_name": "BizbenchV1", "template": "v7"},
-    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v9"},
+    "v2": {"root": "MBABenchV2", "db_name": "MBABenchV2", "template": "v10"},
 }
 DEFAULT_S3_BUCKET = "mbabench"
+
+TEMPLATE_VERSIONS = ("v5", "v6", "v7", "v8", "v9", "v10")
+
+# Files a template promises the agent, monorepo-root-relative. They are
+# seeded into starting_files/ beside the task inputs, snapshotted with the
+# prompt files and uploaded to the prompts prefix. Declared on the template
+# — never in a run config — so the recorded prompt_version and the file the
+# agent saw cannot disagree (<MBABenchV2>/house_standards/README.md).
+TEMPLATE_ATTACHMENTS = {
+    "v10": ["house_standards/House_Standards_v1.md"],
+}
+_HOUSE_STANDARDS_RE = re.compile(r"^House_Standards_v(\d+)\.md$")
 
 
 @dataclass
@@ -110,7 +124,7 @@ class RunConfig:
     benchmark: str = "v1"  # "v1" | "v2"; required in internal run configs (no default)
     record_trajectory: bool = True  # per-step API request/response capture (docker mode only)
     system_prompt: str = "system_prompt_coding_v1.txt"
-    template_version: str = "v7"  # v9 = v2 Questions-sheet mirror (v2 default); v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
+    template_version: str = "v7"  # v10 = v9 + house standards (v2 default); v9 = v2 Questions-sheet mirror; v8 = v2-rubric mirror; v7 = GUI-pv9 mirror (v1 default); v6 = CLI adaptation; v5 = byte-exact CLI templates
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     workspaces_dir: Path = PACKAGE_DIR.parent / "workspaces"
@@ -137,8 +151,54 @@ class RunConfig:
 
     def extra_configs(self) -> dict:
         """What task_attempts.extra_configs records: the identity's pinned
-        settings plus the sandbox image (it pins the CLI version)."""
-        return {**self.identity.extra_configs(), "sandbox_image": self.sandbox.image}
+        settings, the sandbox image (it pins the CLI version) and, when the
+        template ships house standards, which text the agent saw."""
+        out = {**self.identity.extra_configs(), "sandbox_image": self.sandbox.image}
+        out.update(house_standards_provenance(self))
+        return out
+
+
+def template_attachments(cfg: RunConfig) -> list[Path]:
+    """Absolute paths of the template's declared attachments (empty for
+    templates that declare none).
+
+    Raises FileNotFoundError when the monorepo root or a file is missing: a
+    template whose directive names a file the agent will never find must
+    not run, and the caller treats this as infra_failure (no row).
+    """
+    rels = TEMPLATE_ATTACHMENTS.get(cfg.template_version, [])
+    if not rels:
+        return []
+    root = repo_config.monorepo_root()
+    if root is None:
+        raise FileNotFoundError(
+            f"template {cfg.template_version} needs {rels} from the MBABenchV2 "
+            f"root, which could not be located (install the workspace, or "
+            f"check out coding-agents-master inside the monorepo)"
+        )
+    paths = [root / rel for rel in rels]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"template {cfg.template_version} declares attachment(s) that do "
+            f"not exist: {missing}"
+        )
+    return paths
+
+
+def house_standards_provenance(cfg: RunConfig) -> dict:
+    """{"house_standards": {version, file, sha256}} for the standards file the
+    template attaches, else {}. The hash is taken at run time so the row
+    records the text actually delivered, not the version the name claims."""
+    for path in template_attachments(cfg):
+        m = _HOUSE_STANDARDS_RE.match(path.name)
+        if m:
+            return {"house_standards": {
+                "version": int(m.group(1)),
+                "file": path.name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }}
+    return {}
 
 
 def load_config(path: str | Path) -> RunConfig:
@@ -188,8 +248,8 @@ def load_config(path: str | Path) -> RunConfig:
     )
     if raw.get("workspaces_dir"):
         cfg.workspaces_dir = Path(raw["workspaces_dir"]).expanduser()
-    if cfg.template_version not in ("v5", "v6", "v7", "v8", "v9"):
-        raise ValueError('template_version must be "v5", "v6", "v7", "v8", or "v9"')
+    if cfg.template_version not in TEMPLATE_VERSIONS:
+        raise ValueError(f"template_version must be one of {', '.join(TEMPLATE_VERSIONS)}")
     if cfg.sandbox.mode not in ("docker", "host"):
         raise ValueError('sandbox.mode must be "docker" or "host"')
     return cfg

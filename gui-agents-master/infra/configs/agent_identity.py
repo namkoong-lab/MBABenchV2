@@ -160,6 +160,13 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("cowork", "opus_5", "max"): AgentIdentity(
         "claude_opus_5_cowork_max", "claude_opus_5_cowork_max"
     ),
+    # 2026-09-10 (101-task rerun): Fable 5.1 in cowork at Max. Probed live
+    # on claude.ai the same day — top-level radio "Fable 5.1", Effort flyout
+    # Low/Medium/High/Extra/Max, button reads "Model: Fable 5.1 Max". Chat
+    # mode deliberately has no entry: the rerun is cowork-only.
+    ("cowork", "fable_5_1", "max"): AgentIdentity(
+        "claude_fable_5_1_cowork_max", "claude_fable_5_1_cowork_max"
+    ),
 }
 
 
@@ -210,6 +217,13 @@ _V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ),
     ("work", "gpt_5_6_sol", "ultra", "standard"): AgentIdentity(
         "chatgpt_gpt_5_6_sol_work_ultra", "chatgpt_gpt_5_6_sol_work_ultra"
+    ),
+    # 2026-09-10 (101-task rerun): GPT-6 Astra in work mode at Ultra.
+    # Probed live on chatgpt.com the same day — slider picker, model radio
+    # "GPT-6 Astra", Power ladder Light..Ultra (6 stops), pill reads
+    # "GPT-6 Astra Ultra" and held Ultra across a menu reopen.
+    ("work", "gpt_6_astra", "ultra", "standard"): AgentIdentity(
+        "chatgpt_gpt_6_astra_work_ultra", "chatgpt_gpt_6_astra_work_ultra"
     ),
 }
 

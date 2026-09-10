@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -70,6 +71,7 @@ from infra.configs import (  # noqa: E402
     describe_prompt_version,
     load_configs,
     resolve_agent_identity,
+    resolve_prompt_attachments,
     resolve_prompt_files,
 )
 from task_io import (  # noqa: E402
@@ -129,7 +131,7 @@ def build_engine_config(
     active provider block + task fields into the shape the engine expects:
         {agent_type, prompts, prompt_version, local_files_base,
          task_name, task_id, task_source, upload_files, solution_name,
-         <provider>_web: {...}}
+         prompt_attachments, <provider>_web: {...}}
 
     Prompt selection also lands here rather than only in main(): this is the
     function that decides what the engine receives, so a caller that skips
@@ -149,6 +151,13 @@ def build_engine_config(
     """
     if not getattr(cfg, "prompts_file", None):
         cfg.prompts_file = resolve_prompt_files(cfg)
+    # Same rule for the version's attachments: main() resolves them once
+    # (and refuses a missing file) before any task is built; a caller that
+    # skipped main() gets them here so no path sends the prompt without the
+    # files it points the agent at. `is None` rather than falsiness — an
+    # empty list is a resolved answer, not a missing one.
+    if getattr(cfg, "prompt_attachments", None) is None:
+        cfg.prompt_attachments = [str(p) for p in resolve_prompt_attachments(cfg)]
     base = _ns_to_dict(cfg)
 
     provider = cfg.provider.kind
@@ -167,12 +176,22 @@ def build_engine_config(
     if base.get("prompts_file"):
         engine_config["prompts_file"] = base["prompts_file"]
 
+    # The version's attachments go AFTER the task's starting files: the
+    # workbook stays first (that is the order the agents upload and verify
+    # tiles in), and every task of the run gets the same files. They are
+    # appended here, not to spec.upload_files, so the source's record of the
+    # task's own files is untouched. `prompt_attachments` is also carried
+    # separately so preflight, the prompts JSON and --dry-run can tell them
+    # apart from the case files.
+    attachments = list(base.get("prompt_attachments") or [])
     engine_config |= {
         "task_name": spec.task_name,
         "task_id": spec.task_id,
-        "upload_files": [str(p) for p in spec.upload_files],
+        "upload_files": [str(p) for p in spec.upload_files] + attachments,
         provider_block_key: copy.deepcopy(base.get(provider_block_key, {}) or {}),
     }
+    if attachments:
+        engine_config["prompt_attachments"] = attachments
 
     if agent_folder:
         block = engine_config[provider_block_key]
@@ -340,7 +359,7 @@ def preflight_check(
     # prompt_version labels every completion JSON and the task_attempts row.
     # The engine refuses a config without one; catch it here so --dry-run
     # shows it rather than the browser opening first. Only reachable by
-    # nulling the key explicitly — configs.default.yaml supplies 200.
+    # nulling the key explicitly — configs.default.yaml supplies 204.
     if engine_config.get("prompt_version") is None:
         errors.append(
             "prompt_version is null. It names the prompt the attempt was "
@@ -369,11 +388,30 @@ def preflight_check(
         )
 
     # Upload files must exist on disk, resolved the same way the engine will.
+    # The version's attachments ride in upload_files and are checked by the
+    # same loop; they are named as such in the message because the fix is
+    # different (restore the file / re-register the version, not the task).
     upload_files = engine_config.get("upload_files") or []
     local_files_base = engine_config.get("local_files_base")
+    attachments = [str(a) for a in engine_config.get("prompt_attachments") or []]
+    version = engine_config.get("prompt_version")
+    for a in attachments:
+        # Guards the append in build_engine_config: a declared attachment
+        # that never reached upload_files would send the prompt without the
+        # file it tells the agent to read.
+        if a not in [str(u) for u in upload_files]:
+            errors.append(
+                f"prompt_version={version} attachment {a} is not in "
+                f"upload_files — the runner must upload it with the task files"
+            )
     for raw in upload_files:
         resolved = _resolve_upload_path(str(raw), local_files_base)
         if not resolved.exists():
+            if str(raw) in attachments:
+                errors.append(
+                    f"prompt_version={version} attachment not found: {resolved}"
+                )
+                continue
             if local_files_base and not Path(raw).is_absolute():
                 hint = (
                     f" (resolved from local_files_base={local_files_base!r} + "
@@ -444,9 +482,37 @@ def _write_prompts_file(
         "prompts": prompts,
         "prompt_version": engine_config.get("prompt_version"),
         "prompts_file": [pf] if isinstance(pf, str) else list(pf or []),
+        # The version's attachments, by content: the agent was handed these
+        # files with the prompt, so the record must carry what they said,
+        # not where they were.
+        "attachments": [
+            _attachment_record(a)
+            for a in engine_config.get("prompt_attachments") or []
+        ],
     }
     path.write_text(json.dumps(payload, indent=2))
     return path
+
+
+def _attachment_record(path: str) -> dict:
+    """{name, path, sha256, text} for one attachment, read now.
+
+    Preflight already proved the file exists; if it still cannot be read the
+    record keeps the name and the error rather than aborting the attempt —
+    losing the evidence must not lose the run.
+    """
+    p = Path(path)
+    try:
+        data = p.read_bytes()
+    except OSError as e:
+        logger.warning(f"Could not record attachment {p.name}: {e}")
+        return {"name": p.name, "path": str(p), "error": str(e)}
+    return {
+        "name": p.name,
+        "path": str(p),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "text": data.decode("utf-8", errors="replace"),
+    }
 
 
 def _workbook_rank(path: Path) -> tuple[bool, int, int]:
@@ -840,12 +906,15 @@ def _clear_staging(run_dir: Path, sink) -> None:
     shutil.rmtree(run_dir, ignore_errors=True)
 
 
-def _confirm_tasks(specs: list[TaskSpec]) -> bool:
+def _confirm_tasks(specs: list[TaskSpec], attachments: list[str] = ()) -> bool:
     """Print the loaded task list and ask the user to confirm."""
     print(f"\nAbout to run {len(specs)} task(s):")
     for i, spec in enumerate(specs):
         files = ", ".join(p.name for p in spec.upload_files) or "(no files)"
         print(f"  [{i}] {spec.task_name}  —  {files}")
+    if attachments:
+        names = ", ".join(Path(a).name for a in attachments)
+        print(f"  + uploaded with every task (prompt_version attachments): {names}")
     try:
         answer = input("\nProceed? [y/N]: ").strip().lower()
     except EOFError:
@@ -1006,6 +1075,22 @@ def main() -> int:
             return EXIT_CONFIG_ERROR
         logger.info(describe_prompt_version(cfg, cfg.prompts_file))
 
+    # The version's attachments (e.g. the house standards), resolved once
+    # here so a missing file stops the run before any task is built, and so
+    # every task's upload_files and prompts JSON see the same absolute paths.
+    # Resolved on the deprecated prompts_file path too: the recorded
+    # prompt_version still promises them.
+    try:
+        cfg.prompt_attachments = [str(p) for p in resolve_prompt_attachments(cfg)]
+    except ConfigError as e:
+        logger.error(f"Prompt attachment resolution failed:\n{e}")
+        return EXIT_CONFIG_ERROR
+    if cfg.prompt_attachments:
+        logger.info(
+            "attachments (uploaded after each task's starting files): "
+            + ", ".join(cfg.prompt_attachments)
+        )
+
     # The sink writes cfg.agent.prompt_version to task_attempts. Copy the
     # top-level value across so the recorded version is by construction the
     # one that selected the prompts, rather than a second key that can drift
@@ -1081,7 +1166,7 @@ def main() -> int:
             return EXIT_CONFIG_ERROR
 
         if not args.dry_run and not args.yes:
-            if not _confirm_tasks(specs):
+            if not _confirm_tasks(specs, cfg.prompt_attachments):
                 logger.info("Aborted by user.")
                 return 0
 
@@ -1112,6 +1197,11 @@ def main() -> int:
             logger.info(f"\n{'=' * 60}\nTASK {idx}: {spec.task_name}\n{'=' * 60}")
 
             if args.dry_run:
+                if engine_config.get("prompt_attachments"):
+                    logger.info(
+                        "[DRY RUN] attachments (last entries of upload_files): "
+                        + ", ".join(engine_config["prompt_attachments"])
+                    )
                 logger.info("[DRY RUN] engine_config:")
                 print(yaml.safe_dump(engine_config, default_flow_style=False))
                 continue

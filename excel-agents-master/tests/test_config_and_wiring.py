@@ -14,7 +14,12 @@ from excel_agent.engine import (
 )
 from infra.configs import ConfigError, load_configs
 from infra.configs.prompt_registry import PromptVersionError, resolve_prompt_files
-from infra.run import build_engine_config, preflight_check
+from infra.run import (
+    attachment_records,
+    build_engine_config,
+    house_standards_stamp,
+    preflight_check,
+)
 from task_io.base import TaskSpec
 from task_io.registry import build_source
 
@@ -29,7 +34,7 @@ def test_defaults_load_clean(tmp_path):
     assert cfg.benchmark == "v2"
     assert cfg.browser.cdp_port == 9222
     assert cfg.source.schema == "mbabenchv2"
-    assert cfg.prompt_version == 203
+    assert cfg.prompt_version == 205
 
 
 def test_unknown_key_is_a_typo_error(tmp_path):
@@ -139,6 +144,155 @@ def test_preflight_catches_missing_upload_file(tmp_path):
     engine_config["upload_files"] = [str(tmp_path / "missing.pdf")]
     errors = preflight_check(engine_config)
     assert any("not found" in e for e in errors)
+
+
+# ---- prompt attachments (house standards) -----------------------------------
+
+
+HOUSE_STANDARDS = MEMBER_ROOT.parent / "house_standards" / "House_Standards_v1.md"
+
+
+def test_default_version_attaches_house_standards(tmp_path):
+    """The default prompt_version (205) resolves the monorepo's house
+    standards; the registry refuses a version whose attachment is gone."""
+    from infra.configs import resolve_prompt_attachments
+
+    cfg = load_configs(override_path=tmp_path / "absent.yaml")
+    assert resolve_prompt_attachments(cfg) == [HOUSE_STANDARDS.resolve()]
+    cfg.prompt_version = 203
+    cfg.agent.prompt_version = 203
+    assert resolve_prompt_attachments(cfg) == []
+
+
+def test_engine_config_appends_attachment_after_case_files(tmp_path):
+    cfg = load_configs(override_path=tmp_path / "absent.yaml")
+    engine_config = build_engine_config(
+        cfg, _spec(tmp_path), _identity(), ["text"], attachments=[HOUSE_STANDARDS]
+    )
+    # Workbook detection is unaffected; the attachment is a panel upload
+    # placed AFTER the task's own files.
+    assert engine_config["template_file"] == "ApfelInc model.xlsx"
+    assert [Path(p).name for p in engine_config["upload_files"]] == [
+        "case.pdf",
+        "House_Standards_v1.md",
+    ]
+    assert preflight_check(engine_config, [HOUSE_STANDARDS]) == []
+
+
+def test_preflight_refuses_missing_attachment(tmp_path):
+    cfg = load_configs(override_path=tmp_path / "absent.yaml")
+    ghost = tmp_path / "House_Standards_v9.md"
+    engine_config = build_engine_config(
+        cfg, _spec(tmp_path), _identity(), ["text"], attachments=[ghost]
+    )
+    errors = preflight_check(engine_config, [ghost])
+    assert any("prompt attachment not found" in e for e in errors)
+    # Present on disk but dropped from upload_files is refused too.
+    engine_config = build_engine_config(cfg, _spec(tmp_path), _identity(), ["text"])
+    errors = preflight_check(engine_config, [HOUSE_STANDARDS])
+    assert any("not in upload_files" in e for e in errors)
+
+
+def test_missing_attachment_refused_at_resolve(tmp_path):
+    """A registry version pointing at an absent attachment is a config error
+    before any browser opens."""
+    from infra.configs import resolve_prompt_attachments
+
+    reg = tmp_path / "a" / "b" / "registry.yaml"
+    reg.parent.mkdir(parents=True)
+    reg.write_text(
+        "versions:\n  900:\n    files: [x.txt]\n"
+        "    attachments: [House_Standards_v1.md]\n"
+    )
+    cfg = load_configs(override_path=tmp_path / "absent.yaml")
+    cfg.prompt_version = 900
+    cfg.agent.prompt_version = 900
+    with pytest.raises(PromptVersionError, match="does not exist"):
+        resolve_prompt_attachments(cfg, registry_path=reg)
+
+
+def test_attachment_records_and_house_standards_stamp(tmp_path):
+    import hashlib
+
+    recs = attachment_records([HOUSE_STANDARDS])
+    assert [r["name"] for r in recs] == ["House_Standards_v1.md"]
+    assert recs[0]["sha256"] == hashlib.sha256(HOUSE_STANDARDS.read_bytes()).hexdigest()
+    assert recs[0]["text"] == HOUSE_STANDARDS.read_text()
+    assert recs[0]["path"] == str(HOUSE_STANDARDS)
+    assert house_standards_stamp(recs) == {
+        "version": 1,
+        "file": "House_Standards_v1.md",
+        "sha256": recs[0]["sha256"],
+    }
+    # Any other attachment yields no stamp — the key means "house standards".
+    other = tmp_path / "notes.md"
+    other.write_text("n")
+    assert house_standards_stamp(attachment_records([other])) is None
+
+
+def test_prompts_json_carries_attachments(tmp_path):
+    import json
+
+    from datetime import datetime
+
+    from infra.run import _write_prompts_file
+
+    recs = attachment_records([HOUSE_STANDARDS])
+    path = _write_prompts_file(
+        tmp_path / "run", "T", {"prompts": ["p"], "prompt_version": 205},
+        ["tasks_configs/prompts/v2_3.txt"], datetime(2026, 9, 10), recs,
+    )
+    payload = json.loads(path.read_text())
+    assert payload["prompt_version"] == 205
+    assert payload["attachments"] == recs
+
+
+def test_extra_configs_house_standards_reaches_sink_payload(tmp_path):
+    """run.py nests house_standards under extra["extra_configs"]; the sink
+    merges exactly that dict into task_attempts.extra_configs (JSONB)."""
+    from task_io.base import AttemptResult
+    from task_io.sinks.postgres_s3 import (
+        TASK_ATTEMPTS_SCHEMA,
+        MBABenchV2PostgresS3AttemptSink,
+    )
+
+    stamp = house_standards_stamp(attachment_records([HOUSE_STANDARDS]))
+    result = AttemptResult(
+        task_id="7", task_name="T", agent_model_name="m", prompt_version=205,
+        status="success", solution_file=None, log_files=[], started_at="",
+        finished_at="", duration_seconds=0.0,
+        extra={"extra_configs": {"cdp_port": 9222, "house_standards": stamp}},
+    )
+    written = {}
+
+    class _Sink(MBABenchV2PostgresS3AttemptSink):
+        def __init__(self):
+            self.extra_configs = {"ui_model_label": "Opus 4.6"}
+            self.attempt_schema = TASK_ATTEMPTS_SCHEMA
+
+        def _probe_extra_configs_column(self):
+            return True
+
+        def _connect(self):
+            import json
+
+            class _Cur:
+                def __enter__(s):
+                    return s
+                def __exit__(s, *a):
+                    return False
+                def execute(s, q, params=None):
+                    if params:
+                        written.update(json.loads(params[0]))
+            class _Conn:
+                def rollback(s): ...
+                def commit(s): ...
+                def cursor(s): return _Cur()
+            return _Conn()
+
+    _Sink()._after_insert(42, result)
+    assert written["house_standards"] == stamp
+    assert written["cdp_port"] == 9222 and written["ui_model_label"] == "Opus 4.6"
 
 
 # ---- engine contract --------------------------------------------------------

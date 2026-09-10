@@ -9,6 +9,10 @@
 | 9 | 1 | `prompts_pv9/SHARED_pv9_prompt.txt` — 17-check rubric |
 | 200 | 3 | `prompts_v2/step1_analyze` → `step2_build` → `step3_qa` — 132-check rubric |
 | 201 | 1 | `v2_1.txt` — same 132-check rubric, single pass |
+| 202 | 3 | `prompts_v3/step1_analyze` → `step2_build` → `step3_qa` — 200 + Questions-sheet answers |
+| 203 | 1 | `v2_2.txt` — 201 + Questions-sheet answers |
+| 204 | 3 | `prompts_v4/step1_analyze` → `step2_build` → `step3_qa` — 202 + house standards; attaches `../house_standards/House_Standards_v1.md`. **Repo default.** |
+| 205 | 1 | `v2_3.txt` — 203 + house standards; same attachment |
 
 Version 0 asks the agent to return the attached workbook unchanged plus one
 extra sheet named `TEST SHEET` with a large bold `TEST` in A1. It exercises
@@ -24,12 +28,26 @@ therefore tells you exactly what the agent was asked to do: `prompt_version`
 alone determines what gets sent, so the DB label and the prompt cannot drift
 apart.
 
+## Attachments
+
+An entry may also declare `attachments:` — repo-root-relative paths (`..`
+allowed, so a version can reach a monorepo-level file) that are uploaded
+with the task's starting files on every run of that version. 204 and 205
+attach the house standards. The version selects the attachment for the same
+reason it selects the text: a run config never names the file, so
+`task_attempts.prompt_version` and what the agent was handed cannot drift.
+`infra/run.py` resolves them once at startup (a missing file refuses the
+run), appends them after each task's own files, and records their sha256
+and full text in the attempt's `prompts_*.json`. An attachment file is as
+immutable as the prompt text it ships with — new text = new file name + new
+version (see `<monorepo>/house_standards/README.md`).
+
 ## Using it
 
 Set `prompt_version` in the run config and nothing else:
 
 ```yaml
-prompt_version: 201        # single-pass; 200 for the 3-step set
+prompt_version: 205        # single-pass; 204 (the default) for the 3-step set
 ```
 
 `infra/run.py` resolves it through `infra/configs/prompt_registry.py`,

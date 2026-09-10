@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 # Add excel_mcp_server to path
-server_dir = Path(__file__).parent / "excel_mcp_server"
+server_dir = Path(__file__).resolve().parents[1] / "excel_mcp_server"
 sys.path.insert(0, str(server_dir))
 
 import formula_validator
@@ -43,7 +43,7 @@ def test_circular_detection():
     print(f"   Valid: {result['valid']}")
     print(f"   Errors: {result['errors']}")
     assert not result['valid'], "Circular reference should fail"
-    assert "Circular reference" in result['errors'][0], "Should detect circular ref"
+    assert "circular reference" in result['errors'][0].lower(), "Should detect circular ref"
     print("   ✅ PASS - Circular reference detected")
 
     # Test 3: Circular reference in complex formula

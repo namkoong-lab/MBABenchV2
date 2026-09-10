@@ -20,7 +20,7 @@
 # the workbook back unchanged plus one "TEST SHEET" — a solution file you can
 # verify by eye. Never grade the attempts it writes — prompt_version 0 is
 # what marks them, so filter on it before grading. For real benchmark data,
-# set prompt_version to 200 or 201 and move this config out of test_configs/.
+# set prompt_version to 204 or 205 and move this config out of test_configs/.
 
 benchmark: v2
 

@@ -218,14 +218,24 @@ aws:
 #   203    rubric-v9 single-pass     + Questions-sheet answers (one panel
 #                                    turn — byte-identical to the gui
 #                                    pipeline's prompts/v2_2.txt)
+#   204    rubric-v9 3-step          + Questions-sheet answers + House
+#                                    Standards (prompts_v4; attaches
+#                                    <monorepo>/house_standards/
+#                                    House_Standards_v1.md)
+#   205    rubric-v9 single-pass     + Questions-sheet answers + House
+#                                    Standards (prompts/v2_3.txt; same
+#                                    attachment)
 #
-# Default 203 = the single-pass set + the Questions-sheet answer convention,
-# matching what the gui waves run so a gui-vs-excel delta is attributable to
-# the interface. 200/202 remain registered; new runs should not use 200.
-# Must equal agent.prompt_version if that is also set; run.py refuses a
-# mismatch rather than picking one.
+# Default 205 = the single-pass set + the Questions-sheet answer convention
+# + the house standards, matching what the gui waves run so a gui-vs-excel
+# delta is attributable to the interface. A version's `attachments:` are
+# uploaded into the panel after the case files on every run (run.py refuses
+# to start if one is missing) and stamped into extra_configs.house_standards.
+# 200/202/203 remain registered; new runs should not use 200. Must equal
+# agent.prompt_version if that is also set; run.py refuses a mismatch rather
+# than picking one.
 prompt_version:
-  value: 203
+  value: 205
   required: false
 
 

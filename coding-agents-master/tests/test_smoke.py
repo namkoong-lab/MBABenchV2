@@ -51,10 +51,12 @@ def test_config_and_prompt_versions():
     assert template_name("wsp", "v5") == "task_template_wsp_v5.txt"
     assert template_name("fmwc", "v7") == template_name("wsp", "v7") == "task_template_shared_v7.txt"
     assert template_name("fmwc", "v9") == template_name("wsp", "v9") == "task_template_shared_v9.txt"
+    assert template_name("jp", "v10") == "task_template_shared_v10.txt"
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_fmwc_v6.txt") == 106
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_wsp_v5.txt") == 105
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v7.txt") == 107
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v9.txt") == 109
+    assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v10.txt") == 110
     print("ok: config + prompt versions")
 
 

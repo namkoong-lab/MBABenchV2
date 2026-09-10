@@ -35,7 +35,7 @@ VALID_EXCEL_FUNCTIONS: Set[str] = {
 
     # Lookup & Reference
     "VLOOKUP", "HLOOKUP", "XLOOKUP", "LOOKUP",
-    "INDEX", "MATCH", "INDIRECT", "OFFSET", "CHOOSE",
+    "INDEX", "MATCH", "XMATCH", "INDIRECT", "OFFSET", "CHOOSE",
     "ROW", "ROWS", "COLUMN", "COLUMNS",
     "ADDRESS", "AREAS", "TRANSPOSE",
     "GETPIVOTDATA", "HYPERLINK",
@@ -56,6 +56,12 @@ VALID_EXCEL_FUNCTIONS: Set[str] = {
     "EOMONTH", "EDATE", "WORKDAY", "NETWORKDAYS",
     "DATEDIF", "DAYS", "DAYS360",
     "DATEVALUE", "TIMEVALUE",
+
+    # Named intermediates. The house standards (House_Standards_v1.md,
+    # prompt v14+) recommend LET and XMATCH; LibreOffice 24.8+ evaluates
+    # both, so rejecting them here would only push the agent to nested
+    # duplicates of the same expression.
+    "LET",
 
     # Database & Array
     "SUMPRODUCT", "MMULT", "MDETERM", "MINVERSE",

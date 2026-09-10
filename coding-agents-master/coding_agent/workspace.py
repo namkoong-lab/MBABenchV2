@@ -8,6 +8,10 @@ Layout handed to the agent:
 
 The seeded-file manifest (sha256 of every input) lives OUTSIDE the workspace,
 in the attempt dir, so validation can prove the agent produced new work.
+Template attachments (v10: House_Standards_v1.md) are seeded through the same
+path and so appear in the manifest and the PROMPT.md listing — acceptable: an
+agent that hands back the standards file as solution.xlsx fails the hash
+check like any other copied input.
 """
 import hashlib
 import json
@@ -17,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .config import RunConfig, template_attachments
 from .task_source import TaskSpec
 
 
@@ -26,6 +31,23 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def seed_template_attachments(cfg: RunConfig, spec: TaskSpec) -> list[Path]:
+    """Append the template's declared attachments to spec.starting_files so
+    create_attempt copies them beside the task inputs. Returns what was
+    added. Raises (-> infra_failure, no row) if one is missing or would
+    shadow a task input — a silent overwrite either way would change the
+    task the agent sees."""
+    attachments = template_attachments(cfg)
+    task_names = {p.name for p in spec.starting_files}
+    clash = [p.name for p in attachments if p.name in task_names]
+    if clash:
+        raise FileExistsError(
+            f"template attachment(s) {clash} collide with a task starting file"
+        )
+    spec.starting_files = list(spec.starting_files) + attachments
+    return attachments
 
 
 @dataclass

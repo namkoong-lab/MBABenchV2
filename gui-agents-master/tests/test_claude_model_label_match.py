@@ -66,13 +66,16 @@ def test_label_map_knows_both_fables():
     assert agent_labels["fable_5_1"] == "Fable 5.1"
 
 
-def test_fable_5_1_has_no_identity():
-    """Registering the label must not make it runnable: the identity table
-    has no fable_5_1 entry, so a run config naming it is refused."""
+def test_fable_5_1_identity_is_cowork_only():
+    """fable_5_1 resolves in cowork (the 101-task rerun cohort) and is still
+    refused in chat: the label alone must not make every mode runnable."""
     from types import SimpleNamespace as NS
     from infra.configs.agent_identity import (
         UnknownAgentCombination, resolve_agent_identity,
     )
+    cfg = NS(benchmark="v2", provider=NS(kind="claude"),
+             claude_web=NS(mode="cowork", model="fable_5_1", effort="max"))
+    assert resolve_agent_identity(cfg).model_name == "claude_fable_5_1_cowork_max"
     cfg = NS(benchmark="v2", provider=NS(kind="claude"),
              claude_web=NS(mode="chat", model="fable_5_1", effort="max"))
     with pytest.raises(UnknownAgentCombination):

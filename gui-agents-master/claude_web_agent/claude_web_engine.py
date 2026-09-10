@@ -709,6 +709,21 @@ async def run_automation(config: dict) -> bool:
                     "Continue. Please complete all remaining steps and provide "
                     "the finished Excel file for download when done."
                 )
+                # ChatGPT Work mode keeps a sandbox per conversation: the
+                # files the model already built are still there, so the
+                # nudge must say "finish from them", not "do the steps"
+                # (which reads as "start over"). 2026-09-10.
+                if (
+                    provider_key == "chatgpt_web"
+                    and (agent_config.get("mode") or "chat").lower() == "work"
+                ):
+                    CONTINUE_PROMPT = (
+                        "Continue. The files you already created are still in "
+                        "your workspace — pick up from them rather than "
+                        "starting over, finish the remaining steps, and when "
+                        "done attach the finished Excel (.xlsx) file to this "
+                        "chat for download."
+                    )
                 MAX_CONTINUE_ATTEMPTS = 5
 
                 downloaded_files = []

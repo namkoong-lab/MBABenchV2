@@ -14,6 +14,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .repo_config import attachment_extra_configs
 from .mcp_client import ExcelMCPClient
 from .task_executor import ExcelTaskExecutor, TaskStatus
 from .models_config import DEFAULT_MAX_COMPLETION_TOKENS
@@ -25,6 +26,8 @@ class WorkspaceConfig:
     path: str
     detected_pdf_files: List[str] = field(default_factory=list)
     detected_excel_files: List[str] = field(default_factory=list)
+    # .md files (house standards); embedded verbatim in the model context.
+    detected_text_files: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -76,6 +79,9 @@ class BatchRunner:
         # Provenance from _verify_recalc_engine(): which formula recalc engine
         # the MCP server runs ({"engine": "libreoffice"|"fallback", ...}).
         self._recalc_engine_info: Optional[Dict[str, Any]] = None
+        # Absolute paths of the prompt version's attachments (house
+        # standards), resolved by load_config; copied into every workspace.
+        self._attachments: List[Path] = []
 
     def load_config(self) -> Dict[str, Any]:
         """Load and validate YAML configuration"""
@@ -123,10 +129,15 @@ class BatchRunner:
         # (the empty-PDF-context defect: agents ran without the case PDFs).
         pdf_files = [str(f.name) for f in workspace.glob("*.pdf")]
 
+        # Find all .md files (the prompt version's attachments, e.g. the
+        # house standards). Bare names for the same reason as above.
+        text_files = [str(f.name) for f in workspace.glob("*.md")]
+
         config = WorkspaceConfig(
             path=workspace_path,
             detected_pdf_files=pdf_files,
-            detected_excel_files=excel_context_files
+            detected_excel_files=excel_context_files,
+            detected_text_files=text_files,
         )
 
         return config
@@ -211,6 +222,30 @@ class BatchRunner:
                   "(allow_recalc_fallback set) — attempts will be recorded "
                   "with recalc_engine=fallback.")
 
+    def _copy_attachments(self, workspace: Path) -> None:
+        """Copy the prompt version's attachments into the workspace under
+        their bare filenames (the name the prompt directive uses).
+
+        Same spirit as the empty-context guards: an attachment that fails to
+        land would run the agent against a prompt promising text it never
+        saw, so a missing/empty source or copy is fatal for the task.
+        """
+        for src in self._attachments:
+            if not src.is_file() or src.stat().st_size == 0:
+                raise RuntimeError(
+                    f"Prompt attachment missing or empty: {src}; refusing to "
+                    "run the agent without the text its prompt version promises"
+                )
+            dst = workspace / src.name
+            shutil.copy2(src, dst)
+            if not dst.is_file() or dst.stat().st_size == 0:
+                raise RuntimeError(f"Failed to copy prompt attachment {src.name} into {workspace}")
+            print(f"  📎 Attached: {src.name} ({dst.stat().st_size:,} bytes)")
+
+    def _attachment_extra_configs(self) -> Dict[str, Any]:
+        """The attachment-provenance keys merged into extra_configs per attempt."""
+        return attachment_extra_configs(self._attachments)
+
     def _recalc_extra_configs(self) -> Dict[str, Any]:
         """The recalc-provenance keys merged into extra_configs per attempt."""
         if not self._recalc_engine_info:
@@ -252,6 +287,9 @@ class BatchRunner:
             print(f"📊 Excel files for context: {len(workspace_config.detected_excel_files)}")
             for excel in workspace_config.detected_excel_files:
                 print(f"   - {excel}")
+            print(f"📎 Text files for context: {len(workspace_config.detected_text_files)}")
+            for text in workspace_config.detected_text_files:
+                print(f"   - {text}")
 
             # Estimate context size for logging/observability
             estimated_tokens = self.estimate_context_tokens(
@@ -319,6 +357,17 @@ class BatchRunner:
                 if add_result['not_found']:
                     raise RuntimeError(
                         f"Detected Excel files failed to register as context: "
+                        f"{add_result['not_found']} — aborting this task"
+                    )
+
+            # Add text context (house standards; same guard — the prompt
+            # version promises this text, so a run without it is invalid)
+            if workspace_config.detected_text_files:
+                add_result = task_executor.add_context_texts(workspace_config.detected_text_files)
+                print(f"✅ Added {len(add_result['added'])} text file(s) to context")
+                if add_result['not_found']:
+                    raise RuntimeError(
+                        f"Detected text files failed to register as context: "
                         f"{add_result['not_found']} — aborting this task"
                     )
 

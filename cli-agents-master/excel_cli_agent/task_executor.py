@@ -247,6 +247,9 @@ class ExcelTaskExecutor:
         self.context_pdfs: List[str] = []
         # Context Excel files
         self.context_excels: List[str] = []
+        # Context text files (.md — the prompt version's house standards),
+        # embedded verbatim: the agent has no tool that reads them.
+        self.context_texts: List[str] = []
         # Iteration control
         self.default_max_iterations: int = 30
         # Snapshot mode: save solution.xlsx + AI context text after each iteration
@@ -327,6 +330,57 @@ class ExcelTaskExecutor:
         count = len(self.context_excels)
         self.context_excels = []
         return {"cleared": count}
+
+    def add_context_texts(self, text_paths: List[str]) -> Dict[str, Any]:
+        """Add .md files to context for task execution (only from storage directory)"""
+        added = []
+        not_found = []
+
+        for text_path in text_paths:
+            # Only look in storage path
+            file_path = Path(self.excel_client.storage_path) / text_path
+
+            if file_path.exists() and file_path.suffix.lower() == '.md':
+                abs_path = str(file_path.absolute())
+                if abs_path not in self.context_texts:
+                    self.context_texts.append(abs_path)
+                    added.append(abs_path)
+            else:
+                not_found.append(text_path)
+
+        return {"added": added, "not_found": not_found, "total_context_texts": len(self.context_texts)}
+
+    def clear_context_texts(self):
+        """Clear all text context"""
+        count = len(self.context_texts)
+        self.context_texts = []
+        return {"cleared": count}
+
+    @staticmethod
+    def _text_context_label(name: str) -> str:
+        """Section header for an embedded text file — the prompts point the
+        model at 'the HOUSE STANDARDS header', so that name must match."""
+        if name.lower().startswith("house_standards"):
+            return f"HOUSE STANDARDS ({name})"
+        return f"ATTACHED TEXT ({name})"
+
+    def _extract_text_contexts(self) -> str:
+        """Full text of every context .md file, each under its own header.
+
+        Never budgeted: these are ~5 KB of prompt text the prompt version
+        promises the model saw, and the reduced-context ladder's floor is
+        20 K chars, so truncating them buys nothing and breaks the promise.
+        """
+        if not self.context_texts:
+            return ""
+        blocks = []
+        for text_path in self.context_texts:
+            name = Path(text_path).name
+            body = Path(text_path).read_text(encoding="utf-8")
+            blocks.append(
+                f"\n{'='*60}\n{self._text_context_label(name)}\n{'='*60}\n\n{body.strip()}\n"
+            )
+        return "\n".join(blocks)
 
     def _extract_pdf_texts(self, max_chars: int = None) -> str:
         """Extract raw text from all context PDFs (tail-truncated if budgeted)"""
@@ -1302,6 +1356,13 @@ The extracted text from these PDFs will appear below in sections marked like thi
                 context += f"- {Path(excel_path).name}\n"
             # Note: Enhanced Excel context will be added at the end via _extract_excel_texts()
 
+        # Text files (house standards): full text embedded further down.
+        if self.context_texts:
+            context += f"\n\n=== ATTACHED TEXT FILES ({len(self.context_texts)}) ===\n"
+            for text_path in self.context_texts:
+                name = Path(text_path).name
+                context += f"- {name}  (full text below under '{self._text_context_label(name)}'; not an Excel file - do NOT open it with Excel tools)\n"
+
         context += f"\n🎯 FOCUS: Use the current file state above to determine your next action."
         context += f"\n💡 TIP: You can see exactly what's in each cell with column letters and row numbers."
         context += f"\n⚠️  CRITICAL: Never reference the same cell you're putting a formula in (circular reference)."
@@ -1342,6 +1403,13 @@ The extracted text from these PDFs will appear below in sections marked like thi
             for excel_path in self.context_excels:
                 context += f"- {Path(excel_path).name}\n"
             context += "=== The Excel file content is attached to this message for your analysis ===\n"
+
+        # Text files (house standards): full text embedded further down.
+        if self.context_texts:
+            context += f"\n\n=== ATTACHED TEXT FILES ({len(self.context_texts)}) ===\n"
+            for text_path in self.context_texts:
+                name = Path(text_path).name
+                context += f"- {name}  (full text below under '{self._text_context_label(name)}'; not an Excel file - do NOT open it with Excel tools)\n"
 
         context += """
 EXECUTION HISTORY:
@@ -1431,10 +1499,15 @@ EXECUTION HISTORY:
         sheet).
         """
         context_prompt = self._get_context_prompt(task)
+        # Text attachments go first among the extras: they are small, never
+        # budgeted, and must not sit behind a tail-truncated PDF.
+        text_ctx = self._extract_text_contexts() if self.context_texts else ""
         pdf_text = self._extract_pdf_texts() if self.context_pdfs else ""
         excel_text = self._extract_excel_texts() if self.context_excels else ""
 
         additional_context = ""
+        if self.context_texts:
+            additional_context += "\n\n" + text_ctx
         if self.context_pdfs:
             additional_context += "\n\n" + pdf_text
         if self.context_excels:
@@ -1460,7 +1533,8 @@ EXECUTION HISTORY:
             )
         else:
             head = context_prompt
-        remaining = max(30_000, budget - len(head))
+        # The text attachments are part of the non-negotiable head.
+        remaining = max(30_000, budget - len(head) - len(text_ctx))
 
         pdf_budget = int(remaining * 0.25) if self.context_pdfs else 0
         after_pdf = remaining - pdf_budget
@@ -1482,6 +1556,8 @@ EXECUTION HISTORY:
         else:
             reduced_head = context_prompt
         reduced = reduced_head
+        if self.context_texts:
+            reduced += "\n\n" + text_ctx
         if self.context_pdfs:
             reduced += "\n\n" + self._extract_pdf_texts(max_chars=pdf_budget)
         if self.context_excels:
@@ -1905,8 +1981,9 @@ EXECUTION HISTORY:
             if isinstance(arguments, dict) and "task_id" not in arguments and self.current_execution:
                 arguments = {**arguments, "task_id": self.current_execution.task_id}
 
-        # CRITICAL: Detect attempts to use Excel tools on PDF files (Fix #2)
-        # Excel tools only work on .xlsx files, NOT .pdf files
+        # CRITICAL: Detect attempts to use Excel tools on PDF / text files (Fix #2)
+        # Excel tools only work on .xlsx files, NOT .pdf or .md files — both
+        # kinds are already embedded as text in the prompt.
         excel_tools_with_filename = [
             "get_cell_range", "get_formula", "list_worksheets", "create_worksheet",
             "delete_worksheet", "edit_cells", "set_cell_formula",
@@ -1917,14 +1994,18 @@ EXECUTION HISTORY:
 
         if tool_name in excel_tools_with_filename and isinstance(arguments, dict):
             filename = arguments.get("filename", "")
-            if filename and filename.lower().endswith(".pdf"):
+            if filename and filename.lower().endswith((".pdf", ".md")):
+                if filename.lower().endswith(".pdf"):
+                    kind, section = "PDF", f"PDF: {filename}"
+                else:
+                    kind, section = "text", self._text_context_label(Path(filename).name)
                 error_msg = (
-                    f"❌ ERROR: You tried to use Excel tool '{tool_name}' on PDF file '{filename}'.\n\n"
-                    f"📋 PDFs are NOT Excel files!\n\n"
-                    f"✅ The PDF text is ALREADY IN YOUR PROMPT - just read it directly!\n"
-                    f"   Look for the section marked: 'PDF: {filename}'\n\n"
-                    f"🚫 DO NOT use get_cell_range, list_worksheets, or ANY Excel tools on PDFs.\n"
-                    f"📖 The PDF text content is embedded in your system prompt - scroll up and find it!\n\n"
+                    f"❌ ERROR: You tried to use Excel tool '{tool_name}' on {kind} file '{filename}'.\n\n"
+                    f"📋 {kind} files are NOT Excel files!\n\n"
+                    f"✅ The {kind} content is ALREADY IN YOUR PROMPT - just read it directly!\n"
+                    f"   Look for the section marked: '{section}'\n\n"
+                    f"🚫 DO NOT use get_cell_range, list_worksheets, or ANY Excel tools on {kind} files.\n"
+                    f"📖 The {kind} content is embedded in your prompt - scroll up and find it!\n\n"
                     f"Excel tools work ONLY on .xlsx files."
                 )
                 return {

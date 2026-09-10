@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .agents import agent_env, build_command
-from .config import load_config, load_dotenv_if_present, resolve_secrets
+from .config import load_config, load_dotenv_if_present, resolve_secrets, template_attachments
 from .prompt_builder import build_prompt, prompt_file_paths
 from .recorder import has_extra_configs_column, record
 from .repo_config import describe_database_target
@@ -31,21 +31,22 @@ from .sandbox import run_in_sandbox
 from .task_source import ExternalSource, InternalSource, verify_s3_access
 from .telemetry import parse_transcript, write_telemetry
 from .validate import validate, write_verdict
-from .workspace import create_attempt
+from .workspace import create_attempt, seed_template_attachments
 
 EXIT_CODES = {"success": 0, "agent_failure": 2, "timeout": 3,
               "infra_failure": 4, "needs_review": 5}
 
 
 def _snapshot_run_inputs(cfg, spec, attempt) -> None:
-    """Copy the run config and the exact prompt files into the attempt dir,
-    so the local record says what the attempt ran with even if the repo
-    files change later (and before any upload can fail)."""
+    """Copy the run config and the exact prompt files — plus any template
+    attachment, which is prompt material the agent read — into the attempt
+    dir, so the local record says what the attempt ran with even if the
+    repo files change later (and before any upload can fail)."""
     if cfg.config_path and cfg.config_path.exists():
         shutil.copy2(cfg.config_path, attempt.attempt_dir / "run_config.yaml")
     prompts_dir = attempt.attempt_dir / "prompts"
     prompts_dir.mkdir(exist_ok=True)
-    for path in prompt_file_paths(cfg, spec.task_source):
+    for path in [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg)]:
         shutil.copy2(path, prompts_dir / path.name)
 
 
@@ -89,6 +90,10 @@ def main(argv=None) -> int:
     staging = cfg.workspaces_dir / f"_staging_{datetime.now():%Y%m%d_%H%M%S}_{os.getpid()}"
     try:
         spec = source.fetch(staging)
+        # The template's attachments (v10: House_Standards_v1.md) ride into
+        # starting_files/ with the task inputs in both modes; a missing one
+        # is caught here, before any row can be written.
+        seeded = seed_template_attachments(cfg, spec)
         attempt = create_attempt(cfg.workspaces_dir, spec)
         _snapshot_run_inputs(cfg, spec, attempt)
     except Exception as e:  # noqa: BLE001 — classified, reported, non-zero exit
@@ -100,6 +105,8 @@ def main(argv=None) -> int:
     print(f"▶ task {spec.task_id or spec.task_name} ({spec.task_source}) | "
           f"{cfg.agent.cli}/{cfg.agent.model}")
     print(f"  attempt dir: {attempt.attempt_dir}")
+    if seeded:
+        print(f"  seeded template attachments: {', '.join(p.name for p in seeded)}")
 
     # 2. Prompt.
     prompt_text, prompt_version = build_prompt(cfg, spec, attempt.workspace)

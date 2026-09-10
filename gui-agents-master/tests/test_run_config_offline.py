@@ -94,8 +94,10 @@ def test_v2():
     errors = preflight_check(ec, "claude", cfg.benchmark)
     assert not errors, errors
     resolved = resolve_prompts(dict(ec))
-    assert len(resolved["prompts"]) == 3, len(resolved["prompts"])
-    assert "132 checks" in resolved["prompts"][1]
+    # The repo default is 205 — the single-pass prompt (one turn). Single-pass
+    # is the default for every run going forward (Patrick, 2026-09-10).
+    assert len(resolved["prompts"]) == 1, len(resolved["prompts"])
+    assert "132 checks" in resolved["prompts"][0]
 
 
 def test_v1_missing_axes_fails():

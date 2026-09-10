@@ -23,8 +23,8 @@
 # New text = new number.
 #
 # NUMBERING
-#   0        infrastructure smoke test — not a benchmark prompt. Rows it
-#            produces are throwaway.
+#   0, 1     infrastructure smoke tests — not benchmark prompts. Rows they
+#            produce are throwaway (1 = 0 + the house-standards attachment).
 #   9        the number the earlier wave already carries in
 #            task_attempts.prompt_version, kept so that history and future
 #            runs on the same prompt name the same thing.
@@ -48,6 +48,21 @@ versions:
       (YAML reads both as the integer 0).
     files:
       - "tasks_configs/prompts/v000_test.txt"
+
+  1:
+    label: "001 pipeline smoke test + House Standards attachment"
+    description: >
+      NOT a benchmark prompt. Version 0's one-turn plumbing prompt with the
+      House_Standards_v1.md attachment declared, so the attachment path
+      (resolve -> upload after the case files -> attachment wait -> prompts
+      JSON record) is exercised in seconds on a live provider without
+      spending a real task. Added 2026-09-10 for the 101-task rerun ladder;
+      the agent is told to ignore the case and the standards alike. Never
+      grade a run recorded under this version.
+    files:
+      - "tasks_configs/prompts/v000_test.txt"
+    attachments:
+      - "../house_standards/House_Standards_v1.md"
 
   9:
     label: "pv9 single prompt"
@@ -118,3 +133,36 @@ versions:
       truncation-continue caveat as 201.
     files:
       - "tasks_configs/prompts/v2_2.txt"
+
+  204:
+    label: "rubric-v9 3-step + Questions-sheet answers + House Standards"
+    description: >
+      Version 202 plus the house standards: a HOUSE STANDARDS block in step
+      2 (after the ANSWERS block), a read-it-now sentence in step 1, and QA
+      item 9 in step 3, all pointing at the attached House_Standards_v1.md.
+      The file itself is declared under `attachments` and is uploaded with
+      the case files on every run of this version - the version selects
+      the text AND the attachment. The 132-check rubric body is
+      byte-identical to version 200's from the `== FULL RUBRIC ==` marker
+      onward, so any score delta is attributable to the house standards
+      alone. Generated from prompts_v3/ - see prompts_v4/README.md.
+    files:
+      - "tasks_configs/prompts_v4/step1_analyze.txt"
+      - "tasks_configs/prompts_v4/step2_build.txt"
+      - "tasks_configs/prompts_v4/step3_qa.txt"
+    attachments:
+      - "../house_standards/House_Standards_v1.md"
+
+  205:
+    label: "rubric-v9 single-pass + Questions-sheet answers + House Standards"
+    description: >
+      Version 203 plus the same house-standards addition as 204: the HOUSE
+      STANDARDS block before the graded-rubric sentence and QA item 9, with
+      House_Standards_v1.md declared under `attachments`. One chat turn;
+      rubric body byte-identical to 200/201/202/203's from the
+      `== FULL RUBRIC ==` marker onward. Same ~67k-char
+      truncation-continue caveat as 201/203.
+    files:
+      - "tasks_configs/prompts/v2_3.txt"
+    attachments:
+      - "../house_standards/House_Standards_v1.md"

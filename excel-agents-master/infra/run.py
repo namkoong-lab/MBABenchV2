@@ -44,9 +44,11 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -80,6 +82,7 @@ from infra.configs import (
     describe_prompt_version,
     load_configs,
     resolve_agent_identity,
+    resolve_prompt_attachments,
     resolve_prompt_files,
 )
 
@@ -140,20 +143,61 @@ def _load_prompt_texts(prompt_files: list[str]) -> list[str]:
     return texts
 
 
+# Attachment filename that identifies the house standards and its version.
+_HOUSE_STANDARDS_RE = re.compile(r"^House_Standards_v(\d+)\.md$")
+
+
+def attachment_records(attachments: list[Path]) -> list[dict]:
+    """Evidence records for the prompt_version's attachments: name, path,
+    sha256 and the full TEXT. The text is captured for the same reason the
+    prompt text is — a path stops being evidence the moment the file is
+    edited, and the sha256 pins the exact bytes the agent was handed."""
+    records = []
+    for path in attachments:
+        data = path.read_bytes()
+        records.append(
+            {
+                "name": path.name,
+                "path": str(path),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "text": data.decode("utf-8"),
+            }
+        )
+    return records
+
+
+def house_standards_stamp(records: list[dict]) -> dict | None:
+    """The `house_standards` provenance for task_attempts.extra_configs
+    ({version, file, sha256}), or None when no House_Standards_v<N>.md is
+    attached. Read from the attachment list, never from the config, so the
+    stamp cannot disagree with what the panel received."""
+    for rec in records:
+        m = _HOUSE_STANDARDS_RE.match(rec["name"])
+        if m:
+            return {
+                "version": int(m.group(1)),
+                "file": rec["name"],
+                "sha256": rec["sha256"],
+            }
+    return None
+
+
 def build_engine_config(
     cfg: SimpleNamespace,
     spec: TaskSpec,
     identity,
     prompt_texts: list[str],
     attempt_number: int = 0,
+    attachments: list[Path] | None = None,
 ) -> dict:
     """Assemble the engine-input dict for one task.
 
     The workbook among the task's starting files becomes `template_file`
     (its NAME — the provisioning script placed a file with that name in the
     task's OneDrive folder); every other starting file is uploaded into the
-    add-in panel. The identity's pinned UI axes are injected into the
-    provider block, where the cores select AND verify them.
+    add-in panel, followed by the prompt_version's attachments. The
+    identity's pinned UI axes are injected into the provider block, where
+    the cores select AND verify them.
     """
     base = _ns_to_dict(cfg)
     provider = identity.provider
@@ -164,6 +208,10 @@ def build_engine_config(
     ) or ""
     workbook = FileManager.find_workbook_file(local_paths, task_source)
     panel_files = FileManager.get_files_to_upload(local_paths, workbook)
+    # Attachments go in AFTER the workbook split so they can never be
+    # mistaken for the template (they are .md, but the split is by name,
+    # not suffix) and the panel receives the case files first.
+    panel_files = panel_files + [str(p) for p in (attachments or [])]
 
     provider_block = copy.deepcopy(base.get(provider, {}) or {})
     if identity.ui_model_label is not None:
@@ -190,7 +238,9 @@ def build_engine_config(
     return engine_config
 
 
-def preflight_check(engine_config: dict) -> list[str]:
+def preflight_check(
+    engine_config: dict, attachments: list[Path] | None = None
+) -> list[str]:
     """Collect all problems before we touch the browser. Empty list = OK."""
     errors: list[str] = []
     if not engine_config.get("prompts"):
@@ -208,18 +258,28 @@ def preflight_check(engine_config: dict) -> list[str]:
     for raw in engine_config.get("upload_files") or []:
         if not Path(raw).exists():
             errors.append(f"upload file not found: {raw}")
+    # The registry already refused a missing attachment at resolve time;
+    # this re-checks per task so a file deleted mid-run (or an engine_config
+    # assembled without it) is caught before the panel opens.
+    uploads = {str(Path(p)) for p in engine_config.get("upload_files") or []}
+    for path in attachments or []:
+        if not Path(path).is_file():
+            errors.append(f"prompt attachment not found: {path}")
+        elif str(Path(path)) not in uploads:
+            errors.append(f"prompt attachment not in upload_files: {path}")
     return errors
 
 
 def _write_prompts_file(
     run_dir: Path, task_name: str, engine_config: dict, prompt_files: list[str],
-    started: datetime,
+    started: datetime, attachments: list[dict] | None = None,
 ) -> Path | None:
     """Materialize the per-task prompt payload so the sink can upload it.
 
     Records the prompt TEXT, not just paths: this JSON is the artifact that
     survives in S3 as evidence of what the agent was actually asked, and a
-    path is not evidence once the file changes.
+    path is not evidence once the file changes. Attachments (name, path,
+    sha256, text) ride along for the same reason.
     """
     prompts = engine_config.get("prompts") or []
     if not prompts:
@@ -234,6 +294,7 @@ def _write_prompts_file(
                 "prompts": prompts,
                 "prompt_version": engine_config.get("prompt_version"),
                 "prompt_files": list(prompt_files),
+                "attachments": list(attachments or []),
             },
             indent=2,
         )
@@ -561,13 +622,24 @@ def main() -> int:
 
     # Prompt selection: prompt_version picks the files through the registry,
     # so the DB label and the text the agent receives are one decision.
+    # Attachments are resolved here too: a version whose attachment is
+    # missing is refused before any browser opens, and the records (sha256 +
+    # text) are computed once so every attempt of the run stamps the same
+    # bytes.
     try:
         prompt_files = resolve_prompt_files(cfg)
         prompt_texts = _load_prompt_texts(prompt_files)
-    except (ConfigError, OSError) as e:
+        attachments = resolve_prompt_attachments(cfg)
+        attachment_recs = attachment_records(attachments)
+    except (ConfigError, OSError, UnicodeDecodeError) as e:
         logger.error(f"Prompt selection failed:\n{e}")
         return EXIT_CONFIG_ERROR
     logger.info(describe_prompt_version(cfg, prompt_files))
+    for rec in attachment_recs:
+        logger.info(
+            f"attachment: {rec['name']} sha256={rec['sha256']} ({rec['path']})"
+        )
+    house_standards = house_standards_stamp(attachment_recs)
 
     # One prompt_version end-to-end: the sink writes cfg.agent.prompt_version;
     # copy the top-level value across (resolve_prompt_files already refused
@@ -608,8 +680,10 @@ def main() -> int:
         prepared: list[tuple[TaskSpec, dict]] = []
         had_errors = False
         for spec in specs:
-            engine_config = build_engine_config(cfg, spec, identity, prompt_texts)
-            errors = preflight_check(engine_config)
+            engine_config = build_engine_config(
+                cfg, spec, identity, prompt_texts, attachments=attachments
+            )
+            errors = preflight_check(engine_config, attachments)
             if errors:
                 had_errors = True
                 logger.error(f"Preflight failed for task {spec.task_name!r}:")
@@ -654,6 +728,12 @@ def main() -> int:
                 ]
                 logger.info("[DRY RUN] engine_config:")
                 print(yaml.safe_dump(preview, default_flow_style=False))
+                if attachment_recs:
+                    logger.info("[DRY RUN] attachments (uploaded after the case files):")
+                    for rec in attachment_recs:
+                        print(f"  - {rec['name']}  sha256={rec['sha256']}")
+                    if house_standards:
+                        print(f"  extra_configs.house_standards: {house_standards}")
                 continue
 
             published = False
@@ -664,7 +744,8 @@ def main() -> int:
                 attempt_config["run_dir"] = str(run_dir)
                 attempt_config["attempt_number"] = infra_try - 1
                 prompts_file = _write_prompts_file(
-                    run_dir, spec.task_name, attempt_config, prompt_files, started
+                    run_dir, spec.task_name, attempt_config, prompt_files, started,
+                    attachment_recs,
                 )
 
                 deadman = (
@@ -709,6 +790,8 @@ def main() -> int:
                             "engine_task_status": task_status or None,
                         },
                     }
+                    if house_standards:
+                        extra["extra_configs"]["house_standards"] = dict(house_standards)
                     if status != "success" and task_status:
                         extra["failure_reason"] = task_status
 

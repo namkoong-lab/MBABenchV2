@@ -20,9 +20,10 @@ benchmark: v2
 provider:
   kind: "claude"
 
-# 203 = the single-pass v2 prompt + Questions-sheet answers
-# (tasks_configs/prompts/v2_2.txt).
-prompt_version: 203
+# 205 = the single-pass v2 prompt + Questions-sheet answers + house standards
+# (tasks_configs/prompts/v2_3.txt); the version also attaches
+# House_Standards_v1.md after the task's starting files.
+prompt_version: 205
 
 # Every axis a box's output depends on is pinned here rather than inherited.
 # The v2 Claude identity keys on (mode, model, effort); the two capability

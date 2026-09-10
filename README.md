@@ -7,7 +7,7 @@ plus the judge, and each run declares which **benchmark** it belongs to:
 | -------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | DB (Neon)      | `BizbenchV1`                                                       | `MBABenchV2`                                                                           |
 | S3             | `s3://mbabench/BizbenchV1/…`                                       | `s3://mbabench/MBABenchV2/…`                                                           |
-| Agent prompts  | single-prompt pv9 (`gui-agents-master/tasks_configs/prompts_pv9/`) | 3-step rubric prompts (`gui-agents-master/tasks_configs/prompts_v2/`)                  |
+| Agent prompts  | single-prompt pv9 (`gui-agents-master/tasks_configs/prompts_pv9/`) | rubric prompts + house standards (`gui-agents-master/tasks_configs/prompts_v4/`, `house_standards/`) |
 | Grading rubric | 3 categories / 17 checks (`judge/prompts/rubrics/rubric_8.json`)   | 12 categories / 132 checks (`judge/prompts/rubrics/rubric_9.json`, agentic judge only) |
 
 How each pipeline selects the benchmark at launch:
@@ -15,19 +15,24 @@ How each pipeline selects the benchmark at launch:
 - **`gui-agents-master/`** — Playwright drives claude.ai / chatgpt.com.
   Set `benchmark: v1|v2` in the run config; it gates identity labels, the
   source/sink schema (`bizbench` vs `mbabenchv2`), S3 defaults, and provider
-  preflight. Prompts come from `prompts_file` (defaults to the v2 3-step
-  set; v1 configs point at the pv9 payload). Examples:
+  preflight. Prompts come from `prompt_version` via
+  `tasks_configs/prompts/registry.yaml` (default 204 = the v2 3-step set
+  with the house standards attached; 205 is its single-pass twin; v1
+  configs use 9, the pv9 payload). Examples:
   `infra/configs/run_configs/{bizbenchv1,mbabenchv2}_run_examples/`.
 - **`cli-agents-master/`** — our own harness on raw model APIs.
   Set `benchmark: v1|v2` in the batch config (S3 + a DATABASE_URL sanity
   check); `prompt_version` defaults from the benchmark and must embed its
-  rubric (v11 = the frozen pv1105 v1-wave prompts; v12 = the v2-rubric set
-  generated from the GUI `prompts_v2/` sources). A mismatched pairing fails
-  at startup (`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` overrides).
+  rubric (v11 = the frozen pv1105 v1-wave prompts; v12/v13/v14 = the
+  v2-rubric sets generated from the GUI `prompts_v2/`, `prompts_v3/`,
+  `prompts_v4/` sources; v14, the default, embeds the house standards). A
+  mismatched pairing fails at startup (`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1`
+  overrides).
 - **`coding-agents-master/`** — vendor coding agents (Claude Code, Codex),
   one sandboxed container per attempt. Set `benchmark: v1|v2` in the run
-  config; v2 flips S3/DB and defaults `template_version` to v8 (the
-  v2-rubric mirror; v7 is the v1 pv9 mirror).
+  config; v2 flips S3/DB and defaults `template_version` to v10 (the
+  v2-rubric mirror with the house standards seeded into the workspace; v7
+  is the v1 pv9 mirror).
 - **`judge/`** — grades attempts from either benchmark. Pass
   `--benchmark v1|v2`; it selects the DB (`database.{v1,v2}_url` in
   `config/config.yaml`), the S3 grading root and the rubric pair
@@ -39,6 +44,10 @@ guards + DATABASE_URL checks) rather than writing to the wrong store.
 
 Tasks live in the Neon `MBABenchV2` database (`tasks` table), with starting
 and solution files in S3 under `s3://mbabench/MBABenchV2/tasks/<task_name>/`.
+Every v2 attempt also receives the house financial-modelling conventions,
+`house_standards/House_Standards_v1.md`, alongside the starting files; the
+prompt version selects that attachment, so a recorded row implies it
+(see `house_standards/README.md`).
 Each pipeline and the judge has its own README; `CheatSheet.md` is the
 one-page "how do I launch a run" reference across all of them.
 
@@ -58,6 +67,9 @@ scripts/
   export_good_attempts.py  Export the banked good-attempt manifest per
                            (pipeline, model, task) for the v2 study cohorts.
 operation/v1/              v1 results assembly and paper figures.
+house_standards/           House modelling conventions handed to every v2
+                           attempt with the starting files (append-only,
+                           versioned; selected by prompt version).
 gui-agents-master/         claude.ai / chatgpt.com via Playwright + CDP.
 cli-agents-master/         Raw model APIs + a local Excel MCP server.
 coding-agents-master/      Claude Code / Codex CLIs in Docker.

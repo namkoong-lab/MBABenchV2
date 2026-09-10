@@ -260,14 +260,20 @@ poll:
 #   201    rubric-v9 single-pass     (132-check rubric, 1 turn)
 #   202    rubric-v9 3-step          + Questions-sheet answers (3 turns)
 #   203    rubric-v9 single-pass     + Questions-sheet answers (1 turn)
+#   204    202 + House Standards     (3 turns; attaches House_Standards_v1.md)
+#   205    203 + House Standards     (1 turn;  attaches House_Standards_v1.md)
 #
-# Default 202 = the 3-step set + the Questions-sheet answer convention
-# (tasks_configs/prompts_v3/ — see its README). 200/201 remain registered
-# for the pre-Questions cohorts; new runs should not use them.
+# Default 204 = the 3-step set + Questions-sheet answers + the house
+# standards (tasks_configs/prompts_v4/ — see its README). A version may
+# declare `attachments` in the registry; those files are uploaded after each
+# task's starting files on every run of that version, and their text is
+# recorded in the attempt's prompts JSON. The version selects them — no run
+# config names the file. 200-203 remain registered for the earlier cohorts;
+# new runs should not use them.
 # Must equal agent.prompt_version if that is also set; run.py refuses a
 # mismatch rather than picking one.
 prompt_version:
-  value: 202
+  value: 205
   required: false
 
 # Empty = let the engine resolve paths from CWD. Set to the directory
@@ -324,13 +330,13 @@ claude_web:
     value: false
     required: false
   max_sec_per_task:
-    value: 7200                # 2h
+    value: 18000               # 5h
     required: false
   check_interval_seconds:
     value: 2
     required: false
   max_wait_per_prompt_seconds:
-    value: 7200
+    value: 18000
     required: false
 
   retry:
@@ -341,10 +347,10 @@ claude_web:
       value: 10
       required: false
     max_sec_per_task:
-      value: 7200
+      value: 18000
       required: false
     max_sec_per_attempt:
-      value: 7200
+      value: 18000
       required: false
     sleep_between_retries:
       value: 5
@@ -448,13 +454,13 @@ chatgpt_web:
     value: null                # instant | medium | high | xhigh | pro | null
     required: false
   max_sec_per_task:
-    value: 7200                # 2h
+    value: 18000               # 5h
     required: false
   check_interval_seconds:
     value: 3
     required: false
   max_wait_per_prompt_seconds:
-    value: 7200                # 2h
+    value: 18000               # 5h
     required: false
 
   retry:
@@ -469,7 +475,7 @@ chatgpt_web:
     # min is normal) runs to natural completion instead of being killed at
     # 90 min and restarted from scratch in a new chat.
     max_sec_per_attempt:
-      value: 7200
+      value: 18000
       required: false
     sleep_between_retries:
       value: 5

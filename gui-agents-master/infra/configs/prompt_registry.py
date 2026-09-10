@@ -42,6 +42,12 @@ class PromptVersion:
     files: tuple[str, ...]  # repo-root-relative, in send order
     label: str = ""
     description: str = ""
+    # Files uploaded WITH the task's starting files whenever this version
+    # runs (e.g. the house standards). Repo-root-relative; `..` segments are
+    # allowed so a version can point at a monorepo-level file. Declared here
+    # rather than in a run config so the recorded prompt_version and the
+    # attachments the agent saw cannot disagree.
+    attachments: tuple[str, ...] = ()
 
 
 def load_registry(path: Path = REGISTRY_PATH) -> dict[int, PromptVersion]:
@@ -88,11 +94,20 @@ def load_registry(path: Path = REGISTRY_PATH) -> dict[int, PromptVersion]:
             raise PromptVersionError(
                 f"Prompt registry entry {version} has no `files:` list ({path})."
             )
+        attachments = entry.get("attachments") or []
+        if isinstance(attachments, str):
+            attachments = [attachments]
+        if not isinstance(attachments, list):
+            raise PromptVersionError(
+                f"Prompt registry entry {version} has a non-list "
+                f"`attachments:` ({path})."
+            )
         out[version] = PromptVersion(
             version=version,
             files=tuple(str(f) for f in files),
             label=entry.get("label") or "",
             description=(entry.get("description") or "").strip(),
+            attachments=tuple(str(a) for a in attachments),
         )
     return out
 
@@ -159,6 +174,41 @@ def resolve_prompt_files(
     return list(entry.files)
 
 
+def resolve_prompt_attachments(
+    cfg: SimpleNamespace, registry_path: Path = REGISTRY_PATH
+) -> list[Path]:
+    """Absolute paths of the files this run's prompt_version attaches.
+
+    Resolved against the repo root (so `../house_standards/...` reaches the
+    monorepo). Every declared attachment must exist: a version that promises
+    the agent a file it cannot deliver would record rows under a prompt the
+    agent never fully received, so a missing file is refused here, before
+    any browser opens.
+    """
+    version = _config_prompt_version(cfg)
+    if version is None:
+        return []
+    registry = load_registry(registry_path)
+    try:
+        entry = registry.get(int(version))
+    except (TypeError, ValueError):
+        entry = None
+    if entry is None:
+        return []
+    out: list[Path] = []
+    for rel in entry.attachments:
+        path = (registry_path.parents[2] / rel).resolve()
+        if not path.is_file():
+            raise PromptVersionError(
+                f"prompt_version={entry.version} declares attachment {rel!r} "
+                f"but {path} does not exist. Restore the file or register a "
+                f"new version without it; never run a version whose "
+                f"attachments cannot be delivered."
+            )
+        out.append(path)
+    return out
+
+
 def describe_prompt_version(cfg: SimpleNamespace, files: list[str]) -> str:
     """One log line naming the resolved prompt set and where it came from."""
     version = _config_prompt_version(cfg)
@@ -169,4 +219,7 @@ def describe_prompt_version(cfg: SimpleNamespace, files: list[str]) -> str:
     label = f" {entry.label!r}" if entry and entry.label else ""
     n = len(files)
     turns = "1 turn" if n == 1 else f"{n} turns"
-    return f"prompt_version={version}{label} -> {turns}: {', '.join(files)}"
+    line = f"prompt_version={version}{label} -> {turns}: {', '.join(files)}"
+    if entry and entry.attachments:
+        line += f"; attachments: {', '.join(entry.attachments)}"
+    return line

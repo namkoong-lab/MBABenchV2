@@ -28,6 +28,7 @@ def make_executor(tmp_path, **attrs):
     ex = object.__new__(ExcelTaskExecutor)
     ex.context_pdfs = []
     ex.context_excels = []
+    ex.context_texts = []
     ex.fresh_context_mode = True
     ex.enhanced_excel_context = True
     ex.recent_history_count = 3

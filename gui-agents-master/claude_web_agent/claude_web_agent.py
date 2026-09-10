@@ -261,9 +261,9 @@ class ClaudeWebAgent(WebAgent):
     # Labels are matched as a whole model token (_model_label_matches), so
     # "Fable 5" never satisfies "Fable 5.1" or vice versa — the dropdown
     # grew a "Fable 5.1" entry (2026-09), and the wave's fable_5 cohort must
-    # keep running Fable 5. fable_5_1 is registered here only so the label
-    # resolves; it has no identity in infra/configs/agent_identity.py, so a
-    # run config naming it is refused before the browser opens.
+    # keep running Fable 5. fable_5_1 has a cowork identity only
+    # (claude_fable_5_1_cowork_max, 2026-09-10); a chat-mode config naming
+    # it is still refused before the browser opens.
     MODEL_LABELS = {
         "opus_5": "Opus 5",
         "fable_5_1": "Fable 5.1",

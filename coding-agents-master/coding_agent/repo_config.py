@@ -89,6 +89,28 @@ def repo_value(*path: str) -> Optional[str]:
     return node.strip() if isinstance(node, str) and node.strip() else None
 
 
+def monorepo_root() -> Optional[Path]:
+    """<MBABenchV2>, the directory the shared assets hang off (house_standards/
+    ...), or None on a standalone checkout.
+
+    The shared `config` module lives at <root>/config/python/config.py, so
+    its DEFAULT_CONFIG_DIR is the authoritative locator — deliberately not
+    MBABENCH_CONFIG_DIR, which redirects only the yaml lookup (tests point
+    it at throwaway dirs that hold no assets). Without the workspace
+    install, a checkout sitting directly under the monorepo still resolves
+    through its parent.
+    """
+    try:
+        from config import Config
+    except ImportError:
+        candidate = Path(__file__).resolve().parents[2]
+        if (candidate / "config" / "config_default.yaml").exists():
+            return candidate
+        logger.debug("monorepo `config` module not installed and no repo above the checkout")
+        return None
+    return Path(Config.DEFAULT_CONFIG_DIR).resolve().parent
+
+
 def resolve_db_url(benchmark: Optional[str]) -> Tuple[str, str]:
     """(url, human-readable provenance). See the module docstring for order.
 

@@ -26,12 +26,14 @@ provider:
 
 # Prompts come from `prompt_version` through
 # tasks_configs/prompts/registry.yaml — there is no per-task prompt text.
-# Unset, this inherits the repo default 202 (the v2 3-step set +
-# Questions-sheet answers). ChatGPT works better with one combined turn
-# than a sequence, so 203 (the same rubric and Questions-sheet convention
-# folded into a single pass) is the usual choice here; 0 is the cheap
-# smoke-test prompt if you only want to exercise the plumbing.
-prompt_version: 203
+# Unset, this inherits the repo default 204 (the v2 3-step set +
+# Questions-sheet answers + house standards). ChatGPT works better with one
+# combined turn than a sequence, so 205 (the same rubric, Questions-sheet
+# convention and house standards folded into a single pass) is the usual
+# choice here; 0 is the cheap smoke-test prompt if you only want to exercise
+# the plumbing. Both 204 and 205 upload House_Standards_v1.md after the
+# task's own files — the version declares it, this file never names it.
+prompt_version: 205
 
 # chatgpt_web.project_id / project_slug are inherited from configs.yaml.
 # Add a chatgpt_web: block here only if this task needs different values.

@@ -92,13 +92,28 @@ in an ORM model) so every row records what it actually ran under.
 ## Prompts
 
 `tasks_configs/prompts/registry.yaml` maps `prompt_version` → prompt files
-(append-only; one key selects the text AND labels the row). Version **200**
-is the rubric-v9 3-step set, **byte-identical** to
-`gui-agents-master/tasks_configs/prompts_v2/` (enforced by
-`tests/test_prompt_parity.py`) — a gui-vs-excel delta is attributable to
-the interface, not the text. Version **0** is the throwaway pipeline smoke
-prompt. The sent text is snapshotted into each attempt's prompts JSON and
-uploaded to S3.
+(append-only; one key selects the text AND labels the row). Every
+benchmark version is **byte-identical** to its gui-agents-master copy
+(enforced by `tests/test_prompt_parity.py`) — a gui-vs-excel delta is
+attributable to the interface, not the text:
+
+| Version | Set | Files | Attachments |
+|---|---|---|---|
+| 0 | pipeline smoke test (throwaway rows) | `prompts/v000_test.txt` | — |
+| 200 | rubric-v9 3-step | `prompts_v2/` | — |
+| 202 | 200 + Questions-sheet answers | `prompts_v3/` | — |
+| 203 | 202 folded into one panel turn | `prompts/v2_2.txt` | — |
+| 204 | 202 + House Standards | `prompts_v4/` | `../house_standards/House_Standards_v1.md` |
+| 205 | 203 + House Standards (**default**) | `prompts/v2_3.txt` | `../house_standards/House_Standards_v1.md` |
+
+A version's `attachments:` (repo-root-relative; `..` reaches the monorepo's
+`house_standards/`) are uploaded into the add-in panel after the task's
+non-workbook starting files on every run of that version; `infra/run.py`
+refuses to start if one is missing. The sent text is snapshotted into each
+attempt's prompts JSON (with each attachment's name, path, sha256 and text)
+and uploaded to S3, and a `House_Standards_v<N>.md` attachment is stamped
+into `task_attempts.extra_configs.house_standards` as
+`{version, file, sha256}`.
 
 ## Tests
 

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 # Add excel_mcp_server to path
-sys.path.insert(0, str(Path(__file__).parent / "excel_mcp_server"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "excel_mcp_server"))
 
 from formula_validator import validate_formula, VALID_EXCEL_FUNCTIONS
 
@@ -44,6 +44,25 @@ def test_valid_formulas():
 
     print(f"\n📊 Results: {passed} passed, {failed} failed")
     return failed == 0
+
+
+def test_house_standards_functions():
+    """The functions House_Standards_v1.md recommends must all validate
+    (LET/XMATCH were rejected before prompt v14) and none may be
+    'corrected' away by the suggestion table."""
+    from formula_validator import FUNCTION_SUGGESTIONS
+
+    for func in ("XLOOKUP", "XMATCH", "IFS", "SWITCH", "LET"):
+        assert func in VALID_EXCEL_FUNCTIONS, func
+        assert func not in FUNCTION_SUGGESTIONS, func
+    for formula in (
+        "=LET(rev, B2, cost, C2, rev - cost)",
+        "=INDEX(B2:B10, XMATCH(E1, A2:A10, 0))",
+        "=XLOOKUP(E1, A2:A10, B2:B10, 0)",
+    ):
+        result = validate_formula(formula, cell="F1", worksheet="Calc")
+        assert result["valid"], (formula, result["errors"])
+    return True
 
 
 def test_invalid_functions():
@@ -221,6 +240,7 @@ def main():
 
     tests = [
         ("Valid Formulas", test_valid_formulas),
+        ("House Standards Functions", test_house_standards_functions),
         ("Invalid Functions", test_invalid_functions),
         ("Undefined Names", test_undefined_names),
         ("Syntax Errors", test_syntax_errors),

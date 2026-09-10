@@ -10,8 +10,9 @@
 #               -> DB identity chatgpt_gpt_5_6_sol
 # The knob for the other mode is ignored (the agent logs a warning).
 #
-# Note: v2 needs NO prompts override — the repo default already is the v2
-# 3-step prompt set.
+# Note: v2 needs NO prompts override — the repo default (205) already is the
+# v2 single-pass prompt + Questions-sheet answers + house standards, which
+# uploads House_Standards_v1.md with the case files.
 #
 # Run (from gui-agents-master/, Chrome already running + logged in):
 #   python -m infra.run --run-config \

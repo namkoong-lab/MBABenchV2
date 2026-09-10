@@ -18,10 +18,12 @@ Model API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) stay in .env — the
 monorepo config holds no keys for them.
 """
 
+import hashlib
 import logging
 import os
+import re
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -139,3 +141,62 @@ def boto3_credentials() -> dict:
             "aws_secret_access_key": secret_key,
         }
     return {}
+
+
+def monorepo_root() -> Path:
+    """<MBABenchV2>, the directory holding config/ and house_standards/.
+
+    Asks the installed `config` module for its directory (config/python/
+    config.py -> <root>/config), the same install that makes the database
+    and AWS lookups work, so the root can't disagree with them. A standalone
+    checkout has no `config` module; there the workspace layout (this file
+    lives at <root>/cli-agents-master/excel_cli_agent/) is the only answer.
+    """
+    try:
+        from config import Config
+        return Path(Config.DEFAULT_CONFIG_DIR).resolve().parent
+    except (ImportError, AttributeError):
+        return Path(__file__).resolve().parents[2]
+
+
+def resolve_attachments(rel_paths: Iterable[str]) -> List[Path]:
+    """Absolute paths for monorepo-root-relative attachment paths.
+
+    Raises at once on a missing or empty file: an attachment is prompt text
+    the recorded prompt_version promises the agent saw, so running without
+    it would be the empty-context defect all over again — refuse before any
+    task is claimed.
+    """
+    root = monorepo_root()
+    out: List[Path] = []
+    for rel in rel_paths:
+        path = root / rel
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(
+                f"Prompt attachment {rel} is missing or empty under {root} "
+                "(the prompt version declares it; it must exist before the "
+                "batch starts)"
+            )
+        out.append(path)
+    return out
+
+
+def attachment_extra_configs(paths: Iterable[Path]) -> Dict[str, Any]:
+    """The provenance keys merged into task_attempts.extra_configs.
+
+    House_Standards_v<n>.md -> house_standards: {version, file, sha256},
+    the record every pipeline writes (house_standards/README.md). The hash
+    is computed at run time from the file actually shipped, not copied from
+    a constant, so a silently edited file shows up as a different sha.
+    """
+    out: Dict[str, Any] = {}
+    for path in paths:
+        m = re.fullmatch(r"House_Standards_v(\d+)\.md", path.name)
+        if not m:
+            continue
+        out["house_standards"] = {
+            "version": int(m.group(1)),
+            "file": path.name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    return out

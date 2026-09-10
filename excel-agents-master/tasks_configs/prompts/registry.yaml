@@ -81,3 +81,36 @@ versions:
       rubric body is unchanged from 200/202. The repo default.
     files:
       - "tasks_configs/prompts/v2_2.txt"
+
+  204:
+    label: "rubric-v9 3-step + Questions-sheet answers + House Standards"
+    description: >
+      Version 202 plus the house standards: a HOUSE STANDARDS block in step
+      2 (after the ANSWERS block), a read-it-now sentence in step 1, and QA
+      item 9 in step 3, all pointing at the attached House_Standards_v1.md.
+      The file itself is declared under `attachments` and is uploaded with
+      the case files on every run of this version - the version selects
+      the text AND the attachment. The 132-check rubric body is
+      byte-identical to version 200's from the `== FULL RUBRIC ==` marker
+      onward, so any score delta is attributable to the house standards
+      alone. Generated from prompts_v3/ - see prompts_v4/README.md.
+    files:
+      - "tasks_configs/prompts_v4/step1_analyze.txt"
+      - "tasks_configs/prompts_v4/step2_build.txt"
+      - "tasks_configs/prompts_v4/step3_qa.txt"
+    attachments:
+      - "../house_standards/House_Standards_v1.md"
+
+  205:
+    label: "rubric-v9 single-pass + Questions-sheet answers + House Standards"
+    description: >
+      Version 203 plus the same house-standards addition as 204: the HOUSE
+      STANDARDS block before the graded-rubric sentence and QA item 9, with
+      House_Standards_v1.md declared under `attachments`. One chat turn;
+      rubric body byte-identical to 200/201/202/203's from the
+      `== FULL RUBRIC ==` marker onward. Same ~67k-char
+      truncation-continue caveat as 201/203.
+    files:
+      - "tasks_configs/prompts/v2_3.txt"
+    attachments:
+      - "../house_standards/House_Standards_v1.md"

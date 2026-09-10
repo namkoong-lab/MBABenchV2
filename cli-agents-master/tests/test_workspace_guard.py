@@ -22,6 +22,7 @@ def make_runner(tmp_path, s3_client):
     runner.config = {'workspace_base_dir': str(tmp_path)}
     runner._s3_client = s3_client
     runner._s3_bucket = "mbabench"
+    runner._attachments = []
     return runner
 
 
@@ -159,6 +160,103 @@ def test_detected_pdfs_resolve_from_relative_workspace():
                 assert (Path(str(ws)) / name).exists(), name
         finally:
             os.chdir(old_cwd)
+
+
+# --- prompt-version attachments (v14 house standards) ---
+
+def _write_standards(dir_path):
+    p = Path(dir_path) / "House_Standards_v1.md"
+    p.write_text("# Financial Modelling - House Standards\n\nZeros as dashes.\n")
+    return p
+
+
+def test_detected_md_files_are_text_context():
+    """.md files are detected as text context, bare names like the rest."""
+    from excel_cli_agent.batch_runner import BatchRunner
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp) / "Task_X"
+        ws.mkdir()
+        _write_standards(ws)
+        (ws / "Model.xlsx").write_bytes(b"PK stub")
+        runner = object.__new__(BatchRunner)
+        cfg = runner.detect_workspace_files(str(ws))
+        assert cfg.detected_text_files == ["House_Standards_v1.md"], cfg.detected_text_files
+        assert cfg.detected_excel_files == ["Model.xlsx"]
+        assert (ws / cfg.detected_text_files[0]).exists()
+
+
+def test_attachment_copied_into_workspace():
+    """setup_workspace lands each attachment under its bare filename."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src_dir = Path(tmp) / "house_standards"
+        src_dir.mkdir()
+        src = _write_standards(src_dir)
+        runner = make_runner(Path(tmp) / "ws", GoodS3())
+        runner._attachments = [src]
+        task = make_task(["s3://mbabench/MBABenchV2/tasks/x/starting_files/a.xlsx"])
+        workspace = Path(runner.setup_workspace(task))
+        assert (workspace / "a.xlsx").stat().st_size > 0
+        assert (workspace / "House_Standards_v1.md").read_text() == src.read_text()
+        # the copy is what the executor will detect and embed
+        cfg = runner.detect_workspace_files(str(workspace))
+        assert cfg.detected_text_files == ["House_Standards_v1.md"]
+
+
+def test_missing_attachment_raises():
+    """An attachment the prompt version promises but that is gone is fatal."""
+    with tempfile.TemporaryDirectory() as tmp:
+        runner = make_runner(Path(tmp) / "ws", GoodS3())
+        runner._attachments = [Path(tmp) / "house_standards" / "House_Standards_v1.md"]
+        task = make_task(["s3://mbabench/MBABenchV2/tasks/x/starting_files/a.xlsx"])
+        expect_raises(lambda: runner.setup_workspace(task), "Prompt attachment missing")
+
+
+def test_empty_attachment_raises():
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "House_Standards_v1.md"
+        src.write_bytes(b"")
+        runner = make_runner(Path(tmp) / "ws", GoodS3())
+        runner._attachments = [src]
+        task = make_task(["s3://mbabench/MBABenchV2/tasks/x/starting_files/a.xlsx"])
+        expect_raises(lambda: runner.setup_workspace(task), "Prompt attachment missing or empty")
+
+
+def test_local_runner_copies_attachments():
+    """Local mode ships the same attachments after copying the source folder."""
+    from excel_cli_agent.local_batch_runner import LocalBatchRunner
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "task_src"
+        source.mkdir()
+        (source / "Model.xlsx").write_bytes(b"PK stub")
+        src = _write_standards(Path(tmp))
+        runner = object.__new__(LocalBatchRunner)
+        runner.config = {'workspace_base_dir': str(Path(tmp) / "ws")}
+        runner._attachments = [src]
+        workspace = Path(runner.setup_workspace(str(source)))
+        assert (workspace / "Model.xlsx").exists()
+        assert (workspace / "House_Standards_v1.md").read_text() == src.read_text()
+
+
+def test_attachment_provenance_and_v14_resolution():
+    """v14 resolves the real house-standards file from the monorepo root and
+    records {version, file, sha256} for extra_configs; v13 attaches nothing."""
+    import hashlib
+    from excel_cli_agent import prompt_versions, repo_config
+
+    assert prompt_versions.attachments_for("v13") == []
+    rels = prompt_versions.attachments_for("v14")
+    assert rels == ["house_standards/House_Standards_v1.md"]
+    paths = repo_config.resolve_attachments(rels)
+    assert paths[0].name == "House_Standards_v1.md" and paths[0].is_file()
+    prov = repo_config.attachment_extra_configs(paths)
+    assert prov["house_standards"]["version"] == 1
+    assert prov["house_standards"]["file"] == "House_Standards_v1.md"
+    assert prov["house_standards"]["sha256"] == hashlib.sha256(paths[0].read_bytes()).hexdigest()
+    # a missing declared file fails before any task is claimed
+    expect_raises(lambda: repo_config.resolve_attachments(["house_standards/House_Standards_v999.md"]),
+                  "missing or empty")
 
 
 if __name__ == "__main__":

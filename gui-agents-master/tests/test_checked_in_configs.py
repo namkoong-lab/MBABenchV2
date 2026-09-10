@@ -28,7 +28,10 @@ sys.path.insert(0, str(REPO))
 from infra.configs import load_configs  # noqa: E402
 from infra.configs.loader import _DEPRECATED_KEYS  # noqa: E402
 from infra.configs.agent_identity import resolve_agent_identity  # noqa: E402
-from infra.configs.prompt_registry import resolve_prompt_files  # noqa: E402
+from infra.configs.prompt_registry import (  # noqa: E402
+    load_registry,
+    resolve_prompt_files,
+)
 from infra.run import (  # noqa: E402
     _RUN_CONFIG_TASK_KEYS,
     build_engine_config,
@@ -122,3 +125,12 @@ def test_config_loads_and_resolves(path: Path, fake_spec):
     engine_config = build_engine_config(cfg, fake_spec, identity.agent_folder)
     errors = preflight_check(engine_config, cfg.provider.kind, cfg.benchmark)
     assert not errors, errors
+
+    # A version that declares attachments must deliver them: they sit at the
+    # end of upload_files (after the task's own files) and exist on disk.
+    declared = load_registry()[int(cfg.prompt_version)].attachments
+    attached = engine_config.get("prompt_attachments") or []
+    assert len(attached) == len(declared), (declared, attached)
+    uploads = engine_config["upload_files"]
+    assert uploads[len(uploads) - len(attached):] == attached, uploads
+    assert all(Path(a).is_absolute() and Path(a).is_file() for a in attached)

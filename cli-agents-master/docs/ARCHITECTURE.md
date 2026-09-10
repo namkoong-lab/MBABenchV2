@@ -96,7 +96,7 @@ The MCP server provides the agent's capabilities — everything the model can ac
 - **Cell Write tools** (2) — `edit_cells` (for labels/values), `set_cell_formula` (for formulas). Both trigger LibreOffice auto-recalculation after every write.
 - **Analysis tools** (5) — `get_used_range`, `scan_worksheet_structure`, `summarize_workbook_context`, `describe_worksheet`, `validate_formula`. Help the agent understand the current state of the workbook.
 - **Formatting tools** (3) — `format_cells`, `freeze_panes`, `set_column_width`. Applied in later iterations, after calculation work is done.
-- **Meta tools** (2) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check).
+- **Meta tools** (2) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check). The validator's function whitelist (`formula_validator.VALID_EXCEL_FUNCTIONS`) includes every function the house standards recommend — `XLOOKUP`, `XMATCH`, `IFS`, `SWITCH`, `LET` (the last two added with prompt v14; local LibreOffice 25.8 evaluates them).
 
 > **To customize:** Add new tools for your domain in `excel_mcp_server/tools/`. Each tool is an async function decorated with `@mcp.tool()` that returns a JSON string; follow the existing tools in the same module. Common extensions: adding chart generation, pivot table creation, or domain-specific validation rules.
 
@@ -145,6 +145,8 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 **.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `LIBREOFFICE_PATH` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
 
 **prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
+
+**Prompt attachments** (`PROMPT_VERSIONS[ver]["attachments"]`, v14+) — Monorepo-root-relative files the version ships with every workspace; `repo_config.resolve_attachments` turns them into absolute paths at `load_config` time and refuses to start if one is missing. v14 attaches `house_standards/House_Standards_v1.md`: the runners copy it into the workspace, `detect_workspace_files` picks up `*.md` as text context, and `TaskExecutor._assemble_context` embeds the full text under a `HOUSE STANDARDS (<file>)` header — exempt from the reduced-context ladder (it is ~5 KB against a 20 K floor) and placed before the truncatable PDF text. The Excel-tool guard that refuses `.pdf` filenames covers `.md` too. Provenance: `upload_prompts` uploads the file alongside the system prompt (so `prompt_files` reproduces it) and `extra_configs.house_standards = {version, file, sha256}` is computed from the shipped file at run time.
 
 ## Package Structure
 
@@ -393,7 +395,7 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `task_type` | string | `fmwc` | local | Template selection: `fmwc` or `wsp` |
 | **Execution** | | | | |
 | `max_iterations` | int | 30 | both | Max agent iterations per task |
-| `prompt_version` | string | `v10` (v1) / `v12` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric |
+| `prompt_version` | string | `v10` (v1) / `v14` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
 | `fresh_context_mode` | bool | — | registry | Reload xlsx each iteration. Pinned by the agent identity |
 | `enhanced_excel_context` | bool | — | registry | Grid format for Excel context. Pinned by the agent identity |
 | `recent_history_count` | int | — | registry | Recent tool calls replayed in fresh context. Pinned by the agent identity |

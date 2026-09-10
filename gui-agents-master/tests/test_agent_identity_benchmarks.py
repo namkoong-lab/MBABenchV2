@@ -41,6 +41,11 @@ CASES = [
      "claude_fable_5_max"),
     ("v2", "claude", dict(mode="cowork", model="fable_5", effort="max"),
      "claude_fable_5_cowork_max"),
+    ("v2", "claude", dict(mode="cowork", model="fable_5_1", effort="max"),
+     "claude_fable_5_1_cowork_max"),
+    ("v2", "chatgpt", dict(mode="work", model="gpt_6_astra", effort="ultra",
+                           speed="standard"),
+     "chatgpt_gpt_6_astra_work_ultra"),
     ("v2", "claude", dict(model="opus_4_8", effort="max"),
      "claude_opus_4_8_max"),
     # haiku exposes no Effort control, so the axis stays out of its label and

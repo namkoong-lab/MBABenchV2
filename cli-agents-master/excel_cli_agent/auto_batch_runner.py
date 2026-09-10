@@ -28,11 +28,12 @@ from .db import database as db_config
 from .db.database import SessionLocal
 from .db.models import Task, TaskAttempt
 from .repo_config import (
-    boto3_credentials, describe_database_target, repo_value, resolve_db_url,
+    boto3_credentials, describe_database_target, repo_value, resolve_attachments,
+    resolve_db_url,
 )
 from .prompt_versions import (
-    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, parse_prompt_version,
-    rubric_for_prompt_version,
+    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, DEFAULT_V2_PROMPT_VERSION,
+    attachments_for, parse_prompt_version, rubric_for_prompt_version,
 )
 
 # Resolved prompt paths (set by load_config based on prompt_version)
@@ -224,7 +225,7 @@ class AutoBatchRunner(BatchRunner):
         # vice versa) invalidates the wave. Set EXCEL_AGENT_SKIP_RUBRIC_GUARD=1
         # for a deliberate cross-benchmark experiment (logged loudly).
         global SYSTEM_PROMPT_PATH, TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH
-        default_ver = "v13" if benchmark == "v2" else DEFAULT_PROMPT_VERSION
+        default_ver = DEFAULT_V2_PROMPT_VERSION if benchmark == "v2" else DEFAULT_PROMPT_VERSION
         prompt_ver = config.get('prompt_version', default_ver)
         if prompt_ver not in PROMPT_VERSIONS:
             raise ValueError(f"Unknown prompt_version '{prompt_ver}'. Available: {list(PROMPT_VERSIONS.keys())}")
@@ -235,7 +236,7 @@ class AutoBatchRunner(BatchRunner):
                       f"{benchmark} with the {prompt_rubric}-rubric prompt set "
                       f"({prompt_ver}) as a deliberate cross-benchmark experiment.")
             else:
-                suggestion = "v13" if benchmark == "v2" else "v11"
+                suggestion = DEFAULT_V2_PROMPT_VERSION if benchmark == "v2" else "v11"
                 raise ValueError(
                     f"prompt_version {prompt_ver} embeds the {prompt_rubric} "
                     f"grading rubric, but benchmark={benchmark} tasks are graded "
@@ -252,6 +253,11 @@ class AutoBatchRunner(BatchRunner):
         # Set versioned system prompt path for TaskExecutor
         config['system_prompt_path'] = str(SYSTEM_PROMPT_PATH)
 
+        # The prompt version — never the config — names the files shipped
+        # with every workspace (house standards). Resolved now so a missing
+        # file fails the batch before any task is claimed.
+        self._attachments = resolve_attachments(attachments_for(prompt_ver))
+
         self.config = config
 
         print(f"✅ Configuration loaded: {config['batch_name']}")
@@ -263,6 +269,7 @@ class AutoBatchRunner(BatchRunner):
         print(f"   Pinned by identity: {identity.settings()}")
         print(f"   extra_configs column: {'yes' if self._extra_configs_supported else 'NO'}")
         print(f"   Prompt version: {prompt_ver}")
+        print(f"   Attachments: {[p.name for p in self._attachments] or 'none'}")
         print(f"   Max iterations: {config['max_iterations']}")
         print(f"   Max trials: {config['max_trials']}")
         print(f"   Trials since: {config['trials_since']}")
@@ -283,6 +290,7 @@ class AutoBatchRunner(BatchRunner):
             return
         cfg = dict(self._identity.extra_configs())
         cfg.update(self._recalc_extra_configs())
+        cfg.update(self._attachment_extra_configs())
         db.execute(
             sa_text("UPDATE task_attempts SET extra_configs = CAST(:cfg AS jsonb) WHERE id = :id"),
             {"cfg": json.dumps(cfg), "id": attempt_id},
@@ -556,6 +564,10 @@ class AutoBatchRunner(BatchRunner):
                 f"after download: {missing}"
             )
 
+        # The prompt version's attachments (house standards) ride alongside
+        # the starting files, under the bare name the prompt directive uses.
+        self._copy_attachments(workspace)
+
         return str(workspace)
 
     def _verify_s3_access(self):
@@ -618,7 +630,7 @@ class AutoBatchRunner(BatchRunner):
             except Exception as e:
                 print(f"  ⚠️  Failed to upload system prompt: {e}")
 
-        # Upload task templates (both variants; v12's slots share one file,
+        # Upload task templates (both variants; v12+'s slots share one file,
         # so dedupe to keep prompt_files free of repeats)
         for template_path in dict.fromkeys([TASK_TEMPLATE_FMWC_PATH, TASK_TEMPLATE_WSP_PATH]):
             if template_path.exists():
@@ -630,6 +642,18 @@ class AutoBatchRunner(BatchRunner):
                     print(f"  📤 Uploaded template: {uri}")
                 except Exception as e:
                     print(f"  ⚠️  Failed to upload template {template_path.name}: {e}")
+
+        # Upload the attachments too: they are prompt text the agent saw, so
+        # prompt_files must reproduce them alongside the system prompt.
+        for attachment in self._attachments:
+            s3_key = f"{prompts_prefix}/{timestamp}_{attachment.name}"
+            try:
+                self.s3_client.upload_file(str(attachment), self._s3_bucket, s3_key)
+                uri = f"s3://{self._s3_bucket}/{s3_key}"
+                uris.append(uri)
+                print(f"  📤 Uploaded attachment: {uri}")
+            except Exception as e:
+                print(f"  ⚠️  Failed to upload attachment {attachment.name}: {e}")
 
         self._prompt_s3_uris = uris
         return uris

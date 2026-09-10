@@ -18,7 +18,10 @@ from datetime import datetime
 
 from .agent_identity import resolve_agent_identity
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
-from .prompt_versions import PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, parse_prompt_version
+from .prompt_versions import (
+    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, attachments_for, parse_prompt_version,
+)
+from .repo_config import resolve_attachments
 
 
 class LocalBatchRunner(BatchRunner):
@@ -76,6 +79,9 @@ class LocalBatchRunner(BatchRunner):
         self._system_prompt_path = PROMPTS_DIR / ver_files["system"]
         self._task_template_path = PROMPTS_DIR / ver_files[template_key]
         config['system_prompt_path'] = str(self._system_prompt_path)
+        # Same rule as auto mode: the prompt version names the files shipped
+        # with every workspace; a missing one fails here, before any run.
+        self._attachments = resolve_attachments(attachments_for(prompt_ver))
 
         # Load task template
         if 'task_template' not in config:
@@ -90,6 +96,7 @@ class LocalBatchRunner(BatchRunner):
         print(f"   Agent model name: {config['agent_model_name']} (agent_identities.yaml)")
         print(f"   Model: {config['model']}")
         print(f"   Prompt version: {prompt_ver}")
+        print(f"   Attachments: {[p.name for p in self._attachments] or 'none'}")
         print(f"   Max iterations: {config['max_iterations']}")
         print(f"   Workspaces: {len(config['workspaces'])}")
         print(f"   Results dir: {config['results_dir']}")
@@ -115,6 +122,10 @@ class LocalBatchRunner(BatchRunner):
             if f.is_file():
                 shutil.copy2(f, workspace / f.name)
                 print(f"  📄 Copied: {f.name}")
+
+        # Then the prompt version's attachments (house standards), as auto
+        # mode does after the S3 downloads.
+        self._copy_attachments(workspace)
 
         return str(workspace)
 
@@ -164,7 +175,11 @@ class LocalBatchRunner(BatchRunner):
             "agent_model_name": self.config['agent_model_name'],
             "model": self.config['model'],
             # Same audit record auto mode writes to task_attempts.extra_configs.
-            "extra_configs": {**self._identity.settings(), **self._recalc_extra_configs()},
+            "extra_configs": {
+                **self._identity.settings(),
+                **self._recalc_extra_configs(),
+                **self._attachment_extra_configs(),
+            },
             "start_time": datetime.fromtimestamp(result.start_time).isoformat() if result.start_time else None,
             "end_time": datetime.fromtimestamp(result.end_time).isoformat() if result.end_time else None,
             "time_taken_min": result.duration_seconds / 60.0,

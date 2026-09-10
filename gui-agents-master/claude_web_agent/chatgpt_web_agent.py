@@ -243,6 +243,7 @@ class ChatGPTWebAgent(WebAgent):
     # composer pill (verified live 2026-07-21). Unknown values fall back to
     # underscores→spaces/dashes best-effort matching.
     MODEL_LABELS = {
+        "gpt_6_astra": "GPT-6 Astra",       # verified live 2026-09-10
         "gpt_5_6_sol": "GPT-5.6 Sol",
         "gpt_5_5": "GPT-5.5",
         "gpt_5_4": "GPT-5.4",
@@ -298,6 +299,7 @@ class ChatGPTWebAgent(WebAgent):
     #  - Slider generation (verified live 2026-08-28): see the _SLIDER_*
     #    block below — the Advanced rows are gone entirely.
     WORK_MODEL_LABELS = {
+        "gpt_6_astra": "GPT-6 Astra",       # verified live 2026-09-10 (slider picker)
         "gpt_5_6_sol": "GPT-5.6 Sol",
         "gpt_5_6_terra": "GPT-5.6 Terra",
         "gpt_5_6_luna": "GPT-5.6 Luna",
@@ -1963,6 +1965,18 @@ class ChatGPTWebAgent(WebAgent):
         except Exception:
             return ""
 
+    async def _count_xlsx_tiles(self) -> int:
+        """Excel file tiles currently in the conversation (inputs render as
+        tiles too, so callers compare against a submission-time baseline)."""
+        try:
+            return await self.page.evaluate(
+                """() => [...document.querySelectorAll(
+                    'button[aria-label$=".xlsx"], button[aria-label$=".xls"]'
+                )].length"""
+            )
+        except Exception:
+            return -1
+
     async def _count_response_articles(self) -> int:
         """Count the assistant turns currently on the page.
 
@@ -2046,15 +2060,9 @@ class ChatGPTWebAgent(WebAgent):
         work_mode = (self.agent_config.get("mode") or "").lower() == "work"
         baseline_tiles = 0
         if work_mode:
-            try:
-                baseline_tiles = await self.page.evaluate(
-                    """() => [...document.querySelectorAll(
-                        'button[aria-label$=".xlsx"], button[aria-label$=".xls"]'
-                    )].length"""
-                )
-            except Exception:
-                pass
+            baseline_tiles = max(0, await self._count_xlsx_tiles())
         stable_since = None  # wall time when current stability run began
+        cur_tiles = baseline_tiles
 
         # Give ChatGPT time to start generating
         await self.page.wait_for_timeout(5000)
@@ -2215,13 +2223,8 @@ class ChatGPTWebAgent(WebAgent):
                     if work_mode:
                         # Text keywords are useless here — progress notes
                         # mention .xlsx constantly. Only a NEW tile counts.
-                        try:
-                            cur_tiles = await self.page.evaluate(
-                                """() => [...document.querySelectorAll(
-                                    'button[aria-label$=".xlsx"], button[aria-label$=".xls"]'
-                                )].length"""
-                            )
-                        except Exception:
+                        cur_tiles = await self._count_xlsx_tiles()
+                        if cur_tiles < 0:
                             cur_tiles = baseline_tiles
                         has_file_indicator = cur_tiles > baseline_tiles
                         if not has_file_indicator:
@@ -2237,6 +2240,37 @@ class ChatGPTWebAgent(WebAgent):
                                     self.check_interval * 1000
                                 )
                                 continue
+                            # 2026-09-10: the turn ENDED (stable for the
+                            # whole accept window, not generating) and no
+                            # file was handed over. Return whatever text is
+                            # on the page — even a bare "Worked for 45m"
+                            # note — so the engine sends "Continue" in THIS
+                            # conversation, where the sandbox and its files
+                            # still exist. Before this, a note under 50
+                            # chars fell into the dead-page branch below,
+                            # sat 30 min, then restarted the task in a NEW
+                            # chat and threw the work away (the 2026-09-08
+                            # sol restarts). The dead-page guard now only
+                            # covers a page with NO assistant turn at all.
+                            turn_seen = current_article_count > baseline_article_count
+                            is_error_surface = any(
+                                p in current_response
+                                for p in self.STREAM_ERROR_PHRASES
+                            )
+                            if turn_seen and not is_error_surface:
+                                logger.warning(
+                                    f"Work-mode turn ended with no new file "
+                                    f"({int(stable_for)}s stable, "
+                                    f"{len(current_response)} chars, "
+                                    f"articles {baseline_article_count}->"
+                                    f"{current_article_count}) — returning "
+                                    f"so the engine can send 'Continue' in "
+                                    f"this conversation"
+                                )
+                                return (
+                                    current_response
+                                    or "[work-mode turn ended with no file]"
+                                )
                     else:
                         # File card responses can be very short (e.g. "Here is your file:\nSpreadsheet" = ~37 chars)
                         has_file_indicator = any(
@@ -2315,9 +2349,25 @@ class ChatGPTWebAgent(WebAgent):
             # Log every ~30s (use range check since loop interval may skip exact multiples)
             if elapsed > 0 and elapsed % 30 < (self.check_interval + 1):
                 resp_len = len(last_response_text)
+                # 2026-09-10: enough state per line to classify a restart
+                # from the log alone (detector misread vs ChatGPT-side
+                # death): turn count vs baseline, file tiles vs baseline,
+                # how long the page has been quiet, and the response tail.
+                stable_for = (
+                    int(asyncio.get_event_loop().time() - stable_since)
+                    if stable_since is not None else 0
+                )
+                if work_mode:
+                    t = await self._count_xlsx_tiles()
+                    if t >= 0:
+                        cur_tiles = t
+                tail = last_response_text[-80:].replace("\n", " / ")
                 logger.info(
                     f"Waiting... {elapsed}s elapsed, generating={generating}, "
-                    f"response_len={resp_len}, stable={stable_count}/{required_stable}"
+                    f"response_len={resp_len}, stable={stable_count}/{required_stable} "
+                    f"({stable_for}s), articles={last_article_count}"
+                    f"(base {baseline_article_count}), tiles={cur_tiles}"
+                    f"(base {baseline_tiles}), tail={tail!r}"
                 )
 
             await self.page.wait_for_timeout(self.check_interval * 1000)
