@@ -345,8 +345,6 @@ class AIAgentCore(ABC):
         """
         addon_name = self.get_addon_name()
         open_button_text = self.get_open_button_text()
-        # Each step gets its own full budget — Step 1 can't starve Step 2
-        step1_end = asyncio.get_event_loop().time() + max_seconds
 
         # Step 0: the add-in's own ribbon launcher (direct button when the
         # ribbon is wide, "More Options" overflow menuitem when it is
@@ -364,6 +362,15 @@ class AIAgentCore(ABC):
                 )
 
         # Step 1: Click either Add-ins (Claude) or addon ribbon tab (TabAI)
+        # Each step gets its own full budget — Step 0 can't starve Step 1,
+        # Step 1 can't starve Step 2. The budget MUST start here, after Step 0:
+        # 2026-09-11 (full run, 9222 lane, tasks 16-17) the Claude launcher
+        # dropped out of the ribbon overflow mid-run, Step 0 spent the whole
+        # budget looking for it, and a budget computed before Step 0 left this
+        # fallback with zero seconds — "Could not find Add-ins after retries"
+        # fired instantly on every attempt and a task went infra with the
+        # Add-ins path never tried.
+        step1_end = asyncio.get_event_loop().time() + max_seconds
         if self.requires_addins_menu():
             logger.info("🔍 Step 1: Looking for Add-ins button...")
             target_name = "Add-ins"

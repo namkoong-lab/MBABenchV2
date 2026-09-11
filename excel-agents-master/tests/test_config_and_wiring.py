@@ -399,6 +399,17 @@ def test_attachments_ride_on_first_prompt_never_alone():
     assert "attach_to_first_prompt and i == 1" in src
 
 
+def test_addins_fallback_budget_starts_after_ribbon_launcher_step():
+    # 2026-09-11: step1_end was computed before Step 0, so once the add-in's
+    # ribbon launcher vanished mid-run Step 0 burned the whole budget and the
+    # Add-ins fallback failed instantly with zero seconds, never tried.
+    src = _src("excel_agent/core/ai_agent_base.py")
+    body = src[src.index("async def find_and_click("):]
+    step0 = body.index("Step 0: Looking for the")
+    step1_budget = body.index("step1_end = asyncio.get_event_loop().time() + max_seconds")
+    assert step1_budget > step0, "Step 1 budget must be set after Step 0 runs"
+
+
 def test_rescue_native_download_picks_newest_matching(tmp_path, monkeypatch):
     from datetime import datetime, timedelta
     import os
