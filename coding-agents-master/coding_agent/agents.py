@@ -30,11 +30,24 @@ from .config import AgentConfig
 #   stream_idle_timeout_ms  default 300000;  stream_max_retries default 5;
 #   request_max_retries default 4 — passed as -c overrides on whichever
 #   provider the run uses (the traj relay provider, or the built-in openai).
+# 2026-09-11 retry of the four stalled tasks (rows 1456/1457/1459/1460): with
+# the four values above every run died at ~5.5 min into a long turn with
+# "API Error: The operation timed out." and ZERO retries. That message is the
+# Bun runtime's hardcoded 5-minute fetch timeout (oven-sh/bun#16682), not a
+# Claude Code watchdog. Claude Code passes `timeout: false` to fetch only when
+# its byte watchdog is armed, and the byte watchdog is armed only when
+# ANTHROPIC_BASE_URL is api.anthropic.com — under the traj relay
+# (http://127.0.0.1:9877) it is not, so the runtime timeout stays live.
+# API_FORCE_IDLE_TIMEOUT=0 makes Claude Code pass `timeout: false` regardless
+# (read from the 2.1.251 binary: fetchOptions builder `Ci`, gate
+# `!truthy(t) && (hasBodyIdleWatchdog || falsy(t))`). The 30-min event
+# watchdog and the SDK's API_TIMEOUT_MS still bound a truly dead stream.
 CLAUDE_HARNESS_ENV = {
     "CLAUDE_STREAM_IDLE_TIMEOUT_MS": "1800000",
     "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS": "1800000",
     "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
     "CLAUDE_CODE_MAX_RETRIES": "15",
+    "API_FORCE_IDLE_TIMEOUT": "0",
 }
 CODEX_HARNESS_PROVIDER_CONFIG = {
     "stream_idle_timeout_ms": "1800000",

@@ -141,7 +141,10 @@ One container per attempt, from a pinned image:
 - only the workspace directory is mounted; nothing else of the host is visible
 - env carries exactly one secret: the model API key (DB/S3 creds stay on the host)
 - **Harness defaults for long thinking turns** (2026-09-11, `coding_agent/agents.py`):
-  every claude run gets `CLAUDE_STREAM_IDLE_TIMEOUT_MS=1800000`,
+  every claude run gets `API_FORCE_IDLE_TIMEOUT=0` (turns off the Bun runtime's
+  hardcoded 5-minute fetch timeout, which Claude Code only disables itself when
+  it talks to api.anthropic.com directly — under the traj relay it does not),
+  `CLAUDE_STREAM_IDLE_TIMEOUT_MS=1800000`,
   `CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS=1800000`,
   `CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`, `CLAUDE_CODE_MAX_RETRIES=15`;
   every codex run gets `-c model_providers.<provider>.{stream_idle_timeout_ms=1800000,
