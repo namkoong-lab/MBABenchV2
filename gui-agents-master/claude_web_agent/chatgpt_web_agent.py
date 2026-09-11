@@ -62,6 +62,14 @@ class ChatGPTWebAgent(WebAgent):
         "out of usage credits",
         "usage cap reached",
         "limit resets",
+        # Live 2026-09-10 (Pro account, Ultra effort, full run): "You've
+        # reached your usage limit. Add credits to continue, or try again at
+        # Sep 14, 2026, 9:22 PM." — "usage" sits between "your" and "limit",
+        # so the two phrases above did not match and the lane waited out
+        # the accept window instead of failing fast.
+        "reached your usage limit",
+        "hit your usage limit",
+        "Add credits to continue",
     )
 
     # Server-side stream failures. Generation stops, no artifact is
