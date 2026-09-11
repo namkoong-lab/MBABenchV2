@@ -443,6 +443,16 @@ def test_capacity_notice_is_infra_not_success():
     assert "looks_like_capacity_notice(last_text)" in core
 
 
+def test_download_waits_for_ribbon_after_reload():
+    # 2026-09-11 (Telecom): a 30s reload timeout followed by five 6s File-tab
+    # looks discarded 12 minutes of finished model work as download_failed.
+    src = _src("excel_agent/core/file_organizer.py")
+    body = src[src.index("async def download_excel_file("):]
+    assert "ready_deadline = asyncio.get_event_loop().time() + 120" in body
+    assert body.index("ready_deadline") < body.index("max_retries = 5")
+    assert 'page, "text=File", timeout=12000' in body
+
+
 def test_rescue_native_download_picks_newest_matching(tmp_path, monkeypatch):
     from datetime import datetime, timedelta
     import os

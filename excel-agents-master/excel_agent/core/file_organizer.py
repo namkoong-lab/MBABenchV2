@@ -147,6 +147,29 @@ class FileOrganizer:
         except Exception as e:
             logger.warning(f"⚠️ Page reload failed: {e} — proceeding with current state")
 
+        # Wait for the ribbon to be back before spending the retry budget.
+        # 2026-09-11 (Telecom, ChatGPT lane): Page.reload timed out at 30s on
+        # a heavy workbook, the five 6-second File-tab looks that followed all
+        # missed, and 12 minutes of finished model work was discarded as
+        # download_failed. Excel Online can take well over a minute to render
+        # after a reload; a finished workbook is worth waiting for.
+        ready_deadline = asyncio.get_event_loop().time() + 120
+        ribbon_ready = False
+        while asyncio.get_event_loop().time() < ready_deadline:
+            for frame in page.frames:
+                try:
+                    el = await frame.query_selector('text="File"')
+                    if el and await el.is_visible():
+                        ribbon_ready = True
+                        break
+                except Exception:
+                    continue
+            if ribbon_ready:
+                break
+            await asyncio.sleep(3)
+        if not ribbon_ready:
+            logger.warning("⚠️ Ribbon (File tab) not visible after 120s — trying anyway")
+
         max_retries = 5
         download_complete = False
         download = None
@@ -175,7 +198,7 @@ class FileOrganizer:
                 # Step 1: Click File tab
                 logger.info("🔍 Step 1: Looking for File tab...")
                 if not await ExcelOperations._try_click_element(
-                    page, "text=File", timeout=6000
+                    page, "text=File", timeout=12000
                 ):
                     logger.warning(
                         f"⚠️ File tab not found (attempt {attempt + 1}/{max_retries})"
