@@ -37,6 +37,9 @@ Rules (numbering matches render_rules_text and the v6 spec §3):
      (loan), repayments... — 219 flagged flips over 19 labels) is accepted
      only when no INFLOW_GUARD word (income/revenue/net/change/difference/
      growth/asset/value...) marks the row as a net or inflow quantity.
+     v6.5 (Patrick 2026-09-10): loan-schedule "payment" / "principal" rows
+     join the extended list — House Standards attempts sign them negative
+     while the goldens are positive; "balance" rows stay guarded.
   3. Percent x100 / fraction form: when the Unit column says %, the question
      text says percent/rate/margin/..., the golden cell is %-formatted, or
      the attempt wrote a literal "42%": a == 100b or b == 100a is equal
@@ -91,6 +94,11 @@ OUTFLOW_LEXICON_EXTENDED = (
     "insurance", "maintenance", "repairs", "fees", "purchases", "interest",
     "interest expense", "interest paid", "repayment", "repayments",
     "dividends paid", "dividend paid",
+    # v6.5 (Patrick 2026-09-10): loan-schedule rows. Attempts built under the
+    # House Standards ("costs and outflows negative, everywhere") sign the
+    # scheduled payment and principal negative while the goldens are
+    # positive; the magnitude is the answer. "Balance" stays guarded.
+    "payment", "payments", "payment due", "principal", "principal amount",
 )
 OUTFLOW_LEXICON = OUTFLOW_LEXICON_CORE + OUTFLOW_LEXICON_EXTENDED
 # Rule 2 guard (v6.4) — an EXTENDED-list hit is vetoed when the row is a net
@@ -684,7 +692,7 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
 # formulas and authoritative for the decimals, outflow lexicon extended with
 # an inflow guard, rounding compliance moved to Rounding / Rounded outputs.
 # v6.3: prompt text trimmed (Patrick 2026-09-02); rules unchanged.
-RULES_VERSION = "v6.4"
+RULES_VERSION = "v6.5"
 
 
 def render_rules_text() -> str:

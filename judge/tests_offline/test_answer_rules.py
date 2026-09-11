@@ -174,6 +174,16 @@ for lab in ("Interest income 2029", "What is the amount for/of Changes in Net Wo
             "What is the amount for/of Intangible Assets growth in 2030?", "Net income 2029",
             "Equity value at valuation date", "What is the gross margin in 2030?"):
     check(not R.is_outflow_label(lab), f"inflow guard / non-outflow: {lab[:45]!r}")
+for lab in ("What will the Payment Due be on 05/17/2039?", "What will the Principal Amount be on 03/17/2043?",
+            "What will the total Payment Amount be in the year 2033?", "What will the total Principal Amount be in the year 2038?",
+            "What will the Interest be on 03/08/2039?"):
+    check(R.is_outflow_label(lab), f"v6.5 loan-schedule outflow lexicon: {lab[:45]!r}")
+for lab in ("What will the Balance be on 07/23/2030?", "What is the principal balance at maturity?"):
+    check(not R.is_outflow_label(lab), f"v6.5 balance rows stay guarded: {lab[:45]!r}")
+r = R.compare(-964.12, 964.12, ctx("What will the Payment Due be on 05/17/2039?", dp=2))
+check(r["verdict"] == "match" and r["rule"] == "sign_outflow", "v6.5: House-Standards-signed payment accepted")
+r = R.compare(-456767.26, 456767.26, ctx("What will the Balance be on 07/23/2030?", dp=2))
+check(r["verdict"] == "mismatch", "v6.5: flipped balance still wrong")
 r = R.compare(3361886.42, -3361886.42, ctx("What is the amount for/of Energy in 11/2029?", dp=2))
 check(r["verdict"] == "match" and r["rule"] == "sign_outflow", "Fixings energy row: flipped sign accepted (v6.4)")
 r = R.compare(-8172.42, 8172.42, ctx("What is the amount for/of Changes in Net Working Capital in 2030?", dp=2))

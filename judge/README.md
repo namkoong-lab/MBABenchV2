@@ -149,7 +149,10 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
   (`single_pass.hardcoded_counts`).
 - **Answer-equivalence rulebook** — one module, two consumers: the checker
   applies it and template_8 renders it verbatim under the Accuracy category
-  standard (`RULES_VERSION`, recorded per grading). Rules v6.4 (2026-09-02,
+  standard (`RULES_VERSION`, recorded per grading). Rules v6.5 (2026-09-10):
+  loan-schedule "payment" / "principal" rows join the extended outflow
+  lexicon (House Standards attempts sign them negative, goldens are
+  positive; "balance" rows stay guarded). Rules v6.4 (2026-09-02,
   after a $0 sweep of the checker over all 454 v2 attempts): an attempt is
   THE SAME number when it ROUNDS TO the golden — half a unit of the last
   decimal the golden carries, whether or not the agent rounded (the old
