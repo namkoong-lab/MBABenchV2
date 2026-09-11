@@ -14,6 +14,11 @@
 #   extra_args   extra CLI flags (rung-0 corrections live here, not in code)
 #   env          extra env vars injected into the sandbox (no secrets)
 #
+# Underneath every entry the harness applies its own long-turn defaults
+# (coding_agent/agents.py: CLAUDE_HARNESS_ENV for claude, per-provider
+# stream/retry settings for codex) and records them per row as
+# extra_configs.harness_defaults; an entry's env / extra_args override them.
+#
 # An unknown label refuses to run and prints a ready-to-paste stanza. All
 # five settings are written to task_attempts.extra_configs (JSONB,
 # MBABenchV2 only; the BizbenchV1 table has no such column) on every upload,
@@ -89,6 +94,26 @@
   env:
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
     API_TIMEOUT_MS: "3600000"
+    # 2026-09-11 (Pat, in-place env edit like the fable-5 entry on 08-30 —
+    # rows before/after distinguishable via extra_configs.env). The 10-task
+    # rubric-coverage run lost 4 of 10 tasks (28, 41, 43, 48) to one shape:
+    # Fable 5.1 at max effort thinks silently for >5 min on a hard step,
+    # Claude Code's stream watchdog (300 s without an event / 180 s without a
+    # byte) aborts the stream, retries the same turn, then falls back to
+    # NON-streaming requests capped at max_tokens 64000 that die at ~11 min,
+    # and after 10 retries reports "Request timed out" with no workbook
+    # (relay trajectories: drops at 6-17 min while thinking deltas were
+    # flowing). Fable 5 streamed a delta every ~1 s and its 29-min turns
+    # survived the same stack. Settings per code.claude.com/docs/en/
+    # network-config.md and errors.md: wait through 30 min of silence (the
+    # documented cap), never take the non-streaming fallback, retry up to
+    # the 15 cap. Present in Claude Code 2.1.260; the image pins 2.1.251.
+    # The same values are now the harness default for every claude run
+    # (agents.CLAUDE_HARNESS_ENV); kept explicit here as this entry's pin.
+    CLAUDE_STREAM_IDLE_TIMEOUT_MS: "1800000"
+    CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS: "1800000"
+    CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
+    CLAUDE_CODE_MAX_RETRIES: "15"
 
 - agent_model_name: codex_openai/gpt-6-astra-xhigh
   cli: codex

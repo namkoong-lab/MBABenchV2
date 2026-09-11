@@ -155,10 +155,14 @@ class RunConfig:
 
     def extra_configs(self) -> dict:
         """What task_attempts.extra_configs records: the identity's pinned
-        settings, the sandbox image (it pins the CLI version) and, when the
-        template ships house standards, which text the agent saw."""
+        settings, the sandbox image (it pins the CLI version), the harness
+        defaults applied under the identity (agents.harness_defaults) and,
+        when the template ships house standards, which text the agent saw."""
         out = {**self.identity.extra_configs(), "sandbox_image": self.sandbox.image}
         out.update(house_standards_provenance(self))
+        from .agents import harness_defaults  # local: agents imports this module
+        relay = self.record_trajectory and self.sandbox.mode == "docker"
+        out["harness_defaults"] = harness_defaults(self.agent, relay)
         return out
 
 

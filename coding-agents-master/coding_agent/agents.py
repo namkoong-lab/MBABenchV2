@@ -7,6 +7,56 @@ config exists so rung-0 corrections never require code changes.
 """
 from .config import AgentConfig
 
+# ---------------------------------------------------------------------------
+# Harness defaults for long thinking turns (2026-09-11). Applied to EVERY run
+# of each CLI, underneath the identity's own env/args (an identity entry can
+# still override a key). Recorded per row as extra_configs.harness_defaults
+# so an attempt says what it ran with even if these change later.
+#
+# Why: frontier models at max effort can think silently for >5 min on one
+# step. Both CLIs ship a ~5-minute stream idle watchdog that then aborts the
+# request as "broken", retries the same turn (which stalls the same way) and
+# finally gives up — the 2026-09-10 Fable 5.1 run lost 4 of 10 tasks to this
+# with no workbook written. Claude Code also falls back to NON-streaming
+# requests capped at max_tokens 64000, which can never finish a long turn.
+#
+# Claude Code (code.claude.com/docs/en/network-config.md, errors.md):
+#   CLAUDE_STREAM_IDLE_TIMEOUT_MS       event-level watchdog, default 300 s
+#   CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS  byte-level watchdog, default 180 s
+#                                       (clamped to 30 min — the max we set)
+#   CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1  keep retrying as streams
+#   CLAUDE_CODE_MAX_RETRIES             default 10, cap 15
+# Codex (config reference, model_providers.<id>):
+#   stream_idle_timeout_ms  default 300000;  stream_max_retries default 5;
+#   request_max_retries default 4 — passed as -c overrides on whichever
+#   provider the run uses (the traj relay provider, or the built-in openai).
+CLAUDE_HARNESS_ENV = {
+    "CLAUDE_STREAM_IDLE_TIMEOUT_MS": "1800000",
+    "CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS": "1800000",
+    "CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK": "1",
+    "CLAUDE_CODE_MAX_RETRIES": "15",
+}
+CODEX_HARNESS_PROVIDER_CONFIG = {
+    "stream_idle_timeout_ms": "1800000",
+    "stream_max_retries": "15",
+    "request_max_retries": "15",
+}
+
+
+def codex_provider_id(relay: bool) -> str:
+    return "traj" if relay else "openai"
+
+
+def harness_defaults(agent: AgentConfig, relay: bool = False) -> dict:
+    """What the harness adds underneath the identity, for extra_configs."""
+    if agent.cli == "claude":
+        return {"env": dict(CLAUDE_HARNESS_ENV)}
+    if agent.cli == "codex":
+        pid = codex_provider_id(relay)
+        return {"codex_config": {f"model_providers.{pid}.{k}": v
+                                 for k, v in CODEX_HARNESS_PROVIDER_CONFIG.items()}}
+    return {}
+
 
 def build_command(agent: AgentConfig, relay: bool = False) -> list[str]:
     if agent.cli == "claude":
@@ -39,6 +89,8 @@ def build_command(agent: AgentConfig, relay: bool = False) -> list[str]:
                      "-c", "model_providers.traj.wire_api=responses",
                      "-c", "model_providers.traj.env_key=OPENAI_API_KEY",
                      "-c", "model_provider=traj"]
+        for key, value in harness_defaults(agent, relay)["codex_config"].items():
+            args += ["-c", f"{key}={value}"]  # identity extra_args come after, so they win
         args += list(agent.extra_args) + ["-"]  # read prompt from stdin
         # codex 0.146 does not read OPENAI_API_KEY implicitly: an explicit
         # `codex login --with-api-key` (stdin) must store it first. The login
@@ -62,5 +114,7 @@ def agent_env(agent: AgentConfig, api_key_env: str, api_key: str) -> dict:
         "DISABLE_TELEMETRY": "1",
         "DISABLE_ERROR_REPORTING": "1",
     }
-    env.update(agent.env)
+    if agent.cli == "claude":
+        env.update(CLAUDE_HARNESS_ENV)  # harness defaults for long thinking turns
+    env.update(agent.env)  # the identity's own pins win
     return env

@@ -73,6 +73,15 @@ class Relay(BaseHTTPRequestHandler):
                                      data=body if body else None,
                                      headers=fwd_headers, method=self.command)
         chunks = []
+        # Where a failure happened, so a status -1 record says WHO dropped the
+        # connection: "upstream_open" (no response headers ever arrived),
+        # "upstream_read" (the API side closed or errored mid-body — the
+        # client was still connected) or "client_write" (Claude Code / Codex
+        # closed its side while the upstream body was still flowing, e.g. its
+        # own timeout or watchdog). Before 2026-09-11 the exception was
+        # dropped and every drop looked the same.
+        phase = "upstream_open"
+        error = None
         try:
             try:
                 resp = urllib.request.urlopen(req, timeout=3600)
@@ -87,14 +96,25 @@ class Relay(BaseHTTPRequestHandler):
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             while True:
+                phase = "upstream_read"
                 chunk = resp.read(8192)
                 if not chunk:
                     break
                 chunks.append(chunk)
+                phase = "client_write"
                 self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
                 self.wfile.flush()
+            phase = "client_write"
             self.wfile.write(b"0\r\n\r\n")
         except Exception as e:  # noqa: BLE001 — recorded, then propagated as 502
+            error = {"phase": phase, "type": type(e).__name__, "repr": repr(e)[:500],
+                     "bytes_relayed": sum(len(c) for c in chunks),
+                     "elapsed_ms": round((time.time() - t0) * 1000)}
+            try:
+                with open(OUT + ".errors.log", "a") as f:
+                    f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), **error}) + "\n")
+            except Exception:
+                pass
             try:
                 self.send_response(502)
                 self.end_headers()
@@ -115,6 +135,7 @@ class Relay(BaseHTTPRequestHandler):
             "status": status,
             "response": _jsonable(raw, ct),
             "latency_ms": round((time.time() - t0) * 1000),
+            "error": error,
         })
 
     do_POST = do_GET = do_PUT = do_DELETE = _handle

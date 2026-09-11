@@ -189,6 +189,38 @@ def test_scrubbed_templates_v10_v11():
     print("ok: scrubbed templates v10/v11/v13 + house-standards staging")
 
 
+def test_harness_long_turn_defaults():
+    """Every claude run gets the stream-watchdog/retry env underneath its
+    identity (identity wins on conflict); every codex run gets the matching
+    provider stream/retry -c overrides on the provider it actually uses;
+    both are recorded in extra_configs.harness_defaults."""
+    from coding_agent.agents import (CLAUDE_HARNESS_ENV, CODEX_HARNESS_PROVIDER_CONFIG,
+                                     agent_env, build_command, harness_defaults)
+    fable = load_config(ROOT / "run_configs" / "example_fable.yaml")
+    env = agent_env(fable.agent, fable.api_key_env, "sk-test")
+    for k, v in CLAUDE_HARNESS_ENV.items():
+        assert env[k] == v, k
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"  # identity pin still present
+    assert env["CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK"] == "1"
+    assert fable.extra_configs()["harness_defaults"] == {"env": CLAUDE_HARNESS_ENV}
+    # identity env overrides a harness default
+    fable.agent.env = {**fable.agent.env, "CLAUDE_CODE_MAX_RETRIES": "3"}
+    assert agent_env(fable.agent, fable.api_key_env, "sk-test")["CLAUDE_CODE_MAX_RETRIES"] == "3"
+
+    codex = load_config(ROOT / "run_configs" / "example_codex.yaml")
+    assert codex.agent.cli == "codex"
+    joined = " ".join(build_command(codex.agent, relay=True))
+    for k, v in CODEX_HARNESS_PROVIDER_CONFIG.items():
+        assert f"model_providers.traj.{k}={v}" in joined, k
+    joined_direct = " ".join(build_command(codex.agent, relay=False))
+    assert "model_providers.openai.stream_idle_timeout_ms=1800000" in joined_direct
+    assert "model_providers.traj." not in joined_direct
+    hd = harness_defaults(codex.agent, relay=True)["codex_config"]
+    assert hd["model_providers.traj.stream_max_retries"] == "15"
+    assert "codex_config" in codex.extra_configs()["harness_defaults"]
+    print("ok: harness long-turn defaults (claude env, codex provider config, recorded)")
+
+
 def test_telemetry_parsers():
     claude = parse_transcript(FIXTURES / "claude_stream.jsonl", "claude")
     assert claude["cost_usd"] == 1.2345
@@ -206,5 +238,6 @@ if __name__ == "__main__":
     test_config_and_prompt_versions()
     test_workspace_prompt_and_validation()
     test_scrubbed_templates_v10_v11()
+    test_harness_long_turn_defaults()
     test_telemetry_parsers()
     print("ALL SMOKE TESTS PASSED")

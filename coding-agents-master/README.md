@@ -140,6 +140,18 @@ One container per attempt, from a pinned image:
 
 - only the workspace directory is mounted; nothing else of the host is visible
 - env carries exactly one secret: the model API key (DB/S3 creds stay on the host)
+- **Harness defaults for long thinking turns** (2026-09-11, `coding_agent/agents.py`):
+  every claude run gets `CLAUDE_STREAM_IDLE_TIMEOUT_MS=1800000`,
+  `CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS=1800000`,
+  `CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`, `CLAUDE_CODE_MAX_RETRIES=15`;
+  every codex run gets `-c model_providers.<provider>.{stream_idle_timeout_ms=1800000,
+  stream_max_retries=15, request_max_retries=15}` on the provider it uses (traj
+  relay, or openai without a relay). The identity's own `env` / `extra_args`
+  override them. Recorded per row as `extra_configs.harness_defaults`. Why: both
+  CLIs abort a stream after ~5 min of silence and retry the same turn, and
+  Claude Code then falls back to non-streaming requests capped at 64k tokens;
+  Fable 5.1 at max effort thinks silently longer than that on hard tasks and
+  lost 4 of 10 tasks that way on 2026-09-10 with no workbook written.
 - **default-deny egress firewall** — only the vendor's API endpoints resolve;
   the agent cannot browse. If firewall setup fails, the attempt aborts
   (fail-safe) instead of running open. Integrity matters here: the V1 tasks
