@@ -6,6 +6,7 @@ Provides shared logic for TabAI, Claude, and future AI agents.
 
 import asyncio
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -74,6 +75,39 @@ class AIAgentCore(ABC):
         self.config = config
         self.shutdown_event = shutdown_event
         self.completion_logger = completion_logger
+        # Set by a core when the vendor answered a prompt with a capacity /
+        # outage notice instead of doing the work. The engine classifies such
+        # an attempt as infra (unrecorded, retried), never as success or as
+        # the model's own failure.
+        self.provider_unavailable = False
+
+    # Vendor capacity / outage notices. 2026-09-11 ~10:00: Anthropic "high
+    # demand" — the Claude add-in replied with one short notice in 22s, the
+    # Stop button came and went, and the engine recorded a 1-formula workbook
+    # as SUCCESS (attempt 1404); an earlier task (1402) was cut off the same
+    # way after building most of the model. Only a SHORT last reply is tested
+    # so a genuine model reply that mentions "capacity" (a case about plant
+    # capacity, say) can never trip it.
+    _CAPACITY_NOTICE_MAX_CHARS = 600
+    _CAPACITY_NOTICE_RE = re.compile(
+        r"(high|unusually high|heavy|peak) demand"
+        r"|capacity (constraints?|issues?|limits?)"
+        r"|(is|are) (currently )?(at|over) capacity"
+        r"|unable to (respond|process|complete)"
+        r"|try again (later|in a (few|little))"
+        r"|temporarily unavailable"
+        r"|something went wrong"
+        r"|an error occurred",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def looks_like_capacity_notice(cls, text: str | None) -> bool:
+        """True when `text` is a short vendor notice about demand/capacity."""
+        t = (text or "").strip()
+        if not t or len(t) > cls._CAPACITY_NOTICE_MAX_CHARS:
+            return False
+        return bool(cls._CAPACITY_NOTICE_RE.search(t))
 
     @abstractmethod
     def get_agent_type(self) -> str:

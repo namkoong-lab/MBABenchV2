@@ -35,6 +35,9 @@ class TaskStatus(str, Enum):
     NAV_FAILED = "nav_failed"
     EXCEL_FAILED = "excel_failed"
     PANEL_FAILED = "panel_failed"
+    # The vendor answered with a capacity / outage notice instead of working
+    # (Anthropic "high demand", 2026-09-11). Infra: unrecorded, retried.
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
     UNKNOWN = "unknown"
 
 
@@ -49,6 +52,7 @@ PIPELINE_STATUSES = {
     TaskStatus.NAV_FAILED,
     TaskStatus.EXCEL_FAILED,
     TaskStatus.PANEL_FAILED,
+    TaskStatus.PROVIDER_UNAVAILABLE,
     TaskStatus.UNKNOWN,
 }
 

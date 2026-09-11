@@ -410,6 +410,39 @@ def test_addins_fallback_budget_starts_after_ribbon_launcher_step():
     assert step1_budget > step0, "Step 1 budget must be set after Step 0 runs"
 
 
+def test_capacity_notice_is_infra_not_success():
+    # 2026-09-11 ~10:00: Anthropic "high demand" — the Claude add-in replied
+    # with one short notice, the Stop button came and went, and a 1-formula
+    # workbook was recorded as SUCCESS (attempt 1404). A short vendor notice
+    # must flag provider_unavailable, which the engine maps to an infra status.
+    from excel_agent.core.ai_agent_base import AIAgentCore
+    from excel_agent.core.file_organizer import (
+        AGENT_STATUSES, PIPELINE_STATUSES, TaskStatus,
+    )
+
+    assert AIAgentCore.looks_like_capacity_notice(
+        "Claude is currently experiencing high demand. Please try again later."
+    )
+    assert AIAgentCore.looks_like_capacity_notice(
+        "Due to unexpected capacity constraints, Claude is unable to respond right now."
+    )
+    assert AIAgentCore.looks_like_capacity_notice("Something went wrong. Please try again.")
+    # A real reply that merely mentions capacity, or any long reply, never trips it.
+    assert not AIAgentCore.looks_like_capacity_notice(
+        "I've built the plant capacity schedule on the Model sheet and linked the Questions."
+    )
+    assert not AIAgentCore.looks_like_capacity_notice("high demand " * 200)
+    assert not AIAgentCore.looks_like_capacity_notice("")
+
+    assert TaskStatus.PROVIDER_UNAVAILABLE in PIPELINE_STATUSES
+    assert TaskStatus.PROVIDER_UNAVAILABLE not in AGENT_STATUSES
+    eng = _src("excel_agent/engine.py")
+    assert 'getattr(ai_agent, "provider_unavailable", False)' in eng
+    assert "TaskStatus.PROVIDER_UNAVAILABLE" in eng
+    core = _src("excel_agent/core/claude_core.py")
+    assert "looks_like_capacity_notice(last_text)" in core
+
+
 def test_rescue_native_download_picks_newest_matching(tmp_path, monkeypatch):
     from datetime import datetime, timedelta
     import os

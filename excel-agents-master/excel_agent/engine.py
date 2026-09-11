@@ -475,6 +475,16 @@ async def run_automation(config: dict) -> str:
                                     error_msg="Task timed out",
                                 )
                                 final_task_status = TaskStatus.TIMEOUT
+                            elif getattr(ai_agent, "provider_unavailable", False):
+                                # The vendor answered with a capacity notice
+                                # (Anthropic "high demand", 2026-09-11) — the
+                                # model never got to work. Infra, not the
+                                # model's failure: unrecorded and retried.
+                                completion_logger.end_task(
+                                    task_status=TaskStatus.PROVIDER_UNAVAILABLE,
+                                    error_msg="Vendor capacity/outage notice",
+                                )
+                                final_task_status = TaskStatus.PROVIDER_UNAVAILABLE
                             else:
                                 completion_logger.end_task(
                                     task_status=TaskStatus.PROMPT_FAILED,

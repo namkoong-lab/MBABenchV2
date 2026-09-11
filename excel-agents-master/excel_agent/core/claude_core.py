@@ -1138,6 +1138,24 @@ class ClaudeCore(AIAgentCore):
                     final_count = await self._get_response_count(frame)
 
                     if still_stopped and final_count > initial_response_count:
+                        # A finished turn whose last reply is a vendor
+                        # capacity notice is not a completed prompt — the
+                        # work was never done. Flag it for the engine to
+                        # treat as infra (unrecorded, retried).
+                        last_text = ""
+                        try:
+                            articles = await frame.query_selector_all("article")
+                            if articles:
+                                last_text = await articles[-1].text_content() or ""
+                        except Exception:
+                            last_text = ""
+                        if self.looks_like_capacity_notice(last_text):
+                            self.provider_unavailable = True
+                            logger.error(
+                                "❌ Claude answered with a capacity/outage notice "
+                                f"instead of working: {last_text.strip()[:200]!r}"
+                            )
+                            return False
                         logger.info(
                             f"✅ Prompt #{prompt_number} completed! (responses: {final_count}, was {initial_response_count})"
                         )
