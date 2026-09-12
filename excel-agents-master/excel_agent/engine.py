@@ -34,6 +34,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -485,6 +486,21 @@ async def run_automation(config: dict) -> str:
                                     error_msg="Vendor capacity/outage notice",
                                 )
                                 final_task_status = TaskStatus.PROVIDER_UNAVAILABLE
+                                # A usage limit with a known reset time: hold
+                                # here (bounded) so the runner's infra retry
+                                # lands after the reset instead of churning
+                                # through the queue as infra-skips.
+                                retry_after = getattr(
+                                    ai_agent, "provider_retry_after", None
+                                )
+                                if retry_after:
+                                    hold = min(max(0.0, retry_after - time.time()), 3600.0)
+                                    if hold > 0:
+                                        logger.warning(
+                                            f"⏸️ Vendor limit resets in {hold/60:.0f} min "
+                                            "— holding before the infra retry"
+                                        )
+                                        await asyncio.sleep(hold)
                             else:
                                 completion_logger.end_task(
                                     task_status=TaskStatus.PROMPT_FAILED,

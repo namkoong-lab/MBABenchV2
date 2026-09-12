@@ -80,6 +80,52 @@ class AIAgentCore(ABC):
         # an attempt as infra (unrecorded, retried), never as success or as
         # the model's own failure.
         self.provider_unavailable = False
+        # Epoch seconds when a vendor usage limit resets (parsed from the
+        # panel banner), or None. The engine holds until then before the
+        # infra retry so the lane pauses itself instead of churning.
+        self.provider_retry_after = None
+
+    # Panel-level vendor notices that are NOT chat replies (no <article>):
+    # 2026-09-11 21:51 the Claude add-in showed "Rate limit exceeded. Limits
+    # will reset at Fri Sep 11 2026 22:40:00 GMT-0400 ... Get extra usage"
+    # plus "Something went wrong — let us know" after one tool step; no
+    # response article ever rendered and wait_for_completion sat in
+    # "Waiting for Claude to start" for over an hour (would have recorded a
+    # TIMEOUT row at the 5h cap). Phrases here are ones a modelling reply
+    # never contains.
+    _PANEL_NOTICE_RE = re.compile(
+        r"rate limit exceeded"
+        r"|limits will reset"
+        r"|get extra usage"
+        r"|something went wrong"
+        r"|(high|unusually high|heavy|peak) demand"
+        r"|unable to (respond|process|complete)"
+        r"|temporarily unavailable",
+        re.IGNORECASE,
+    )
+    _LIMIT_RESET_RE = re.compile(
+        r"reset at (\w{3} \w{3} \d{1,2} \d{4} \d{2}:\d{2}:\d{2}) GMT([+-]\d{4})"
+    )
+
+    @classmethod
+    def panel_notice(cls, panel_text: str | None) -> str | None:
+        """The matched vendor-notice phrase in `panel_text`, else None."""
+        m = cls._PANEL_NOTICE_RE.search(panel_text or "")
+        return m.group(0) if m else None
+
+    @classmethod
+    def parse_limit_reset_epoch(cls, panel_text: str | None) -> float | None:
+        """Epoch seconds of 'Limits will reset at <date> GMT±hhmm', else None."""
+        m = cls._LIMIT_RESET_RE.search(panel_text or "")
+        if not m:
+            return None
+        try:
+            from datetime import datetime
+            return datetime.strptime(
+                f"{m.group(1)} {m.group(2)}", "%a %b %d %Y %H:%M:%S %z"
+            ).timestamp()
+        except Exception:
+            return None
 
     # Vendor capacity / outage notices. 2026-09-11 ~10:00: Anthropic "high
     # demand" — the Claude add-in replied with one short notice in 22s, the

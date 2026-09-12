@@ -1083,6 +1083,30 @@ class ClaudeCore(AIAgentCore):
             if not frame:
                 continue
 
+            # Vendor notice banners are not chat replies (no <article>), so
+            # the response-count logic never sees them. Scan the panel text
+            # every 15s: a usage-limit / outage banner means the prompt will
+            # never complete — bail as provider_unavailable (infra, unrecorded)
+            # instead of sitting here until the 5h cap records a TIMEOUT row.
+            if elapsed % 15 == 0:
+                try:
+                    panel_text = await frame.evaluate(
+                        "() => (document.body && document.body.innerText) "
+                        "? document.body.innerText.slice(-2000) : ''"
+                    )
+                except Exception:
+                    panel_text = ""
+                notice = self.panel_notice(panel_text)
+                if notice:
+                    self.provider_unavailable = True
+                    self.provider_retry_after = self.parse_limit_reset_epoch(panel_text)
+                    logger.error(
+                        f"❌ Claude panel shows a vendor notice ({notice!r}); "
+                        f"limit reset epoch={self.provider_retry_after} — "
+                        "aborting the prompt as provider_unavailable"
+                    )
+                    return False
+
             # Scroll to bottom periodically
             if elapsed % 5 == 0:
                 try:

@@ -434,6 +434,20 @@ def test_capacity_notice_is_infra_not_success():
     assert not AIAgentCore.looks_like_capacity_notice("high demand " * 200)
     assert not AIAgentCore.looks_like_capacity_notice("")
 
+    # Panel banners (no <article>): 2026-09-11 21:51 usage limit, sat 64 min.
+    banner = ("Read 3 ranges, create sheets and Drivers tab\nRate limit exceeded. "
+              "Limits will reset at Fri Sep 11 2026 22:40:00 GMT-0400 (Eastern "
+              "Daylight Time). Get extra usage to keep using Claude, or try again "
+              "later.\nSomething went wrong — let us know.\nSend feedback")
+    assert AIAgentCore.panel_notice(banner)
+    assert AIAgentCore.parse_limit_reset_epoch(banner) == 1789180800.0  # 2026-09-11 22:40 EDT
+    assert AIAgentCore.panel_notice("Built the plant capacity schedule; answers linked.") is None
+    assert AIAgentCore.parse_limit_reset_epoch("no banner") is None
+    core = _src("excel_agent/core/claude_core.py")
+    assert "self.panel_notice(panel_text)" in core
+    eng = _src("excel_agent/engine.py")
+    assert 'getattr(\n                                    ai_agent, "provider_retry_after", None\n                                )' in eng
+
     assert TaskStatus.PROVIDER_UNAVAILABLE in PIPELINE_STATUSES
     assert TaskStatus.PROVIDER_UNAVAILABLE not in AGENT_STATUSES
     eng = _src("excel_agent/engine.py")
