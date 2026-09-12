@@ -110,6 +110,12 @@ class AIAgentCore(ABC):
         r"reset\s+at\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})\s+GMT\s*([+-]\d{4})",
         re.IGNORECASE,
     )
+    # Locale short form seen 2026-09-12 03:06: "Limits will reset at
+    # 9/12/2026, 3:40:00 AM." — local time, no zone.
+    _LIMIT_RESET_SHORT_RE = re.compile(
+        r"reset\s+at\s+(\d{1,2}/\d{1,2}/\d{4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([AP]M)",
+        re.IGNORECASE,
+    )
 
     @classmethod
     def panel_notice(cls, panel_text: str | None) -> str | None:
@@ -121,17 +127,27 @@ class AIAgentCore(ABC):
     def parse_limit_reset_epoch(cls, panel_text: str | None) -> float | None:
         """Epoch seconds of 'Limits will reset at <date> GMT±hhmm', else None."""
         text = (panel_text or "").replace(" ", " ")
+        from datetime import datetime
         m = cls._LIMIT_RESET_RE.search(text)
-        if not m:
-            return None
-        try:
-            from datetime import datetime
-            stamp = re.sub(r"\s+", " ", m.group(1)).strip()
-            return datetime.strptime(
-                f"{stamp} {m.group(2)}", "%a %b %d %Y %H:%M:%S %z"
-            ).timestamp()
-        except Exception:
-            return None
+        if m:
+            try:
+                stamp = re.sub(r"\s+", " ", m.group(1)).strip()
+                return datetime.strptime(
+                    f"{stamp} {m.group(2)}", "%a %b %d %Y %H:%M:%S %z"
+                ).timestamp()
+            except Exception:
+                return None
+        m = cls._LIMIT_RESET_SHORT_RE.search(text)
+        if m:
+            try:
+                clock = m.group(2) if m.group(2).count(":") == 2 else m.group(2) + ":00"
+                local = datetime.strptime(
+                    f"{m.group(1)} {clock} {m.group(3).upper()}", "%m/%d/%Y %I:%M:%S %p"
+                )
+                return local.timestamp()  # naive = local wall clock, as the panel shows it
+            except Exception:
+                return None
+        return None
 
     # Vendor capacity / outage notices. 2026-09-11 ~10:00: Anthropic "high
     # demand" — the Claude add-in replied with one short notice in 22s, the

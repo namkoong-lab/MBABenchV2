@@ -446,6 +446,11 @@ def test_capacity_notice_is_infra_not_success():
     assert AIAgentCore.parse_limit_reset_epoch(nbsp) == 1789180800.0
     eng_hold = _src("excel_agent/engine.py")
     assert "hold = 1800.0" in eng_hold  # default hold when no reset time parses
+    # Locale short form (2026-09-12 03:06), local wall clock.
+    from datetime import datetime
+    short = "Rate limit exceeded. Limits will reset at 9/12/2026, 3:40:00 AM. Get extra usage"
+    assert AIAgentCore.parse_limit_reset_epoch(short) == datetime(2026, 9, 12, 3, 40).timestamp()
+    assert AIAgentCore.parse_limit_reset_epoch("reset at 9/12/2026, 11:05 PM.") == datetime(2026, 9, 12, 23, 5).timestamp()
     assert AIAgentCore.panel_notice("Built the plant capacity schedule; answers linked.") is None
     assert AIAgentCore.parse_limit_reset_epoch("no banner") is None
     core = _src("excel_agent/core/claude_core.py")
