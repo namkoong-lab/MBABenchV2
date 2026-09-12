@@ -1100,10 +1100,12 @@ class ClaudeCore(AIAgentCore):
                 if notice:
                     self.provider_unavailable = True
                     self.provider_retry_after = self.parse_limit_reset_epoch(panel_text)
+                    tail = " ".join((panel_text or "")[-500:].split())
                     logger.error(
                         f"❌ Claude panel shows a vendor notice ({notice!r}); "
                         f"limit reset epoch={self.provider_retry_after} — "
-                        "aborting the prompt as provider_unavailable"
+                        "aborting the prompt as provider_unavailable. "
+                        f"Panel tail: {tail!r}"
                     )
                     return False
 

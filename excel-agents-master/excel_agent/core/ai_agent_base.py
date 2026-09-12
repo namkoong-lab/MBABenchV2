@@ -103,8 +103,12 @@ class AIAgentCore(ABC):
         r"|temporarily unavailable",
         re.IGNORECASE,
     )
+    # Whitespace-tolerant: panel innerText can carry non-breaking spaces and
+    # line breaks inside the date (2026-09-12 03:01: the banner matched but
+    # the space-literal form of this pattern parsed no reset time).
     _LIMIT_RESET_RE = re.compile(
-        r"reset at (\w{3} \w{3} \d{1,2} \d{4} \d{2}:\d{2}:\d{2}) GMT([+-]\d{4})"
+        r"reset\s+at\s+(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{4}\s+\d{1,2}:\d{2}:\d{2})\s+GMT\s*([+-]\d{4})",
+        re.IGNORECASE,
     )
 
     @classmethod
@@ -116,13 +120,15 @@ class AIAgentCore(ABC):
     @classmethod
     def parse_limit_reset_epoch(cls, panel_text: str | None) -> float | None:
         """Epoch seconds of 'Limits will reset at <date> GMT±hhmm', else None."""
-        m = cls._LIMIT_RESET_RE.search(panel_text or "")
+        text = (panel_text or "").replace(" ", " ")
+        m = cls._LIMIT_RESET_RE.search(text)
         if not m:
             return None
         try:
             from datetime import datetime
+            stamp = re.sub(r"\s+", " ", m.group(1)).strip()
             return datetime.strptime(
-                f"{m.group(1)} {m.group(2)}", "%a %b %d %Y %H:%M:%S %z"
+                f"{stamp} {m.group(2)}", "%a %b %d %Y %H:%M:%S %z"
             ).timestamp()
         except Exception:
             return None

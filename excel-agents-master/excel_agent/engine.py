@@ -495,12 +495,18 @@ async def run_automation(config: dict) -> str:
                                 )
                                 if retry_after:
                                     hold = min(max(0.0, retry_after - time.time()), 3600.0)
-                                    if hold > 0:
-                                        logger.warning(
-                                            f"⏸️ Vendor limit resets in {hold/60:.0f} min "
-                                            "— holding before the infra retry"
-                                        )
-                                        await asyncio.sleep(hold)
+                                else:
+                                    # No parseable reset time: still hold, or
+                                    # the runner's 20s retry re-hits the same
+                                    # limit and burns all three tries in
+                                    # minutes (2026-09-12 03:02).
+                                    hold = 1800.0
+                                if hold > 0:
+                                    logger.warning(
+                                        f"⏸️ Vendor notice — holding {hold/60:.0f} min "
+                                        "before the infra retry"
+                                    )
+                                    await asyncio.sleep(hold)
                             else:
                                 completion_logger.end_task(
                                     task_status=TaskStatus.PROMPT_FAILED,

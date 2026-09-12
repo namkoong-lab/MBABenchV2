@@ -441,6 +441,11 @@ def test_capacity_notice_is_infra_not_success():
               "later.\nSomething went wrong — let us know.\nSend feedback")
     assert AIAgentCore.panel_notice(banner)
     assert AIAgentCore.parse_limit_reset_epoch(banner) == 1789180800.0  # 2026-09-11 22:40 EDT
+    # innerText variants: non-breaking spaces and a line break inside the date
+    nbsp = banner.replace("Fri Sep 11 2026 22:40:00 GMT-0400", "Fri Sep 11 2026\n22:40:00 GMT-0400")
+    assert AIAgentCore.parse_limit_reset_epoch(nbsp) == 1789180800.0
+    eng_hold = _src("excel_agent/engine.py")
+    assert "hold = 1800.0" in eng_hold  # default hold when no reset time parses
     assert AIAgentCore.panel_notice("Built the plant capacity schedule; answers linked.") is None
     assert AIAgentCore.parse_limit_reset_epoch("no banner") is None
     core = _src("excel_agent/core/claude_core.py")
