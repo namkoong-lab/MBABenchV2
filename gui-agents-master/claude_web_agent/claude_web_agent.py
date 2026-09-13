@@ -141,6 +141,12 @@ class ClaudeWebAgent(WebAgent):
         # normal messages (tasks 53-54). Match the model-name-independent
         # tail phrases instead of chasing per-model wordings.
         "Switch to another model, or manage usage credits",
+        # 2026-09-11 (full run, mbabench.04): the 5-hour SESSION cap renders a
+        # composer banner "Usage limit reached · Resets 10:40 PM · limits
+        # shared with Claude Code" with the send button disabled — none of the
+        # wordings above appear, so get_state() said READY, three sends failed
+        # and the lane recorded a failed row per task until killed.
+        "Usage limit reached",
         "manage usage credits at claude.ai",
     )
 

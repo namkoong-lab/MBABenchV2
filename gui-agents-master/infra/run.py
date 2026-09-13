@@ -634,8 +634,18 @@ QUALITY_MIN_BYTES = 12000
 QUALITY_MIN_SHEETS = 3
 
 
-def check_output_quality(solution_file: Path | None) -> tuple[bool, str]:
+def check_output_quality(
+    solution_file: Path | None, input_files: list | None = None
+) -> tuple[bool, str]:
     """Return (ok, reason). ok=False flags a suspected-degraded output.
+
+    2026-09-11 (full run, attempts 1434/1461/1523): ChatGPT Work mode lists the
+    user's own uploaded workbook among the sandbox artifacts, so when the sandbox
+    dies mid-task and the model says "I couldn't produce a .xlsx", the backend
+    download still returns the STARTING FILE (or a formula-free checkpoint) and
+    the row was recorded success. Two extra checks close that: a workbook that is
+    byte-identical to any input file, or that carries no formulas at all, is not
+    a deliverable.
 
     Runs in infra.run AFTER the engine subprocess returns — i.e. OUTSIDE the
     engine's own retry loop — so it only records a verdict and never triggers
@@ -668,7 +678,102 @@ def check_output_quality(solution_file: Path | None) -> tuple[bool, str]:
             f"(min {QUALITY_MIN_BYTES} bytes, {QUALITY_MIN_SHEETS} sheets) — "
             f"suspected content-load disruption"
         )
+    identical = _identical_input(solution_file, input_files or [])
+    if identical is not None:
+        return False, (
+            f"solution workbook is byte-identical to the input file "
+            f"{identical.name} — the agent produced no deliverable"
+        )
+    n_formulas = _count_formulas(solution_file)
+    if n_formulas == 0:
+        return False, (
+            "solution workbook contains no formulas — not a model "
+            "(starting file or checkpoint picked up as the artifact)"
+        )
     return True, ""
+
+
+def _identical_input(solution_file: Path, input_files: list) -> Path | None:
+    """The input file whose bytes equal the solution's, else None. Fails open."""
+    import hashlib
+
+    def digest(p: Path) -> str:
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    try:
+        sol = digest(Path(solution_file))
+        for raw in input_files:
+            p = Path(raw)
+            if p.suffix.lower() in (".xlsx", ".xlsm") and p.is_file() and digest(p) == sol:
+                return p
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"identical-input check skipped: {e}")
+    return None
+
+
+def _count_formulas(solution_file: Path) -> int | None:
+    """Formula cells across all sheets, read from the sheet XML so namespaced
+    writers (<x:f>) count too. None on any error (fails open)."""
+    import re
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(solution_file) as z:
+            parts = [n for n in z.namelist() if "worksheets/" in n and n.endswith(".xml")]
+            return sum(
+                len(re.findall(rb"<(?:\w+:)?f[\s>]", z.read(n))) for n in parts
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"formula count skipped: {e}")
+        return None
+
+
+USAGE_CAP_LOG_SIGNATURES = (
+    "Rate limit persisted",            # claude: limit banner during the wait
+    "Usage/plan limit persisted",      # chatgpt: limit banner during the wait
+    "Rate limited before prompts",     # either: get_state() saw the banner
+    "Usage limit reached",             # claude 5-hour session banner text
+    "Add credits to continue",         # chatgpt usage-credit exhaustion
+)
+
+
+def usage_cap_hit(run_dir: Path) -> str | None:
+    """Why the task's failure looks like an ACCOUNT CAP, else None.
+
+    2026-09-11 (full run): four separate cap events (two ChatGPT, two Claude)
+    each left the lane walking its list and recording a failed row per task
+    every few minutes until a human killed it. A cap is a property of the
+    account, not the task, so the runner stops the lane instead (exit 4) —
+    the row for the task that hit it is still published, and a relaunch after
+    the reset resumes at that task because skip_already_attempted ignores
+    failed rows. Reads the engine's completion JSONs (task_status
+    'rate_limited' = banner seen before prompts) and its log (banner seen
+    mid-wait). Fails open on any read error.
+    """
+    try:
+        for cj in sorted(Path(run_dir).glob("json_logs/*.json")):
+            try:
+                data = json.loads(cj.read_text())
+            except Exception:
+                continue
+            for t in data.get("tasks", []) or []:
+                if t.get("task_status") == "rate_limited":
+                    return f"engine reported task_status=rate_limited ({cj.name})"
+        for lg in sorted(Path(run_dir).glob("logs/*.log")):
+            try:
+                text = lg.read_text(errors="ignore")
+            except Exception:
+                continue
+            for sig in USAGE_CAP_LOG_SIGNATURES:
+                if sig in text:
+                    return f"engine log contains {sig!r} ({lg.name})"
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"usage-cap check skipped: {e}")
+    return None
 
 
 def _kill_engine_tree(proc: subprocess.Popen) -> None:
@@ -1192,6 +1297,7 @@ def main() -> int:
                     return EXIT_ENV_BLOCKED
                 logger.info(f"Auth precheck: {detail}")
 
+        cap_stop: str | None = None
         for i, (spec, engine_config) in enumerate(prepared):
             idx = args.start + i
             logger.info(f"\n{'=' * 60}\nTASK {idx}: {spec.task_name}\n{'=' * 60}")
@@ -1239,7 +1345,9 @@ def main() -> int:
             # the stub still uploads to S3 for inspection.
             quality_reason: str | None = None
             if status == "success":
-                ok, reason = check_output_quality(solution_file)
+                ok, reason = check_output_quality(
+                    solution_file, list(spec.upload_files or [])
+                )
                 if not ok:
                     status = "failed"
                     quality_reason = reason
@@ -1274,8 +1382,19 @@ def main() -> int:
                 prompt_files=[prompts_file] if prompts_file else [],
                 extra=extra,
             )
+            # Decide BEFORE publish/clear: _clear_staging may delete run_dir.
+            cap_reason = usage_cap_hit(run_dir) if status != "success" else None
             sink.publish(result)
             _clear_staging(run_dir, sink)
+            if cap_reason:
+                cap_stop = cap_reason
+                logger.error(
+                    f"ACCOUNT USAGE CAP on task {spec.task_name}: {cap_reason}. "
+                    f"Stopping this lane (exit {EXIT_ENV_BLOCKED}) — the remaining "
+                    f"{len(prepared) - i - 1} task(s) are untouched; relaunch the "
+                    f"same run config after the account's reset."
+                )
+                break
 
         logger.info(f"\nDone. succeeded={succeeded} failed={failed}")
     finally:
@@ -1287,6 +1406,8 @@ def main() -> int:
         source.close()
         sink.close()
 
+    if cap_stop:
+        return EXIT_ENV_BLOCKED
     return EXIT_OK if failed == 0 else EXIT_TASK_FAILED
 
 
