@@ -233,7 +233,11 @@ checks:
       them here. Colour inherited from the starting workbook is out of
       scope. Fail ONLY when you can cite cells of the same kind carrying
       different font colours, or a reserved colour used for the wrong kind
-      of cell.
+      of cell. Same-sheet calculations in black sitting beside green formulas
+      that reference another sheet is the convention working as intended —
+      those are cells of DIFFERENT kinds, not an inconsistency. Before citing
+      two formula cells as inconsistent, confirm they are the same kind (both
+      same-sheet, or both cross-sheet).
 
   - category: Formatting
     name: Minimal non-standard color usage
@@ -267,3 +271,52 @@ checks:
       and similar identifiers are text on purpose and are not mistakes.
       Formula results are never marked; a formula that returns text on
       purpose (TEXT, concatenation) is judged from its formula, not here.
+
+  # --- 2026-09-14: notes added from the toy-task reliability run 1 misses ---
+
+  - category: Documentation
+    name: Linked table of contents
+    note: |
+      A table of contents satisfies this check when every OTHER worksheet is
+      reachable from it by hyperlink. The entry for the contents sheet itself
+      needs no link, and neither do section headings within the contents
+      list. Fail only for a worksheet with no hyperlink to it, or hyperlinks
+      that point nowhere.
+
+  - category: Documentation
+    name: Purpose documentation
+    note: |
+      The case brief / Instructions sheet the agent was given is the QUESTION,
+      not the model's documentation. Purpose documentation must be authored
+      for the model — a cover, documentation or "about" sheet, or a clearly
+      labelled block, stating what the model is for and which business
+      question it answers. Retaining or restating the brief does not satisfy
+      this check on its own.
+
+  - category: Formatting
+    name: Numbers right-aligned
+    note: |
+      Excel's default (General) horizontal alignment renders numbers
+      right-aligned. A numeric cell with no explicit alignment IS
+      right-aligned — never cite "no explicit right-alignment setting" as a
+      mistake. Fail only for numeric cells explicitly set to left or center
+      alignment, and cite them.
+
+  - category: Formatting
+    name: Currency stated
+    note: |
+      A currency symbol used as the unit label — "$", "[$]", "€", "£", "$mm",
+      "USD 000s" — states the currency. Do not fail because the symbol is not
+      spelled out as an ISO code, unless the case involves more than one
+      currency (FX) and the symbol leaves the reader unable to tell which.
+      Fail when monetary blocks or columns carry no currency indication at all.
+
+  - category: Formatting
+    name: File extension (.xlsx)
+    note: |
+      The attempt is always staged for grading as ai_attempt.xlsx; judge this
+      check from the "original filename" shown in the workbook properties
+      header, never from the staged name. .xlsx passes; .xlsm passes when VBA
+      is present and is a mistake when the properties report no VBA (a
+      macro-less workbook should be .xlsx); .xls, .xlsb, .csv and exports from
+      other applications fail.
