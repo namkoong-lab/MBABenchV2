@@ -320,3 +320,18 @@ checks:
       is present and is a mistake when the properties report no VBA (a
       macro-less workbook should be .xlsx); .xls, .xlsb, .csv and exports from
       other applications fail.
+
+  # --- 2026-09-14 judge-misses walkthrough (toy 70) --------------------------
+
+  - category: Formatting
+    name: Reasonable column widths
+    note: |
+      Measure widths against the rubric's rule of thumb (roughly 75-80
+      characters). A column below that line that is sized to fit its own
+      content — for example a helper column widened to show its header label —
+      is not excessive. A column set much wider than its content requires is
+      excessive even below that line — for example calculation columns
+      widened to about three times the width of identical neighbouring
+      columns. The case's own brief (the Instructions sheet the agent
+      was given) is provided by the case and is excluded from this check,
+      including its text wrapping and its column widths.
