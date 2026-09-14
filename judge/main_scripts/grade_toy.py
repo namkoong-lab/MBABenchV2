@@ -260,6 +260,20 @@ def insert_grading(conn, run_id, toy, variant, repeat_no, target, result, verdic
     return gid
 
 
+def _with_reconnect(conn, fn):
+    """Run fn(conn); on a dropped connection reconnect once and retry. Returns (fn result, live conn)."""
+    try:
+        return fn(conn), conn
+    except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+        logger.warning(f"  DB connection lost ({str(e).strip()}); reconnecting and retrying once")
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+        conn = gfd.get_db_connection()
+        return fn(conn), conn
+
+
 def already_graded(conn, run_id) -> set:
     with conn.cursor() as cur:
         cur.execute(f"select check_no, variant, repeat_no from {SCHEMA}.toy_gradings where run_id=%s and not failed", (run_id,))
@@ -395,13 +409,27 @@ def main():
         logger.info(f"  -> verdict={verdict['verdict']} expected={variant} {'OK' if ok else 'MISS'}  "
                     f"cost=${result.get('cost') or 0:.3f}  run=${run_cost:.2f}  {result.get('raw_files_path') or ''}")
         if write_db:
-            gid = insert_grading(conn, run_id, toy, variant, repeat_no, None if args.full_rubric else check_no,
-                                 result, verdict, versions, args.model)
-            logger.info(f"  toy_gradings id {gid}")
+            # A single grading can run 40+ minutes (65 MB workbooks); Neon drops idle
+            # SSL sessions well before that, so reconnect and retry once. If the
+            # retry also fails, park the row locally (pending_toy_grading.json in the
+            # bundle) instead of aborting the run.
+            try:
+                gid, conn = _with_reconnect(conn, lambda c: insert_grading(
+                    c, run_id, toy, variant, repeat_no, None if args.full_rubric else check_no,
+                    result, verdict, versions, args.model))
+                logger.info(f"  toy_gradings id {gid}")
+            except psycopg2.Error as e:
+                pend = Path(result.get("output_dir") or scratch_run_dir) / "pending_toy_grading.json"
+                pend.write_text(json.dumps({"run_id": run_id, "toy": toy, "variant": variant, "repeat_no": repeat_no,
+                                            "target": None if args.full_rubric else check_no, "result": result,
+                                            "verdict": verdict, "versions": versions, "model": args.model}, default=str))
+                logger.error(f"  DB insert failed twice ({e}); row parked at {pend} — backfill with scratch/backfill_toy_grading.py")
     if write_db:
-        with conn.cursor() as cur:
-            cur.execute(f"update {SCHEMA}.toy_runs set finished_at = now() where run_id = %s", (run_id,))
-        conn.commit()
+        def _finish(c):
+            with c.cursor() as cur:
+                cur.execute(f"update {SCHEMA}.toy_runs set finished_at = now() where run_id = %s", (run_id,))
+            c.commit()
+        _, conn = _with_reconnect(conn, _finish)
     logger.info(f"\nRun {run_id}: {n_ok} graded ({n_correct} correct), {n_bad} failed, ${run_cost:.2f}")
 
 
