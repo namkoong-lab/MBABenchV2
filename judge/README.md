@@ -49,7 +49,7 @@ would lift this.)
 Useful flags: `--dry-run`, `--no-db-write`, `--no-s3-upload`, `--nocall`,
 `--model <slug>`, `--reasoning-effort {none,minimal,low,medium,high}`.
 `--model` takes a grader label registered in `judge_identities.yaml`, which
-pins the endpoint (openrouter | gemini | anthropic | openai), the wire model
+pins the endpoint (openrouter | gemini | anthropic | openai | tensorblock), the wire model
 id, and the default reasoning effort. An unregistered label refuses to run
 and prints the stanza to add.
 
@@ -202,8 +202,7 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
 ### judge v7 — single-pass 7 / template_8 (2026-09-09)
 
 Rows record `judge_version` 7 / `prompt_version` 8 (template unchanged) and are
-not comparable to version 6 rows. Every further judge change lands here until
-version 7 is cut.
+not comparable to version 6 rows. Frozen 2026-09-14 when version 8 was cut.
 
 - **Evidence the rubric grades on is now served** (2026-09-09, caches move
   to `*_csv_cache_v4`, properties schema 2). Properties block: cell
@@ -261,6 +260,28 @@ version 7 is cut.
   1175-1236) was not and judged those checks with no evidence — each grade
   log's parameter header records `"ignore_sheets"`. Ignoring is opt-in
   (`--ignore-sheets NAME ...`); `--no-ignore-sheets` is a kept no-op.
+
+### judge v8 — single-pass 8 / template_8 (2026-09-14)
+
+Rows record `judge_version` 8 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 7 rows. Cut from the toy-reliability run-1 walkthrough
+(19 misses on 18 checks); every further judge change lands here until version 9.
+
+- **Harness verdict for Rounding / Rounded outputs retired** (rulebook v6.6).
+  The check covers every final output a reader sees, not only the Questions
+  answers, and a number format now counts as rounding, so the judge decides
+  it; the harness could reverse a correct judge fail (toy 104). The rounding
+  statistics (`n_unrounded`, `rounding_directive`, per-question
+  `attempt_rounded`) are still measured and recorded in `answer_check.json`
+  and `scored_results.answer_check` for audit. Final calculation accuracy and
+  Deliverable completeness keep their harness handling.
+- **OVERSIZED RANGE tag** (check 25): the properties block's per-sheet line
+  flags a sheet declared at Excel's full width or height whose content ends
+  far earlier. Extreme-only by design — a ratio rule flagged 59 of 471 cached
+  real workbooks, goldens included. Rendered from stored properties; no cache
+  generation bump. Test: `tests_offline/test_oversized_range.py`.
+- **Guidance 27 → 36 notes**: edits to checks 16, 49, 55, 64, 82; new notes
+  for 2, 11, 25, 37, 65, 66, 67, 104, 107.
 
 ### Latest-prompt guard (2026-09-10)
 
@@ -346,4 +367,5 @@ python tests_offline/test_benchmark_presets.py
 python tests_offline/test_rubric9_consistency.py
 python tests_offline/test_formula_cache.py
 python tests_offline/test_single_pass.py
+python tests_offline/test_oversized_range.py
 ```

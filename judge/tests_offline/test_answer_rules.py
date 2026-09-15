@@ -245,6 +245,8 @@ for word in ("scale-aware", "half a unit", "one part in a million", "outflow", "
 check("capex" in txt and "depreciation" in txt, "rulebook text lists the outflow lexicon")
 check("ROUNDS TO" in txt and "Rounded outputs" in txt and "energy" in txt,
       "v6.4 text: rounds-to rule, rounding-compliance pointer, extended lexicon")
+check("STORED value" not in txt and "harness decides" not in txt and "never an accuracy matter" in txt,
+      "v6.6 text: rule 11 no longer claims a harness rounding verdict or that a display format cannot round")
 
 print()
 if FAILS:

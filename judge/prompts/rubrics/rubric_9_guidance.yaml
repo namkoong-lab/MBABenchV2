@@ -97,9 +97,11 @@ checks:
   - category: Formatting
     name: Black font for calculations
     note: |
-      Do NOT deduct points when a formula that references cells on other
-      sheets is formatted in green font — green is the sanctioned color
-      for cross-sheet links, so either color is acceptable for such cells.
+      Green is acceptable only when the formula itself references another
+      sheet, with a sheet name before "!". Read the formula before excusing
+      green: a same-sheet calculation in green, or any colour other than
+      black, is a mistake. For a spilled range, the top cell's formula
+      decides the kind of every cell in the spill.
 
   - category: Formatting
     name: Green font for cross-sheet links
@@ -213,7 +215,9 @@ checks:
       wrapper, a LET, or a construction three functions deep all PASS.
       Fail ONLY for a formula nesting four or more functions deep that a
       helper row or column would clearly simplify; cite the cell and its
-      formula.
+      formula. Formulas wrapped in LET, and LAMBDA-style array formulas
+      (LAMBDA and its helpers REDUCE, SCAN, MAP, BYROW, BYCOL, MAKEARRAY),
+      are exempt from the nesting-depth count.
 
   - category: Structure
     name: Data-type designation (actuals vs. estimates)
@@ -252,13 +256,13 @@ checks:
   - category: Formatting
     name: No colors that mimic standard coding
     note: |
-      Fails only when a RESERVED FONT colour (blue for inputs, black for
-      calculations, green for cross-sheet links, red for external links)
-      is applied to cells of another kind, so a reader would misread the
-      cell's purpose. Background FILLS never mimic font coding — a blue
-      header fill or a blue input-block fill is not a violation. Negative
-      numbers shown in red font are a standard accounting convention and
-      are never a violation of this check.
+      Unit labels, such as bracketed units like [$], [%], [#], [days], and
+      the "Units" column heading above them, may carry the input blue; they
+      sit beside inputs and cannot be mistaken for inputs. Any other text in
+      a reserved colour, such as row labels, section headings, or totals, is
+      a violation. Background fills never mimic font coding. Negative
+      numbers in red are a standard accounting convention and never a
+      violation.
 
   - category: Error Checks
     name: No unresolved cell warnings
@@ -290,8 +294,11 @@ checks:
       not the model's documentation. Purpose documentation must be authored
       for the model — a cover, documentation or "about" sheet, or a clearly
       labelled block, stating what the model is for and which business
-      question it answers. Retaining or restating the brief does not satisfy
-      this check on its own.
+      question it answers. Retaining the brief does not satisfy this check
+      on its own. A cover or documentation block the agent wrote counts even
+      when it paraphrases the brief, when the starting workbook shows the
+      agent added it; without that evidence, text that reads as the case
+      brief is the brief.
 
   - category: Formatting
     name: Numbers right-aligned
@@ -300,7 +307,9 @@ checks:
       right-aligned. A numeric cell with no explicit alignment IS
       right-aligned — never cite "no explicit right-alignment setting" as a
       mistake. Fail only for numeric cells explicitly set to left or center
-      alignment, and cite them.
+      alignment, and cite them. The case's questions-and-answers sheet has
+      its layout and cell formatting set by the case; its alignment is not
+      judged here. Identify that sheet by its role, not its name.
 
   - category: Formatting
     name: Currency stated
@@ -335,3 +344,107 @@ checks:
       columns. The case's own brief (the Instructions sheet the agent
       was given) is provided by the case and is excluded from this check,
       including its text wrapping and its column widths.
+
+  # --- 2026-09-14 judge-misses walkthrough ------------------------------------
+
+  - category: Formatting
+    name: Negatives in parentheses
+    note: |
+      The case's questions-and-answers sheet has its layout and cell
+      formatting set by the case; its formatting is not judged here.
+      Identify that sheet by its role, not its name.
+
+  - category: Formatting
+    name: Zeros as dashes
+    note: |
+      The case's questions-and-answers sheet has its layout and cell
+      formatting set by the case; its formatting is not judged here.
+      Identify that sheet by its role, not its name.
+
+  - category: Formatting
+    name: Thousands separators
+    note: |
+      The case's questions-and-answers sheet has its layout and cell
+      formatting set by the case; its formatting is not judged here.
+      Identify that sheet by its role, not its name.
+
+  - category: Documentation
+    name: Formula commentary for non-obvious formulas
+    note: |
+      List the model's non-obvious formulas: deep nesting, LAMBDA or array
+      constructions, custom functions, and domain methods such as a distance
+      or search algorithm. Each should carry its own note, or a note pointing
+      to where the same construction is explained. A non-obvious formula with
+      neither is a mistake; cite the cell. One note per block is enough: a
+      formula copied across a row or column, or filling one contiguous block,
+      needs a single note, not one per cell. The same construction repeated
+      in a separate block, for example on another sheet, needs its own note
+      or a pointer.
+
+  - category: Accuracy
+    name: Starting values
+    note: |
+      Where the case supplies input values in the workbook, such as an
+      Assumptions or Inputs sheet, the model must use them by reference:
+      formulas link back to those cells. A starting value re-typed or pasted
+      elsewhere is a mistake, even when it matches, where that copy feeds a
+      calculation or an answer, because the model would no longer follow the
+      case's inputs if they changed; cite the cell. A copy that only labels
+      or displays the value and feeds nothing is not judged here. Inputs the
+      case gives only in text are entered once, on an inputs sheet, and
+      referenced from there.
+
+  - category: Flexibility
+    name: M&A / divestiture flexibility
+    note: |
+      This check applies only when the case concerns a company or group whose
+      set of business units could plausibly change: several segments,
+      business lines or locations, or a case that mentions acquisitions,
+      divestitures or new units. When the case has a single business unit and
+      no mention of others, or concerns a security, a fund or portfolio, a
+      single forecast series, or a personal decision, the check is satisfied
+      by default.
+
+  - category: Rounding
+    name: Rounded outputs
+    note: |
+      Judge the precision a reader sees on the final outputs: the answer
+      cells and the summary or output figures presented to the reader.
+      Rounding by ROUND() or by number format both count. Where the task
+      states a precision for the answers, that governs the answers.
+      Otherwise, precision in line with the House Standards, or comparably
+      sensible, passes. Fail only for clear false precision, such as figures
+      in the thousands or more shown to the cent, or ratios and percentages
+      shown to four or more decimals. Intermediate calculation cells are out
+      of scope here; "Full precision in intermediates" covers them. A blank
+      answer is not a rounding mistake; Accuracy covers missing answers.
+
+  - category: Error Checks
+    name: Reasonable file size
+    note: |
+      Judge proportionality, not only the megabyte guideline. Compare the
+      attempt's file size with the solution's: a workbook several times the
+      size of the solution with comparable content is bloated even when it
+      is under 10 MB. A sheet whose declared size extends to Excel's full
+      sheet width or height is marked OVERSIZED RANGE in the properties
+      block; that is the oversized used range the rubric names as bloat and
+      is strong evidence of a fail, unless the starting workbook or the
+      solution carries the same sheet at the same extent, in which case it
+      was inherited and is not the agent's mistake.
+
+  - category: Structure
+    name: Cover sheet first
+    note: |
+      The first tab must work as a cover: it identifies the model and orients
+      the reader on opening. Judge its contents, not its name; a first tab
+      called "Summary", "Overview" or anything else passes if it does that
+      job. Cover information includes the model's title, purpose, owner,
+      version and date, and also what the House Standards ask a cover to
+      carry: scope (including what the model leaves out), a legend of
+      colours and abbreviations, the approach and main design decisions,
+      what may be changed, how a case is selected, and where the answer is
+      read. These are typical contents, not a checklist: a first tab that
+      states the title and purpose plus several of the other items passes,
+      and some missing is not a failure. Fail when the first tab carries
+      little of this information, or when a cover-like page exists but is
+      not the first tab.

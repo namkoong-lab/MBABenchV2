@@ -3490,7 +3490,7 @@ def agentic_judge_case(
             wire_chars_at_call = _wire_char_total(state.messages)
 
             _msgs = state.messages
-            if identity.provider in ("anthropic", "openai"):
+            if identity.provider in ("anthropic", "openai", "tensorblock"):
                 # OpenAI (direct) 400s on emf/wmf/bmp/tiff parts just like
                 # Anthropic; OpenRouter normalizes them, direct API doesn't.
                 _msgs = strip_unsupported_anthropic_images(_msgs)
@@ -3503,7 +3503,7 @@ def agentic_judge_case(
                 # OpenAI chat/completions rejects function tools with any
                 # reasoning_effort except 'none' (gpt-5.5).
                 _create_kwargs["reasoning_effort"] = (
-                    "none" if identity.provider == "openai" else reasoning_effort
+                    "none" if identity.provider in ("openai", "tensorblock") else reasoning_effort
                 )
             _call_t0 = time.time()
             try:
@@ -3848,7 +3848,7 @@ def agentic_judge_case(
                 )
 
                 _msgs = state.messages
-                if identity.provider in ("anthropic", "openai"):
+                if identity.provider in ("anthropic", "openai", "tensorblock"):
                     _msgs = strip_unsupported_anthropic_images(_msgs)
                 _create_kwargs = {
                     "model": identity.model,
@@ -3857,7 +3857,7 @@ def agentic_judge_case(
                 }
                 if reasoning_effort is not None:
                     _create_kwargs["reasoning_effort"] = (
-                        "none" if identity.provider == "openai" else reasoning_effort
+                        "none" if identity.provider in ("openai", "tensorblock") else reasoning_effort
                     )
                 _call_t0 = time.time()
                 try:
@@ -4263,7 +4263,7 @@ def single_pass_judge_case(
     # _finalize_case threads them into scores.json / _metadata.json and the
     # DB write prefers them over the 12-category env values.
     versions = dict(prep["versions"])
-    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="7")
+    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="8")
     versions["PROMPT_VERSION"] = load_env_var(
         "SINGLE_PASS_PROMPT_VERSION", default="8"
     )
@@ -4623,7 +4623,7 @@ def single_pass_judge_case(
             evicted=0,
         )
         _msgs = state.messages
-        if identity.provider in ("anthropic", "openai"):
+        if identity.provider in ("anthropic", "openai", "tensorblock"):
             _msgs = strip_unsupported_anthropic_images(_msgs)
         _create_kwargs = {
             "model": identity.model,
@@ -4636,7 +4636,7 @@ def single_pass_judge_case(
             and not use_native_anthropic
         ):
             _create_kwargs["reasoning_effort"] = (
-                "none" if identity.provider == "openai" else reasoning_effort
+                "none" if identity.provider in ("openai", "tensorblock") else reasoning_effort
             )
         if use_native_anthropic:
             _api = "anthropic_messages"

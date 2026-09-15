@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.cell import range_boundaries
 
 try:
     from .logger import logger
@@ -626,6 +627,44 @@ def _fmt_list(items, limit=_MAX_LIST, fn=str) -> str:
     return "; ".join(shown) + (f"; (+{more} more)" if more > 0 else "")
 
 
+EXCEL_MAX_COLUMNS = 16384
+EXCEL_MAX_ROWS = 1048576
+
+
+def oversized_range_tag(sheet_props: dict) -> str:
+    """Evidence tag for rubric_9 check 25 (Reasonable file size): a sheet whose
+    declared extent reaches Excel's full width or height while its content
+    ends far earlier — the "oversized used range" the rubric names as bloat.
+
+    Deliberately extreme-only (2026-09-14): a ratio rule (declared >= 10x
+    content) flagged 59 of 471 cached real workbooks, golden solutions
+    included, on harmless 300-column extents. Full-sheet extents flag 3, all
+    one golden's sheet. Computed at render time from the stored properties,
+    so no cache generation bump. Empty/unknown used range -> no tag.
+    """
+    ur = sheet_props.get("used_range")
+    if not ur or ur == "unknown":
+        return ""
+    try:
+        _, _, last_col, last_row = range_boundaries(ur)
+    except Exception:  # noqa: BLE001
+        return ""
+    parts = []
+    mc = sheet_props.get("max_column") or 0
+    mr = sheet_props.get("max_row") or 0
+    if mc >= EXCEL_MAX_COLUMNS and last_col:
+        parts.append(
+            f"declared {mc:,} columns, content ends at column {last_col} "
+            f"({mc // last_col}x): OVERSIZED RANGE"
+        )
+    if mr >= EXCEL_MAX_ROWS and last_row:
+        parts.append(
+            f"declared {mr:,} rows, content ends at row {last_row} "
+            f"({mr // last_row}x): OVERSIZED RANGE"
+        )
+    return (" — " + "; ".join(parts)) if parts else ""
+
+
 def render_properties_text(
     props: Optional[dict],
     listed_files: Optional[set] = None,
@@ -703,6 +742,7 @@ def render_properties_text(
             f"{s.get('max_row')}x{s.get('max_column')} (used {s.get('used_range') or 'empty'}; "
             f"{s.get('n_values', '?')} values, {s.get('n_formulas', '?')} formulas"
             f"{', ' + str(s['n_spill_anchors']) + ' spill/array ranges' if s.get('n_spill_anchors') else ''})"
+            f"{oversized_range_tag(s)}"
         )
         lines.append(head)
         fp = s.get("freeze_panes")

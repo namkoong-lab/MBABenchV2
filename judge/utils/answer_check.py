@@ -7,9 +7,12 @@ Two jobs:
    per-question artifact rides with the grading as `answer_check.json`.
 2. **Decide** the harness-decidable checks — two under Accuracy (Final
    calculation accuracy, Deliverable completeness in the zero-answers case)
-   and, since v6.4, Rounding / Rounded outputs (an answer whose stored value
-   carries more decimals than the sheet asked for; a display format alone
-   does not round) — and hand the verdicts to the judge's scoring layer
+   — and hand the verdicts to the judge's scoring layer. Rounding /
+   Rounded outputs was a harness verdict from v6.4 to v6.5 (stored value
+   carrying more decimals than the sheet asked for); retired 2026-09-14 —
+   the judge's own verdict stands, and the rounding statistics
+   (`n_unrounded`, `rounding_directive`, per-question `attempt_rounded`)
+   are still measured and recorded for audit only
    (`harness_verdicts`), where the grading's `--accuracy-check harness|llm`
    flag chooses which engine's decisions land in the recorded total. BOTH
    engines' verdicts are always recorded, so the comparison never needs a
@@ -707,42 +710,21 @@ def harness_verdicts(result: dict, hardcoded_counts: bool = True) -> dict:
         )
     base[dc_key] = dc
 
-    # --- Rounding / Rounded outputs (v6.4): the sheet asked for a precision --
-    # Pat 2026-09-02: "if the instructions say to round, there should be a
-    # penalty for not rounding" — and it belongs here, not in the binary
-    # accuracy check. Decided only when the Questions sheet states a
-    # precision and the layout was trusted.
+    # --- Rounding / Rounded outputs: statistics only (harness verdict retired) --
+    # v6.4 (Pat 2026-09-02) decided this check from the Questions sheet's
+    # stored values. Retired 2026-09-14 after the toy-reliability
+    # walkthrough: the check covers every final output a reader sees (answer
+    # cells AND summary/output figures), rounding by number format now counts,
+    # and the harness could reverse a correct judge fail (toy 104: the judge
+    # failed a Summary shown to the cent; the harness, seeing 100 rounded
+    # answers, overlaid a pass). The judge's verdict stands; the measured
+    # statistics still ride along for audit.
     directive = result.get("rounding_directive") or {}
     ro = dict(base[ro_key], n_questions=n_q, n_unrounded=result.get("n_unrounded", 0),
               rounding_directive=directive)
-    if not any(v is not None for v in directive.values()):
-        ro["fallback_reason"] = "the Questions sheet states no rounding precision"
-    elif share < MEASURE_MIN_LOCATED_SHARE:
-        ro["fallback_reason"] = fa["fallback_reason"]
-    else:
-        mistakes = []
-        for q in result["questions"]:
-            if (q["located"] and q["verdict"] != "missing"
-                    and q.get("requested_decimals") is not None
-                    and q.get("attempt_rounded") is False):
-                mistakes.append({
-                    "location": q["attempt_cell"] or q["golden_cell"],
-                    "description": (
-                        f"Not rounded as instructed: \"{_short(q['label'])}\" holds "
-                        f"{q['got']!r} where the sheet asks for "
-                        f"{q['requested_decimals']} decimal places (a display format "
-                        f"alone does not round the stored value)."
-                    ),
-                    "severity": "minor",
-                })
-        ro["engine"] = "harness"
-        ro["decision"] = "pass" if not mistakes else "fail"
-        ro["mistakes"] = mistakes
-        ro["summary"] = (
-            f"Harness rounding check: {len(mistakes)} of {result['n_answered']} present "
-            f"answers are not rounded to the precision the Questions sheet asks for "
-            f"({', '.join(f'{k}: {v} dp' for k, v in directive.items() if v is not None)})."
-        )
+    ro["fallback_reason"] = (
+        "harness Rounded-outputs verdict retired 2026-09-14; stats recorded for audit only"
+    )
     base[ro_key] = ro
     return base
 

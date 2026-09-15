@@ -20,8 +20,9 @@ Rules (numbering matches render_rules_text and the v6 spec §3):
      rounded figures (two correct roundings can sit one notch apart at a
      boundary). v6.4 (Pat 2026-09-02): the band no longer requires the
      attempt to be rounded — 22 of 454 attempts failed the binary check on
-     presentation alone; not rounding as instructed is instead a harness
-     verdict under Rounding / Rounded outputs (answer_check). The decimals
+     presentation alone; not rounding as instructed is instead judged
+     under Rounding / Rounded outputs (by the judge — the v6.4 harness
+     verdict for that check was retired in v6.6). The decimals
      the comparison runs at come from the golden's own ROUND(...,n) when
      present (the key's real precision — the 4-dp tasks store ROUND(x,4) on
      a %-formatted fraction, not 6 places), else from the header phrase.
@@ -368,7 +369,7 @@ def is_rounded_to(value: float, decimals: int) -> bool:
     float representation noise — i.e. the agent actually rounded. The slack
     is relative 1e-12 of the scaled value (v6.4: the earlier 1e-6 slack let
     any value above ~10,000 count as rounded, which hid unrounded answers
-    from the Rounding / Rounded outputs verdict)."""
+    from the `n_unrounded` audit statistic)."""
     scaled = value * (10.0 ** decimals)
     return abs(scaled - round(scaled)) <= max(1e-9, abs(scaled) * 1e-12)
 
@@ -628,8 +629,8 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
     out["tolerance"] = tol
     out["tolerance_source"] = tol_src
     out["abs_delta"] = abs(a - b)
-    # Rounding compliance (v6.4): recorded per answer for the harness's
-    # Rounding / Rounded outputs verdict; never changes the equivalence verdict.
+    # Rounding compliance (v6.4): recorded per answer as an audit statistic
+    # (v6.6: no longer a harness verdict); never changes the equivalence verdict.
     dec, dec_src = stored_decimals(ctx, precision, e_pct_fmt)
     out["requested_decimals"] = dec
     out["decimals_source"] = dec_src
@@ -692,7 +693,12 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
 # formulas and authoritative for the decimals, outflow lexicon extended with
 # an inflow guard, rounding compliance moved to Rounding / Rounded outputs.
 # v6.3: prompt text trimmed (Patrick 2026-09-02); rules unchanged.
-RULES_VERSION = "v6.5"
+# v6.6 (2026-09-14, toy-reliability walkthrough): the harness verdict for
+# Rounding / Rounded outputs is retired — the judge decides it from every
+# final output a reader sees, and a number format counts as rounding. Rule
+# 11 now only keeps rounding out of Accuracy; the per-answer rounding
+# statistics stay recorded for audit.
+RULES_VERSION = "v6.6"
 
 
 def render_rules_text() -> str:
@@ -711,4 +717,4 @@ def render_rules_text() -> str:
   8. Zero: 0, 0.0 and an accounting "-" are all zero. A BLANK answer cell is UNANSWERED (that is a completeness failure, not an equivalence question).
   9. Unit scale is never forgiven: 1,234 vs 1,234,000 is WRONG even if a thousands/millions convention explains it — record it as a mistake and say "possible unit-scale difference" so a reviewer can see the cause.
  10. Hardcoded answers: an answer typed as a constant instead of a live formula referencing the model is a mistake for Final calculation accuracy even when the number is right (the rubric requires the workbook to calculate it). Text answers (Yes/No, sentinels) may be literal.
- 11. Rounding compliance: when the Questions sheet asks for a precision, an answer whose STORED value carries more decimals than asked (a display format alone does not round) fails Rounding / Rounded outputs; the harness decides that check from the cells and it never touches Final calculation accuracy."""
+ 11. Rounding is never an accuracy matter: whether answers are rounded as instructed is judged under Rounding / Rounded outputs, never under Final calculation accuracy."""

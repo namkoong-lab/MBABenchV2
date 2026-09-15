@@ -108,8 +108,15 @@ agentic_judge:
 # strictness tie-break, native Anthropic path with prompt caching. Grades
 # under version 6 are not comparable to version 5 rows (all deprecated).
 # 5 / template_7: the first single-pass build (2026-09-01).
+# 8 / template_8 (2026-09-14, toy-reliability walkthrough): the harness
+# verdict for Rounding / Rounded outputs is retired (rulebook v6.6, the
+# judge decides it), the properties block tags full-width/full-height sheets
+# OVERSIZED RANGE (check 25), and the guidance file grows from 27 to 36
+# notes (checks 2, 11, 16, 25, 37, 49, 55, 64-67, 82, 104, 107). Prompt
+# version and template unchanged. Rows graded under version 8 are not
+# comparable with version 7 rows.
 single_pass:
-  version: 7
+  version: 8
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500
