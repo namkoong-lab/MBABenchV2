@@ -85,6 +85,22 @@ def main() -> int:
         "openrouter base_url",
     )
 
+    print("Step 1b: tensorblock (Forge) provider resolves to the gateway + forge key")
+    tb = _write_registry(
+        VALID
+        + """
+- grader_model: tensorblock/gpt-5.6-sol
+  provider: tensorblock
+  model: tensorblock/gpt-5.6-sol
+  effort: none
+"""
+    )
+    tbi = resolve_judge_identity("tensorblock/gpt-5.6-sol", tb)
+    check(tbi.base_url == "https://api.forge.tensorblock.co/v1", "forge base_url")
+    check(tbi.api_key_provider == "forge", "forge key entry (never openai/anthropic)")
+    from utils.repo_config import API_KEYS
+    check(API_KEYS["forge"] == ("FORGE_API_KEY", "forge_api_key"), "forge key names")
+
     print("Step 2: duplicate label refused")
     dup_label = _write_registry(
         VALID

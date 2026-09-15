@@ -28,6 +28,16 @@ PROVIDERS = {
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/", "gemini"),
     "anthropic": ("https://api.anthropic.com/v1/", "anthropic"),
     "openai": (None, "openai"),
+    # TensorBlock Forge — OpenAI-compatible gateway, separate key and
+    # billing (Forge credits). Probed 2026-09-15 on tensorblock/gpt-5.6-sol:
+    # reasoning_effort is forwarded (an invalid level is rejected upstream),
+    # function tools work, usage carries cached_tokens, no per-call cost.
+    # The upstream is OpenAI's chat/completions, so the judge treats it like
+    # provider "openai" for request shaping (image-part stripping, tools
+    # forcing effort "none") and routes real reasoning tiers through
+    # /v1/responses like provider "openai" (Forge forwards encrypted
+    # reasoning items; probed with a two-round tool exchange at high).
+    "tensorblock": ("https://api.forge.tensorblock.co/v1", "forge"),
 }
 
 # (provider, model, effort) — the axes that make two graders different.
@@ -131,7 +141,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> Dict[str, JudgeIdentity]:
 def _stanza(label: str) -> str:
     return "\n".join([
         f"- grader_model: {label}",
-        "  provider: openrouter              # openrouter | gemini | anthropic | openai",
+        "  provider: openrouter              # openrouter | gemini | anthropic | openai | tensorblock",
         "  model: <id sent on the wire>      # full slug for openrouter; bare id otherwise",
         "  effort: minimal                   # reasoning_effort; null = don't send",
     ])

@@ -47,10 +47,14 @@ except ImportError:  # imported as a bare module (utils/ on sys.path)
 def wants_responses_api(provider: str, reasoning_effort) -> bool:
     """True when this call must route via /v1/responses.
 
-    Only OpenAI, and only for a real reasoning tier — effort None or 'none'
-    stays on chat/completions, the path every existing OpenAI grading used.
+    Only the OpenAI wire (direct, or via the TensorBlock Forge gateway —
+    probed 2026-09-15: Forge forwards /v1/responses with store=False and
+    returns reasoning items with encrypted_content, and a two-round tool
+    exchange resending them succeeds), and only for a real reasoning tier —
+    effort None or 'none' stays on chat/completions, the path every existing
+    OpenAI grading used.
     """
-    return provider == "openai" and reasoning_effort not in (None, "none")
+    return provider in ("openai", "tensorblock") and reasoning_effort not in (None, "none")
 
 
 class ReasoningState:

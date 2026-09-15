@@ -138,6 +138,18 @@ class ExcelTaskExecutor:
             if "openrouter" in self.base_url.lower():
                 self.api_key = (os.getenv("OPENROUTER_API_KEY") or repo_value("keys", "openrouter_api_key")
                                 or api_key or os.getenv("OPENAI_API_KEY") or "no-key")
+            elif "tensorblock" in self.base_url.lower():
+                # TensorBlock Forge gateway (api.forge.tensorblock.co): its own
+                # key, bills Forge credits only — never fall back to an OpenAI
+                # or Anthropic key here. OpenAI-compatible wire, so the direct
+                # reasoning_effort format applies.
+                self.api_key = (os.getenv("FORGE_API_KEY") or repo_value("keys", "forge_api_key") or "")
+                if not self.api_key:
+                    raise ValueError(
+                        "Forge base_url set but no Forge key: set FORGE_API_KEY or "
+                        "keys.forge_api_key in <MBABenchV2>/config/config.yaml"
+                    )
+                self.use_openai_direct = True
             else:
                 self.api_key = (api_key or os.getenv("OPENAI_API_KEY") or repo_value("keys", "openai_api_key")
                                 or os.getenv("OPENROUTER_API_KEY") or "no-key")

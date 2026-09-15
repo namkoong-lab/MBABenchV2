@@ -155,6 +155,9 @@ API_KEYS = {
     "gemini": ("GEMINI_API_KEY", "gemini_api_key"),
     "anthropic": ("ANTHROPIC_API_KEY", "anthropic_api_key"),
     "openai": ("OPENAI_API_KEY", "openai_api_key"),
+    # TensorBlock Forge gateway (judge provider "tensorblock"): its own key,
+    # so a Forge-routed grader can only ever bill Forge credits.
+    "forge": ("FORGE_API_KEY", "forge_api_key"),
 }
 
 

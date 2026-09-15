@@ -179,6 +179,11 @@ _MODEL_PRICING = {
     # from Patrick's isolated-window credits-dashboard deltas after the runs
     # ($/MTok = delta / token_tracking totals), then recalibrate here.
     "openai/gpt-5.6-sol": (5.0, 30.0),       # OpenAI list (matches cli models_config)
+    # Forge does not return per-call cost and publishes no price in
+    # models.list; OpenAI's list rate is assumed until a Forge credit diff
+    # verifies it (2026-09-15). Cached tokens are priced at the full input
+    # rate for this provider (no _CACHE_PRICING entry) until measured.
+    "tensorblock/gpt-5.6-sol": (5.0, 30.0),
     "anthropic/claude-opus-5": (5.0, 25.0),  # Anthropic list price
     # (gemini-3.7-flash now priced above at the 2026-08-31 OpenRouter list —
     # a stale duplicate entry here was silently shadowing it, since the
@@ -354,8 +359,8 @@ def robust_send_message(
                 kwargs["response_format"] = response_format
             if reasoning_effort is not None:
                 kwargs["reasoning_effort"] = reasoning_effort
-            if identity.provider == "openai":
-                # OpenAI (direct) 400s on non-image MIME parts (emf/wmf/bmp/
+            if identity.provider in ("openai", "tensorblock"):
+                # OpenAI (direct, or via the Forge gateway) 400s on non-image MIME parts (emf/wmf/bmp/
                 # tiff embedded in workbooks) exactly like Anthropic; the
                 # OpenRouter route normalized these, the direct API doesn't.
                 kwargs["messages"] = strip_unsupported_anthropic_images(

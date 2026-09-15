@@ -49,6 +49,7 @@ keys:
   anthropic_api_key: "${env:ANTHROPIC_API_KEY}"    # cli-agents: Anthropic-direct runs
   openai_api_key: "${env:OPENAI_API_KEY}"          # cli-agents: OpenAI/vLLM runs + MCP analysis tools
   openrouter_api_key: "${env:OPENROUTER_API_KEY}"  # cli-agents: OpenRouter runs
+  forge_api_key: "${env:FORGE_API_KEY}"            # TensorBlock Forge gateway (judge tensorblock/* graders); bills Forge credits only
 
 venv_path: null
 

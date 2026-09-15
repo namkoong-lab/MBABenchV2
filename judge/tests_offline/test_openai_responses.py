@@ -40,6 +40,8 @@ check(not oa.wants_responses_api("openai", "none"), "openai+none stays chat")
 check(not oa.wants_responses_api("openai", None), "openai+None stays chat")
 check(not oa.wants_responses_api("anthropic", "max"), "anthropic never routes")
 check(not oa.wants_responses_api("openrouter", "high"), "openrouter never routes")
+check(oa.wants_responses_api("tensorblock", "low"), "tensorblock(Forge)+low -> responses")
+check(not oa.wants_responses_api("tensorblock", "none"), "tensorblock+none stays chat")
 
 # ---------------------------------------------------------------------------
 # Tool conversion

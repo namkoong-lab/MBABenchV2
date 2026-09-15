@@ -105,3 +105,13 @@
   provider: anthropic
   model: claude-sonnet-5
   effort: high                        # Anthropic's own default for Sonnet 5 = the bake-off "Sonnet, high (default)" arm
+
+# TensorBlock Forge route (2026-09-15). Same model and effort as
+# openai/gpt-5.6-sol, reached through the Forge gateway and billed to Forge
+# credits — a separate label so every grading row shows the route. Ladder-
+# tested 2026-09-15: models.list, plain chat, function tools + effort none
+# (reasoning_tokens 0), invalid effort rejected upstream (pass-through).
+- grader_model: tensorblock/gpt-5.6-sol
+  provider: tensorblock
+  model: tensorblock/gpt-5.6-sol       # Forge's id; the response echoes gpt-5.6-sol-2026-07-09
+  effort: none                        # real tiers (low..xhigh) also work — routed via /v1/responses like provider openai

@@ -347,11 +347,13 @@ def main():
     # per provider from base_url, so this only needs to find *a* key.
     base_url = getattr(args, 'base_url', None) or os.getenv("BASE_URL")
     api_key = (args.api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-               or os.getenv("ANTHROPIC_API_KEY") or repo_value("keys", "openai_api_key")
-               or repo_value("keys", "openrouter_api_key") or repo_value("keys", "anthropic_api_key"))
+               or os.getenv("ANTHROPIC_API_KEY") or os.getenv("FORGE_API_KEY")
+               or repo_value("keys", "openai_api_key")
+               or repo_value("keys", "openrouter_api_key") or repo_value("keys", "anthropic_api_key")
+               or repo_value("keys", "forge_api_key"))
     if not api_key and not (base_url and "localhost" in base_url):
-        print("❌ API key required. Set OPENAI_API_KEY, OPENROUTER_API_KEY, or "
-              "ANTHROPIC_API_KEY in .env, or keys.* in <MBABenchV2>/config/config.yaml")
+        print("❌ API key required. Set OPENAI_API_KEY, OPENROUTER_API_KEY, "
+              "ANTHROPIC_API_KEY or FORGE_API_KEY in .env, or keys.* in <MBABenchV2>/config/config.yaml")
         return 1
     if not api_key:
         api_key = "no-key"  # Local servers (vLLM/SGLang) don't need a real key

@@ -188,6 +188,14 @@ def _candidate_slugs(model: str) -> list:
     "anthropic/claude-opus-4.8", "gpt-5.6-sol" as "openai/gpt-5.6-sol".
     """
     candidates = [model]
+    # TensorBlock Forge ids carry a "tensorblock/" prefix over the bare
+    # direct-API name ("tensorblock/gpt-5.6-sol"); price and context come
+    # from the bare id's usual sources. Forge publishes no prices, so this
+    # is the OpenRouter/list rate, not necessarily what Forge credits charge.
+    if model.startswith("tensorblock/"):
+        bare = model[len("tensorblock/"):]
+        candidates.append(bare)
+        model = bare
     dotted = re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", model)
     if dotted != model:
         candidates.append(dotted)
@@ -229,6 +237,8 @@ def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
     """
     if model in DIRECT_API_PRICING:
         return DIRECT_API_PRICING[model]
+    if model.startswith("tensorblock/") and model[len("tensorblock/"):] in DIRECT_API_PRICING:
+        return DIRECT_API_PRICING[model[len("tensorblock/"):]]
     live = _fetch_live_pricing()
     if live:
         for slug in _candidate_slugs(model):
@@ -271,6 +281,8 @@ def resolve_context_window(model: str) -> int:
                 return ctx
     if model in MODEL_CONTEXT_WINDOWS:
         return MODEL_CONTEXT_WINDOWS[model]
+    if model.startswith("tensorblock/") and model[len("tensorblock/"):] in MODEL_CONTEXT_WINDOWS:
+        return MODEL_CONTEXT_WINDOWS[model[len("tensorblock/"):]]
     key = f"ctx:{model}"
     if key not in _pricing_warned:
         _pricing_warned.add(key)

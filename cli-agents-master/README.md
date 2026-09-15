@@ -121,8 +121,11 @@ module installed by the workspace):
   (falls back to boto3's default chain: env vars, `AWS_PROFILE`, `~/.aws`).
 - `aws.s3_bucket` — bucket name (default `mbabench`).
 - `keys.anthropic_api_key` / `keys.openai_api_key` /
-  `keys.openrouter_api_key` — model API keys. Env vars (below) take
-  precedence when both are set.
+  `keys.openrouter_api_key` / `keys.forge_api_key` — model API keys. Env
+  vars (below) take precedence when both are set. `forge_api_key` is the
+  TensorBlock Forge gateway (`base_url: https://api.forge.tensorblock.co/v1`,
+  model ids `tensorblock/<name>`); it bills Forge credits and never falls
+  back to another key.
 
 ### Environment Variables
 
@@ -186,7 +189,7 @@ LibreOffice 24.8+ evaluates both).
 
 - **Local Mode**: Run from local folders with just an API key — no database or cloud setup
 - **Auto Pipeline**: DB-driven task discovery, S3 upload, trial management for production benchmarking
-- **Any LLM Provider**: Works with OpenRouter, OpenAI, Anthropic, vLLM, SGLang via unified `base_url`
+- **Any LLM Provider**: Works with OpenRouter, OpenAI, Anthropic, TensorBlock Forge, vLLM, SGLang via unified `base_url`
 - **21 Excel Tools**: File ops, worksheets, cells, formulas, formatting, validation via MCP
 - **Formula Recalculation**: LibreOffice auto-recalc after every formula change
 - **Structured Logging**: `attempts.jsonl` (local) or DB `task_attempts` table (auto mode)
