@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Export the banked "good attempt" manifest for the MBABenchV2 corpus.
 
-One entry per (pipeline, model, task) for the eight study cohorts:
-4 pipelines (gui, api, coding_cli, excel) x 2 models (Claude Fable 5, GPT-5.6 Sol).
+One entry per (pipeline, model, task) for the four production cohorts of the
+101-task rerun: GUI (Fable 5.1 cowork/max, GPT-6 Astra work/ultra) and Excel
+add-in (Fable 5.1, GPT-5.6 Sol xhigh), all at prompt_version 205.
 A good attempt = task_attempts row that is not deprecated and not agent_failed
 (a run that hit the iteration cap is recorded agent_failed=False by design and
 counts). Smoke rows (prompt_version 0) are excluded.
@@ -37,22 +38,15 @@ import psycopg2  # noqa: E402
 # (system v15 + template v9, rubric-scrubbed), coding 113 (template v13, rubric-scrubbed). ONLY these count —
 # every earlier prompt version is ignored by this manifest, so a task is
 # "missing" until it has a good attempt on the current prompts.
-LATEST_PV = {"gui": 205, "excel": 205, "api": 1509, "coding_cli": 113}
+LATEST_PV = {"gui": 205, "excel": 205}
 
 COHORTS = [
     # (pipeline, model, agent_model_type, agent_model_name, approved prompt versions)
-    # TODO(2026-09-10): the 101-task rerun uses new model labels (GUI:
-    # claude_fable_5_1_cowork_max / chatgpt_gpt_6_astra_work_ultra are
-    # registered; CLI / coding / Excel labels pending). Update the labels
-    # below when each cohort's identity is registered.
-    ("gui",        "fable", "gui",        "claude_fable_5_cowork_max",              (LATEST_PV["gui"],)),
-    ("gui",        "sol",   "gui",        "chatgpt_gpt_5_6_sol_work_ultra",         (LATEST_PV["gui"],)),
-    ("api",        "fable", "api",        "openpyxl_anthropic/claude-fable-5-max",   (LATEST_PV["api"],)),
-    ("api",        "sol",   "api",        "openpyxl_openai/gpt-5.6-sol-xhigh",      (LATEST_PV["api"],)),
-    ("coding_cli", "fable", "coding_cli", "claudecode_anthropic/claude-fable-5-max", (LATEST_PV["coding_cli"],)),
-    ("coding_cli", "sol",   "coding_cli", "codex_openai/gpt-5.6-sol-xhigh",         (LATEST_PV["coding_cli"],)),
-    ("excel",      "fable", "excel",      "claude_excel_fable_5",                   (LATEST_PV["excel"],)),
-    ("excel",      "sol",   "excel",      "chatgpt_excel_gpt_5_6_sol_xhigh",        (LATEST_PV["excel"],)),
+    # The four production cohorts of the 101-task v2 rerun (2026-09-10 onward).
+    ("gui",   "fable", "gui",   "claude_fable_5_1_cowork_max",     (LATEST_PV["gui"],)),
+    ("gui",   "astra", "gui",   "chatgpt_gpt_6_astra_work_ultra",  (LATEST_PV["gui"],)),
+    ("excel", "fable", "excel", "claude_excel_fable_5_1",          (LATEST_PV["excel"],)),
+    ("excel", "sol",   "excel", "chatgpt_excel_gpt_5_6_sol_xhigh", (LATEST_PV["excel"],)),
 ]
 
 def jsonable(v):
@@ -121,7 +115,7 @@ def main():
     out = {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "database": dbname,
-        "design": {"pipelines": 4, "models": 2, "tasks": len(tasks), "expected_attempts": 8 * len(tasks),
+        "design": {"cohorts": len(COHORTS), "tasks": len(tasks), "expected_attempts": len(COHORTS) * len(tasks),
                    "task_id_range": [1, max_id]},
         "tasks_outside_scope": outside,
         "total_good_attempts": len(attempts),
@@ -130,7 +124,7 @@ def main():
     }
     with open(args.out, "w") as f:
         json.dump(out, f, indent=2, default=jsonable)
-    print(f"{dbname}: {len(attempts)} good attempts of {8*len(tasks)} expected (tasks 1-{max_id}) -> {args.out}")
+    print(f"{dbname}: {len(attempts)} good attempts of {len(COHORTS)*len(tasks)} expected (tasks 1-{max_id}) -> {args.out}")
     if outside:
         print(f"  NOTE: {len(outside)} jp tasks outside scope (ids {outside[0]['task_id']}-{outside[-1]['task_id']}) listed under tasks_outside_scope")
     for c in cohort_summary:
