@@ -37,6 +37,15 @@ judge:
   # grade anyway (recorded in scored_results.formula_cache).
   uncached_formula_max_ratio: 0.5
 
+  # Retired rubric_9 checks (judge v9, 2026-09-16): forced not_applicable on
+  # every task, never prompted or scored; the category rescales around them
+  # like suitability gating. The rubric keeps its 132-position numbering
+  # (toys, annotations and past gradings are keyed by position), so this is
+  # a rule, not a deletion. utils/rubric_suitability.RETIRED_CHECK_NAMES pins
+  # the name each number must carry; a mismatch refuses to grade.
+  # 37 = M&A / divestiture flexibility, 101 = Architecture suited to audience.
+  retired_checks: "37,101"
+
   do_rounding: true
   float_rounding: 6
   percentage_rounding: 8
@@ -116,7 +125,12 @@ agentic_judge:
 # version and template unchanged. Rows graded under version 8 are not
 # comparable with version 7 rows.
 single_pass:
-  version: 8
+  # 9 (2026-09-16): evidence flags (PERIOD SERIES, content fit, WIDE
+  # OUTLIER, date literals in formulas), checks 37 and 101 retired by rule
+  # (judge.retired_checks), guidance 36 -> 42 notes. Prompt version and
+  # template unchanged. Rows graded under version 9 are not comparable with
+  # version 8 rows.
+  version: 9
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500

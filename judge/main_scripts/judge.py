@@ -4263,7 +4263,7 @@ def single_pass_judge_case(
     # _finalize_case threads them into scores.json / _metadata.json and the
     # DB write prefers them over the 12-category env values.
     versions = dict(prep["versions"])
-    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="8")
+    versions["JUDGE_VERSION"] = load_env_var("SINGLE_PASS_VERSION", default="9")
     versions["PROMPT_VERSION"] = load_env_var(
         "SINGLE_PASS_PROMPT_VERSION", default="8"
     )

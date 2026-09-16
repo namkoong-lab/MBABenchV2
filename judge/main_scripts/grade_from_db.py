@@ -1276,20 +1276,22 @@ def main(args):
         # runs. Namespaced by database name because task/attempt ids collide
         # across the v1 and v2 databases.
         cache_root = Path(scratch_base) / "grade_cache" / cache_namespace()
-        # Cache generations: "_v2" (2026-08) added the *_data.csv serving
+        # Cache generations: "_v7" (2026-09-16, judge v9) properties schema 4
+        # — period-series scan, content fit, date literals in formulas;
+        # "_v2" (2026-08) added the *_data.csv serving
         # variants; "_v3" (2026-09) _workbook_properties.json; "_v4"
         # (2026-09-09, judge v7) hyperlinks / page breaks / grouping / CF
         # styles / hidden names in the properties block and Excel-style
         # dates, accounting zeros, hidden-format and data-table tagging in
         # the cells. Older generations must never be reused; their dirs are
         # left untouched.
-        solution_cache_base = cache_root / "solution_csv_cache_v6"
+        solution_cache_base = cache_root / "solution_csv_cache_v7"
         solution_cache_base.mkdir(parents=True, exist_ok=True)
-        attempt_cache_base = cache_root / "attempt_csv_cache_v6"
+        attempt_cache_base = cache_root / "attempt_csv_cache_v7"
         attempt_cache_base.mkdir(parents=True, exist_ok=True)
         # Starting-workbook CSVs are per task, like solution CSVs. New cache
         # family (2026-09) — existing solution/attempt caches stay valid.
-        starting_cache_base = cache_root / "starting_csv_cache_v6"
+        starting_cache_base = cache_root / "starting_csv_cache_v7"
         starting_cache_base.mkdir(parents=True, exist_ok=True)
         # Phase A: per-task suitability annotations, fetched once per run and
         # staged into each task folder (the judge enforces the v2 rule).

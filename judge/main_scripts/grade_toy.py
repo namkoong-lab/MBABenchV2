@@ -43,7 +43,7 @@ sys.path.insert(0, str(_judge_root))
 
 import psycopg2  # noqa: E402
 import psycopg2.extras  # noqa: E402
-from utils import repo_config, rubric_guidance  # noqa: E402
+from utils import repo_config, rubric_guidance, rubric_suitability  # noqa: E402
 from utils.judge_identity import resolve_judge_identity  # noqa: E402
 from utils.llm_utils import get_client  # noqa: E402
 from utils.logger import add_log_file, logger  # noqa: E402
@@ -345,6 +345,13 @@ def main():
 
     conn = None if (args.no_db_write and args.manifest) else gfd.get_db_connection()
     toys = toys_from_manifest(args.manifest, flat, args.checks) if args.manifest else toys_from_db(conn, args.checks)
+    # Retired checks (judge v9): the judge forces them not_applicable on every
+    # grading, so a targeted toy for one would prompt for nothing. Skip them.
+    retired = rubric_suitability.retired_check_numbers(rubric)
+    dropped = [t["check_no"] for t in toys if t["check_no"] in retired]
+    if dropped:
+        logger.warning(f"Skipping toys for RETIRED checks {dropped} (project_configs judge.retired_checks)")
+        toys = [t for t in toys if t["check_no"] not in retired]
     if not toys:
         logger.error("No toys selected"); sys.exit(3)
     unknown = sorted(set(args.checks or []) - {t["check_no"] for t in toys})
@@ -423,7 +430,7 @@ def main():
                 pend.write_text(json.dumps({"run_id": run_id, "toy": toy, "variant": variant, "repeat_no": repeat_no,
                                             "target": None if args.full_rubric else check_no, "result": result,
                                             "verdict": verdict, "versions": versions, "model": args.model}, default=str))
-                logger.error(f"  DB insert failed twice ({e}); row parked at {pend} — backfill with scratch/backfill_toy_grading.py")
+                logger.error(f"  DB insert failed twice ({e}); row parked at {pend} — backfill with operation_scripts/backfill_toy_grading.py")
     if write_db:
         def _finish(c):
             with c.cursor() as cur:

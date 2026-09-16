@@ -13,9 +13,16 @@ text block for the judge's seed prompt.
 Where a property cannot be read the block says so explicitly ("unknown"),
 so the model can tell "absent" from "not provided".
 
-Cache generation: files written here ride in `*_csv_cache_v6` — a v2 cache
+Cache generation: files written here ride in `*_csv_cache_v7` — a v2 cache
 has no properties file and the loaders degrade to the old behaviour
 (alphabetical listing, no block), which is why the generation was bumped.
+`_v7` (2026-09-16, judge v9): schema 4 adds the evidence flags from the
+toy-reliability walkthrough — PERIOD SERIES scan per sheet (orientation,
+OUT OF ORDER, unlabeled gaps, VERTICAL PERIOD SERIES on a horizontal tab,
+content past an End-style marker), content-vs-column-width fit (NUMERIC
+exceeds width / TEXT cut off), and formulas carrying a typed date-like
+string literal. WIDE OUTLIER (column widths) is render-time from the
+stored widths. Extraction now also receives the data-only workbook.
 `_v6` (2026-09-10 pm): light yellows at the 60-degree hue boundary are named
 `light_yellow`, not `olive` (canary on check 47); schema unchanged.
 `_v5` (2026-09-10, judge v7 tier 2): schema 3 adds the active cell per
@@ -36,7 +43,9 @@ data-table tagging). A v3 cache lacks all of that, so the generation moved.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -49,10 +58,20 @@ except ImportError:  # imported as a bare module (utils/ on sys.path)
     from logger import logger
 
 FILENAME = "_workbook_properties.json"
-SCHEMA_VERSION = 3   # 3 (2026-09-10): active cell, styled empty cells, spill counts, theme hex on colours
+SCHEMA_VERSION = 4   # 4 (2026-09-16, judge v9): period series scan, content fit, date literals in formulas
+                     # 3 (2026-09-10): active cell, styled empty cells, spill counts, theme hex on colours
                      # 2 (2026-09-09): hyperlinks, page breaks, grouping, CF styles, hidden names, vba, origin
 _MAX_LIST = 25          # per-list cap in the rendered text (JSON keeps everything)
 _MAX_COMMENT_CHARS = 160
+DEFAULT_COL_WIDTH = 8.43
+
+# --- judge v9 evidence-flag thresholds (module constants; see README v9) ----
+WIDE_OUTLIER_RATIO = 2.5       # a run of >=2 equal-width columns this many times wider than its neighbours
+WIDE_OUTLIER_MIN_NEIGHBOUR = 4.0   # spacer columns (width < 4) are not neighbours
+PERIOD_MIN_RUN = 3             # labels in a row/column before it counts as a period series
+PERIOD_YEAR_MIN, PERIOD_YEAR_MAX = 1990, 2100
+FIT_MARGIN_CHARS = 1.0         # text must exceed the column by more than this to be counted
+NUMERIC_FIT_MARGIN_CHARS = 1.5 # a number must exceed the column by more than this to be called ### (estimator error band)
 
 
 def _safe(fn, default="unknown"):
@@ -147,7 +166,407 @@ def _color_text(color, palette=None) -> Optional[str]:
 _SYSTEM_NAME_PREFIXES = ("IQ_", "IQB_", "Risk", "Pal_", "_xlnm", "solver_", "_xlfn", "Slicer_")
 
 
-def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None) -> dict:
+# ---------------------------------------------------------------------------
+# judge v9 evidence flags (extraction-time; toy-reliability walkthrough 2026-09-16)
+# ---------------------------------------------------------------------------
+
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
+_RE_YEAR = re.compile(r"^(?:FY|CY|FYE|YE)?\s?'?(\d{4})\s?[AEFPB]?$", re.I)          # 2026, FY2026, 2026E
+_RE_FY2 = re.compile(r"^(?:FY|CY)\s?'?(\d{2})\s?[AEFPB]?$", re.I)                    # FY26
+_RE_Q_Y = re.compile(r"^Q([1-4])\s*[-/' ]?\s*(?:FY|CY)?\s?'?(\d{4}|\d{2})\s?[AEFPB]?$", re.I)   # Q1 2028, Q1'28
+_RE_Y_Q = re.compile(r"^(?:FY|CY)?\s?'?(\d{4})\s*[-/ ]?\s*Q([1-4])$", re.I)          # 2028 Q1, 2028-Q1
+_RE_MON_Y = re.compile(r"^([A-Za-z]{3})[a-z]*\.?\s*[-/' ]?\s*'?(\d{4}|\d{2})$")      # Jan-26, Jan 2026, January 2026
+_RE_Y_MON = re.compile(r"^(\d{4})\s*[-/ ]\s*([A-Za-z]{3})[a-z]*\.?$")                # 2026-Jan
+_RE_DATE_LITERAL = re.compile(
+    r"\"(?:\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})|\d{4}[./-]\d{1,2}[./-]\d{1,2})\""
+)
+_RE_END_MARKER = re.compile(
+    r"^[\s<>\-=*_#]*end(?:\s+of)?(?:\s+(?:sheet|model|calculations?|calcs?|tab|worksheet|section))?[\s<>\-=*_#.!]*$",
+    re.I,
+)
+
+
+def _two_digit_year(yy: int) -> int:
+    return 2000 + yy if yy < 70 else 1900 + yy
+
+
+def _period_key(v) -> Optional[tuple]:
+    """Period-style label -> (year, month, day) sort key, or None.
+
+    Plain numbers are NOT classified here: a row of values that happen to lie
+    in 1990-2100 is data, not a timeline. `_numeric_year_run` admits numeric
+    years only when a run is consecutive (2026, 2027, 2028 ...)."""
+    if isinstance(v, _dt.datetime):
+        return (v.year, v.month, v.day) if PERIOD_YEAR_MIN <= v.year <= PERIOD_YEAR_MAX else None
+    if isinstance(v, _dt.date):
+        return (v.year, v.month, v.day) if PERIOD_YEAR_MIN <= v.year <= PERIOD_YEAR_MAX else None
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s or len(s) > 24:
+        return None
+    # a year-only label sorts at the END of its year (12, 31): a fiscal-year
+    # total column after Q4 (Q4'22, FY'22, Q1'23) is in order
+    m = _RE_YEAR.match(s)
+    if m:
+        y = int(m.group(1))
+        return (y, 12, 31) if PERIOD_YEAR_MIN <= y <= PERIOD_YEAR_MAX else None
+    m = _RE_FY2.match(s)
+    if m:
+        return (_two_digit_year(int(m.group(1))), 12, 31)
+    m = _RE_Q_Y.match(s)
+    if m:
+        q, y = int(m.group(1)), m.group(2)
+        y = int(y) if len(y) == 4 else _two_digit_year(int(y))
+        return (y, q * 3, 0) if PERIOD_YEAR_MIN <= y <= PERIOD_YEAR_MAX else None
+    m = _RE_Y_Q.match(s)
+    if m:
+        y, q = int(m.group(1)), int(m.group(2))
+        return (y, q * 3, 0) if PERIOD_YEAR_MIN <= y <= PERIOD_YEAR_MAX else None
+    m = _RE_MON_Y.match(s)
+    if m and m.group(1).lower() in _MONTHS:
+        y = m.group(2)
+        y = int(y) if len(y) == 4 else _two_digit_year(int(y))
+        return (y, _MONTHS[m.group(1).lower()], 0) if PERIOD_YEAR_MIN <= y <= PERIOD_YEAR_MAX else None
+    m = _RE_Y_MON.match(s)
+    if m and m.group(2).lower() in _MONTHS:
+        y = int(m.group(1))
+        return (y, _MONTHS[m.group(2).lower()], 0) if PERIOD_YEAR_MIN <= y <= PERIOD_YEAR_MAX else None
+    return None
+
+
+def _numeric_year(v) -> Optional[int]:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if float(v) != int(v):
+        return None
+    y = int(v)
+    return y if PERIOD_YEAR_MIN <= y <= PERIOD_YEAR_MAX else None
+
+
+def _label_text(v) -> str:
+    if isinstance(v, _dt.datetime):
+        return v.strftime("%Y-%m-%d") if (v.hour or v.minute) == 0 else v.isoformat(" ")
+    if isinstance(v, _dt.date):
+        return v.isoformat()
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return str(v).strip()
+
+
+def _is_formula(v) -> bool:
+    return (isinstance(v, str) and v.startswith("=") and v != "=") or type(v).__name__ in ("ArrayFormula", "DataTableFormula")
+
+
+def _has_content(v) -> bool:
+    return v is not None and not (isinstance(v, str) and not v.strip())
+
+
+def _line_runs(cells: list, positions: list[int]):
+    """Period runs along one row or column.
+
+    `cells` are the values in order, `positions` their 1-based indexes. Yields
+    dicts {start, end, keys, labels, gaps} where a gap is a blank cell inside
+    the run (recorded for the "unlabeled gap" evidence). String/date labels
+    qualify on their own; plain numeric years qualify only as a monotonic
+    run stepping by 0 or 1 with at least two distinct years (2026, 2027,
+    2028 ... or a monthly model's 2027, 2028, 2028, 2028 ...).
+    """
+    n = len(cells)
+    i = 0
+    while i < n:
+        key = _period_key(cells[i])
+        ny = _numeric_year(cells[i]) if key is None else None
+        if key is None and ny is None:
+            i += 1
+            continue
+        start = i
+        keys: list = []
+        labels: list = []
+        gaps: list = []
+        numeric_only = key is None
+        j = i
+        last_num = None
+        direction = None
+        while j < n:
+            v = cells[j]
+            k = _period_key(v)
+            y = _numeric_year(v) if k is None else None
+            if k is not None:
+                if numeric_only and keys:
+                    break   # a numeric run does not absorb string labels (different header row style)
+                numeric_only = False
+                keys.append(k); labels.append(_label_text(v)); j += 1
+                continue
+            if y is not None and numeric_only:
+                # numeric years: steps of 0 or 1 in one direction (a monthly
+                # model repeats the year across its months; 2027 2028 2028 ...)
+                if last_num is not None:
+                    step = y - last_num
+                    if abs(step) > 1:
+                        break
+                    if step != 0:
+                        if direction is None:
+                            direction = step
+                        elif step != direction:
+                            break
+                keys.append((y, 12, 31)); labels.append(str(y)); last_num = y; j += 1
+                continue
+            if y is not None and not numeric_only:
+                break
+            # blank cell: a gap only when the run continues right after it
+            if not _has_content(v) and keys and j + 1 < n and (
+                _period_key(cells[j + 1]) is not None or (numeric_only and _numeric_year(cells[j + 1]) is not None)
+            ) and (not gaps or gaps[-1] != j - 1):
+                gaps.append(j); j += 1
+                continue
+            break
+        if len(keys) >= PERIOD_MIN_RUN and not (numeric_only and len({k[0] for k in keys}) < 2):
+            end = j - 1
+            while end > start and not _has_content(cells[end]):
+                end -= 1
+            yield {"start": positions[start], "end": positions[end], "keys": keys, "labels": labels,
+                   "gaps": [positions[g] for g in gaps], "numeric": numeric_only}
+        i = max(j, i + 1)
+
+
+def _out_of_order(keys: list) -> bool:
+    """True only for a NON-monotonic run. A strictly descending series (a
+    newest-first statement, DEC '25 ... DEC '20) is ordered, just reversed;
+    goldens carry those on source-data sheets."""
+    asc = all(b >= a for a, b in zip(keys, keys[1:]))
+    desc = all(b <= a for a, b in zip(keys, keys[1:]))
+    return not (asc or desc)
+
+
+def _scan_period_series(ws, ws_values, bounds: dict) -> dict:
+    """PERIOD SERIES evidence for rubric_9 checks 108/123/124/125 (judge v9).
+
+    Walks the data-only sheet once. Horizontal runs (a row of >=3 period
+    labels) define the sheet's main timeline. A vertical run is reported as
+    VERTICAL PERIOD SERIES only on a sheet that has a horizontal run and only
+    when the cells beside the run are formulas (an Assumptions-style year
+    list with typed inputs beside it is a register and stays silent). Also
+    reports the last End-style marker and any content below it.
+    """
+    out: dict[str, Any] = {"horizontal": [], "vertical": [], "out_of_order": [], "gaps": [],
+                           "end_marker": None}
+    rows_vals: dict[int, list] = {}
+    col_cells: dict[int, list] = {}
+    value_rows: dict[int, set] = {}
+    end_marker = None
+    min_c = bounds.get("min_col", 1)
+    for r, row in enumerate(ws_values.iter_rows(**bounds), bounds.get("min_row", 1)):
+        if not row:
+            continue
+        # read-only sheets yield EmptyCell objects without .row/.column, so
+        # the row number comes from the enumeration, never from the cell
+        vals = [c.value for c in row]
+        rows_vals[r] = vals
+        vr = set()
+        for off, v in enumerate(vals):
+            if _has_content(v):
+                c = min_c + off
+                vr.add(c)
+                if isinstance(v, str) and len(v) <= 40 and _RE_END_MARKER.match(v):
+                    end_marker = (r, c, v.strip())
+        if vr:
+            value_rows[r] = vr
+    if not rows_vals:
+        return out
+    row_numbers = sorted(rows_vals)
+    width = max(len(v) for v in rows_vals.values())
+    positions_h = [min_c + k for k in range(width)]
+
+    # horizontal
+    for r in row_numbers:
+        vals = rows_vals[r]
+        for run in _line_runs(vals, positions_h[:len(vals)]):
+            a, b = get_column_letter(run["start"]), get_column_letter(run["end"])
+            rec = {"range": f"{a}{r}:{b}{r}", "orientation": "horizontal", "n": len(run["keys"]),
+                   "first": run["labels"][0], "last": run["labels"][-1], "numeric": run["numeric"],
+                   "descending": bool(run["keys"] and run["keys"][-1] < run["keys"][0])}
+            if _out_of_order(run["keys"]):
+                rec["out_of_order"] = True
+                out["out_of_order"].append({"range": rec["range"], "labels": run["labels"][:12]})
+            # unlabeled gaps: blank header over a column that carries values just below
+            real_gaps = []
+            for g in run["gaps"]:
+                below = any(g in value_rows.get(rr, ()) for rr in range(r + 1, r + 16))
+                if below:
+                    real_gaps.append(f"{get_column_letter(g)}{r}")
+            if real_gaps:
+                rec["gaps"] = real_gaps
+                out["gaps"].append({"range": rec["range"], "cells": real_gaps})
+            out["horizontal"].append(rec)
+    has_main_timeline = bool(out["horizontal"])
+
+    # vertical (only meaningful on a sheet with a horizontal timeline)
+    if has_main_timeline:
+        h_cells = set()
+        for rec in out["horizontal"]:
+            (c1, r1, c2, _r2) = range_boundaries(rec["range"])
+            for c in range(c1, c2 + 1):
+                h_cells.add((r1, c))
+        for k in range(width):
+            c = min_c + k
+            col_vals = [rows_vals[r][k] if k < len(rows_vals[r]) else None for r in row_numbers]
+            for run in _line_runs(col_vals, row_numbers):
+                r1, r2 = run["start"], run["end"]
+                if any((r, c) in h_cells for r in range(r1, r2 + 1)):
+                    continue
+                rows_in = [r for r in range(r1, r2 + 1) if _has_content(rows_vals.get(r, [None] * width)[k] if k < len(rows_vals.get(r, [])) else None)]
+                beside_formula = 0
+                beside_any = 0
+                for r in rows_in:
+                    v = _safe(lambda: ws.cell(row=r, column=c + 1).value, None)
+                    if _has_content(v) or _is_formula(v):
+                        beside_any += 1
+                        if _is_formula(v):
+                            beside_formula += 1
+                if not rows_in or beside_any == 0 or beside_formula * 2 < beside_any:
+                    continue
+                col = get_column_letter(c)
+                out["vertical"].append({
+                    "range": f"{col}{r1}:{col}{r2}", "orientation": "vertical", "n": len(run["keys"]),
+                    "first": run["labels"][0], "last": run["labels"][-1],
+                    "formulas_beside": f"{beside_formula}/{beside_any}",
+                    "out_of_order": _out_of_order(run["keys"]),
+                })
+
+    if end_marker is not None and has_main_timeline:
+        r, c, text = end_marker
+        below = sorted(rr for rr in value_rows if rr > r)
+        out["end_marker"] = {"cell": f"{get_column_letter(c)}{r}", "text": text,
+                             "rows_below": len(below),
+                             "first_row_below": below[0] if below else None,
+                             "last_row_below": below[-1] if below else None}
+    return out
+
+
+def _date_literal_formulas(ws, bounds: dict) -> list[str]:
+    """Cells whose formula text carries a typed date-like string literal
+    ("12.12.2028", "2028-12-12", "12/12/2028") — checks 2/10/81 (judge v9).
+    Plain date cell values are not touched."""
+    hits: list[str] = []
+    for row in ws.iter_rows(**bounds):
+        for cell in row:
+            v = cell.value
+            text = None
+            if isinstance(v, str) and v.startswith("="):
+                text = v
+            elif type(v).__name__ == "ArrayFormula":
+                text = str(getattr(v, "text", "") or "")
+            if text and '"' in text and _RE_DATE_LITERAL.search(text):
+                hits.append(cell.coordinate)
+    return hits
+
+
+def _char_weight(ch: str) -> float:
+    """Width of one character in units of the default font's '0' (Calibri 11:
+    digits 1.0, lowercase ~0.9, capitals ~1.1, narrow glyphs ~0.5)."""
+    if ch in " .,:;'|!il`":
+        return 0.5
+    if ch in "$%()-+/\\[]{}\"*^tfrjI":
+        return 0.7
+    if ch in "@#&mwMW":
+        return 1.3
+    if ch.isupper():
+        return 1.1
+    if ch.isdigit():
+        return 1.0
+    return 0.9
+
+
+def display_width(text: str, font_size: Optional[float] = None, bold: bool = False) -> float:
+    """Approximate width of `text` in Excel column-width units (characters of
+    the default 11pt font). Proportional-font correction is coarse on purpose:
+    the fit flags carry a margin and the golden sweep calibrates them."""
+    w = sum(_char_weight(ch) for ch in text)
+    if font_size and font_size > 0:
+        w *= float(font_size) / 11.0
+    if bold:
+        w *= 1.08
+    return w
+
+
+class _WidthMap:
+    """Column -> width lookup over <col> runs (a run may span to 16384)."""
+
+    def __init__(self, runs: list[tuple[int, int, float]], default: float):
+        self.runs = sorted(runs)
+        self.default = default
+
+    def get(self, c: int, default=None) -> float:
+        for lo, hi, w in self.runs:
+            if lo <= c <= hi:
+                return w
+            if lo > c:
+                break
+        return self.default if default is None else default
+
+
+def _column_width_map(ws) -> tuple[_WidthMap, float]:
+    """Width lookup for the sheet plus its default width. A sheet-level
+    defaultColWidth of 0 (Excel writes it) means the application default."""
+    default = _safe(lambda: float(ws.sheet_format.defaultColWidth), None) or DEFAULT_COL_WIDTH
+    runs = []
+    for lo, hi, dim in _col_dims(ws):
+        w = getattr(dim, "width", None)
+        if w is not None and getattr(dim, "customWidth", True):
+            runs.append((lo, hi, round(float(w), 2)))
+    return _WidthMap(runs, float(default)), float(default)
+
+
+def column_fit_summary(ws, fit_cells: list, value_cells: dict) -> dict:
+    """Content-vs-column-width evidence for rubric_9 check 69 (judge v9).
+
+    `fit_cells`: [(row, col, kind, width_chars)] collected by the cell
+    extractor from the DISPLAY strings it already rendered (kind is
+    "num" for numbers/dates rendered as Excel shows them, "text" for
+    strings); `value_cells`: {row: set(cols)} of populated cells. Wrapped,
+    shrink-to-fit and merged cells are excluded by the collector.
+
+    Three classes. NUMERIC exceeds width (Excel would render ###) is the one
+    labelled a problem. Text wider than its column beside a non-empty
+    neighbour is cut off on screen and is served as INFORMATION with
+    examples — 43 of the first 98 goldens carry such header labels, so the
+    rubric, not the flag, decides. Text overflowing into an empty neighbour
+    is normal and only counted.
+    """
+    widths, default = _column_width_map(ws)
+    hidden = set()
+    for lo, hi, dim in _col_dims(ws):
+        if getattr(dim, "hidden", False) and hi - lo <= 2000:
+            hidden.update(range(lo, hi + 1))
+    numeric: list[dict] = []
+    cut: list[dict] = []
+    overflow = 0
+    for (r, c, kind, need) in fit_cells:
+        if c in hidden:
+            continue
+        cap = widths.get(c)
+        if cap <= 0.5:
+            continue   # effectively hidden by width
+        ref = f"{get_column_letter(c)}{r}"
+        if kind == "num":
+            if need > cap + NUMERIC_FIT_MARGIN_CHARS:
+                numeric.append({"ref": ref, "need": round(need, 1), "width": cap})
+        elif need > cap + FIT_MARGIN_CHARS:
+            if (c + 1) in value_cells.get(r, ()):
+                cut.append({"ref": ref, "need": round(need, 1), "width": cap})
+            else:
+                overflow += 1
+    return {
+        "numeric_overflow": {"count": len(numeric), "examples": numeric[:_MAX_LIST]},
+        "text_cut_off": {"count": len(cut), "examples": cut[:_MAX_LIST]},
+        "text_overflow_into_empty": overflow,
+    }
+
+
+def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
+                      ws_values=None, column_fit: Optional[dict] = None) -> dict:
     kind = "chartsheet" if type(ws).__name__ == "Chartsheet" else "worksheet"
     props: dict[str, Any] = {
         "name": ws.title,
@@ -278,28 +697,23 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None) 
         props["row_heights"] = "unknown"
         props["row_groups"] = "unknown"
     try:
-        hidden_cols, widths, col_groups = [], [], []
-        for key, dim in ws.column_dimensions.items():
-            lo = int(getattr(dim, "min", None) or 0) or None
-            hi = int(getattr(dim, "max", None) or 0) or None
-            if lo is None:
-                from openpyxl.utils import column_index_from_string
-                lo = hi = column_index_from_string(key)
-            hi = hi or lo
-            if hi - lo > 200:  # openpyxl sometimes reports a 16384-wide default dim
-                hi = lo
-            if getattr(dim, "hidden", False):
+        hidden_cols, width_runs, col_groups = [], [], []
+        for lo, hi, dim in _col_dims(ws):
+            span = hi - lo + 1
+            if getattr(dim, "hidden", False) and span <= 2000:
                 hidden_cols.extend(range(lo, hi + 1))
             w = getattr(dim, "width", None)
             if w is not None and getattr(dim, "customWidth", True):
-                for c in range(lo, hi + 1):
-                    widths.append((c, round(float(w), 2)))
+                # a <col min=9 max=308> run is one entry, however wide (judge
+                # v9: the old 200-column cap collapsed real model timelines
+                # to their first column and misread every other width)
+                width_runs.append({"first": lo, "last": hi, "value": round(float(w), 2)})
             lvl = getattr(dim, "outlineLevel", 0) or 0
-            if lvl:
+            if lvl and span <= 2000:
                 for c in range(lo, hi + 1):
                     col_groups.append((c, int(lvl)))
         props["hidden_cols"] = sorted(set(hidden_cols))
-        props["column_widths"] = _runs(widths)
+        props["column_widths"] = _merge_runs(width_runs)
         props["col_groups"] = _runs(col_groups)
         props["default_col_width"] = _safe(lambda: ws.sheet_format.defaultColWidth, None)
     except Exception:  # noqa: BLE001
@@ -370,7 +784,61 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None) 
         props["conditional_formats"] = sorted(cfs, key=lambda d: d["sqref"])
     except Exception:  # noqa: BLE001
         props["conditional_formats"] = "unknown"
+
+    # judge v9 evidence flags. Each is independent and never fatal.
+    try:
+        try:
+            from .sheet_extent import iter_rows_kwargs as _irk
+        except ImportError:  # bare-module import path
+            from sheet_extent import iter_rows_kwargs as _irk
+        _b, _ = _irk(ws)
+    except Exception:  # noqa: BLE001
+        _b = {}
+    try:
+        props["date_literal_formulas"] = _date_literal_formulas(ws, _b)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"  [properties] date-literal scan failed on '{ws.title}': {e}")
+        props["date_literal_formulas"] = "unknown"
+    if ws_values is not None:
+        try:
+            props["period_series"] = _scan_period_series(ws, ws_values, _b)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"  [properties] period-series scan failed on '{ws.title}': {e}")
+            props["period_series"] = "unknown"
+    else:
+        props["period_series"] = "unknown"
+    props["column_fit"] = column_fit if column_fit is not None else "unknown"
     return props
+
+
+def _col_dims(ws):
+    """(lo, hi, dim) for every column_dimensions entry, 1-based inclusive."""
+    from openpyxl.utils import column_index_from_string
+    out = []
+    try:
+        for key, dim in ws.column_dimensions.items():
+            lo = int(getattr(dim, "min", None) or 0) or None
+            hi = int(getattr(dim, "max", None) or 0) or None
+            if lo is None:
+                lo = hi = column_index_from_string(key)
+            hi = hi or lo
+            if hi < lo:
+                lo, hi = hi, lo
+            out.append((lo, hi, dim))
+    except Exception:  # noqa: BLE001
+        pass
+    return sorted(out, key=lambda t: t[0])
+
+
+def _merge_runs(runs: list[dict]) -> list[dict]:
+    """Sort width runs and merge adjacent equal-value runs."""
+    merged: list[dict] = []
+    for r in sorted(runs, key=lambda r: r["first"]):
+        if merged and merged[-1]["last"] == r["first"] - 1 and merged[-1]["value"] == r["value"]:
+            merged[-1]["last"] = r["last"]
+        else:
+            merged.append(dict(r))
+    return merged
 
 
 def _is_styled_empty(cell) -> bool:
@@ -431,11 +899,16 @@ def _dxf_style(dxf, palette=None) -> Optional[dict]:
     return out or None
 
 
-def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None = None) -> dict:
+def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None = None,
+                                workbook_values=None, column_fit: dict | None = None) -> dict:
     """Everything the rubric grades that is not a cell value.
 
     `name_map` maps original sheet names to the output (filtered/safe) names
     the CSVs were saved under; sheets skipped by the filter map to None.
+    `workbook_values` (judge v9) is the data-only load of the same file — the
+    period-series scan reads cached values; without it that block is
+    "unknown". `column_fit` maps sheet name -> column_fit_summary() output
+    collected by the cell extractor.
     """
     path = Path(excel_file_path)
     wb: dict[str, Any] = {
@@ -484,8 +957,13 @@ def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None
 
     sheets = []
     name_map = name_map or {}
+    column_fit = column_fit or {}
     for i, ws in enumerate(workbook._sheets if hasattr(workbook, "_sheets") else workbook.worksheets, 1):
-        sheets.append(_sheet_properties(ws, i, name_map.get(ws.title, ws.title), palette))
+        ws_values = None
+        if workbook_values is not None and type(ws).__name__ != "Chartsheet":
+            ws_values = _safe(lambda: workbook_values[ws.title], None)
+        sheets.append(_sheet_properties(ws, i, name_map.get(ws.title, ws.title), palette,
+                                        ws_values=ws_values, column_fit=column_fit.get(ws.title)))
     return {"schema": SCHEMA_VERSION, "workbook": wb, "sheets": sheets}
 
 
@@ -665,6 +1143,155 @@ def oversized_range_tag(sheet_props: dict) -> str:
     return (" — " + "; ".join(parts)) if parts else ""
 
 
+_WIDE_OUTLIER_SKIP_SHEETS = re.compile(r"instruction|question|brief|readme", re.I)
+
+
+def wide_outlier_tags(sheet_props: dict) -> list[str]:
+    """Evidence for rubric_9 check 70 (Reasonable column widths), judge v9:
+    a run of >= 2 consecutive equal-width columns at least WIDE_OUTLIER_RATIO
+    times wider than the nearest equal-width run (length >= 2, not a spacer)
+    on BOTH sides, and no longer than the longer neighbour run (a group
+    inside a field, not the field and not an edge). Lone columns (a label or question column) are
+    never compared, and the case's own Instructions/Questions sheets are
+    skipped (guidance excludes them from check 70). Computed at render time
+    from the stored widths. Returns
+    lines like `BA:BD width 34.9 vs neighbours 12.9 (2.7x): WIDE OUTLIER`.
+    """
+    cw = sheet_props.get("column_widths")
+    if not isinstance(cw, list) or not cw:
+        return []
+    if _WIDE_OUTLIER_SKIP_SHEETS.search(str(sheet_props.get("name") or "")):
+        return []   # the case's own brief / questions sheet: excluded from check 70 by guidance
+    ur = sheet_props.get("used_range")
+    try:
+        first_c, _, last_c, _ = range_boundaries(ur) if ur and ur != "unknown" else (None, None, None, None)
+    except Exception:  # noqa: BLE001
+        first_c = last_c = None
+    default = sheet_props.get("default_col_width") or DEFAULT_COL_WIDTH
+    try:
+        default = float(default)
+    except (TypeError, ValueError):
+        default = DEFAULT_COL_WIDTH
+    if not (first_c and last_c):
+        return []   # no content, nothing to compare
+    lo, hi = first_c, last_c
+    widths: dict[int, float] = {}
+    for run in cw:
+        try:
+            a, b, w = int(run["first"]), int(run["last"]), float(run["value"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for c in range(max(a, lo), min(b, hi) + 1):
+            widths[c] = w
+    if not widths:
+        return []
+    hidden = set(sheet_props.get("hidden_cols") or []) if isinstance(sheet_props.get("hidden_cols"), list) else set()
+    cols = [c for c in range(lo, hi + 1) if c not in hidden]
+    if not cols:
+        return []
+    runs: list[dict] = []
+    for c in cols:
+        w = widths.get(c, default)
+        if runs and runs[-1]["last"] == c - 1 and abs(runs[-1]["w"] - w) < 0.01:
+            runs[-1]["last"] = c
+        else:
+            runs.append({"first": c, "last": c, "w": w})
+    def _neighbour(idx: int, step: int):
+        j = idx + step
+        while 0 <= j < len(runs):
+            r = runs[j]
+            if (r["last"] - r["first"] + 1) >= 2 and r["w"] >= WIDE_OUTLIER_MIN_NEIGHBOUR:
+                return r
+            j += step
+        return None
+    tags = []
+    for i, r in enumerate(runs):
+        if (r["last"] - r["first"] + 1) < 2 or r["w"] < WIDE_OUTLIER_MIN_NEIGHBOUR * WIDE_OUTLIER_RATIO:
+            continue
+        left, right = _neighbour(i, -1), _neighbour(i, +1)
+        nbrs = [n for n in (left, right) if n is not None]
+        if len(nbrs) < 2:
+            # the group must sit INSIDE the field: a wide pair at the right
+            # edge of the used range (long-text note columns) or beside the
+            # sheet's margin columns is not an outlier (Telecom golden, toys
+            # 69/70 Pass)
+            continue
+        if any(r["w"] < WIDE_OUTLIER_RATIO * n["w"] for n in nbrs):
+            continue
+        # an outlier is a GROUP inside a wider field of same-width columns:
+        # the run must be no longer than its longest neighbour run. A model's
+        # whole timeline block (G:DW at 16 beside A:F label columns at 5.8)
+        # is the field itself, not an outlier — 10 goldens have that shape.
+        span = r["last"] - r["first"] + 1
+        if span > max(n["last"] - n["first"] + 1 for n in nbrs):
+            continue
+        nw = sorted({round(n["w"], 1) for n in nbrs})
+        ratio = r["w"] / max(n["w"] for n in nbrs)
+        a, b = get_column_letter(r["first"]), get_column_letter(r["last"])
+        tags.append(
+            f"{a}:{b} width {r['w']:.1f} vs neighbours {'/'.join(f'{x:.1f}' for x in nw)} "
+            f"({ratio:.1f}x): WIDE OUTLIER"
+        )
+    return tags
+
+
+def _period_series_lines(ps) -> list[str]:
+    if ps == "unknown" or not isinstance(ps, dict):
+        return ["     period series: unknown"]
+    lines = []
+    h = ps.get("horizontal") or []
+    if not h:
+        lines.append("     period series: none detected")
+    else:
+        shown = h[:4]
+        desc = "; ".join(f"{r['range']} {r['first']} → {r['last']}" for r in shown)
+        more = f"; (+{len(h) - len(shown)} more)" if len(h) > len(shown) else ""
+        lines.append(f"     period series: {len(h)} horizontal ({desc}{more})")
+    for rec in (ps.get("out_of_order") or [])[:10]:
+        lines.append(f"     PERIOD SERIES OUT OF ORDER: {rec['range']} {', '.join(rec.get('labels', []))}")
+    for rec in (ps.get("gaps") or [])[:10]:
+        lines.append(f"     unlabeled gap at {', '.join(rec['cells'])} (period header {rec['range']} continues past it over value-bearing columns)")
+    for rec in (ps.get("vertical") or [])[:10]:
+        lines.append(
+            f"     VERTICAL PERIOD SERIES: {rec['range']} {rec['first']} → {rec['last']} down rows "
+            f"({rec['formulas_beside']} cells beside are formulas) on a sheet whose main timeline runs across columns"
+            + (" — OUT OF ORDER" if rec.get("out_of_order") else "")
+        )
+    em = ps.get("end_marker")
+    if isinstance(em, dict) and em.get("rows_below"):
+        lines.append(
+            f"     content continues {em['rows_below']} rows past the \"{em['text']}\" marker at {em['cell']} "
+            f"(rows {em['first_row_below']}-{em['last_row_below']})"
+        )
+    return lines
+
+
+def _column_fit_lines(cf) -> list[str]:
+    if cf == "unknown" or not isinstance(cf, dict):
+        return ["     content fit: unknown"]
+    num = cf.get("numeric_overflow") or {}
+    cut = cf.get("text_cut_off") or {}
+    n_num, n_cut = int(num.get("count", 0) or 0), int(cut.get("count", 0) or 0)
+    over = int(cf.get("text_overflow_into_empty", 0) or 0)
+    parts = []
+    if n_num:
+        ex = num.get("examples") or []
+        parts.append(
+            f"NUMERIC exceeds width (would render ###): {', '.join(e['ref'] for e in ex[:8])}"
+            f"{', ...' if n_num > 8 else ''} ({n_num} cell{'s' if n_num != 1 else ''}; e.g. {ex[0]['ref']} needs ~{ex[0]['need']} chars in width {ex[0]['width']})"
+        )
+    if n_cut:
+        ex = cut.get("examples") or []
+        parts.append(
+            f"text wider than its column beside a non-empty neighbour (cut off on screen; information, "
+            f"common in header rows): {', '.join(e['ref'] for e in ex[:6])}{', ...' if n_cut > 6 else ''} "
+            f"({n_cut} cell{'s' if n_cut != 1 else ''}; e.g. {ex[0]['ref']} needs ~{ex[0]['need']} chars in width {ex[0]['width']})"
+        )
+    if over:
+        parts.append(f"text overflowing into empty neighbours: {over} cell{'s' if over != 1 else ''} (normal, not a problem)")
+    return ["     content fit: " + ("; ".join(parts) if parts else "no problems")]
+
+
 def render_properties_text(
     props: Optional[dict],
     listed_files: Optional[set] = None,
@@ -791,6 +1418,16 @@ def render_properties_text(
                if isinstance(cw, list) and cw else ("unknown" if cw == "unknown" else "all default"))
             + f" (default {dcw if dcw else 8.43})"
         )
+        for tag in wide_outlier_tags(s):
+            lines.append("     column width outlier: " + tag)
+        lines.extend(_column_fit_lines(s.get("column_fit", "unknown")))
+        lines.extend(_period_series_lines(s.get("period_series", "unknown")))
+        dl = s.get("date_literal_formulas")
+        if isinstance(dl, list) and dl:
+            lines.append(
+                "     formulas with a typed date-like string literal: "
+                + ", ".join(dl[:_MAX_LIST]) + (f", (+{len(dl) - _MAX_LIST} more)" if len(dl) > _MAX_LIST else "")
+            )
         rh = s.get("row_heights")
         lines.append(
             "     custom row heights: "

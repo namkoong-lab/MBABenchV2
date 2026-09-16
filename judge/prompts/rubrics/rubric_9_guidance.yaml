@@ -22,6 +22,12 @@ general: |
   the offending content was inherited, check the starting workbook first;
   only penalize what the agent added or changed.
 
+  Similarity to the solution workbook is never evidence that a check passes.
+  The solution is a reference for what the case requires, not a template the
+  attempt is graded against. Grade the attempt on its own contents: a check
+  passes because the attempt satisfies it, not because the attempt resembles
+  the solution in the areas you compared.
+
 categories:
   Accuracy: |
     Judge this category with a reasonable-person standard: if a reasonable
@@ -106,9 +112,12 @@ checks:
   - category: Formatting
     name: Green font for cross-sheet links
     note: |
-      Do NOT deduct points when a formula that references cells on other
-      sheets is formatted in black font — black is the sanctioned color
-      for calculations, so either color is acceptable for such cells.
+      Determine the model's own convention from the majority of its
+      cross-sheet links. Where most cross-sheet links are green, a block of
+      cross-sheet links in black is an inconsistency: fail and cite the
+      range. Where black is the model's convention for cross-sheet links, or
+      the model uses no green at all, do not deduct; black is a sanctioned
+      calculation colour. Never fail a model solely for lacking green.
 
   # ---------------------------------------------------------------------
   # Repeat-grading stability notes (Pat, 2026-09-02). Added after grading
@@ -180,6 +189,13 @@ checks:
       that is set in two different places, or a business assumption buried
       inside a formula with no labelled input cell anywhere. Do not fail
       because the block would be tidier on a dedicated sheet.
+      Third fail condition: when the central assumptions sheet declares
+      itself the source of all inputs (for example "use the Assumptions tab
+      as the source of truth for all inputs"), a business or timing driver
+      that is instead set on another sheet, with no pointer to it from the
+      assumptions sheet, is a fail even if it is set in only one place.
+      Historical data tables and case-provided data sheets are not drivers
+      for this purpose. Cite the block and the missing signpost.
 
   - category: Assumptions
     name: Assumption sources
@@ -218,15 +234,23 @@ checks:
       formula. Formulas wrapped in LET, and LAMBDA-style array formulas
       (LAMBDA and its helpers REDUCE, SCAN, MAP, BYROW, BYCOL, MAKEARRAY),
       are exempt from the nesting-depth count.
+      Depth is the longest chain of a function nested inside a function;
+      sibling arguments do not add depth. MAX(0, IF(AND(a, b), SUMIFS(...),
+      0)) is three deep (MAX → IF → AND, or MAX → IF → SUMIFS), not five.
+      Count the deepest chain before deciding a formula exceeds the
+      guideline.
 
   - category: Structure
     name: Data-type designation (actuals vs. estimates)
     note: |
       This applies where a single table mixes actual and forecast columns.
-      A sheet or block holding only historical data, or only projections,
-      passes when the header, title or an adjacent note says which it is.
-      Fail ONLY when actual and projected columns sit in one table with no
-      A/E marking or equivalent designation; cite the header row.
+      A block holding only projections passes when its header, title, an
+      adjacent note, or a period-0 opening column makes that clear. Fail
+      when (a) actual and projected columns sit in one table with no
+      designation of any kind, or (b) a designation row exists but mislabels
+      a column: an opening, historical, or actual column tagged as a
+      forecast or model period, or the reverse. Check the label against the
+      year and period rows. Cite the header row.
 
   - category: Formatting
     name: Consistent color coding
@@ -260,9 +284,13 @@ checks:
       the "Units" column heading above them, may carry the input blue; they
       sit beside inputs and cannot be mistaken for inputs. Any other text in
       a reserved colour, such as row labels, section headings, or totals, is
-      a violation. Background fills never mimic font coding. Negative
-      numbers in red are a standard accounting convention and never a
-      violation.
+      a violation. Pale tints used for header rows, input blocks, or section
+      bands, dark bands with contrasting text, and negative numbers shown in
+      red never mimic font coding. A saturated fill in one of the reserved
+      colours (pure green, blue, or red, such as 00B050, 0000FF/0070C0,
+      FF0000) applied to individual calculation or output cells does mimic
+      it and is a violation. Negative numbers in red are a standard
+      accounting convention and never a violation.
 
   - category: Error Checks
     name: No unresolved cell warnings
@@ -335,15 +363,15 @@ checks:
   - category: Formatting
     name: Reasonable column widths
     note: |
-      Measure widths against the rubric's rule of thumb (roughly 75-80
-      characters). A column below that line that is sized to fit its own
-      content — for example a helper column widened to show its header label —
-      is not excessive. A column set much wider than its content requires is
-      excessive even below that line — for example calculation columns
-      widened to about three times the width of identical neighbouring
-      columns. The case's own brief (the Instructions sheet the agent
-      was given) is provided by the case and is excluded from this check,
-      including its text wrapping and its column widths.
+      Two tests, both required. First: any column tagged WIDE OUTLIER in
+      the properties summary fails unless that column's own content needs
+      the width; cite the range. Second: any column wider than roughly 75-80
+      characters at the default font fails regardless of its neighbours.
+      Passing the second test says nothing about the first; do not stop at
+      the widest column. A helper column sized to show its own header label
+      is not excessive. The case's own brief (the Instructions sheet the
+      agent was given) is excluded from this check, including its text
+      wrapping and column widths.
 
   # --- 2026-09-14 judge-misses walkthrough ------------------------------------
 
@@ -360,6 +388,9 @@ checks:
       The case's questions-and-answers sheet has its layout and cell
       formatting set by the case; its formatting is not judged here.
       Identify that sheet by its role, not its name.
+      This applies to financial and quantity values. Period counters, flags,
+      switches, check counts, index cells, and true/false results may
+      display 0; do not fail for them.
 
   - category: Formatting
     name: Thousands separators
@@ -393,6 +424,10 @@ checks:
       or displays the value and feeds nothing is not judged here. Inputs the
       case gives only in text are entered once, on an inputs sheet, and
       referenced from there.
+      Also scan summary and output sheets, not only the inputs sheet and the
+      model body, for typed dates and constants that equal a case input;
+      where the properties summary lists a typed date literal inside a
+      formula, check that cell.
 
   - category: Flexibility
     name: M&A / divestiture flexibility
@@ -448,3 +483,81 @@ checks:
       and some missing is not a failure. Fail when the first tab carries
       little of this information, or when a cover-like page exists but is
       not the first tab.
+
+  # --- 2026-09-16 judge v9: toy-reliability runs 2-3 walkthrough --------------
+  # Decisions log: JUDGE_DECISIONS_2026-09-16.md (Patrick + Claude). Every
+  # note below was checked against the 101 golden solutions before adoption.
+
+  - category: Structure
+    name: Functional sheet separation
+    note: |
+      Judge "separate sheets" by whether each function is clearly
+      distinguishable, not by sheet count. A single calculation sheet that
+      holds inputs, schedules, statements, and outputs in clearly labeled,
+      contiguous, non-overlapping sections satisfies this check, as do the
+      benchmark's own solution workbooks. Fail only when functions are
+      genuinely interleaved: inputs typed inside a schedule, an output table
+      built in the middle of the assumptions block, or sections a reader
+      cannot tell apart without tracing formulas. A cover or instructions
+      sheet that also holds inputs is not a mistake if the inputs are in a
+      labeled block.
+
+  - category: Structure
+    name: Roll-forward (corkscrew) structure for balances
+    note: |
+      Grade this on whether balance movements are visible and periods
+      chain, not on row count. A balance computed in a single formula
+      satisfies this check when the formula reads as opening balance plus
+      additions minus deductions, each component is drawn from a labeled
+      row or input, and each period's result feeds the next period. The
+      benchmark's own solution workbooks use this compact form for debt,
+      PP&E, and equity. Fail when a balance is hardcoded, when the
+      movements cannot be traced to labeled rows, when a period's opening
+      balance does not equal the prior closing balance, or when the formula
+      compresses several unrelated steps so the movement cannot be read.
+
+  - category: Structure
+    name: Timeline orientation
+    note: |
+      Inspect the full used range of every calculation tab, including any
+      tables below or beside the main block and anything past an "End"
+      marker. A summary or recap table that lists periods down rows on a
+      tab whose main timeline runs across columns is mixed orientation and
+      fails, unless it is a record-style register (one row per item with
+      several attribute columns). A period-by-period series of the same
+      metrics is not a register. Where the properties summary reports a
+      PERIOD SERIES on the tab, check it.
+
+  - category: Structure
+    name: Deal vs. planning orientation
+    note: |
+      Read the case to decide which purpose the model serves: ongoing
+      planning (a recurring forecast refreshed period by period, such as an
+      FP&A or budget model) or one-time deal evaluation (entry and exit,
+      sources and uses, returns to investors). Then judge whether the
+      workbook's structure serves that purpose and only that purpose.
+      Structure that belongs to the other purpose counts against this check
+      even when it sits outside the calculation engine: a Sources & Uses
+      table, entry or exit valuation, or returns analysis bolted onto a
+      planning model; or a rolling multi-period refresh cadence built into
+      a one-time deal model. Cite the block. A model whose structure
+      matches its stated purpose with nothing from the other purpose added
+      passes.
+
+  - category: Assumptions
+    name: Assumption units
+    note: |
+      A cell formatted and displayed as a date, or holding Yes/No, On/Off,
+      or a switch value, states its own unit; a blank unit label beside it
+      is not a mistake. Fail only for a number whose unit or scale cannot
+      be read from the cell or its label.
+
+  - category: Error Checks
+    name: Consistent units
+    note: |
+      A value labelled in one scale that feeds a line labelled in another
+      scale with no conversion between them is mixing scales, even though
+      both are labelled: for example an input shown as 77.5 [$k] multiplied
+      straight into a [$] wage line. Follow the value into the calculation,
+      not only the label beside it, and cite both cells. Values that are
+      converted explicitly (×1,000, ÷1,000,000) are consistent.

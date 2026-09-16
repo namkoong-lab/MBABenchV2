@@ -283,6 +283,65 @@ not comparable to version 7 rows. Cut from the toy-reliability run-1 walkthrough
 - **Guidance 27 → 36 notes**: edits to checks 16, 49, 55, 64, 82; new notes
   for 2, 11, 25, 37, 65, 66, 67, 104, 107.
 
+### judge v9 — single-pass 9 / template_8 (2026-09-16)
+
+Rows record `judge_version` 9 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 8 rows. Cut from the toy-reliability runs 2-3
+walkthrough (decisions log `JUDGE_DECISIONS_2026-09-16.md`, implementation
+brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
+
+- **Checks 37 and 101 retired by rule** (`judge.retired_checks: "37,101"` in
+  `project_configs.yaml`; `utils/rubric_suitability.py`). The rubric keeps its
+  132-position numbering — toys, suitability annotations and every grading to
+  date are keyed by position — so nothing is deleted or renumbered: the two
+  checks are forced `not_applicable` on every task (with or without an
+  annotation, and under `JUDGE_SKIP_SUITABILITY=1`), never prompted, never
+  scored, and their categories rescale around them exactly as suitability
+  gating does. `RETIRED_CHECK_NAMES` pins the (category, name) each number must
+  carry; a regenerated rubric that moved them refuses to grade. Recorded per
+  grading in `scored_results.rubric_suitability.retired_checks`. `grade_toy.py`
+  skips toys for retired checks. Effective rubric: 130 items.
+- **Evidence flags in the properties block** (`utils/workbook_properties.py`,
+  schema 4; CSV caches move to `*_csv_cache_v7`). Each is rendered per sheet:
+  - `WIDE OUTLIER` (check 70): a run of ≥ 2 equal-width columns ≥ 2.5× wider
+    than the nearest equal-width run on each side (length ≥ 2, width ≥ 4 so
+    spacers do not count). Lone columns are never compared; Instructions /
+    Questions sheets are skipped. Render-time from stored widths.
+  - `period series` (checks 108/123/124/125): every run of ≥ 3 period labels
+    (years, dates, `Qn YYYY`, `Mon-YY`, `FYyyyy`; plain numeric years only as
+    a monotonic run) in a row, with `PERIOD SERIES OUT OF ORDER`, `unlabeled
+    gap at …` (blank header over a value-bearing column inside the run),
+    `VERTICAL PERIOD SERIES` (down rows on a sheet that has a horizontal
+    timeline, only when the cells beside are formulas — typed-input registers
+    stay silent), and `content continues N rows past the "End Sheet" marker`.
+    Extraction-time; needs the data-only workbook.
+  - `content fit` (check 69): from the display strings the extractor already
+    renders — `NUMERIC exceeds width (would render ###)` is the one problem
+    label (number at least 1.5 characters wider than its column; the golden
+    sweep put two goldens' borderline cells inside that band). Text wider
+    than its column beside a non-empty neighbour is cut off on screen and is
+    served as information with examples — 43 of 98 goldens carry such
+    header labels, so the rubric decides, not the flag. Text overflowing
+    into an empty neighbour is counted as normal. Width estimate is coarse
+    (character classes of the default font, font size and bold scaling);
+    wrapped, shrink-to-fit, centre-across-selection, merged and
+    General-format cells are excluded.
+  - **Column-width bug fixed in the extractor** while calibrating: a `<col
+    min=9 max=308>` run wider than 200 columns was collapsed to its first
+    column, so every timeline column of a wide model was served at the
+    default width (8.43 instead of, say, 12.9). Widths served since judge v6
+    were wrong for those sheets; v7 caches carry the corrected runs.
+  - `formulas with a typed date-like string literal` (checks 2/10/81):
+    `"12.12.2028"`, `"2028-12-12"`, `"12/12/2028"` inside formula text.
+  Golden/toy-Pass sweep counts are in the session notes for 2026-09-16.
+  Tests: `tests_offline/test_evidence_flags_v9.py`.
+- **Guidance 36 → 42 notes**: replaced 50, 70, 126; extended 2, 4, 55, 66,
+  82; new 7, 33, 108, 112, 115, 129; general block gains "similarity to the
+  solution is never evidence".
+- Rubric 10 queue (not implemented): 115 and 129 rewritten so clearly
+  distinguishable sections / a visible single-formula roll-forward are
+  acceptable; 70's "Bad" line led by "wider than content requires".
+
 ### Latest-prompt guard (2026-09-10)
 
 Both DB drivers refuse to spend on superseded agent prompts. For `--benchmark

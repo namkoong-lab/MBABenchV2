@@ -35,6 +35,88 @@ ANNOTATOR = "julian"
 STAGED_FILENAME = "rubric_suitability.json"
 SKIP_ENV = "JUDGE_SKIP_SUITABILITY"
 
+# Retired checks (judge v9, 2026-09-16). The rubric keeps its 132-position
+# numbering — toys, annotations and every grading to date are keyed by
+# position — so a check is retired by RULE, not by deletion: it is forced
+# not_applicable on every task, never prompted, never scored, and the
+# category rescales around it exactly as suitability gating does. Which
+# numbers are retired comes from project_configs.yaml (judge.retired_checks,
+# "37,101"); this table pins the NAME each number must carry so a
+# regenerated/renumbered rubric can never retire the wrong check.
+RETIRED_ENV_KEY = "JUDGE_RETIRED_CHECKS"
+RETIRED_CHECK_NAMES = {
+    37: ("Flexibility", "M&A / divestiture flexibility"),
+    101: ("Purpose & Scope", "Architecture suited to audience"),
+}
+
+
+def _flat(rubric: dict) -> list:
+    return [(cat, c["name"]) for cat, checks in rubric.items() for c in checks]
+
+
+def retired_check_numbers(rubric: dict | None = None) -> list[int]:
+    """Configured retired check numbers, validated against `rubric` when given.
+
+    Raises SuitabilityError if a configured number is not in
+    RETIRED_CHECK_NAMES or the rubric's check at that position carries a
+    different (category, name) — refusing to grade beats retiring the wrong
+    check. Positions beyond the rubric (v1's 17-check rubric_8) are ignored.
+    """
+    try:
+        from .misc_utils import load_env_var
+    except ImportError:  # bare-module import path
+        from misc_utils import load_env_var
+    raw = str(load_env_var(RETIRED_ENV_KEY, default="") or "").strip()
+    if not raw or raw.lower() in ("none", "null", "[]"):
+        return []
+    numbers = []
+    for tok in raw.replace(";", ",").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if not tok.isdigit():
+            raise SuitabilityError(f"{RETIRED_ENV_KEY}: {tok!r} is not a check number")
+        numbers.append(int(tok))
+    out = []
+    for no in sorted(set(numbers)):
+        if no not in RETIRED_CHECK_NAMES:
+            raise SuitabilityError(
+                f"{RETIRED_ENV_KEY} names check {no}, which has no entry in "
+                f"RETIRED_CHECK_NAMES — add the (category, name) pin before retiring it"
+            )
+        if rubric is not None:
+            flat = _flat(rubric)
+            if no > len(flat):
+                continue
+            if flat[no - 1] != RETIRED_CHECK_NAMES[no]:
+                raise SuitabilityError(
+                    f"retired check {no} is pinned to {RETIRED_CHECK_NAMES[no]!r} but the loaded "
+                    f"rubric has {flat[no - 1]!r} at that position — numbering drift; refusing to grade"
+                )
+        out.append(no)
+    return out
+
+
+def _apply_retirement(annotation: dict, retired: list[int]) -> list[int]:
+    """Force retired numbers to not_applicable in a (validated-shape)
+    annotation. Returns the numbers actually changed or already excluded."""
+    applied = []
+    for e in annotation.get("rubrics", []):
+        if e.get("no") in retired:
+            e["verdict"] = "not_applicable"
+            e["retired"] = True
+            applied.append(e["no"])
+    return applied
+
+
+def _all_applicable_annotation(rubric: dict) -> dict:
+    rubrics = [
+        {"no": i, "category": cat, "name": name, "verdict": "applicable", "conditional": False}
+        for i, (cat, name) in enumerate(_flat(rubric), 1)
+    ]
+    return {"annotator": "retired-checks-only", "created_at": None, "rubric_version": None,
+            "complete": True, "rubrics": rubrics}
+
 
 class SuitabilityError(Exception):
     """A v2 grading cannot proceed without a valid suitability annotation."""
@@ -188,6 +270,9 @@ def build_suitability(annotation: dict, rubric: dict, s3_key: str = None) -> dic
         "conditional_flags": sorted(
             e["no"] for e in annotation["rubrics"] if e.get("conditional")
         ),
+        "retired_checks": sorted(
+            e["no"] for e in annotation["rubrics"] if e.get("retired")
+        ),
     }
     return {"applicable": applicable, "excluded": excluded, "provenance": provenance}
 
@@ -246,12 +331,25 @@ def load_for_case(task_path: Path, rubric: dict, benchmark: str | None) -> dict 
     annotation and no escape hatch.
     """
     staged = Path(task_path) / STAGED_FILENAME
+    retired = retired_check_numbers(rubric)
+
+    def _retired_only(extra: dict) -> dict | None:
+        """No annotation in play: retire by rule alone (judge v9), or None."""
+        if not retired:
+            return None
+        annotation = _all_applicable_annotation(rubric)
+        _apply_retirement(annotation, retired)
+        out = build_suitability(annotation, rubric)
+        out["provenance"].update({"gated": False, **extra})
+        logger.info(f"  SUITABILITY: retired check(s) {retired} excluded by rule (no task annotation)")
+        return out
+
     if skip_requested():
         logger.warning(
-            f"  SUITABILITY: {SKIP_ENV}=1 — grading UNGATED (all 132 checks); "
-            f"recorded in scored_results"
+            f"  SUITABILITY: {SKIP_ENV}=1 — grading UNGATED (all checks except retired "
+            f"{retired or 'none'}); recorded in scored_results"
         )
-        return None
+        return _retired_only({"skipped_via_env": True})
     if not staged.exists():
         if benchmark == "v2":
             raise SuitabilityError(
@@ -260,9 +358,15 @@ def load_for_case(task_path: Path, rubric: dict, benchmark: str | None) -> dict 
                 f"judge runs place the annotation JSON there). Set {SKIP_ENV}=1 "
                 f"to grade ungated."
             )
-        return None
+        return _retired_only({})
     annotation = json.loads(staged.read_text())
     if annotation.get("complete") is not True:
         raise SuitabilityError(f"staged annotation {staged} is not complete")
     meta = annotation.get("_staging", {})
-    return build_suitability(annotation, rubric, s3_key=meta.get("s3_key"))
+    if retired:
+        validate_annotation(annotation, rubric)   # shape first, so the numbers mean what we think
+        _apply_retirement(annotation, retired)
+        logger.info(f"  SUITABILITY: retired check(s) {retired} forced not_applicable")
+    out = build_suitability(annotation, rubric, s3_key=meta.get("s3_key"))
+    out["provenance"]["gated"] = True
+    return out

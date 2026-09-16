@@ -4,6 +4,7 @@ import random
 import threading
 import time
 
+import httpx
 from openai import OpenAI
 
 from .judge_identity import JudgeIdentity
@@ -89,6 +90,12 @@ def get_client(identity: JudgeIdentity) -> OpenAI:
         kwargs = {"api_key": resolve_api_key(identity.api_key_provider)}
         if identity.base_url is not None:
             kwargs["base_url"] = identity.base_url
+        # 2026-09-15: the SDK's default httpx timeout allows only 5 s to
+        # CONNECT. Under evening load the Forge gateway took 5-10 s to accept
+        # a TCP connection and ~20 s to finish TLS, so ~30% of toy gradings
+        # died on round 1 with "Request timed out." before any request was
+        # sent. Keep the 600 s read budget; give connect a full minute.
+        kwargs["timeout"] = httpx.Timeout(600.0, connect=60.0)
         client = OpenAI(**kwargs)
         _clients[provider] = client
         return client
@@ -181,8 +188,8 @@ _MODEL_PRICING = {
     "openai/gpt-5.6-sol": (5.0, 30.0),       # OpenAI list (matches cli models_config)
     # Forge does not return per-call cost and publishes no price in
     # models.list; OpenAI's list rate is assumed until a Forge credit diff
-    # verifies it (2026-09-15). Cached tokens are priced at the full input
-    # rate for this provider (no _CACHE_PRICING entry) until measured.
+    # verifies it (2026-09-15; verified the same day against Forge's usage
+    # log: $5/$30 exactly, cached input at 10% — see _CACHE_PRICING).
     "tensorblock/gpt-5.6-sol": (5.0, 30.0),
     "anthropic/claude-opus-5": (5.0, 25.0),  # Anthropic list price
     # (gemini-3.7-flash now priced above at the 2026-08-31 OpenRouter list —
@@ -240,6 +247,12 @@ def calculate_message_size(messages):
 _CACHE_PRICING = {
     "openai": (0.25, 1.0),
     "anthropic": (0.10, 1.25),
+    # tensorblock (Forge) — measured 2026-09-15 from Forge's own usage log
+    # over the 430-grading toy run 2 (1,769 Sol calls, $446.67): every
+    # charge = $5/M uncached input + $0.50/M cached input + $30/M output,
+    # i.e. cached input at 10%. The run's recorded estimates (no discount)
+    # came to $1,144 against $447 actually billed.
+    "tensorblock": (0.10, 1.0),
 }
 
 

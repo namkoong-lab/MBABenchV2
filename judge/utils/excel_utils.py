@@ -1045,6 +1045,43 @@ def _format_hides_content(format_string, value) -> bool:
     return False
 
 
+def _collect_fit(sink: list, cell, raw_value, display_value: str, row_idx: int, col_idx: int) -> None:
+    """Record (row, col, kind, needed width) for the content-fit evidence
+    (workbook_properties.column_fit_summary). Only cells whose on-screen
+    text is known: numbers/dates the renderer produced as Excel shows them,
+    and plain unwrapped text."""
+    if isinstance(raw_value, bool):
+        return
+    al = getattr(cell, "alignment", None)
+    if al is not None and (getattr(al, "wrap_text", False) or getattr(al, "shrink_to_fit", False)
+                           or getattr(al, "horizontal", None) in ("centerContinuous", "fill")):
+        return   # wrapped / shrunk / centred across selection: never cut off
+    text = display_value
+    if not text or "[FORMAT:" in text or "[NEG FORMAT:" in text or "[ZERO FORMAT:" in text:
+        return   # legacy fallback string, not what Excel displays
+    if isinstance(raw_value, (int, float)):
+        fmt = getattr(cell, "number_format", None) or "General"
+        if fmt == "General":
+            return   # General shrinks to fit; never renders ### for ordinary values
+        kind = "num"
+    elif isinstance(raw_value, (datetime.datetime, datetime.date, datetime.time)):
+        kind = "num"
+    elif isinstance(raw_value, str):
+        if raw_value.startswith("=") or "\n" in raw_value:
+            return
+        kind = "text"
+    else:
+        return
+    font = getattr(cell, "font", None)
+    size = getattr(font, "size", None) if font is not None else None
+    bold = bool(getattr(font, "bold", False)) if font is not None else False
+    try:
+        from . import workbook_properties as _wp
+    except ImportError:  # bare-module import path
+        import workbook_properties as _wp
+    sink.append((row_idx, col_idx, kind, _wp.display_width(text.strip(), size, bold)))
+
+
 def create_enhanced_cell_variants(
     cell,
     cell_data_only,
@@ -1053,8 +1090,15 @@ def create_enhanced_cell_variants(
     _cached_config=None,
     extra_tag: Optional[str] = None,
     palette=None,
+    fit_sink: Optional[list] = None,
 ) -> tuple:
     """(full, data) encodings of one cell.
+
+    `fit_sink` (judge v9): when given, appends (row, col, kind, width_chars)
+    for cells whose display string can be compared with the column width —
+    numbers/dates rendered as Excel shows them ("num") and unwrapped text
+    ("text"). Wrapped, shrink-to-fit, merged-anchor and General-format
+    numeric cells are skipped; the caller drops merged interiors.
 
     `full` embeds reference, display value, formula, and the style FORMAT
     segment. `data` is identical minus the cell-level style segment
@@ -1074,6 +1118,12 @@ def create_enhanced_cell_variants(
     # Start with formatted display value (includes number formatting)
     display_value = _get_formatted_value(cell, cell_data_only, _cached_config)
     raw_value = cell_data_only.value
+
+    if fit_sink is not None and raw_value is not None:
+        try:
+            _collect_fit(fit_sink, cell, raw_value, display_value, row_idx, col_idx)
+        except Exception:  # noqa: BLE001 — evidence only, never abort extraction
+            pass
 
     # Formula text. Plain formulas come back as strings starting with "=";
     # array formulas (Ctrl+Shift+Enter / dynamic arrays) as ArrayFormula
@@ -1283,11 +1333,25 @@ def extract_all_cell_data(worksheet, worksheet_data, palette=None) -> Dict[str, 
         )
         cached_config = (do_rounding, float_rounding, percentage_rounding)
 
+        # judge v9 content-fit evidence: collected from the display strings
+        # this loop already renders (no second formatting pass).
+        fit_sink: list = []
+        value_cells: Dict[int, set] = {}
+        merged: set = set()
+        try:
+            for rng in worksheet.merged_cells.ranges:
+                for r in range(rng.min_row, rng.max_row + 1):
+                    for c in range(rng.min_col, rng.max_col + 1):
+                        merged.add((r, c))
+        except Exception:  # noqa: BLE001
+            merged = set()
+
         for row_idx, (row, row_data) in enumerate(
             zip(worksheet.iter_rows(**bounds), worksheet_data.iter_rows(**bounds)), 1
         ):
             enhanced_row = []
             data_row = []
+            row_vals: set = set()
             for col_idx, (cell, cell_data_only) in enumerate(zip(row, row_data), 1):
                 full_cell, data_cell = create_enhanced_cell_variants(
                     cell,
@@ -1297,12 +1361,24 @@ def extract_all_cell_data(worksheet, worksheet_data, palette=None) -> Dict[str, 
                     _cached_config=cached_config,
                     extra_tag=dt_tags.get((row_idx, col_idx)) if dt_tags else None,
                     palette=palette,
+                    fit_sink=None if (row_idx, col_idx) in merged else fit_sink,
                 )
+                rv = cell_data_only.value
+                if rv is not None and not (isinstance(rv, str) and not rv.strip()):
+                    row_vals.add(col_idx)   # shows something, so it blocks overflow
                 enhanced_row.append(full_cell)
                 data_row.append(data_cell)
+            if row_vals:
+                value_cells[row_idx] = row_vals
             enhanced_data.append(enhanced_row)
             data_view.append(data_row)
+        try:
+            column_fit = _wp_column_fit(worksheet, fit_sink, value_cells)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Sheet '{worksheet.title}': content-fit summary failed: {e}")
+            column_fit = "unknown"
     else:
+        column_fit = "unknown"
         for row_idx, row in enumerate(worksheet.iter_rows(**bounds), 1):
             enhanced_row = []
             data_row = []
@@ -1324,6 +1400,7 @@ def extract_all_cell_data(worksheet, worksheet_data, palette=None) -> Dict[str, 
     return {
         "full": list_to_csv(enhanced_data),
         "data": list_to_csv(data_view),
+        "column_fit": column_fit,
         "metadata": {
             "format": "Enhanced with cell references, formulas and formatting",
             "separator": "|",
@@ -1331,6 +1408,14 @@ def extract_all_cell_data(worksheet, worksheet_data, palette=None) -> Dict[str, 
             "columns": len(enhanced_data[0]) if enhanced_data else 0,
         },
     }
+
+
+def _wp_column_fit(worksheet, fit_sink, value_cells):
+    try:
+        from . import workbook_properties as _wp
+    except ImportError:  # bare-module import path
+        import workbook_properties as _wp
+    return _wp.column_fit_summary(worksheet, fit_sink, value_cells)
 
 
 ### Cell processing functions - end
@@ -1572,6 +1657,7 @@ def process_all_worksheets(
     results = {}
     all_saved_files = []
     name_map: Dict[str, Any] = {}  # original sheet name -> output name (None = filtered out)
+    column_fit_by_sheet: Dict[str, Any] = {}  # judge v9: per-sheet content-fit evidence
 
     # Process each worksheet
     for sheet_name in sheet_names:
@@ -1612,6 +1698,7 @@ def process_all_worksheets(
 
         # Extract data
         extraction_result = extract_all_cell_data(worksheet, worksheet_data, palette=palette)
+        column_fit_by_sheet[sheet_name] = extraction_result.get("column_fit", "unknown")
 
         # Save files
         saved_files = save_sheet_csv_files(
@@ -1635,7 +1722,10 @@ def process_all_worksheets(
     except ImportError:  # bare-module import path
         import workbook_properties as _wp
     try:
-        props = _wp.extract_workbook_properties(workbook, excel_file_path, name_map)
+        props = _wp.extract_workbook_properties(
+            workbook, excel_file_path, name_map,
+            workbook_values=workbook_data_only, column_fit=column_fit_by_sheet,
+        )
         props_path = _wp.save_properties(output_dir, props)
         all_saved_files.append(str(props_path))
         if not quiet:

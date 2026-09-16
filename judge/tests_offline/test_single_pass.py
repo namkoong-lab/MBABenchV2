@@ -294,8 +294,8 @@ from utils.misc_utils import load_env_var  # noqa: E402
 
 check(str(load_env_var("AGENTIC_JUDGE_VERSION")) == "4",
       "config: agentic (12-category) judge version is 4")
-check(str(load_env_var("SINGLE_PASS_VERSION")) == "8",
-      "config: single_pass version is 8 (judge v8: harness rounding verdict retired, OVERSIZED RANGE tag)")
+check(str(load_env_var("SINGLE_PASS_VERSION")) == "9",
+      "config: single_pass version is 9 (judge v9: evidence flags, retired checks 37/101, guidance 36->42)")
 check(str(load_env_var("SINGLE_PASS_PROMPT_VERSION")) == "8",
       "config: single_pass prompt_version is 8")
 check(str(load_env_var("JUDGE_VERSION")) != str(load_env_var("SINGLE_PASS_VERSION")),
@@ -332,9 +332,9 @@ check(tier == "forced", "95% pressure is 'forced'")
 orch_src = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
 check("suitability_source_path=suitability_src" in orch_src,
       "orchestrator forwards suitability_source_path (v2 blocker fixed)")
-check("solution_csv_cache_v6" in orch_src and "attempt_csv_cache_v6" in orch_src
-      and "starting_csv_cache_v6" in orch_src,
-      "orchestrator uses the _v6 cache generation (judge v7 tier 2 evidence)")
+check("solution_csv_cache_v7" in orch_src and "attempt_csv_cache_v7" in orch_src
+      and "starting_csv_cache_v7" in orch_src,
+      "orchestrator uses the _v7 cache generation (judge v9 evidence flags)")
 check("accuracy_check=self.accuracy_check" in orch_src and "add_accuracy_check_arg" in orch_src,
       "orchestrator forwards --accuracy-check")
 check('uuid.uuid4().hex[:6]' in orch_src.split("def main")[1],
