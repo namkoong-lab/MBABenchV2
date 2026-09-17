@@ -443,6 +443,18 @@ class ClaudeCore(AIAgentCore):
             # Scan items inside the opened menu only. Exact match on
             # text_content first, then substring.
             items = await menu.query_selector_all('[role="menuitem"]')
+            try:
+                dump = []
+                for it in items:
+                    dump.append(
+                        f"{(await it.text_content() or '').strip()!r}"
+                        f"[disabled={await it.get_attribute('aria-disabled')}"
+                        f"/{await it.get_attribute('data-disabled')}"
+                        f" state={await it.get_attribute('data-state')}]"
+                    )
+                logger.info("Model menu items: %s", "; ".join(dump))
+            except Exception as e:
+                logger.info("Model menu dump failed: %s", e)
             for item in items:
                 try:
                     if not await item.is_visible():
@@ -452,7 +464,7 @@ class ClaudeCore(AIAgentCore):
                         await item.click()
                         logger.info("Clicked model item '%s'", target)
                         await asyncio.sleep(0.5)
-                        return await self._verify_selected_model(frame, target_lower)
+                        return await self._verify_or_retry_model(frame, target, target_lower)
                 except Exception:
                     continue
             for item in items:
@@ -464,7 +476,7 @@ class ClaudeCore(AIAgentCore):
                         await item.click()
                         logger.info("Clicked model item '%s' (whole-token)", target)
                         await asyncio.sleep(0.5)
-                        return await self._verify_selected_model(frame, target_lower)
+                        return await self._verify_or_retry_model(frame, target, target_lower)
                 except Exception:
                     continue
 
@@ -482,19 +494,83 @@ class ClaudeCore(AIAgentCore):
                 await self._dismiss_dropdown(frame)
             return False
 
-    async def _verify_selected_model(self, frame, target_lower: str) -> bool:
-        """Re-read the model selector and confirm it shows the pinned label."""
+    async def _verify_or_retry_model(self, frame, target: str, target_lower: str) -> bool:
+        """Verify the pin; on failure log what the panel shows and retry the
+        selection once via keyboard (hover the item, press Enter), which is
+        how a Radix menu item selects when a synthetic click is ignored."""
+        if await self._verify_selected_model(frame, target_lower):
+            return True
+        # First-time selection of some models (Fable 5.1) opens an
+        # "About this model" modal with Cancel / Got it; the switch only
+        # commits after "Got it". Acknowledge it and re-verify.
         try:
-            btn = await frame.query_selector('button[aria-label="Model selector"]')
-            if not btn:
-                logger.error("Model selector button vanished during verification")
+            ack = await frame.query_selector('button:has-text("Got it")')
+            if ack and await ack.is_visible():
+                await ack.click()
+                logger.info("Acknowledged the 'About this model' modal (Got it)")
+                await asyncio.sleep(0.5)
+                if await self._verify_selected_model(frame, target_lower):
+                    return True
+        except Exception as e:
+            logger.warning("Model-notice acknowledgement errored: %s", e)
+        try:
+            body = await frame.evaluate("document.body.innerText")
+            logger.warning("Panel text after failed pin (600 chars): %r", (body or "")[:600])
+            still_open = await frame.query_selector('[role="menu"][data-state="open"]')
+            logger.warning("Model menu still open after click: %s", bool(still_open))
+            if still_open:
+                await self._dismiss_dropdown(frame)
+                await asyncio.sleep(0.3)
+            model_btn = await frame.query_selector('button[aria-label="Model selector"]')
+            if not model_btn:
                 return False
-            shown = (await btn.get_attribute("title") or "").strip().lower()
-            if not shown:
-                shown = (await btn.text_content() or "").strip().lower()
-            if _label_matches(target_lower, shown):
-                logger.info("✅ Model verified: selector shows %r", shown)
-                return True
+            await model_btn.click()
+            menu = None
+            for _ in range(20):
+                await asyncio.sleep(0.1)
+                menu = await frame.query_selector('[role="menu"][data-state="open"]')
+                if menu:
+                    break
+            if not menu:
+                logger.error("Model dropdown did not reopen for the keyboard retry")
+                return False
+            for item in await menu.query_selector_all('[role="menuitem"]'):
+                text = (await item.text_content() or "").strip().lower()
+                if text == target_lower or _label_matches(target_lower, text):
+                    await item.hover()
+                    await asyncio.sleep(0.2)
+                    await item.focus()
+                    await frame.page.keyboard.press("Enter")
+                    logger.info("Keyboard-selected model item '%s'", target)
+                    await asyncio.sleep(0.5)
+                    return await self._verify_selected_model(frame, target_lower)
+            logger.error("Model '%s' not found on the keyboard retry", target)
+            await self._dismiss_dropdown(frame)
+            return False
+        except Exception as e:
+            logger.error("Keyboard model retry errored: %s", e)
+            return False
+
+    async def _verify_selected_model(self, frame, target_lower: str) -> bool:
+        """Re-read the model selector and confirm it shows the pinned label.
+
+        The selector's title re-renders asynchronously after a menu click, so
+        poll for up to ~4s before declaring the pin unverified.
+        """
+        try:
+            shown = ""
+            for _ in range(8):
+                btn = await frame.query_selector('button[aria-label="Model selector"]')
+                if not btn:
+                    logger.error("Model selector button vanished during verification")
+                    return False
+                shown = (await btn.get_attribute("title") or "").strip().lower()
+                if not shown:
+                    shown = (await btn.text_content() or "").strip().lower()
+                if _label_matches(target_lower, shown):
+                    logger.info("✅ Model verified: selector shows %r", shown)
+                    return True
+                await asyncio.sleep(0.5)
             logger.error(
                 "Model verification FAILED: selector shows %r, pinned %r — "
                 "aborting setup",
