@@ -1,0 +1,31 @@
+# Colour and type style shared by the v2 figures (operation/v2/paper_scripts/*).
+# Scripts load this file and refer to slots by name, so a palette change happens here once.
+
+font: Gill Sans            # macOS system font; falls back to sans-serif when absent
+
+ink:
+  primary: "#0b0b0b"       # titles, value labels, category labels
+  muted: "#898781"         # axis titles, tick numbers
+  grid: "#e1e0d9"          # hairline gridlines
+  baseline: "#c3c2b7"      # axis spines
+  surface: "#ffffff"       # figure and axes background; also the gap between stacked segments
+  unknown: "#c3c2b7"       # any category the palettes below do not name
+
+# tasks.human_difficulty_measure, easiest -> hardest: one blue ramp, light -> dark.
+# Ordinal ramp validated against the light surface (dataviz validate_palette.js --ordinal).
+difficulty:
+  Easy: "#86b6ef"
+  Medium: "#3987e5"
+  Medium-Hard: "#1c5cab"
+  Hard: "#0d366b"
+
+# Categorical slots in fixed order for future multi-series figures (assign by entity, never cycle).
+categorical:
+  - "#2a78d6"              # blue
+  - "#eb6834"              # orange
+  - "#1baf7a"              # aqua
+  - "#eda100"              # yellow
+  - "#e87ba4"              # magenta
+  - "#008300"              # green
+  - "#4a3aa7"              # violet
+  - "#e34948"              # red
