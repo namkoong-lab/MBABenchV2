@@ -118,6 +118,11 @@ checks:
       range. Where black is the model's convention for cross-sheet links, or
       the model uses no green at all, do not deduct; black is a sanctioned
       calculation colour. Never fail a model solely for lacking green.
+      Keep this check in step with Consistent color coding: when you cite
+      black cross-sheet cells there in a model whose convention is green,
+      those same cells are cross-sheet links that are not green, so this
+      check fails on the same range. Do not pass one and fail the other on
+      the same cells.
 
   # ---------------------------------------------------------------------
   # Repeat-grading stability notes (Pat, 2026-09-02). Added after grading
@@ -644,3 +649,34 @@ checks:
       questions-and-answers sheet is the case's text, not the agent's
       documentation. This note does not touch Rounded outputs: display
       precision remains an acceptable way to round final outputs there.
+
+  - category: Structure
+    name: Freeze panes set
+    note: |
+      The properties summary gives each sheet's freeze position with the
+      rows and columns it locks and their approximate size. A sheet tagged
+      EXCESSIVE locks more than about two thirds of a regular screen in
+      rows (over roughly 300 points, about 20 standard rows) or a full
+      screen in columns (over roughly 200 characters): what lies below or
+      beside the locked area
+      cannot be scrolled into a useful view. Fail and cite the sheet and
+      its freeze cell, even when panes are otherwise set where needed.
+      Without the tag, do not fail for excess.
+
+  - category: Model Outputs & Executive Summary
+    name: Output reasonableness check
+    note: |
+      A sense check compares a key output with something OUTSIDE the model:
+      an industry range, a comparable company or transaction, a third-party
+      estimate, or a typed bound whose basis is stated. An input or
+      assumption that is part of the model is never a valid benchmark.
+      Comparing a modeled figure with the model's own input or assumption
+      (or a link to it), or with another figure derived from the same
+      inputs, is a reconciliation, not a sense check, whatever the section
+      is called: set such rows aside. So are tests any figure would meet
+      (positive, between 0% and 100%). Judge what remains. Pass only when
+      the model's key outputs, the headline figures for this model type,
+      are covered by outside comparisons. An isolated outside comparison
+      beside key outputs that go unchecked does not pass. Fail and cite the
+      sense-check section when it rests on the model's own inputs or leaves
+      key outputs without an outside comparison.

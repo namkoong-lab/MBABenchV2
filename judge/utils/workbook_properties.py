@@ -24,8 +24,9 @@ error-alert state (`alert`, `error_style`) and render the full rule
 (operator, both bounds) with a per-sheet tally: 8 of the 12 jv9 GUI
 attempts had every validation alert-off and the judge passed 7 of them.
 Rounding statements per sheet beside the count of formulas using a
-rounding function (check 105). A v7 cache would silently lack all three:
-hence the bump.
+rounding function (check 105). The freeze position carries the rows and
+columns it locks with their size, tagged EXCESSIVE at render time (check
+122). A v7 cache would silently lack all of it: hence the bump.
 `_v7` (2026-09-16, judge v9): schema 4 adds the evidence flags from the
 toy-reliability walkthrough — PERIOD SERIES scan per sheet (orientation,
 OUT OF ORDER, unlabeled gaps, VERTICAL PERIOD SERIES on a horizontal tab,
@@ -87,6 +88,13 @@ PERIOD_MIN_RUN = 3             # labels in a row/column before it counts as a pe
 PERIOD_YEAR_MIN, PERIOD_YEAR_MAX = 1990, 2100
 FIT_MARGIN_CHARS = 1.0         # text must exceed the column by more than this to be counted
 NUMERIC_FIT_MARGIN_CHARS = 1.5 # a number must exceed the column by more than this to be called ### (estimator error band)
+# judge v11 (check 122): "not more than 2/3 of a regular screen view should be blocked by freeze
+# panes". A laptop grid shows roughly 450 pt of rows and 200 characters of columns at 100% zoom.
+# Rows: two thirds of that. Columns: the golden sweep (2026-09-19) found label blocks up to 156
+# characters wide frozen in three goldens (CapitalinMotion, FinancialRelations, DailyCash), so
+# columns are tagged only when they alone fill a regular screen; goldens' rows top out at 118 pt.
+FREEZE_MAX_ROWS_PT = 300.0     # ~20 standard 15-pt rows
+FREEZE_MAX_COLS_CHARS = 200.0
 
 
 def _safe(fn, default="unknown"):
@@ -649,6 +657,7 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
         "zoom": _safe(lambda: ws.sheet_view.zoomScale, None),
         "gridlines": _safe(lambda: ws.sheet_view.showGridLines, None),
         "freeze_panes": _safe(lambda: ws.freeze_panes, None),
+        "freeze_extent": _safe(lambda: _freeze_extent(ws), None),
         "merged_ranges": _safe(lambda: sorted(str(r) for r in ws.merged_cells.ranges), []),
         "protected": _safe(lambda: bool(ws.protection.sheet), None),
         "print_area": _safe(lambda: ws.print_area, None),
@@ -889,6 +898,58 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
         props["period_series"] = "unknown"
     props["column_fit"] = column_fit if column_fit is not None else "unknown"
     return props
+
+
+def _freeze_extent(ws) -> Optional[dict]:
+    """Rows/columns locked by the sheet's freeze position and their size:
+    `A35` locks 34 rows; the judge was only ever shown the cell and never
+    cited an excessive freeze (12 jv9 GUI gradings: 660/480/475/306 pt
+    locked on four attempts, goldens at most 8 rows / 118 pt). Hidden rows
+    take no screen space and are not counted."""
+    fp = ws.freeze_panes
+    if not fp:
+        return None
+    m = re.match(r"^\$?([A-Za-z]{1,3})\$?(\d+)$", str(fp))
+    if not m:
+        return None
+    from openpyxl.utils.cell import column_index_from_string
+    n_rows, n_cols = int(m.group(2)) - 1, column_index_from_string(m.group(1).upper()) - 1
+    default_h = float(getattr(ws.sheet_format, "defaultRowHeight", None) or 15.0)
+    rows_pt = 0.0
+    for r in range(1, n_rows + 1):
+        d = ws.row_dimensions[r] if r in ws.row_dimensions else None
+        if d is not None and d.hidden:
+            continue
+        rows_pt += float(d.height) if d is not None and d.height else default_h
+    widths, default_w = _column_width_map(ws)
+    cols_chars = sum(float(widths.get(c, default_w) or default_w) for c in range(1, n_cols + 1))
+    return {"rows": n_rows, "cols": n_cols, "rows_pt": round(rows_pt, 1), "cols_chars": round(cols_chars, 1)}
+
+
+def freeze_text(sheet_props: dict) -> str:
+    """'A35 (34 rows ≈ 660 pt frozen, 0 columns) EXCESSIVE: …' — the tag is
+    render-time from the stored extent, so the thresholds can move without
+    re-extraction. Caches without the extent render the cell alone."""
+    fp = sheet_props.get("freeze_panes")
+    if not fp:
+        return "none"
+    ext = sheet_props.get("freeze_extent")
+    if not isinstance(ext, dict):
+        return str(fp)
+    rows, cols = int(ext.get("rows") or 0), int(ext.get("cols") or 0)
+    rows_pt, cols_chars = float(ext.get("rows_pt") or 0), float(ext.get("cols_chars") or 0)
+    parts = [f"{rows} row{'s' if rows != 1 else ''}" + (f" ≈ {rows_pt:.0f} pt" if rows else "") + " frozen",
+             f"{cols} column{'s' if cols != 1 else ''}" + (f" ≈ {cols_chars:.0f} characters wide" if cols else "")]
+    text = f"{fp} ({', '.join(parts)})"
+    over = []
+    if rows_pt > FREEZE_MAX_ROWS_PT:
+        over.append(f"{rows_pt:.0f} pt of rows")
+    if cols_chars > FREEZE_MAX_COLS_CHARS:
+        over.append(f"{cols_chars:.0f} characters of columns")
+    if over:
+        text += (" EXCESSIVE: " + " and ".join(over)
+                 + " locked, more than two thirds of a regular screen; what lies beyond cannot be scrolled into a useful view")
+    return text
 
 
 def _col_dims(ws):
@@ -1489,7 +1550,7 @@ def render_properties_text(
         lines.append(head)
         fp = s.get("freeze_panes")
         detail = [
-            f"freeze panes: {fp or 'none'}",
+            f"freeze panes: {freeze_text(s)}",
             f"gridlines: {'on' if s.get('gridlines') in (None, True) else 'off'}",
             f"zoom: {s.get('zoom') or 100}",
             f"tab color: {s.get('tab_color') or 'none'}",

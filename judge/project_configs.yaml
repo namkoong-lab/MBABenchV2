@@ -147,8 +147,14 @@ single_pass:
   # rounding function (check 105: a "rounded to" label over display-only
   # precision misdescribes the model; House Standards v1 rounding line
   # amended in place the same day, see house_standards/README.md);
-  # guidance 44 -> 47 notes (22, 44, 105 new; 66 extended). Prompt version
-  # and template unchanged.
+  # freeze position renders the rows/columns it locks and their size,
+  # tagged EXCESSIVE above 300 pt of rows or 200 characters of columns
+  # (check 122: four of the 12 jv9 GUI attempts lock 306-660 pt, never
+  # cited); guidance 44 -> 49 notes (22, 44, 88, 105, 122 new; 50 and 66
+  # extended: 50 now fails on the range check 52 cites, grading 1084; 88:
+  # the model's own inputs are never a benchmark, key outputs need outside
+  # comparisons, one isolated outside comparison does not pass).
+  # Prompt version and template unchanged.
   version: 11
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"

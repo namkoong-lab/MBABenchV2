@@ -392,6 +392,39 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     following it. Rubric 10 queue: 105 reads "rounded or shown to", label
     must match what the model does.
     Test: `tests_offline/test_rounding_statements.py`.
+  - `freeze panes` extent (check 122; judge v11): the detail line now reads
+    `freeze panes: A35 (34 rows ≈ 660 pt frozen, 0 columns) EXCESSIVE: …`.
+    The judge was shown only the cell and never cited an excessive freeze:
+    of the 12 jv9 GUI attempts four lock 306-660 pt of rows (1085 Checks
+    A35, 1078 Checks D25, 1086 Assumption A26, 1083 Owning/Renting E18)
+    and all passed or failed for missing panes only. Thresholds
+    (`FREEZE_MAX_ROWS_PT` 300, `FREEZE_MAX_COLS_CHARS` 200; the column
+    threshold was 130 until the golden sweep found three goldens freezing
+    141-156 characters of label columns) apply at render
+    time from the stored extent; hidden rows are not counted. Guidance note
+    on 122: an EXCESSIVE tag fails the check; no tag, no fail for excess.
+    Test: `tests_offline/test_freeze_extent.py`.
+  - Check 50 note extended (judge v11, text only): grading 1084 failed
+    Consistent color coding (52) on `Checks!D6, D20:D29` — black where the
+    identical formulas beside them are green — and passed Green font for
+    cross-sheet links (50) one tool call earlier. The judge had read the
+    cells; it booked the slip once. The note now keeps the two checks in
+    step. Across the 12 jv9 GUI attempts only 1084 has a black cell whose
+    identical neighbouring formula is green; larger black blocks elsewhere
+    are calculations those models colour black on purpose. A stricter rule
+    (any black formula naming another sheet fails 50) was considered and
+    shelved: it fails every golden and needs the House Standards colour
+    line to say so first.
+  - Check 88 note (judge v11, text only): grading 1084 passed a "sense
+    check" (`Checks!B38:F42`) whose three benchmarks are links to the very
+    assumptions that drive the compared figures (3.0% appreciation vs the
+    3% growth input, to 1e-8), while 1085 — same agent, same pattern,
+    "no external market benchmark is assumed" — and 1086 were failed.
+    Patrick's ruling 2026-09-19: an input or assumption that is part of the
+    model is never a valid benchmark, and one isolated outside comparison
+    among unchecked key outputs does not pass. 1075 (typed EV/EBITDA, P/E,
+    WACC ranges) and 1076 (peer percentiles) are the passing shape. The
+    four reviewed goldens carry no sense-check section at all.
   Golden/toy-Pass sweep counts are in the session notes for 2026-09-16.
   Tests: `tests_offline/test_evidence_flags_v9.py`.
 - **Guidance 36 → 42 notes**: replaced 50, 70, 126; extended 2, 4, 55, 66,
