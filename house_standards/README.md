@@ -38,6 +38,19 @@ other pipeline reads this directory directly. Edit here, then copy.
   (including the rubric) govern over the house standards; departures are
   noted on the cover.
 
+## Amendments
+
+- **2026-09-18, v1 amended in place (Patrick's decision; the one exception to
+  the append-only rule above).** The Rounding line changed from `"$mm, rounded
+  to $0.01mm" at the head of the block` to wording that must match what the
+  model does: `"shown to $0.01mm"` for display-only precision, `"rounded to"`
+  only where a rounding function is applied. The version number, the
+  filename and every prompt version that attaches it are unchanged, and for
+  the current round of attempts the two texts count as the same standard.
+  Attempts that record provenance carry the file's sha256, which tells the
+  two texts apart: before `00b20f795c10bdda9823bf67578093711b52ba39191cc3052af2de3b01b67617`, after `cc4a62089d756cbb9c254a876c2eb3f6fd40864dcb33cf0592560e302f8ce342`. The coding
+  pipeline's copy was updated with it (still byte-identical).
+
 ## Known interactions
 
 - The CLI validator whitelist must include every function the standards

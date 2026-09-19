@@ -22,7 +22,7 @@ Beyond the sheets any model needs, every model carries a linked contents page, a
 
 **Units.** $mm unless the instructions say otherwise, stated at the head of every block and column with the currency alongside. Anything in another unit — per-unit prices, headcount, per-share figures, multiples — is labelled where it appears.
 
-**Rounding.** State the convention beside the figures it governs: "$mm, rounded to $0.01mm" at the head of the block.
+**Rounding.** State the convention beside the figures it governs, in words that match what the model does: "$mm, shown to $0.01mm" at the head of a block whose figures carry full precision and are only displayed to that precision; "rounded to $0.01mm" only where a rounding function (ROUND and its relatives) is actually applied to those figures.
 
 **Signs.** Costs and outflows negative, revenues and inflows positive, everywhere — including add-backs in EBITDA bridges and movements in working capital.
 
