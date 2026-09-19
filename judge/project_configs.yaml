@@ -44,7 +44,11 @@ judge:
   # a rule, not a deletion. utils/rubric_suitability.RETIRED_CHECK_NAMES pins
   # the name each number must carry; a mismatch refuses to grade.
   # 37 = M&A / divestiture flexibility, 101 = Architecture suited to audience.
-  retired_checks: "37,101"
+  # 28 = No unused formatting (judge v11, 2026-09-19; meant to come back once
+  # it is redefined). Taking a number off this list un-retires it with no
+  # other change: the pin stays, and evidence served for that check alone
+  # (28: "styled empty cells in used range") is rendered again.
+  retired_checks: "28,37,101"
 
   do_rounding: true
   float_rounding: 6
@@ -154,6 +158,9 @@ single_pass:
   # extended: 50 now fails on the range check 52 cites, grading 1084; 88:
   # the model's own inputs are never a benchmark, key outputs need outside
   # comparisons, one isolated outside comparison does not pass).
+  # 2026-09-19, folded in (nothing graded under 11 yet): check 28 No unused
+  # formatting retired by rule (judge.retired_checks; 129 effective items)
+  # and its evidence line left out of the properties block while retired.
   # Prompt version and template unchanged.
   version: 11
   prompt_template: "prompts/agentic_judge_template_8.yaml"

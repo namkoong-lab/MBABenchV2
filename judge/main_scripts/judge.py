@@ -4443,6 +4443,9 @@ def single_pass_judge_case(
             {"Accuracy": answer_rules.render_rules_text()} if hardened else None
         ),
     )
+    # Evidence served for a retired check alone stays out of all three blocks
+    # (workbook_properties.STYLED_EMPTY_CHECK); un-retiring renders it again.
+    _retired_checks = suitability_provenance.get("retired_checks") or []
     compile_kwargs = dict(
         rubric_checks_text=rubric_checks_text,
         check_ids_text=", ".join(check_ids),
@@ -4451,13 +4454,14 @@ def single_pass_judge_case(
             attempt_props,
             set(attempt_file_list),
             origin=workbook_properties.load_origin(prep["task_path"]),
+            retired_checks=_retired_checks,
         ),
         solution_properties_text=workbook_properties.render_properties_text(
-            solution_props, set(solution_file_list)
+            solution_props, set(solution_file_list), retired_checks=_retired_checks
         ),
         starting_properties_text=(
             workbook_properties.render_properties_text(
-                starting_props, set(starting_file_list)
+                starting_props, set(starting_file_list), retired_checks=_retired_checks
             )
             if starting_file_list
             else "  (starting workbook not available for this attempt)"

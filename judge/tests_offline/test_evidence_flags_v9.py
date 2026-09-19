@@ -5,7 +5,8 @@
     unlabeled gaps, VERTICAL PERIOD SERIES, content past an End marker
   - content fit (check 69): NUMERIC exceeds width / TEXT cut off / overflow
   - typed date-like string literal inside a formula (checks 2/10/81)
-  - retired checks 37/101: forced not_applicable by rule, numbering kept
+  - retired checks 28/37/101: forced not_applicable by rule, numbering kept;
+    28's own evidence line follows the config list (judge v11, 2026-09-19)
 
 Run from judge/:  python tests_offline/test_evidence_flags_v9.py
 """
@@ -253,8 +254,9 @@ def test_date_literal_formulas():
 
 def test_retired_checks_config_and_pins():
     retired = rs.retired_check_numbers(RUBRIC)
-    assert retired == [37, 101], retired
+    assert retired == [28, 37, 101], retired
     flat = rs._flat(RUBRIC)
+    assert flat[27] == ("Error Checks", "No unused formatting")
     assert flat[36] == ("Flexibility", "M&A / divestiture flexibility")
     assert flat[100] == ("Purpose & Scope", "Architecture suited to audience")
     assert len(flat) == 132, "the rubric keeps its 132 positions; retirement is a rule, not a deletion"
@@ -277,15 +279,16 @@ def test_retired_checks_refuse_on_numbering_drift():
     else:
         raise AssertionError("an unpinned number must be refused")
     finally:
-        os.environ[f"BIZBENCHJUDGE_{rs.RETIRED_ENV_KEY}"] = "37,101"
+        os.environ[f"BIZBENCHJUDGE_{rs.RETIRED_ENV_KEY}"] = "28,37,101"
 
 
 def test_retired_checks_applied_with_and_without_annotation():
     d = Path(tempfile.mkdtemp())
     # (a) no annotation, v1/unknown benchmark -> retired-only gating
     out = rs.load_for_case(d, RUBRIC, benchmark=None)
-    assert out is not None and out["provenance"]["retired_checks"] == [37, 101]
-    assert out["provenance"]["gated"] is False and out["provenance"]["excluded_count"] == 2
+    assert out is not None and out["provenance"]["retired_checks"] == [28, 37, 101]
+    assert out["provenance"]["gated"] is False and out["provenance"]["excluded_count"] == 3
+    assert "No unused formatting" in out["excluded"]["Error Checks"]
     assert "M&A / divestiture flexibility" in out["excluded"]["Flexibility"]
     assert "Architecture suited to audience" in out["excluded"]["Purpose & Scope"]
     # (b) skip env -> still retired
@@ -293,7 +296,7 @@ def test_retired_checks_applied_with_and_without_annotation():
     os.environ[rs.SKIP_ENV] = "1"
     try:
         out = rs.load_for_case(d, RUBRIC, benchmark="v2")
-        assert out["provenance"]["skipped_via_env"] is True and out["provenance"]["retired_checks"] == [37, 101]
+        assert out["provenance"]["skipped_via_env"] is True and out["provenance"]["retired_checks"] == [28, 37, 101]
     finally:
         os.environ.pop(rs.SKIP_ENV, None)
         os.environ.pop(f"BIZBENCHJUDGE_{rs.SKIP_ENV}", None)
@@ -303,12 +306,39 @@ def test_retired_checks_applied_with_and_without_annotation():
     rubrics[4]["verdict"] = "not_applicable"      # task's own exclusion of check 5 survives
     (d / rs.STAGED_FILENAME).write_text(json.dumps({"complete": True, "annotator": "t", "rubrics": rubrics}))
     out = rs.load_for_case(d, RUBRIC, benchmark="v2")
-    assert out["provenance"]["gated"] is True and out["provenance"]["retired_checks"] == [37, 101]
-    assert out["provenance"]["excluded_count"] == 3, out["provenance"]
+    assert out["provenance"]["gated"] is True and out["provenance"]["retired_checks"] == [28, 37, 101]
+    assert out["provenance"]["excluded_count"] == 4, out["provenance"]
     eff = rs.build_effective_weights(
         json.loads((JUDGE / "prompts" / "rubrics" / "rubric_9_weights.json").read_text()), out["excluded"])
+    assert all(c["name"] != "No unused formatting" for c in eff["Error Checks"])
+    assert len(eff["Error Checks"]) == 14, "the other 14 Error Checks items carry the category"
     assert all(c["name"] != "M&A / divestiture flexibility" for c in eff["Flexibility"])
     assert all(c["name"] != "Architecture suited to audience" for c in eff["Purpose & Scope"])
+
+
+def test_retired_check_evidence_line_follows_the_config():
+    """Check 28's own evidence line is left out while 28 is retired and comes
+    back when 28 is taken off judge.retired_checks — no code change either way."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"], ws["C3"] = "x", 1
+    ws["B2"].font = Font(bold=True)               # styled, empty, inside the used range
+    props = _extract(wb)
+    line = "styled empty cells in used range: 1 (e.g. B2)"
+    assert line in wp.render_properties_text(props), "no retired list given -> everything renders"
+    key = f"BIZBENCHJUDGE_{rs.RETIRED_ENV_KEY}"
+    try:
+        retired = rs.retired_check_numbers(RUBRIC)             # config as shipped: 28 retired
+        assert wp.STYLED_EMPTY_CHECK in retired
+        assert "styled empty cells" not in wp.render_properties_text(props, retired_checks=retired)
+        os.environ[key] = "37,101"                             # 28 taken off the list
+        retired = rs.retired_check_numbers(RUBRIC)
+        assert retired == [37, 101]
+        assert line in wp.render_properties_text(props, retired_checks=retired)
+    finally:
+        os.environ[key] = "28,37,101"
+    # the data is kept either way, so neither direction needs a cache rebuild
+    assert props["sheets"][0]["styled_empty_cells"] == {"count": 1, "examples": ["B2"]}
 
 
 if __name__ == "__main__":

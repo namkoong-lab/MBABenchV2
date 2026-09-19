@@ -95,6 +95,12 @@ NUMERIC_FIT_MARGIN_CHARS = 1.5 # a number must exceed the column by more than th
 # columns are tagged only when they alone fill a regular screen; goldens' rows top out at 118 pt.
 FREEZE_MAX_ROWS_PT = 300.0     # ~20 standard 15-pt rows
 FREEZE_MAX_COLS_CHARS = 200.0
+# Evidence served for ONE rubric_9 check only. While that check is retired
+# (project_configs judge.retired_checks) its line is left out of the rendered
+# block, so the judge cannot cite it under another check; taking the check off
+# the retired list renders it again. Render-time only: the JSON always keeps
+# the data, so neither direction needs a schema or cache bump.
+STYLED_EMPTY_CHECK = 28        # "No unused formatting" (retired 2026-09-19, judge v11)
 
 
 def _safe(fn, default="unknown"):
@@ -1472,6 +1478,7 @@ def render_properties_text(
     props: Optional[dict],
     listed_files: Optional[set] = None,
     origin: Optional[dict] = None,
+    retired_checks=None,
 ) -> str:
     """Compact deterministic text for the seed prompt.
 
@@ -1480,10 +1487,13 @@ def render_properties_text(
     looking for a file that is not there. `origin` (attempt only) is the
     provenance sidecar from setup_task_folder: the attempt is staged as
     ai_attempt.xlsx, so the delivered filename/extension (check 77) is
-    only known from it.
+    only known from it. `retired_checks` (the grading's retired check
+    numbers) leaves out evidence that exists for a retired check alone
+    (STYLED_EMPTY_CHECK); omitted, everything renders.
     """
     if not props:
         return "  (workbook properties not available — older extraction cache)"
+    retired = set(retired_checks or ())
     wb = props.get("workbook", {})
     lines = []
     size = wb.get("bytes")
@@ -1561,16 +1571,17 @@ def render_properties_text(
                if s.get("top_left_cell") and s.get("top_left_cell") != "A1" else ""),
         ]
         lines.append("     " + "; ".join(detail))
-        se = s.get("styled_empty_cells")
-        if isinstance(se, dict):
-            n_se = int(se.get("count", 0) or 0)
-            ex = list(se.get("examples") or [])
-            se_txt = "none" if n_se == 0 else (
-                f"{n_se} (e.g. {', '.join(ex)}{', ...' if n_se > len(ex) else ''})"
-            )
-        else:
-            se_txt = "unknown" if se == "unknown" else "none"
-        lines.append("     styled empty cells in used range: " + se_txt)
+        if STYLED_EMPTY_CHECK not in retired:
+            se = s.get("styled_empty_cells")
+            if isinstance(se, dict):
+                n_se = int(se.get("count", 0) or 0)
+                ex = list(se.get("examples") or [])
+                se_txt = "none" if n_se == 0 else (
+                    f"{n_se} (e.g. {', '.join(ex)}{', ...' if n_se > len(ex) else ''})"
+                )
+            else:
+                se_txt = "unknown" if se == "unknown" else "none"
+            lines.append("     styled empty cells in used range: " + se_txt)
         hr, hc = s.get("hidden_rows", []), s.get("hidden_cols", [])
         rg, cg = s.get("row_groups", []), s.get("col_groups", [])
         lines.append(

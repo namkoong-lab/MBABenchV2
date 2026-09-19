@@ -41,10 +41,13 @@ SKIP_ENV = "JUDGE_SKIP_SUITABILITY"
 # not_applicable on every task, never prompted, never scored, and the
 # category rescales around it exactly as suitability gating does. Which
 # numbers are retired comes from project_configs.yaml (judge.retired_checks,
-# "37,101"); this table pins the NAME each number must carry so a
-# regenerated/renumbered rubric can never retire the wrong check.
+# "28,37,101"); this table pins the NAME each number must carry so a
+# regenerated/renumbered rubric can never retire the wrong check. A pin only
+# permits retirement — the config list decides — so un-retiring a check is a
+# config edit and its pin stays here (28 is meant to return once redefined).
 RETIRED_ENV_KEY = "JUDGE_RETIRED_CHECKS"
 RETIRED_CHECK_NAMES = {
+    28: ("Error Checks", "No unused formatting"),   # judge v11, 2026-09-19
     37: ("Flexibility", "M&A / divestiture flexibility"),
     101: ("Purpose & Scope", "Architecture suited to audience"),
 }

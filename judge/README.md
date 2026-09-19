@@ -238,7 +238,7 @@ not comparable to version 6 rows. Frozen 2026-09-14 when version 8 was cut.
   hues 200-260° are named `blue` / `light_blue` / `muted_blue` /
   `dark_blue` instead of `pale_blue` / `muted_purple` / `slate_blue` (48,
   52, 55). Properties block: `styled empty cells in used range: N (e.g. …)`
-  per sheet (28); hidden defined names leave the listed set for the
+  per sheet (28; left out while 28 is retired, see judge v9/v11); hidden defined names leave the listed set for the
   footnote `[+N add-in/system, +M hidden names not listed]` (9, 29); the
   true `active cell` per sheet, read from the selection of the view's
   active pane on frozen sheets (62); `N spill/array ranges` in each sheet's
@@ -301,6 +301,30 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
   carry; a regenerated rubric that moved them refuses to grade. Recorded per
   grading in `scored_results.rubric_suitability.retired_checks`. `grade_toy.py`
   skips toys for retired checks. Effective rubric: 130 items.
+  - **Check 28 No unused formatting retired the same way** (judge v11,
+    2026-09-19, folded into 11 because nothing had been graded under it):
+    `judge.retired_checks: "28,37,101"`, effective rubric 129 items. The
+    colleague's review of the 12 jv9 GUI gradings showed the check cannot be
+    graded as served: Excel's Check Performance counts formatting on empty
+    cells beyond the last row/column of content, the judge's `styled empty
+    cells in used range` count looks only inside the content rectangle, and
+    the LeaseorKeys / NestQuest goldens carry ~69k trailing formatted cells
+    themselves. 28 is 3.28% of Error Checks (0.43% of the total); the other
+    14 Error Checks items rescale by 1.034, the category stays at 13%. The
+    suitability annotations in S3 are not edited for a retirement (28 is
+    `applicable` in all 101, as 101 still is): the rule overrides them at
+    load time, and an annotation that is not an exact 132/132 match refuses
+    to grade.
+  - **Reversible by config alone.** 28 is meant to return once redefined
+    (rubric 10 queue below). Taking a number off `judge.retired_checks`
+    un-retires it: its `RETIRED_CHECK_NAMES` pin stays (a pin permits, the
+    list decides), and evidence that exists for that check alone is rendered
+    again — `workbook_properties.STYLED_EMPTY_CHECK` leaves the `styled empty
+    cells in used range` line out of all three properties blocks only while
+    28 is on the list (`render_properties_text(..., retired_checks=…)`,
+    passed from the grading's provenance). Render-time only: the properties
+    JSON always keeps the count, so neither direction needs a schema or CSV
+    cache bump. Test: `test_retired_check_evidence_line_follows_the_config`.
 - **Evidence flags in the properties block** (`utils/workbook_properties.py`,
   schema 4; CSV caches move to `*_csv_cache_v7`; judge v11 adds schema 5 and
   `*_csv_cache_v8`, see the last bullet). Each is rendered per sheet:
@@ -432,7 +456,11 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
   solution is never evidence".
 - Rubric 10 queue (not implemented): 115 and 129 rewritten so clearly
   distinguishable sections / a visible single-formula roll-forward are
-  acceptable; 70's "Bad" line led by "wider than content requires".
+  acceptable; 70's "Bad" line led by "wider than content requires"; 28 No
+  unused formatting redefined before it returns (what counts as unused —
+  Excel's Check Performance looks beyond the last content row/column, net of
+  the starting file — with evidence to match; the agent-facing build prompts
+  still carry the item, as they do 37 and 101).
 
 ### Latest-prompt guard (2026-09-10)
 
