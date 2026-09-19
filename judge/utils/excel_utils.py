@@ -1164,11 +1164,12 @@ def create_enhanced_cell_variants(
     # only — a formula returning text (=TEXT(...)) shows its formula, and the
     # marker states a fact, not a verdict (version labels are text on purpose).
     text_tag = " [TEXT]" if formula_text is None and _is_numeric_text(raw_value) else ""
+    actual_tag = _actual_value_tag(display_value, raw_value, getattr(cell, "number_format", None))
     if hidden_by_format:
         fmt = getattr(cell, "number_format", None) or ""
         cell_parts = [f"[{cell_ref}]{raw_value}{text_tag} [FORMAT:{fmt}] [HIDDEN BY FORMAT]"]
     elif display_value.strip() or formula_text is not None:
-        cell_parts = [f"[{cell_ref}]{display_value}{text_tag}"]
+        cell_parts = [f"[{cell_ref}]{display_value}{text_tag}{actual_tag}"]
     else:
         cell_parts = [display_value]
     if extra_tag and (cell_parts[0] or formula_text is not None):
@@ -1186,6 +1187,59 @@ def create_enhanced_cell_variants(
             cell_parts.append(f"FORMAT:{formatting}")
 
     return "|".join(cell_parts), data_variant
+
+
+_RE_ZERO_LIKE = re.compile(r"^\(?-?[$€£¥]?\s*0(?:[.,]0+)?\s*\)?%?$")
+LEFTOVER_ABS = 1e-6   # below this a non-zero value is a floating-point leftover, not a small number
+
+
+def _format_sections(fmt: str) -> list:
+    out, cur, quoted = [], "", False
+    for ch in fmt or "":
+        if ch == '"':
+            quoted = not quoted
+        if ch == ";" and not quoted:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return out
+
+
+def _zero_section_is_dash(fmt) -> bool:
+    """True for formats whose third (zero) section shows a dash and no digit
+    placeholder: `#,##0.00;(#,##0.00);"-"`, accounting `_(* "-"??_)`."""
+    if not isinstance(fmt, str) or ";" not in fmt:
+        return False
+    parts = _format_sections(fmt)
+    if len(parts) < 3:
+        return False
+    zero = parts[2].replace('"', "").replace("\\", "").replace("_", "").replace("*", "")
+    # `?`/`#` placeholders show nothing for a zero (accounting `"-"??`), a `0` would print a digit
+    return any(d in zero for d in ("-", "–", "—")) and "0" not in zero
+
+
+def _actual_value_tag(display_value: str, raw_value, number_format=None) -> str:
+    """Judge v11 (2026-09-18): a cell that DISPLAYS like zero (0, 0.00,
+    (0.00), -0.0, 0.00%) while its value is not zero is served with the
+    underlying number — `0.00 [actual 3.64e-12]` — when the value is a
+    floating-point leftover (|value| < LEFTOVER_ABS) or the cell carries a
+    dash format (where a true zero would have shown the dash). Without it
+    the judge cannot tell a leftover from a zero shown as 0, and failed
+    check 66 on 5 of 12 gradings for leftovers. Ordinary small numbers
+    rounded away by the display precision (0.0025 as 0.00 under #,##0.00)
+    are not tagged: the golden sweep put 102k such cells in 36 goldens, a
+    prompt-size cost with nothing to decide. Exact zeros are untouched.
+    Applied after the width-fit measurement, so no other evidence changes."""
+    if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool) or raw_value == 0:
+        return ""
+    text = (display_value or "").replace("_", "").replace("*", "").strip()
+    if not text or not _RE_ZERO_LIKE.match(text):
+        return ""
+    if abs(raw_value) >= LEFTOVER_ABS and not _zero_section_is_dash(number_format):
+        return ""
+    return f" [actual {raw_value:.3g}]"
 
 
 def _data_table_formula_text(dtf) -> str:

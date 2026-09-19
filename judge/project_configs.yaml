@@ -130,7 +130,26 @@ single_pass:
   # (judge.retired_checks), guidance 36 -> 42 notes. Prompt version and
   # template unchanged. Rows graded under version 9 are not comparable with
   # version 8 rows.
-  version: 9
+  # 10 (2026-09-17): content-fit renders the NUMERIC ### class only (the
+  # text cut-off line was read as a defect: toy 69 Pass 0/3), guidance
+  # 42 -> 44 notes (69 new, 115 extended, 117 new: content past the End
+  # marker). Prompt version and template unchanged.
+  # 11 (2026-09-18): IMPLICIT INTERSECTION evidence line (properties schema
+  # 5, CSV caches *_csv_cache_v8): plain formulas that Excel evaluates to
+  # #VALUE! by implicit intersection while the served value looks fine
+  # (grading 1075, Sens_Engine!D448); data validation renders operator,
+  # both bounds and the error-alert state with a per-sheet tally (alert-off
+  # validations accept any entry; 8 of 12 jv9 GUI attempts, 7 passed);
+  # cell extractor tags zero-looking displays whose value is not zero with
+  # the underlying number ("0.00 [actual 3.6e-12]": check 66 failed 5 of 12
+  # gradings on floating-point leftovers under a correct dash format);
+  # rounding statements per sheet beside the count of formulas using a
+  # rounding function (check 105: a "rounded to" label over display-only
+  # precision misdescribes the model; House Standards v1 rounding line
+  # amended in place the same day, see house_standards/README.md);
+  # guidance 44 -> 47 notes (22, 44, 105 new; 66 extended). Prompt version
+  # and template unchanged.
+  version: 11
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500

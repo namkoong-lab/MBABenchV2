@@ -391,6 +391,12 @@ checks:
       This applies to financial and quantity values. Period counters, flags,
       switches, check counts, index cells, and true/false results may
       display 0; do not fail for them.
+      A cell served as "0.00 [actual 3.6e-12]" (or "(0.00) [actual …]",
+      "-0.0 [actual …]") is NOT a zero: the tag carries its real, non-zero
+      value, and a dash format would have shown the dash for a true zero.
+      Never fail this check for a tagged cell. Fail only cells whose value
+      is exactly zero (no tag) and that display 0, 0.0 or 0.00 where a dash
+      belongs, subject to the exemptions above.
 
   - category: Formatting
     name: Thousands separators
@@ -500,7 +506,10 @@ checks:
       built in the middle of the assumptions block, or sections a reader
       cannot tell apart without tracing formulas. A cover or instructions
       sheet that also holds inputs is not a mistake if the inputs are in a
-      labeled block.
+      labeled block. Content placed after a sheet's End marker (the
+      properties summary reports "content continues N rows past the End
+      marker") sits outside the sheet's declared structure and is NOT a
+      separated section, however it is labeled: fail and cite the block.
 
   - category: Structure
     name: Roll-forward (corkscrew) structure for balances
@@ -561,3 +570,77 @@ checks:
       straight into a [$] wage line. Follow the value into the calculation,
       not only the label beside it, and cite both cells. Values that are
       converted explicitly (×1,000, ÷1,000,000) are consistent.
+
+  # --- 2026-09-17 judge v10: toy re-test misses 69 / 115 / 117 --------------
+  # Checked against the 101 golden solutions: no golden has a numeric ###
+  # cell or content past its End marker; 64 goldens have header labels
+  # wider than their column, so text overflow is not evidence for check 69.
+
+  - category: Formatting
+    name: Sufficient column widths
+    note: |
+      Judge this on values that cannot be read: numeric cells the
+      properties summary lists as "NUMERIC exceeds width (would render
+      ###)", and any value hidden by its column. A text label that runs a
+      few characters past its column is ordinary formatting practice and
+      is NOT a mistake on this check; do not infer truncation from column
+      widths or label lengths. When the summary reports that no numeric
+      value exceeds its column width and no hidden value is found, the
+      check passes.
+
+  - category: Structure
+    name: Functional calculation sections
+    note: |
+      Sectioning is judged on the calculation sheet as laid out. When the
+      properties summary reports content continuing past the sheet's End
+      marker, the rows below the marker belong to no section: an End marker
+      placed above the calculations means the sheet is not sectioned at
+      all, and calculation blocks appended after the marker are unsectioned.
+      Fail and cite the marker cell and the rows below it.
+
+  - category: Error Checks
+    name: No formula errors
+    note: |
+      When a sheet's properties line reads IMPLICIT INTERSECTION, every
+      formula it lists displays #VALUE! in Excel even though the served CSV
+      shows a number for it: the formula uses a multi-cell range as a single
+      value from a cell outside that range, carries no array marker, and the
+      served value came from a non-Excel recalculation. Treat each listed
+      cell as a visible Excel error: fail this check and cite the cells
+      (formulas that reference them display #VALUE! as well). A formula that
+      is NOT listed is never an implicit-intersection error, whatever its
+      shape; do not infer one from formula text.
+
+  - category: Formatting
+    name: Input cells data validation
+    note: |
+      The properties summary lists every validation with its rule and its
+      error-alert state. A validation whose alert is OFF neither rejects nor
+      flags an entry: Excel accepts anything typed into the cell (a list
+      merely shows a dropdown). Treat alert-OFF validations as absent; a
+      sheet whose validations are all alert-OFF has no working validation.
+      "Key input cells" are the hardcoded drivers a user is meant to change
+      (scenario selectors, switches, dates, durations, rates, counts, unit
+      factors), not pasted data blocks (financial statements,
+      comparable-company tables, time series), which need none. Pass when
+      the key drivers carry alert-ON validation (stop or warning); fail and
+      cite the cells when they do not, or when the only validation present
+      has its alert off.
+
+  - category: Rounding
+    name: Rounding documented
+    note: |
+      The properties summary lists each sheet's rounding statements beside
+      the number of formulas on that sheet that use a rounding function. A
+      statement that figures are "rounded to" a precision is accurate only
+      where those figures are rounded by formula. Where the formulas carry
+      full precision and only the number format limits what is displayed
+      (rounding-function count 0, or rounding confined to other figures),
+      the accurate wording is "shown to" or "displayed to" that precision,
+      or a statement that full precision is carried; a "rounded to" label
+      there misdescribes the model: fail and cite the label cell. Wording
+      that says shown/displayed, or that says figures are carried
+      unrounded, passes. Rounding wording on the case's instructions or
+      questions-and-answers sheet is the case's text, not the agent's
+      documentation. This note does not touch Rounded outputs: display
+      precision remains an acceptable way to round final outputs there.

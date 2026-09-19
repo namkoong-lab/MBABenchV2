@@ -13,9 +13,19 @@ text block for the judge's seed prompt.
 Where a property cannot be read the block says so explicitly ("unknown"),
 so the model can tell "absent" from "not provided".
 
-Cache generation: files written here ride in `*_csv_cache_v7` — a v2 cache
+Cache generation: files written here ride in `*_csv_cache_v8` — a v2 cache
 has no properties file and the loaders degrade to the old behaviour
 (alphabetical listing, no block), which is why the generation was bumped.
+`_v8` (2026-09-18, judge v11): schema 5 adds the IMPLICIT INTERSECTION scan
+per sheet (utils/implicit_intersection.py) — plain formulas that Excel
+evaluates to #VALUE! while the cached value (LibreOffice/openpyxl) looks
+fine; grading 1075 Sens_Engine!D448. Data validations now carry their
+error-alert state (`alert`, `error_style`) and render the full rule
+(operator, both bounds) with a per-sheet tally: 8 of the 12 jv9 GUI
+attempts had every validation alert-off and the judge passed 7 of them.
+Rounding statements per sheet beside the count of formulas using a
+rounding function (check 105). A v7 cache would silently lack all three:
+hence the bump.
 `_v7` (2026-09-16, judge v9): schema 4 adds the evidence flags from the
 toy-reliability walkthrough — PERIOD SERIES scan per sheet (orientation,
 OUT OF ORDER, unlabeled gaps, VERTICAL PERIOD SERIES on a horizontal tab,
@@ -56,9 +66,14 @@ try:
     from .logger import logger
 except ImportError:  # imported as a bare module (utils/ on sys.path)
     from logger import logger
+try:
+    from . import implicit_intersection as _ii
+except ImportError:  # bare-module import path
+    import implicit_intersection as _ii
 
 FILENAME = "_workbook_properties.json"
-SCHEMA_VERSION = 4   # 4 (2026-09-16, judge v9): period series scan, content fit, date literals in formulas
+SCHEMA_VERSION = 5   # 5 (2026-09-18, judge v11): implicit-intersection scan (Excel-only #VALUE!)
+                     # 4 (2026-09-16, judge v9): period series scan, content fit, date literals in formulas
                      # 3 (2026-09-10): active cell, styled empty cells, spill counts, theme hex on colours
                      # 2 (2026-09-09): hyperlinks, page breaks, grouping, CF styles, hidden names, vba, origin
 _MAX_LIST = 25          # per-list cap in the rendered text (JSON keeps everything)
@@ -463,6 +478,54 @@ def _date_literal_formulas(ws, bounds: dict) -> list[str]:
     return hits
 
 
+# A precision CLAIM ("rounded to $0.01", "results round to two decimals"), not any use of the
+# word: the golden sweep met product names ("Round moulder"), case instructions ("please round
+# your answers ...", "rounded up") and notes about "rounding noise", none of which is a label.
+_RE_ROUND_WORD = re.compile(r"\bround(?:ed|s|ing)?\s+to\b", re.I)
+_RE_ROUND_FUNC = re.compile(r"\b(?:ROUND|ROUNDUP|ROUNDDOWN|MROUND)\s*\(", re.I)
+_MAX_ROUNDING_STATEMENTS = 6
+
+
+def _rounding_statements(ws, bounds: dict) -> dict:
+    """Judge v11 (check 105): the sheet's typed rounding statements ("USD,
+    rounded to $0.01") beside the number of formulas on the sheet that use a
+    rounding function. A label that says figures are "rounded" while no
+    formula rounds them describes the display, not the model; the judge
+    decides, this only serves the two facts."""
+    statements, n_formulas, n_round = [], 0, 0
+    for row in ws.iter_rows(**bounds):
+        for cell in row:
+            v = cell.value
+            if isinstance(v, str):
+                if v.startswith("="):
+                    n_formulas += 1
+                    if _RE_ROUND_FUNC.search(v):
+                        n_round += 1
+                elif _RE_ROUND_WORD.search(v):
+                    text = " ".join(v.split())
+                    statements.append({"cell": cell.coordinate,
+                                       "text": text if len(text) <= 120 else text[:120] + "…"})
+            elif type(v).__name__ == "ArrayFormula":
+                n_formulas += 1
+                if _RE_ROUND_FUNC.search(str(getattr(v, "text", "") or "")):
+                    n_round += 1
+    return {"statements": statements, "n_formulas": n_formulas, "n_round_formulas": n_round}
+
+
+def _rounding_lines(rs) -> list[str]:
+    # A sheet with no formulas (the case's Instructions text, a change log) has no figures
+    # of its own to round: nothing to compare the statement with, so nothing is rendered.
+    if not isinstance(rs, dict) or not rs.get("statements") or not rs.get("n_formulas"):
+        return []
+    st = rs["statements"]
+    shown = "; ".join(f'{d["cell"]} "{d["text"]}"' for d in st[:_MAX_ROUNDING_STATEMENTS])
+    more = f"; (+{len(st) - _MAX_ROUNDING_STATEMENTS} more)" if len(st) > _MAX_ROUNDING_STATEMENTS else ""
+    return [
+        f"     rounding statements: {shown}{more} — formulas on this sheet using a rounding function "
+        f"(ROUND/ROUNDUP/ROUNDDOWN/MROUND): {rs.get('n_round_formulas', 0):,} of {rs.get('n_formulas', 0):,}"
+    ]
+
+
 def _char_weight(ch: str) -> float:
     """Width of one character in units of the default font's '0' (Calibri 11:
     digits 1.0, lowercase ~0.9, capitals ~1.1, narrow glyphs ~0.5)."""
@@ -529,11 +592,12 @@ def column_fit_summary(ws, fit_cells: list, value_cells: dict) -> dict:
     shrink-to-fit and merged cells are excluded by the collector.
 
     Three classes. NUMERIC exceeds width (Excel would render ###) is the one
-    labelled a problem. Text wider than its column beside a non-empty
-    neighbour is cut off on screen and is served as INFORMATION with
-    examples — 43 of the first 98 goldens carry such header labels, so the
-    rubric, not the flag, decides. Text overflowing into an empty neighbour
-    is normal and only counted.
+    labelled a problem and the only one RENDERED (judge v10). Text wider than
+    its column beside a non-empty neighbour is cut off on screen; 64 of the
+    101 goldens carry such header labels and no width threshold separates
+    them from a defect, so the count is kept in the stored JSON only (it was
+    read as a defect every time when rendered, toy 69 Pass 0/3). Text
+    overflowing into an empty neighbour is normal and only counted.
     """
     widths, default = _column_width_map(ws)
     hidden = set()
@@ -765,6 +829,11 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
                 "formula1": dv.formula1,
                 "formula2": dv.formula2,
                 "allow_blank": dv.allowBlank,
+                # judge v11: a validation whose error alert is off never rejects
+                # or flags an entry (Excel accepts anything typed); the judge
+                # passed 7 of 8 attempts whose validations were all alert-off.
+                "alert": bool(dv.showErrorMessage),
+                "error_style": (dv.errorStyle or "stop") if dv.showErrorMessage else None,
             })
         props["data_validations"] = sorted(dvs, key=lambda d: d["sqref"])
     except Exception:  # noqa: BLE001
@@ -799,6 +868,17 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
     except Exception as e:  # noqa: BLE001
         logger.warning(f"  [properties] date-literal scan failed on '{ws.title}': {e}")
         props["date_literal_formulas"] = "unknown"
+    try:
+        props["rounding_statements"] = _rounding_statements(ws, _b)   # judge v11, check 105
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"  [properties] rounding-statement scan failed on '{ws.title}': {e}")
+        props["rounding_statements"] = "unknown"
+    try:
+        # judge v11: plain formulas Excel evaluates to #VALUE! by implicit intersection
+        props["implicit_intersection"] = _ii.scan_sheet(ws, _b)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"  [properties] implicit-intersection scan failed on '{ws.title}': {e}")
+        props["implicit_intersection"] = "unknown"
     if ws_values is not None:
         try:
             props["period_series"] = _scan_period_series(ws, ws_values, _b)
@@ -1095,6 +1175,53 @@ def _cf_rule_text(rule: dict) -> str:
     return " ".join(bits)
 
 
+_DV_OPERATORS = {
+    "between": "between {a} and {b}", "notBetween": "not between {a} and {b}",
+    "equal": "= {a}", "notEqual": "<> {a}", "greaterThan": "> {a}", "lessThan": "< {a}",
+    "greaterThanOrEqual": ">= {a}", "lessThanOrEqual": "<= {a}",
+}
+
+
+def _data_validation_rule(d: dict) -> str:
+    """'D7 whole between 1 and 50 — alert OFF (any entry accepted)'."""
+    t = d.get("type") or "?"
+    a, b = d.get("formula1"), d.get("formula2")
+    op = d.get("operator")
+    if t in ("list", "custom") or op is None and b is None:
+        rule = f"{d['sqref']} {t}{' ' + str(a) if a else ''}"
+    else:
+        tmpl = _DV_OPERATORS.get(op or "between", "{a} {b}")
+        rule = f"{d['sqref']} {t} " + tmpl.format(a=a, b=b if b is not None else "?")
+    alert = d.get("alert")
+    if alert is None:
+        return rule + " — alert unknown"
+    if not alert:
+        return rule + " — alert OFF (any entry accepted)"
+    style = d.get("error_style") or "stop"
+    what = {"stop": "stop, entry rejected", "warning": "warning, entry allowed after a prompt",
+            "information": "information, entry allowed"}.get(str(style), str(style))
+    return rule + f" — alert ON ({what})"
+
+
+def _data_validation_text(dvs) -> str:
+    """Judge v11: per-sheet tally of the error-alert state, then every rule."""
+    if dvs == "unknown":
+        return "unknown"
+    if not dvs:
+        return "none"
+    known = [d for d in dvs if d.get("alert") is not None]
+    n, n_on = len(dvs), sum(1 for d in known if d.get("alert"))
+    if len(known) < n:
+        head = f"{n} (alert state unknown for {n - len(known)})"
+    elif n_on == n:
+        head = f"{n} (error alert ON for all)"
+    elif n_on == 0:
+        head = f"{n} (error alert OFF for ALL — none of them rejects or flags an entry)"
+    else:
+        head = f"{n} ({n_on} with the error alert ON, {n - n_on} OFF)"
+    return head + ": " + _fmt_list(dvs, fn=_data_validation_rule)
+
+
 def _fmt_list(items, limit=_MAX_LIST, fn=str) -> str:
     if items == "unknown":
         return "unknown"
@@ -1267,29 +1394,17 @@ def _period_series_lines(ps) -> list[str]:
 
 
 def _column_fit_lines(cf) -> list[str]:
+    """Judge v10: only the NUMERIC ### class is rendered (see column_fit_summary)."""
     if cf == "unknown" or not isinstance(cf, dict):
         return ["     content fit: unknown"]
     num = cf.get("numeric_overflow") or {}
-    cut = cf.get("text_cut_off") or {}
-    n_num, n_cut = int(num.get("count", 0) or 0), int(cut.get("count", 0) or 0)
-    over = int(cf.get("text_overflow_into_empty", 0) or 0)
-    parts = []
-    if n_num:
-        ex = num.get("examples") or []
-        parts.append(
+    n_num = int(num.get("count", 0) or 0)
+    if not n_num:
+        return ["     content fit: no numeric value exceeds its column width (nothing would render ###)"]
+    ex = num.get("examples") or []
+    return ["     content fit: "
             f"NUMERIC exceeds width (would render ###): {', '.join(e['ref'] for e in ex[:8])}"
-            f"{', ...' if n_num > 8 else ''} ({n_num} cell{'s' if n_num != 1 else ''}; e.g. {ex[0]['ref']} needs ~{ex[0]['need']} chars in width {ex[0]['width']})"
-        )
-    if n_cut:
-        ex = cut.get("examples") or []
-        parts.append(
-            f"text wider than its column beside a non-empty neighbour (cut off on screen; information, "
-            f"common in header rows): {', '.join(e['ref'] for e in ex[:6])}{', ...' if n_cut > 6 else ''} "
-            f"({n_cut} cell{'s' if n_cut != 1 else ''}; e.g. {ex[0]['ref']} needs ~{ex[0]['need']} chars in width {ex[0]['width']})"
-        )
-    if over:
-        parts.append(f"text overflowing into empty neighbours: {over} cell{'s' if over != 1 else ''} (normal, not a problem)")
-    return ["     content fit: " + ("; ".join(parts) if parts else "no problems")]
+            f"{', ...' if n_num > 8 else ''} ({n_num} cell{'s' if n_num != 1 else ''}; e.g. {ex[0]['ref']} needs ~{ex[0]['need']} chars in width {ex[0]['width']})"]
 
 
 def render_properties_text(
@@ -1428,19 +1543,15 @@ def render_properties_text(
                 "     formulas with a typed date-like string literal: "
                 + ", ".join(dl[:_MAX_LIST]) + (f", (+{len(dl) - _MAX_LIST} more)" if len(dl) > _MAX_LIST else "")
             )
+        lines.extend(_ii.render_lines(s.get("implicit_intersection")))
+        lines.extend(_rounding_lines(s.get("rounding_statements")))
         rh = s.get("row_heights")
         lines.append(
             "     custom row heights: "
             + (_row_runs_text(rh[:_MAX_LIST]) + (f", (+{len(rh) - _MAX_LIST} more runs)" if len(rh) > _MAX_LIST else "")
                if isinstance(rh, list) and rh else ("unknown" if rh == "unknown" else "none"))
         )
-        lines.append(
-            "     data validation: " + _fmt_list(
-                s.get("data_validations"),
-                fn=lambda d: f"{d['sqref']} {d.get('type') or '?'}"
-                             f"{' ' + str(d.get('formula1')) if d.get('formula1') else ''}",
-            )
-        )
+        lines.append("     data validation: " + _data_validation_text(s.get("data_validations")))
         lines.append(
             "     conditional formats: " + _fmt_list(
                 s.get("conditional_formats"),

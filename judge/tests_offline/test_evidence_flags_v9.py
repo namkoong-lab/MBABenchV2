@@ -217,7 +217,11 @@ def test_content_fit_classes():
     assert [e["ref"] for e in cf["text_cut_off"]["examples"]] == ["C6"], cf
     assert cf["text_overflow_into_empty"] == 1, cf
     text = wp.render_properties_text(_extract(wb))
-    assert "NUMERIC exceeds width (would render ###): B2" in text and "cut off on screen; information" in text and "C6" in text, text
+    # judge v10: the text cut-off class stays in the JSON but is not rendered (toy 69 Pass failed 3/3 on it)
+    assert "NUMERIC exceeds width (would render ###): B2" in text and "cut off" not in text and "C6" not in text, text
+    ws["B2"] = 1.0
+    text = wp.render_properties_text(_extract(wb))
+    assert "no numeric value exceeds its column width" in text and "NUMERIC exceeds" not in text, text
 
 
 def test_display_width_scales_with_font():

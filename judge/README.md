@@ -302,7 +302,8 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
   grading in `scored_results.rubric_suitability.retired_checks`. `grade_toy.py`
   skips toys for retired checks. Effective rubric: 130 items.
 - **Evidence flags in the properties block** (`utils/workbook_properties.py`,
-  schema 4; CSV caches move to `*_csv_cache_v7`). Each is rendered per sheet:
+  schema 4; CSV caches move to `*_csv_cache_v7`; judge v11 adds schema 5 and
+  `*_csv_cache_v8`, see the last bullet). Each is rendered per sheet:
   - `WIDE OUTLIER` (check 70): a run of ≥ 2 equal-width columns ≥ 2.5× wider
     than the nearest equal-width run on each side (length ≥ 2, width ≥ 4 so
     spacers do not count). Lone columns are never compared; Instructions /
@@ -333,6 +334,64 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     were wrong for those sheets; v7 caches carry the corrected runs.
   - `formulas with a typed date-like string literal` (checks 2/10/81):
     `"12.12.2028"`, `"2028-12-12"`, `"12/12/2028"` inside formula text.
+  - `IMPLICIT INTERSECTION` (check 22; judge v11, 2026-09-18,
+    `utils/implicit_intersection.py`): plain formulas (no `t="array"`
+    marker) that use a multi-cell range as a single value — operand of an
+    operator or argument of a single-value function such as ABS/ROUND —
+    from a cell outside that range. Excel evaluates them by implicit
+    intersection and shows #VALUE!; LibreOffice and the Python engines that
+    write the cached values do block arithmetic instead, so the served
+    number looks fine (grading 1075, `Sens_Engine!D448`, cached 4.9e-08).
+    The walker's context rules were probed against Excel for Mac 16.112 on
+    166 formulas (0 false flags; the probe set is the test fixture). Unprobed
+    constructs (OFFSET, CHOOSE, TRANSPOSE, names, tables, IFERROR-wrapped
+    expressions, dynamic-array functions) are never flagged. Goldens: 0 of
+    101 flagged; the 12 jv9 GUI gradings: only 1075/D448. Guidance note on
+    check 22 tells the judge to fail on the listed cells only.
+    Test: `tests_offline/test_implicit_intersection.py`.
+  - `data validation` line (check 44; judge v11): every validation now
+    renders its full rule and error-alert state — `D7 whole between 1 and
+    50 — alert OFF (any entry accepted)` — under a per-sheet tally ("13
+    (error alert OFF for ALL …)"). Before, the line showed only the cell,
+    the type and the first bound, and the alert flag was never extracted;
+    8 of the 12 jv9 GUI attempts had every validation alert-off (both
+    vendors) and the judge passed 7 of them. Guidance note on 44: alert-off
+    equals absent; key inputs are drivers, not data blocks. Goldens: 4 of
+    101 carry validation, all alert-on. Rubric 10 queue: add "with the
+    error alert enabled" to the check text.
+    Test: `tests_offline/test_data_validation_alert.py`.
+  - `[actual …]` tag in the cell views (check 66; judge v11,
+    `excel_utils._actual_value_tag`): a cell that displays like zero (0,
+    0.00, (0.00), -0.0, 0.00%) while its value is not zero is served as
+    `0.00 [actual 3.64e-12]` in both the full and the data view — when the
+    value is a floating-point leftover (below 1e-6) or the cell carries a
+    dash format (a true zero would have shown the dash). Ordinary small
+    numbers rounded away by the display (0.0025 as 0.00 under #,##0.00)
+    are not tagged: they would have added 102k tags across 36 goldens with
+    nothing to decide. The judge
+    was shown the same "0.00" for a floating-point leftover under a correct
+    dash format as for a true zero and failed check 66 on 5 of the 12 jv9
+    GUI gradings for leftovers (1075, 1078, 1083, 1084, 1085). Exact zeros
+    are untouched; the tag is added after the width-fit measurement and
+    the hidden-by-format test, so no other evidence changes. Guidance 66
+    extended: a tagged cell is never a zero. The four reviewed goldens use
+    no dash format at all (thousands of true zeros shown as 0.00), which
+    the rubric as written fails — task-creator item.
+    Test: `tests_offline/test_actual_value_tag.py`.
+  - `rounding statements` line (check 105; judge v11): each sheet's typed
+    rounding statements ("USD, rounded to $0.01") beside the number of
+    formulas on that sheet using ROUND/ROUNDUP/ROUNDDOWN/MROUND. Patrick's
+    ruling 2026-09-18: a "rounded to" label over figures that are only
+    displayed to that precision misdescribes the model (the colleague's
+    point on 1084 `Owning model!B3` and 1085 `Owning!B4`); "shown to" /
+    "displayed to" or "carried unrounded" is the accurate wording. Display
+    precision stays acceptable for Rounded outputs (104). The House
+    Standards prescribed the "rounded to" wording until the same day: v1
+    was amended in place, version unchanged (`house_standards/README.md`,
+    Amendments), so attempts built under the earlier text fail 105 for
+    following it. Rubric 10 queue: 105 reads "rounded or shown to", label
+    must match what the model does.
+    Test: `tests_offline/test_rounding_statements.py`.
   Golden/toy-Pass sweep counts are in the session notes for 2026-09-16.
   Tests: `tests_offline/test_evidence_flags_v9.py`.
 - **Guidance 36 → 42 notes**: replaced 50, 70, 126; extended 2, 4, 55, 66,

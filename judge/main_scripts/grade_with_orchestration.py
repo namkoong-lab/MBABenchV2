@@ -395,9 +395,9 @@ class GradeOrchestrator:
         # the cell extractor renders dates / accounting zeros like Excel and
         # tags hidden-format and data-table cells ("_v3" introduced
         # _workbook_properties.json).
-        self.solution_cache_base = cache_root / "solution_csv_cache_v7"
-        self.attempt_cache_base = cache_root / "attempt_csv_cache_v7"
-        self.starting_cache_base = cache_root / "starting_csv_cache_v7"
+        self.solution_cache_base = cache_root / "solution_csv_cache_v8"
+        self.attempt_cache_base = cache_root / "attempt_csv_cache_v8"
+        self.starting_cache_base = cache_root / "starting_csv_cache_v8"
         self.solution_cache_base.mkdir(parents=True, exist_ok=True)
         self.attempt_cache_base.mkdir(parents=True, exist_ok=True)
         self.starting_cache_base.mkdir(parents=True, exist_ok=True)
