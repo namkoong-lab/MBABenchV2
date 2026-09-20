@@ -36,6 +36,19 @@ def test_text_refusals_are_failures_too():
     assert refusal('{"success": false}') == "Refused, nothing was written: no reason given"
 
 
+def test_plain_text_tool_errors_are_failures():
+    # what the tools' own exception handlers return
+    for text in ("Error copying file: 'MergedCell' object has no attribute 'column_letter'",
+                 "Error getting cell range: Excel file 'solution.xlsx' not found",
+                 "Error listing worksheets: Excel file 'solution.xlsx' not found",
+                 "Error: Source file 'Case.xlsx' not found", "Error computing used range: boom"):
+        msg = refusal(text)
+        assert msg and msg.startswith("Tool failed: Error"), text
+    # ordinary text that merely begins with the word is not an error report
+    for text in ("Error Checks sheet holds 12 balance checks", "Errors: none", "Successfully copied 'a' to 'b'"):
+        assert refusal(text) is None, text
+
+
 def test_successes_and_ordinary_results_are_not_failures():
     for payload in ({"success": True, "calculated_value": 15999.2}, {"cells": [[1, 2]]}, {"success": None},
                     [], [{"success": False}], "Created file solution.xlsx", "{not json}", "", None, 0,

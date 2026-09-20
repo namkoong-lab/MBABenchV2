@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 
 import openpyxl
+from openpyxl.cell.cell import MergedCell
+from openpyxl.utils import get_column_letter
 from openpyxl.workbook import Workbook
 
 from . import shared_state
@@ -21,8 +23,15 @@ def _auto_fit_columns(wb: Workbook) -> None:
     for ws in wb.worksheets:
         for col_cells in ws.columns:
             max_length = 0
-            col_letter = col_cells[0].column_letter
+            # A column whose first cell lies inside a merged range starts with a
+            # MergedCell, which has .column but no .column_letter: that crashed
+            # every save of such a workbook ("'MergedCell' object has no
+            # attribute 'column_letter'"), so copy_file could never create
+            # solution.xlsx for it (2026-09-19, CoastalAggregates).
+            col_letter = get_column_letter(col_cells[0].column)
             for cell in col_cells:
+                if isinstance(cell, MergedCell):
+                    continue
                 if cell.value is not None:
                     cell_len = len(str(cell.value))
                     if isinstance(cell.value, str) and cell.value.startswith('='):

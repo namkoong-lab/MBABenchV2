@@ -81,6 +81,10 @@ class TaskExecution:
     context_reduced: bool = False
 
 
+# How the MCP tools report their own exceptions: "Error: ..." or "Error <verb>ing <what>: ...".
+_TOOL_ERROR_TEXT = re.compile(r"^Error(?::| [a-z]+ing\b[^:\n]{0,40}:)")
+
+
 class StreamTimeoutError(Exception):
     """Raised when streaming API call exceeds hard timeout via signal.alarm."""
     pass
@@ -1455,6 +1459,13 @@ EXECUTION HISTORY:
         parsed = payload
         if isinstance(payload, str):
             text = payload.strip()
+            # The tools' own exception handlers answer in plain text ("Error
+            # copying file: ...", "Error getting cell range: ...", "Error: Source
+            # file ... not found"). Read as a success, a copy_file that crashed
+            # left the agent looping for 38 iterations on a solution.xlsx that
+            # was never created (2026-09-19 canary).
+            if _TOOL_ERROR_TEXT.match(text):
+                return "Tool failed: " + " ".join(text.split())
             if not (text.startswith("{") and text.endswith("}")):
                 return None
             parsed = None
