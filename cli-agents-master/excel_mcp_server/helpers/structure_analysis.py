@@ -124,7 +124,10 @@ def _find_task_like_text(ws: Worksheet, bounds: Tuple[int, int, int, int], row_c
     seen = set()
     unique: List[Dict[str, Any]] = []
     for t in tasks:
-        key = (t["cell"].split(str(int(t["cell"][1:])))[0], t["kind"], t["text"][:80])
+        # Column letters of the cell ("AA11" -> "AA"). The old int(cell[1:])
+        # assumed a one-letter column and raised on AA onwards, which failed
+        # summarize_workbook_context for any sheet with text past column Z.
+        key = (t["cell"].rstrip("0123456789"), t["kind"], t["text"][:80])
         if key in seen:
             continue
         seen.add(key)
