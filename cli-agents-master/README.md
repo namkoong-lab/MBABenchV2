@@ -76,8 +76,14 @@ task_filter:
   task_source: "fmwc"
   missing_for_model: true
 
-max_iterations: 30
+max_iterations: 40        # the default when omitted (models_config.DEFAULT_MAX_ITERATIONS)
 ```
+
+Run limits: `max_iterations` (one model call per iteration) defaults to 40, and
+one model call may take `api_timeout_seconds` — when omitted, 60 minutes for
+the `max` and `xhigh` effort tiers (240 s for `high`, 180 s otherwise). Both
+effective values are written to every attempt row (`extra_configs.max_iterations`,
+`extra_configs.api_timeout_seconds`).
 
 Run:
 ```bash
@@ -157,14 +163,19 @@ Versioned prompt files are bundled in `excel_cli_agent/prompts/`. Set the versio
 prompt_version: "v10"  # uses system_prompt_v10.txt + task_template_fmwc_v4.txt
 ```
 
-In auto mode the default follows the `benchmark` key (v1 → v10, v2 → v15),
+In auto mode the default follows the `benchmark` key (v1 → v10, v2 → v16),
 and an explicit choice must belong to the same benchmark: v1..v11 carry the
 17-check v1 rubric; v12..v14 embed the 132-check v2 rubric (generated from
 the GUI `prompts_v{2,3,4}/` sources by `tools/build_v1{2,3,4}_prompts.py`);
 v15 is v14 with every rubric-derived passage scrubbed (`tools/
 build_v15_prompts.py`, the same scrub as coding template v11) — the agent
 gets the task, the Questions-sheet mechanics, the tool guidance and the house
-standards, nothing about grading. A mismatched pairing fails at startup;
+standards, nothing about grading; v16 (2026-09-19, `tools/build_v16_prompts.py`,
+prompt_version 1609) is v15 with the five passages of the tool manual that
+contradicted the House Standards removed (outflows-positive sign convention,
+Calibri 11/12, `0.00%` and no-decimal number codes, "font color, NOT cell
+fill") and one sentence giving the standards precedence over the manual's
+style advice — the standards' values are not restated. A mismatched pairing fails at startup;
 `EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate cross-benchmark run.
 
 **Attachments (v14+).** A prompt version can declare `attachments` in

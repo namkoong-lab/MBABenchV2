@@ -70,6 +70,13 @@ MODEL_PRICING = {
     "claude-opus-4-8": {"input": 5.00, "output": 25.00},  # Anthropic direct model ID
     "claude-fable-5": {"input": 25.00, "output": 50.00},  # Anthropic direct model ID; see DIRECT_API_PRICING
     "gpt-5.6-sol": {"input": 5.00, "output": 30.00},  # OpenAI direct model ID
+    # 2026-09-19 backstop for the 101-task rerun cohorts: the OpenRouter list
+    # price on that day, used only when the live fetch fails (a failed fetch
+    # used to record these runs at $0). NOT billing-verified - claude-fable-5
+    # billed $25 input against a $10 listing; pin the verified rate in
+    # DIRECT_API_PRICING after the first isolated run's credit diff.
+    "claude-fable-5-1": {"input": 10.00, "output": 50.00},  # Anthropic direct model ID
+    "gpt-6-astra": {"input": 10.00, "output": 50.00},  # OpenAI direct model ID
     "google/gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
     "z-ai/glm-4.7": {"input": 0.40, "output": 1.50},
     "x-ai/grok-4": {"input": 3.00, "output": 15.00},
@@ -131,13 +138,30 @@ MODEL_DEFAULTS: Dict[str, Dict] = {
     },
 }
 
-# Timeout by reasoning effort level
+# Per-call model timeout (seconds) by reasoning effort. 2026-09-19 (Pat): the
+# two top tiers get the same 60 minutes - "xhigh" was 300 s, a hard bound on
+# the whole call, while "max" had 3600, so an OpenAI top-tier cohort could lose
+# a long thinking turn to the clock that an Anthropic one never faced.
 TIMEOUT_BY_REASONING: Dict[Optional[str], int] = {
-    "max": 3600,  # Anthropic effort-based models (e.g. claude-fable-5)
-    "xhigh": 300,
+    "max": 3600,
+    "xhigh": 3600,
     "high": 240,
     None: 180,
 }
+
+# Iteration cap (one model call per iteration) when a run config names none.
+# 40 is what every v2 API cohort actually ran with; the old fallback of 30
+# would have silently shortened a cohort whose config omitted the key.
+DEFAULT_MAX_ITERATIONS = 40
+
+
+def resolve_api_timeout(reasoning_effort: Optional[str], explicit: Optional[int] = None) -> int:
+    """Seconds one model call may take: the run config's api_timeout_seconds
+    if set, else the effort tier's. The runner records the result on every
+    attempt row (extra_configs.api_timeout_seconds)."""
+    if explicit:
+        return int(explicit)
+    return TIMEOUT_BY_REASONING.get(reasoning_effort, TIMEOUT_BY_REASONING[None])
 
 
 # --- Live pricing -----------------------------------------------------------
@@ -263,6 +287,12 @@ MODEL_CONTEXT_WINDOWS = {
     "claude-opus-4-8": 200_000,
     "claude-opus-4-6": 200_000,
     "gpt-5.6-sol": 400_000,
+    # 2026-09-19: equal to the live feed's value on that day, so an attempt
+    # whose fetch failed sees the same workbook context as one whose fetch
+    # worked. Without an entry the 128k default minus the 128k output
+    # allowance floors the context budget at 10k tokens - a crippled attempt.
+    "claude-fable-5-1": 1_000_000,
+    "gpt-6-astra": 1_050_000,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 

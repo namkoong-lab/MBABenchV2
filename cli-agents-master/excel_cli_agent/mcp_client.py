@@ -5,6 +5,7 @@ Provides interface to Excel MCP Server tools with proper subprocess timeout hand
 This implementation uses direct subprocess communication instead of async MCP library,
 which allows proper timeout enforcement that actually kills stuck processes.
 """
+import collections
 import json
 import subprocess
 import sys
@@ -44,6 +45,8 @@ class ExcelMCPClient:
         self.created_files: List[str] = []
         self._request_id = 0
         self._connected = False
+        # Last lines the server wrote to stderr (see _drain_stderr).
+        self._stderr_tail: collections.deque = collections.deque(maxlen=200)
 
     def _next_request_id(self) -> int:
         """Generate next JSON-RPC request ID."""
@@ -79,6 +82,9 @@ class ExcelMCPClient:
 
             if response_line is None:
                 # Timeout occurred - kill the process
+                tail = list(self._stderr_tail)[-10:]
+                if tail:
+                    print("   MCP server stderr (last lines):\n      " + "\n      ".join(tail))
                 self._kill_process()
                 raise TimeoutError(f"MCP request '{method}' timed out after {timeout}s")
 
@@ -126,6 +132,29 @@ class ExcelMCPClient:
 
         return result[0]
 
+    def _drain_stderr(self, stream) -> None:
+        """Keep the server's stderr pipe empty, remembering its last lines.
+
+        The server logs a ~43-byte line per request to stderr. The pipe was
+        opened and never read, so its 64 KB buffer filled at the 1,505th
+        call of a session and the server blocked on its next log write:
+        the tool call hung until its 60-120 s timeout, the server was
+        killed and the iteration lost (29 such timeouts in the v2 logs,
+        every one at call 1,505/1,506; reproduced 2026-09-19).
+        """
+        rest = b""
+        try:
+            while True:
+                chunk = stream.read(65536)  # raw pipe: returns what is there
+                if not chunk:
+                    break
+                *lines, rest = (rest + chunk).split(b"\n")
+                self._stderr_tail.extend(l.decode(errors="replace").rstrip() for l in lines)
+        except (OSError, ValueError):
+            pass  # pipe closed under us (server killed)
+        if rest:
+            self._stderr_tail.append(rest.decode(errors="replace").rstrip())
+
     def _kill_process(self):
         """Kill the MCP server subprocess."""
         if self.process:
@@ -152,6 +181,9 @@ class ExcelMCPClient:
                 stderr=subprocess.PIPE,
                 bufsize=0  # Unbuffered
             )
+            self._stderr_tail.clear()
+            threading.Thread(target=self._drain_stderr, args=(self.process.stderr,),
+                             name="mcp-stderr-drain", daemon=True).start()
 
             # Initialize the MCP session
             init_result = self._send_request("initialize", {

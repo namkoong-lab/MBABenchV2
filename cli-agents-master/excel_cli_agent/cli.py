@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from .mcp_client import ExcelMCPClient
 from .task_executor import ExcelTaskExecutor, TaskStatus
 from .batch_runner import run_batch_from_config
-from .models_config import DEFAULT_MODEL
+from .models_config import DEFAULT_MAX_ITERATIONS, DEFAULT_MODEL
 from .repo_config import repo_value
 
 
@@ -315,7 +315,7 @@ def main():
                        help="Excel files storage directory")
     parser.add_argument("--api-key", help="OpenAI API key (or set OPENAI_API_KEY env var)")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="AI model to use")
-    parser.add_argument("--max-iterations", type=int, default=30, help="Maximum iterations per task")
+    parser.add_argument("--max-iterations", type=int, default=DEFAULT_MAX_ITERATIONS, help="Maximum iterations per task")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose mode (print full AI responses)")
     parser.add_argument("--batch", nargs="+", help="Run commands in batch mode")
     parser.add_argument("--batch-config", help="Path to YAML batch configuration file")

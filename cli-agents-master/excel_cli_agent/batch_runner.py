@@ -17,7 +17,7 @@ from datetime import datetime
 from .repo_config import attachment_extra_configs
 from .mcp_client import ExcelMCPClient
 from .task_executor import ExcelTaskExecutor, TaskStatus
-from .models_config import DEFAULT_MAX_COMPLETION_TOKENS
+from .models_config import DEFAULT_MAX_COMPLETION_TOKENS, DEFAULT_MAX_ITERATIONS, resolve_api_timeout
 
 
 @dataclass
@@ -98,7 +98,7 @@ class BatchRunner:
 
         # Set defaults
         config.setdefault('verbose', False)
-        config.setdefault('max_iterations', 30)
+        config.setdefault('max_iterations', DEFAULT_MAX_ITERATIONS)
         config.setdefault('batch_size', 1)
         config.setdefault('snapshot_iterations', False)
 
@@ -250,6 +250,17 @@ class BatchRunner:
     def _attachment_extra_configs(self) -> Dict[str, Any]:
         """The attachment-provenance keys merged into extra_configs per attempt."""
         return attachment_extra_configs(self._attachments, getattr(self, "_attachment_names", {}))
+
+    def _run_limit_extra_configs(self) -> Dict[str, Any]:
+        """The two run limits, merged into extra_configs per attempt: how many
+        iterations (model calls) the agent was allowed and how long one call
+        could take. Neither was recorded before 2026-09-19, so earlier rows
+        cannot show what they ran under (the lane logs say 40 iterations)."""
+        return {
+            "max_iterations": int(self.config.get("max_iterations", DEFAULT_MAX_ITERATIONS)),
+            "api_timeout_seconds": resolve_api_timeout(self.config.get("reasoning_effort"),
+                                                       self.config.get("api_timeout_seconds")),
+        }
 
     def _recalc_extra_configs(self) -> Dict[str, Any]:
         """The recalc-provenance keys merged into extra_configs per attempt."""

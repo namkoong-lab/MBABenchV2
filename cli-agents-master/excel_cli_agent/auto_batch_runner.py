@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
+from .models_config import DEFAULT_MAX_ITERATIONS
 
 from .agent_identity import resolve_agent_identity
 from .db import database as db_config
@@ -138,7 +139,7 @@ class AutoBatchRunner(BatchRunner):
 
         # Set defaults
         config.setdefault('verbose', False)
-        config.setdefault('max_iterations', 30)
+        config.setdefault('max_iterations', DEFAULT_MAX_ITERATIONS)
         config.setdefault('batch_size', 1)
         config.setdefault('snapshot_iterations', False)
         config.setdefault('max_trials', 7)
@@ -290,6 +291,7 @@ class AutoBatchRunner(BatchRunner):
         if not self._extra_configs_supported:
             return
         cfg = dict(self._identity.extra_configs())
+        cfg.update(self._run_limit_extra_configs())
         cfg.update(self._recalc_extra_configs())
         cfg.update(self._attachment_extra_configs())
         db.execute(

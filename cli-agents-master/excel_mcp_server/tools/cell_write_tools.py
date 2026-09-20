@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from ..core.libreoffice_bridge import _recalculate_with_libreoffice, _save_with_recalc
 from ..core.shared_state import _lo_engine, mcp
 from ..core.workbook_io import _get_file_path, _load_workbook, _load_workbook_view, _save_workbook_sync
+from .. import formula_validator as _formula_validator
 from ..helpers.cell_validation import _validate_cell_references
 from ..helpers.formula_evaluation import _eval_formula
 from ..helpers.type_inference import _infer_type
@@ -141,8 +142,11 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
 
         ws = wb[worksheet_name]
 
+        # Text literals are emptied first: ="ERROR!" is not a sheet named ERROR,
+        # and ="Note (see "&A1 has no unbalanced bracket.
+        formula_no_text = _formula_validator.strip_string_literals(formula)
         sheet_ref_pattern = r"'([^']+)'!|([A-Za-z_][A-Za-z0-9_\s]*!)(?!')"
-        matches = re.findall(sheet_ref_pattern, formula)
+        matches = re.findall(sheet_ref_pattern, formula_no_text)
 
         for match in matches:
             referenced_sheet = match[0] if match[0] else match[1].rstrip('!')
@@ -187,7 +191,7 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
         except Exception as validation_error:
             print(f"Warning: Formula validation failed with error: {validation_error}")
 
-        if formula.count('(') != formula.count(')'):
+        if formula_no_text.count('(') != formula_no_text.count(')'):
             return json.dumps({
                 "success": False,
                 "cell": cell,
@@ -215,8 +219,11 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
                 "error_type": "CELL_TYPE_ERROR"
             }, indent=2)
 
+        # Post-2007 functions (XLOOKUP, IFS, LET, STDEV.S, ...) must be stored
+        # with their "_xlfn." prefix or they are "#NAME?" in Excel and LibreOffice.
+        stored_formula = _formula_validator.add_future_function_prefixes(formula)
         target_cell = ws[cell]
-        target_cell.value = formula
+        target_cell.value = stored_formula
 
         _save_workbook_sync(wb, _get_file_path(filename))
 
@@ -274,6 +281,10 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
             "formula": formula,
             "note": "Formula set successfully"
         }
+        if stored_formula != formula:
+            response["stored_as"] = stored_formula
+            response["note"] += ("; newer functions are stored with the file format's _xlfn./_xlpm. "
+                                 "prefixes (Excel shows them without) - expect them when reading formulas back")
 
         if calculated_value is not None:
             response["calculated_value"] = calculated_value

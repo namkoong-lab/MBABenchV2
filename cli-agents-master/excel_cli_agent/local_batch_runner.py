@@ -18,6 +18,7 @@ from datetime import datetime
 
 from .agent_identity import resolve_agent_identity
 from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
+from .models_config import DEFAULT_MAX_ITERATIONS
 from .prompt_versions import (
     PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, attachment_names_for, attachments_for, parse_prompt_version,
 )
@@ -59,7 +60,7 @@ class LocalBatchRunner(BatchRunner):
 
         # Set defaults
         config.setdefault('verbose', False)
-        config.setdefault('max_iterations', 30)
+        config.setdefault('max_iterations', DEFAULT_MAX_ITERATIONS)
         config.setdefault('batch_size', 1)
         config.setdefault('snapshot_iterations', False)
         config.setdefault('workspace_base_dir', './workspaces')

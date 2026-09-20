@@ -2,6 +2,7 @@
 Iterative Task Execution Engine
 Provides iterative reasoning and Excel tool execution capabilities
 """
+import ast
 import json
 import re
 import signal
@@ -34,7 +35,8 @@ except ImportError:
     anthropic = None
 
 from .mcp_client import ExcelMCPClient
-from .models_config import MODEL_PRICING, calculate_cost, resolve_context_window
+from .models_config import (DEFAULT_MAX_ITERATIONS, MODEL_PRICING, calculate_cost, resolve_api_timeout,
+                            resolve_context_window)
 from .repo_config import repo_value
 
 
@@ -69,7 +71,7 @@ class TaskExecution:
     start_time: float
     end_time: Optional[float] = None
     total_iterations: int = 0
-    max_iterations: int = 20
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
     final_result: Optional[str] = None
     error: Optional[str] = None
     total_cost_usd: float = 0.0
@@ -180,18 +182,8 @@ class ExcelTaskExecutor:
             elif not self.api_key:
                 self.api_key = api_key
 
-        # Determine timeout based on reasoning effort or explicit config
-        # High reasoning efforts need more time (xhigh: 300s, high: 240s, etc.)
-        if api_timeout_seconds:
-            timeout_secs = api_timeout_seconds
-        elif reasoning_effort == "max":
-            timeout_secs = 3600  # Anthropic effort-based models (e.g. claude-fable-5)
-        elif reasoning_effort == "xhigh":
-            timeout_secs = 300  # 5 minutes for xhigh reasoning
-        elif reasoning_effort == "high":
-            timeout_secs = 240  # 4 minutes for high reasoning
-        else:
-            timeout_secs = 180  # 3 minutes default
+        # Explicit config, else the effort tier's allowance (max and xhigh: 60 min).
+        timeout_secs = resolve_api_timeout(reasoning_effort, api_timeout_seconds)
 
         # Use httpx.Timeout for granular control over read/connect timeouts.
         # read must cover the longest SILENT gap in a stream: high-reasoning
@@ -263,7 +255,7 @@ class ExcelTaskExecutor:
         # embedded verbatim: the agent has no tool that reads them.
         self.context_texts: List[str] = []
         # Iteration control
-        self.default_max_iterations: int = 30
+        self.default_max_iterations: int = DEFAULT_MAX_ITERATIONS
         # Snapshot mode: save solution.xlsx + AI context text after each iteration
         self.snapshot_iterations: bool = False
         # Verbose mode
@@ -1148,8 +1140,8 @@ class ExcelTaskExecutor:
                 # Check for overall timeout
                 elapsed = time_module.time() - start_time
                 if elapsed > timeout_seconds:
-                    print(f"⚠️ Stream timeout after {elapsed:.1f}s, returning partial response")
-                    break
+                    raise StreamTimeoutError(
+                        f"API call still streaming after {elapsed:.0f}s (limit {timeout_seconds}s)")
 
                 # Extract content from delta
                 if chunk.choices and len(chunk.choices) > 0:
@@ -1193,6 +1185,12 @@ class ExcelTaskExecutor:
                     billed_cost = getattr(chunk.usage, "cost", None)
                     if billed_cost is not None:
                         usage_info["cost"] = float(billed_cost)
+        except StreamTimeoutError:
+            # The hard timeout (SIGALRM) fires inside this loop. It used to be
+            # caught by the handler below and a cut-off response returned as
+            # complete: unparseable JSON, no usage, a burned iteration. Let the
+            # caller's retry see it.
+            raise
         except Exception as e:
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
@@ -1328,7 +1326,7 @@ ITERATION: {task.total_iterations}/{task.max_iterations}
                 context += f"   Args: {args_str}\n"
                 # Show result summary
                 if step.error:
-                    context += f"   Error: {step.error[:100]}\n"
+                    context += f"   Error: {step.error[:300]}\n"
                 elif step.result:
                     result_str = str(step.result.get('result', ''))
                     carry_full = (
@@ -1440,6 +1438,37 @@ EXECUTION HISTORY:
         return context
 
 
+
+    @staticmethod
+    def _tool_refusal(payload: Any) -> Optional[str]:
+        """The tool's own failure message, or None when the tool did not refuse.
+
+        call_tool wraps every answered MCP call as {"success": True, "result":
+        <the tool's JSON, already parsed>}, so a refusal such as
+        set_cell_formula's {"success": false, "error": ...} arrives here as a
+        dict. Until 2026-09-19 this was tested with json.loads(str(dict)) -
+        Python repr, never valid JSON - inside a bare except, so refusals were
+        recorded as successes (5,729 against 27 caught in the saved v2 logs):
+        the batch did not stop and the model was never told the cell had not
+        been written. Text results are still parsed (JSON, then Python literal).
+        """
+        parsed = payload
+        if isinstance(payload, str):
+            text = payload.strip()
+            if not (text.startswith("{") and text.endswith("}")):
+                return None
+            parsed = None
+            for parse in (json.loads, ast.literal_eval):
+                try:
+                    parsed = parse(text)
+                    break
+                except (ValueError, SyntaxError):
+                    continue
+        if not (isinstance(parsed, dict) and parsed.get("success") is False):
+            return None
+        reason = " ".join(str(parsed.get("error") or "no reason given").split())
+        where = f" at {parsed['cell']}" if parsed.get("cell") else ""
+        return f"Refused{where}, nothing was written: {reason}"
 
     def _detect_loop(self, task: TaskExecution, lookback: int = 3) -> bool:
         """Detect if the agent is stuck in a loop repeating failed actions"""
@@ -2448,23 +2477,19 @@ EXECUTION HISTORY:
                             })
                             break
                     else:
-                        # Check if the result indicates a failed operation (common with MCP tools)
-                        result_str = str(step.result.get('result', 'No result'))
+                        # The MCP call went through; the tool's own verdict is
+                        # inside 'result' (e.g. set_cell_formula refusing a formula).
+                        payload = step.result.get('result', 'No result')
+                        result_str = str(payload)
+                        refusal = self._tool_refusal(payload)
 
-                        # Parse JSON result to check for success=false pattern
-                        is_actual_failure = False
-                        try:
-                            import json
-                            if result_str.strip().startswith('{') and result_str.strip().endswith('}'):
-                                parsed_result = json.loads(result_str)
-                                if isinstance(parsed_result, dict) and parsed_result.get('success') is False:
-                                    is_actual_failure = True
-                        except:
-                            pass
-
-                        if is_actual_failure:
+                        if refusal is not None:
                             print(f"❌ Failed: {result_str[:100]}...")
-                            step.error = f"Operation failed: {result_str[:200]}"
+                            step.error = refusal
+                            # Keep the refused step in the history: RECENT ACTIONS is
+                            # built from task.steps and is the only place the model
+                            # learns that the write did not happen.
+                            task.steps.append(step)
                             all_action_results.append({
                                 "action_number": action_idx + 1,
                                 "tool_name": step.tool_name,
