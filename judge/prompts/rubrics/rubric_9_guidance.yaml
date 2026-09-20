@@ -148,6 +148,21 @@ checks:
       sensitivity table or documented scenario testing is NOT a failure of
       this check; it is about whether the model breaks, not whether it
       demonstrates that it doesn't.
+      A plausible change moves a driver to another value the business could
+      actually take: scaled (halved, doubled, tripled) or shifted (a date by
+      months, a horizon by years). Zero is a stress case only where zero is
+      a real state (0% growth, 0% return, no debt). Zero, negative, blank or
+      out-of-list values for an input that must be positive to mean
+      anything — a duration, a period count, months per year, a share
+      count, a scenario selector — are invalid inputs, not stress cases:
+      they belong to data validation (Input cells data validation) and
+      never fail this check, whether or not a validation would stop them.
+      The same holds for a perpetual (terminal-value) growth rate at or
+      above the discount rate inside a perpetuity formula, CF×(1+g)/(r−g),
+      which is only defined for g < r. This concerns the perpetuity rate
+      alone: growth of revenue, costs or any other line during the explicit
+      forecast years may exceed the discount rate, and raising it is an
+      ordinary plausible stress.
 
   - category: Assumptions
     name: Single date driver
@@ -184,6 +199,11 @@ checks:
       reasonably want to change — and cite the cell and the constant. If
       the same number is also present as a labelled input cell elsewhere,
       it is a duplication issue for Centralized assumptions, not this check.
+      Also permitted: constants that only reconcile a labelling or data
+      convention — the 0.01 step between inclusive bracket labels
+      ("12,348.01 – 14,000"), a one-period offset, an epsilon tolerance in
+      a check. These are technical remnants, not inputs: no user would
+      change them.
 
   - category: Assumptions
     name: Centralized assumptions
@@ -340,9 +360,12 @@ checks:
       right-aligned. A numeric cell with no explicit alignment IS
       right-aligned — never cite "no explicit right-alignment setting" as a
       mistake. Fail only for numeric cells explicitly set to left or center
-      alignment, and cite them. The case's questions-and-answers sheet has
-      its layout and cell formatting set by the case; its alignment is not
-      judged here. Identify that sheet by its role, not its name.
+      alignment, and cite them. An alignment token belongs to the cell whose
+      [ref] opens the same field; a field with a FORMAT segment and no
+      [ref] is an empty cell and is never an alignment mistake. The case's
+      questions-and-answers sheet has its layout and cell formatting set by
+      the case; its alignment is not judged here. Identify that sheet by
+      its role, not its name.
 
   - category: Formatting
     name: Currency stated
@@ -541,6 +564,14 @@ checks:
       several attribute columns). A period-by-period series of the same
       metrics is not a register. Where the properties summary reports a
       PERIOD SERIES on the tab, check it.
+      A long high-frequency schedule — a monthly or daily engine running
+      to hundreds of periods (loan amortization, a month-by-month ledger) —
+      is conventionally built down rows; across columns it needs hundreds
+      of columns. There a vertical timeline is justified by content when it
+      is applied consistently across the calculation tabs: do not fail it
+      as "vertical by default". Either orientation passes for such
+      schedules. The horizontal standard binds where the periods fit across
+      columns (annual and quarterly models).
 
   - category: Structure
     name: Deal vs. planning orientation
@@ -668,8 +699,12 @@ checks:
     note: |
       A sense check compares a key output with something OUTSIDE the model:
       an industry range, a comparable company or transaction, a third-party
-      estimate, or a typed bound whose basis is stated. An input or
-      assumption that is part of the model is never a valid benchmark.
+      estimate, or a benchmark bound or range the modeller typed for the
+      purpose. The rubric allows a check against intuition, so a bound
+      sourced as the modeller's judgment counts. Such a bound drives no
+      calculation: it is an outside benchmark wherever it sits, the inputs
+      sheet included. An input or assumption that DRIVES the model is never
+      a valid benchmark.
       Comparing a modeled figure with the model's own input or assumption
       (or a link to it), or with another figure derived from the same
       inputs, is a reconciliation, not a sense check, whatever the section
@@ -678,5 +713,60 @@ checks:
       the model's key outputs, the headline figures for this model type,
       are covered by outside comparisons. An isolated outside comparison
       beside key outputs that go unchecked does not pass. Fail and cite the
-      sense-check section when it rests on the model's own inputs or leaves
-      key outputs without an outside comparison.
+      sense-check section when it rests on the model's own driving inputs or
+      leaves key outputs without an outside comparison.
+
+  - category: Formatting
+    name: Text left-aligned
+    note: |
+      Excel's default (General) horizontal alignment renders text
+      left-aligned and numbers right-aligned. A text cell whose FORMAT
+      segment carries no halign token IS left-aligned — never cite it as a
+      mistake. Fail only for text cells explicitly set to right or center
+      alignment that are not column headers over numeric columns, and cite
+      them. An alignment token belongs to the cell whose [ref] opens the
+      same field; a field with a FORMAT segment and no [ref] is an empty
+      cell and is never a text-alignment mistake. The case's
+      questions-and-answers sheet has its layout and cell formatting set by
+      the case; its alignment is not judged here. Identify that sheet by
+      its role, not its name.
+
+  - category: Error Checks
+    name: Master error flag
+    note: |
+      When a check row displays an Excel error — a cell the properties
+      summary lists under IMPLICIT INTERSECTION, a formula it lists as
+      referencing one, or a cached error value — test the roll-up behind
+      the flag. COUNTIF / COUNTIFS on FALSE, "FAIL" or "ERROR" skip error
+      values, so such a flag still reads OK while that check is broken. A
+      master flag that stays OK while a check row is in error fails this
+      check; cite the roll-up cell. Without an erroring check row, do not
+      fail a flag for how its roll-up is built.
+
+  - category: Formatting
+    name: Page breaks set
+    note: |
+      Decide per sheet, from the "print estimate" line of the properties
+      summary. A sheet it tags MULTI-PAGE, NO MANUAL BREAKS prints on more
+      than one page with Excel cutting wherever the page runs out: it needs
+      manual breaks at its section boundaries, and breaks on other sheets
+      do not cover for it. Fail and cite each tagged sheet the agent built
+      or changed; a sheet that came with the starting workbook carries the
+      same line in that workbook's summary and is not the agent's print
+      setup. A sheet that fits one page needs no breaks. No tag, no fail
+      for missing breaks; where breaks exist, fail them only when they cut
+      through a table or section.
+
+  - category: Structure
+    name: Best-fit structure for stated purpose
+    note: |
+      A clearly better alternative exists when the workbook reaches a result
+      by brute-force replication — the same calculation block copied many
+      times to unroll an iteration or to fill a sensitivity grid, thousands
+      of formulas — where a standard Excel mechanism delivers the same
+      outputs: a what-if data table, iterative calculation with a breaker
+      switch, or one parameterised block. Fail and name the mechanism and
+      the replicated range. A stated reason for the replication (avoiding
+      circularity, a tool that cannot evaluate data tables) explains the
+      choice but does not make the structure the best fit. Do not fail for
+      a different but comparably compact layout.

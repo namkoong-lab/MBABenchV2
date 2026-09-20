@@ -327,7 +327,7 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     cache bump. Test: `test_retired_check_evidence_line_follows_the_config`.
 - **Evidence flags in the properties block** (`utils/workbook_properties.py`,
   schema 4; CSV caches move to `*_csv_cache_v7`; judge v11 adds schema 5 and
-  `*_csv_cache_v8`, see the last bullet). Each is rendered per sheet:
+  `*_csv_cache_v8`, see the last bullet; judge v12 schema 6 and `_v9`). Each is rendered per sheet:
   - `WIDE OUTLIER` (check 70): a run of ≥ 2 equal-width columns ≥ 2.5× wider
     than the nearest equal-width run on each side (length ≥ 2, width ≥ 4 so
     spacers do not count). Lone columns are never compared; Instructions /
@@ -348,7 +348,8 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     served as information with examples — 43 of 98 goldens carry such
     header labels, so the rubric decides, not the flag. Text overflowing
     into an empty neighbour is counted as normal. Width estimate is coarse
-    (character classes of the default font, font size and bold scaling);
+    (character classes of the default font, font size and bold scaling;
+    numbers are measured in their own face since judge v12);
     wrapped, shrink-to-fit, centre-across-selection, merged and
     General-format cells are excluded.
   - **Column-width bug fixed in the extractor** while calibrating: a `<col
@@ -461,6 +462,100 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
   Excel's Check Performance looks beyond the last content row/column, net of
   the starting file — with evidence to match; the agent-facing build prompts
   still carry the item, as they do 37 and 101).
+
+### judge v12 — single-pass 12 / template_8 (2026-09-20)
+
+Rows record `judge_version` 12 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 11 rows. Cut from the colleague's second review: he
+re-annotated four of the twelve jv11 GUI gradings (1087 LeaseorKeys, 1091 Bosch,
+1092 ApfelInc, 1097 NestQuest) and disagreed on 11 decisions. Patrick ruled on
+each; twelve rows exist under 11, so everything lands here.
+
+- **Numbers are measured in their own font** (check 69; properties schema 6,
+  CSV caches `*_csv_cache_v9`). `display_width` measured every face as Calibri
+  scaled by size/11, so Arial 10 — whose digits are 7.4 px, the same as
+  Calibri 11 — came out 9% narrow: grading 1092's `WACC!C31:C39`
+  ("3,276,619.94", column 9.0, `###` in Excel) needed "9.55" characters against
+  a 9.0 + 1.5 threshold, nothing was listed, and the note on 69 then forces a
+  pass. `workbook_properties.numeric_display_width` sums the glyph widths of
+  the cell's own face (`_FACE_EM`, read from the font files with fontTools;
+  unknown faces are measured as Calibri, the narrowest common one, so they
+  miss rather than flag falsely) and divides by the column-width unit, the
+  Normal font's digit in whole pixels (`normal_font`, `column_unit_px`: 7 px
+  for Calibri 11, Aptos Narrow 11 and Arial 10 alike). Bold leaves the digits
+  of most faces unchanged. The rule and its 1.5-character band are unchanged,
+  and text is still measured by `display_width` (that class is not rendered).
+  The rebuilt scan lists exactly `C31:C39` on 1092 (`C30` fits).
+  Tests: `test_numeric_width_uses_the_cell_font`,
+  `test_numeric_fit_end_to_end_arial_10`.
+- **IMPLICIT INTERSECTION lists who references the cell** (check 32;
+  `implicit_intersection.find_dependents`, one workbook-wide pass that runs
+  only when something was flagged). The cached value of a flagged cell looks
+  fine, so everything downstream looked fine too: on 1092
+  `Sens_Engine!D448` feeds `Checks!D19/F19`, the roll-up
+  `Checks!D46 =COUNTIF(F6:F42,FALSE)` skips the erroring row and
+  `Summary!D3` stays "OK". The line now ends "referenced by Sensitivity!D94,
+  Checks!D19, Checks!F19: these cells show the error in Excel too". Only
+  single-cell operands are listed; a range that merely contains the cell is
+  not, because whether it passes the error on depends on the function around
+  it. New note on 32: a master flag that stays OK while a check row is in
+  error fails, and only then (8 of the 10 roll-ups among the twelve attempts
+  count failures and would skip an error; a by-design rule was not adopted).
+  Patrick's ruling: no cascade. One formula costs 22 and 32; 23 (No unresolved
+  cell warnings) and 31 (Error-check sheet) stand as graded.
+  Test: `test_dependents_of_a_flagged_cell_are_listed`.
+- **Print estimate per sheet** (check 76; `_print_estimate`, stored as
+  `print_estimate`, rendered under the page-breaks line). Excel's automatic
+  page breaks are stored nowhere, so the judge had to guess which sheets run
+  past a page: 76 flipped on 5 of the 12 attempts between jv9 and jv11, every
+  one a workbook with breaks on some long sheets and none on others (1092:
+  `Summary`, 133 rows, fit to one page wide, no breaks; the colleague's note
+  is the jv9 judge's own fail text). The line gives pages tall and wide — the
+  print area, else the used range, from row heights and column widths against
+  paper, orientation, margins and the fit or scale settings, with print-title
+  rows repeated — and the manual breaks inside it, tagged `MULTI-PAGE, NO
+  MANUAL BREAKS` above `PRINT_MULTI_PAGE_MIN` (1.3 pages, the estimate's error
+  band). The case's Instructions / Questions sheets are skipped. On the twelve
+  attempts the tag falls on exactly the six Fable workbooks and none of the
+  six Astra ones, which settles all five flips. New note on 76: decide per
+  sheet from the tag; breaks elsewhere do not cover a tagged sheet; inherited
+  sheets are not the agent's print setup; no tag, no fail for missing breaks.
+  Goldens: 100 of 101 carry the tag, none has a manual break and one has any
+  print setup at all — they fail 76 as written (task-creator item).
+  Test: `test_print_estimate_tags_multi_page_sheets_without_breaks`.
+- **Guidance 49 → 53 notes.** New 76, above. New 111 Best-fit structure: brute-force
+  replication of one calculation block where a data table, iterative
+  calculation or one parameterised block would do is the articulable better
+  alternative (grading 1092: `Sens_Engine!B78:Y445`, ten stacked 33x10 blocks,
+  7,639 formulas; the golden needs 54 with iteration and one data table; jv9
+  failed it in those words, jv11 passed it, no note existed). New 63 Text
+  left-aligned: text with no `halign`
+  token IS left-aligned, and a FORMAT field with no `[ref]` is an empty cell
+  (grading 1087 booked the `halign:right` of the empty `Assumptions!E26:E28`
+  to the text in `D26:D28`); the same `[ref]` sentence joins 64. New 32, above.
+  Extended 99: a plausible change scales or shifts a driver; zero, negative,
+  blank or out-of-list values of an input that must be positive, and a
+  perpetuity growth rate at or above the discount rate, are invalid inputs for
+  data validation, not stress cases (five of the ten 99 fails across the 24
+  GUI gradings rested on one; explicit-period growth above the discount rate
+  stays an ordinary stress). Extended 81: constants that reconcile a labelling
+  convention are technical remnants (grading 1097,
+  `Assumptions!H45:H61 =(F45-0.01)*$D$83`, the cent between "12,348.01 –
+  14,000" labels). Extended 108: a monthly or daily engine of hundreds of
+  periods is conventionally vertical and passes either way when consistent
+  (same workbooks, same note: jv9 passed all four such attempts, jv11 failed
+  three; the goldens of tasks 19, 32 and 38 are vertical).
+  Reworded 88: the jv11 note ("the model's own inputs are never a benchmark",
+  "a typed bound whose basis is stated") took 88 from 2 to 11 fails of 12, and
+  failed 1092 — the workbook this README names as the passing shape — by
+  reading the benchmark bounds typed in `Inputs!D56:D63` (source "Judgment")
+  as model inputs. Patrick's ruling: a bound typed for the sense check is an
+  outside comparison wherever it sits, and the modeller's judgment is basis
+  enough (the rubric says "against intuition"); only an input that DRIVES the
+  model is never a benchmark.
+- Noise floor measured on the way: of 1,380 paired jv9/jv11 decisions on the
+  twelve attempts 99 flipped (7.2%), 53 of them on checks no judge change
+  touched (3.8%) — 99 (6 of 12), 76 (5), 26 and 115 (4 each).
 
 ### Latest-prompt guard (2026-09-10)
 

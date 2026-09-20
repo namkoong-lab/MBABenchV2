@@ -13,9 +13,16 @@ text block for the judge's seed prompt.
 Where a property cannot be read the block says so explicitly ("unknown"),
 so the model can tell "absent" from "not provided".
 
-Cache generation: files written here ride in `*_csv_cache_v8` — a v2 cache
+Cache generation: files written here ride in `*_csv_cache_v9` — a v2 cache
 has no properties file and the loaders degrade to the old behaviour
 (alphabetical listing, no block), which is why the generation was bumped.
+`_v9` (2026-09-20, judge v12): schema 6. The content-fit scan measures a
+number in its own font's glyph widths against the column-width unit of the
+workbook's Normal font (`numeric_display_width`); before, every face was
+measured as Calibri scaled by size/11, so Arial 10 came out 9% narrow and
+grading 1092's WACC!C31:C39 (### in Excel) was never flagged. The implicit-
+intersection scan also records which formulas reference each flagged cell.
+A v8 cache carries the old fit counts: hence the bump.
 `_v8` (2026-09-18, judge v11): schema 5 adds the IMPLICIT INTERSECTION scan
 per sheet (utils/implicit_intersection.py) — plain formulas that Excel
 evaluates to #VALUE! while the cached value (LibreOffice/openpyxl) looks
@@ -57,6 +64,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re
+import weakref
 from pathlib import Path
 from typing import Any, Optional
 
@@ -73,7 +81,8 @@ except ImportError:  # bare-module import path
     import implicit_intersection as _ii
 
 FILENAME = "_workbook_properties.json"
-SCHEMA_VERSION = 5   # 5 (2026-09-18, judge v11): implicit-intersection scan (Excel-only #VALUE!)
+SCHEMA_VERSION = 6   # 6 (2026-09-20, judge v12): typeface-aware numeric fit; implicit-intersection dependents
+                     # 5 (2026-09-18, judge v11): implicit-intersection scan (Excel-only #VALUE!)
                      # 4 (2026-09-16, judge v9): period series scan, content fit, date literals in formulas
                      # 3 (2026-09-10): active cell, styled empty cells, spill counts, theme hex on colours
                      # 2 (2026-09-09): hyperlinks, page breaks, grouping, CF styles, hidden names, vba, origin
@@ -95,6 +104,11 @@ NUMERIC_FIT_MARGIN_CHARS = 1.5 # a number must exceed the column by more than th
 # columns are tagged only when they alone fill a regular screen; goldens' rows top out at 118 pt.
 FREEZE_MAX_ROWS_PT = 300.0     # ~20 standard 15-pt rows
 FREEZE_MAX_COLS_CHARS = 200.0
+# judge v12 (check 76): a sheet is called multi-page only when the estimate clears one page by
+# this much; the estimate reads heights, widths, margins and the fit settings, never a renderer.
+PRINT_MULTI_PAGE_MIN = 1.3
+_PAPER_PT = {1: (612.0, 792.0), 5: (612.0, 1008.0), 8: (841.9, 1190.6), 9: (595.3, 841.9)}   # Letter, Legal, A3, A4
+_COL_UNIT_PT = 5.25            # one column-width unit: 7 px at 96 dpi
 # Evidence served for ONE rubric_9 check only. While that check is retired
 # (project_configs judge.retired_checks) its line is left out of the rendered
 # block, so the judge cannot cite it under another check; taking the check off
@@ -568,6 +582,101 @@ def display_width(text: str, font_size: Optional[float] = None, bold: bool = Fal
     return w
 
 
+# Glyph advance widths in em, read from the font files with fontTools (2026-09-20): the faces the
+# corpus uses on numeric cells (Arial, Aptos Narrow, Calibri, Arial Narrow; Roboto on the case-set
+# Questions tabs, from its published metrics, the font is not installed here) and Excel's other
+# common ones. Order: digit, punctuation (. , '), space, parenthesis, minus/hyphen, plus, percent,
+# slash/colon, capital (mean A-Z), lowercase (mean a-z), digit of the bold cut.
+_FACE_EM = {
+    "calibri":         (0.507, 0.251, 0.226, 0.303, 0.306, 0.498, 0.715, 0.386, 0.554, 0.456, 0.507),
+    "aptos narrow":    (0.507, 0.260, 0.187, 0.304, 0.306, 0.507, 0.761, 0.313, 0.551, 0.443, 0.507),
+    "aptos":           (0.534, 0.286, 0.203, 0.293, 0.340, 0.534, 0.826, 0.339, 0.603, 0.483, 0.534),
+    "arial":           (0.556, 0.278, 0.278, 0.333, 0.333, 0.584, 0.889, 0.278, 0.677, 0.490, 0.556),
+    "arial narrow":    (0.456, 0.228, 0.228, 0.273, 0.273, 0.479, 0.729, 0.228, 0.555, 0.401, 0.456),
+    "times new roman": (0.500, 0.250, 0.250, 0.333, 0.333, 0.564, 0.833, 0.278, 0.667, 0.459, 0.500),
+    "verdana":         (0.636, 0.364, 0.352, 0.454, 0.454, 0.818, 1.076, 0.454, 0.687, 0.562, 0.711),
+    "tahoma":          (0.546, 0.303, 0.312, 0.383, 0.363, 0.728, 0.977, 0.382, 0.608, 0.489, 0.637),
+    "cambria":         (0.554, 0.205, 0.220, 0.382, 0.332, 0.554, 0.890, 0.490, 0.600, 0.488, 0.592),
+    "georgia":         (0.614, 0.270, 0.241, 0.375, 0.374, 0.643, 0.817, 0.469, 0.681, 0.499, 0.701),
+    "trebuchet ms":    (0.524, 0.367, 0.301, 0.367, 0.367, 0.524, 0.600, 0.524, 0.587, 0.501, 0.586),
+    "courier new":     (0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600, 0.600),
+    "roboto":          (0.562, 0.230, 0.248, 0.342, 0.276, 0.567, 0.732, 0.412, 0.655, 0.535, 0.562),
+}
+_FACE_ALIASES = {"helvetica": "arial", "helvetica neue": "arial", "liberation sans": "arial", "arimo": "arial",
+                 "carlito": "calibri", "liberation serif": "times new roman"}
+_DEFAULT_FACE = "calibri"   # unknown faces are measured as the narrowest common one: a miss, never a false ###
+_NORMAL_FONT_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _face_em(face: Optional[str]) -> tuple:
+    key = (face or "").strip().lower()
+    return _FACE_EM.get(_FACE_ALIASES.get(key, key), _FACE_EM[_DEFAULT_FACE])
+
+
+def _px_per_em(size: Optional[float]) -> float:
+    return (float(size) if size and size > 0 else 11.0) * 96.0 / 72.0
+
+
+def normal_font(wb) -> tuple[str, float]:
+    """(face, size) of the workbook's Normal style. Column widths are counted in digits of THIS
+    font (ECMA-376 18.3.1.13), whatever font a cell uses."""
+    try:
+        return _NORMAL_FONT_CACHE[wb]
+    except (KeyError, TypeError):
+        pass
+    face, size = "Calibri", 11.0
+    font = _safe(lambda: wb._named_styles["Normal"].font, None) or _safe(lambda: wb._fonts[0], None)
+    if font is not None:
+        face = getattr(font, "name", None) or face
+        size = float(getattr(font, "sz", None) or size)
+    try:
+        _NORMAL_FONT_CACHE[wb] = (face, size)
+    except TypeError:
+        pass
+    return face, size
+
+
+def column_unit_px(face: Optional[str] = None, size: Optional[float] = None) -> float:
+    """Pixels in one column-width unit: the widest digit of the Normal font, in whole pixels
+    (7 for Calibri 11, Aptos Narrow 11 and Arial 10 alike)."""
+    return max(1.0, float(round(_face_em(face)[0] * _px_per_em(size))))
+
+
+def numeric_display_width(text: str, face: Optional[str] = None, font_size: Optional[float] = None,
+                          bold: bool = False, unit_px: float = 7.0) -> float:
+    """Width of a rendered number or date in column-width units, from the cell font's own glyph
+    widths (judge v12). `display_width` measures every face as Calibri scaled by size/11, which
+    made Arial 10 (digits 7.4 px, the same as Calibri 11) come out 9% narrow: grading 1092,
+    WACC!C31:C39, "3,276,619.94" in a 9.0 column shows ### in Excel and was never flagged.
+    Bold leaves the digits of most faces unchanged; where it widens them the table says so."""
+    m = _face_em(face)
+    cut = (m[10] / m[0]) if bold and m[0] else 1.0
+    letters = 1.06 if bold else 1.0
+    em = 0.0
+    for ch in text:
+        if ch.isdigit() or ch in "$€£¥":
+            em += m[0] * cut
+        elif ch in ".,'":
+            em += m[1] * cut
+        elif ch in "  ":
+            em += m[2]
+        elif ch in "()[]":
+            em += m[3] * cut
+        elif ch in "-−–":
+            em += m[4] * cut
+        elif ch == "+":
+            em += m[5] * cut
+        elif ch == "%":
+            em += m[6] * cut
+        elif ch in "/:":
+            em += m[7] * cut
+        elif ch.isupper():
+            em += m[8] * cut * letters
+        else:
+            em += m[9] * cut * letters
+    return em * _px_per_em(font_size) / (unit_px or 7.0)
+
+
 class _WidthMap:
     """Column -> width lookup over <col> runs (a run may span to 16384)."""
 
@@ -601,8 +710,9 @@ def column_fit_summary(ws, fit_cells: list, value_cells: dict) -> dict:
 
     `fit_cells`: [(row, col, kind, width_chars)] collected by the cell
     extractor from the DISPLAY strings it already rendered (kind is
-    "num" for numbers/dates rendered as Excel shows them, "text" for
-    strings); `value_cells`: {row: set(cols)} of populated cells. Wrapped,
+    "num" for numbers/dates rendered as Excel shows them, measured by
+    `numeric_display_width` since judge v12, "text" for strings, measured
+    by `display_width`); `value_cells`: {row: set(cols)} of populated cells. Wrapped,
     shrink-to-fit and merged cells are excluded by the collector.
 
     Three classes. NUMERIC exceeds width (Excel would render ###) is the one
@@ -641,6 +751,87 @@ def column_fit_summary(ws, fit_cells: list, value_cells: dict) -> dict:
         "text_cut_off": {"count": len(cut), "examples": cut[:_MAX_LIST]},
         "text_overflow_into_empty": overflow,
     }
+
+
+def _print_estimate(ws, props: dict) -> Optional[dict]:
+    """How many pages the sheet prints on (judge v12, check 76): the print area, else the used
+    range, measured from row heights and column widths against the paper, orientation, margins
+    and scaling the file stores. Excel's automatic breaks are not stored anywhere, so without
+    this the judge had to guess which sheets run past a page: the check flipped on 5 of the 12
+    jv9/jv11 GUI attempts, all of them workbooks with breaks on some long sheets and none on
+    others (grading 1092: Summary, 133 rows, fit to one page wide, no breaks). Sparse arithmetic
+    over the stored dimensions, so a sheet declared at full height costs nothing."""
+    area = ws.print_area
+    area = (area[0] if isinstance(area, (list, tuple)) and area else area) or ""
+    ref = str(area).split(",")[0].rsplit("!", 1)[-1].replace("$", "")
+    basis = "print area"
+    if not ref:
+        ref, basis = str(props.get("used_range") or ""), "used range"
+    if not ref or ref == "unknown":
+        return None
+    c1, r1, c2, r2 = range_boundaries(ref)
+    if None in (c1, r1, c2, r2):
+        return None
+    default_h = float(ws.sheet_format.defaultRowHeight or 15.0)
+    height = default_h * (r2 - r1 + 1)
+    for idx, dim in ws.row_dimensions.items():
+        if r1 <= int(idx) <= r2:
+            h = float(dim.height) if dim.height is not None else default_h
+            height += (0.0 if getattr(dim, "hidden", False) else h) - default_h
+    widths, default_w = _column_width_map(ws)
+    hidden_cols = set(props.get("hidden_cols") or []) if isinstance(props.get("hidden_cols"), list) else set()
+    width = sum(0.0 if c in hidden_cols else widths.get(c) for c in range(c1, min(c2, c1 + 2000) + 1)) * _COL_UNIT_PT
+    if c2 - c1 > 2000:
+        width += default_w * (c2 - c1 - 2000) * _COL_UNIT_PT
+    ps, pm = ws.page_setup, ws.page_margins
+    pw, ph = _PAPER_PT.get(int(ps.paperSize or 1), _PAPER_PT[1])
+    if ps.orientation == "landscape":
+        pw, ph = ph, pw
+    avail_w = pw - 72.0 * (float(pm.left or 0) + float(pm.right or 0))
+    avail_h = ph - 72.0 * (float(pm.top or 0) + float(pm.bottom or 0))
+    if avail_w <= 0 or avail_h <= 0 or height <= 0 or width <= 0:
+        return None
+    fit = bool(props.get("fit_to_page"))
+    fit_w = (1 if ps.fitToWidth is None else int(ps.fitToWidth)) if fit else None
+    fit_h = (1 if ps.fitToHeight is None else int(ps.fitToHeight)) if fit else None
+    if fit:
+        scale = min([1.0] + ([avail_w * fit_w / width] if fit_w else []) + ([avail_h * fit_h / height] if fit_h else []))
+        scale = max(scale, 0.10)
+    else:
+        scale = float(ps.scale or 100) / 100.0
+    title_h = 0.0
+    titles = str(ws.print_title_rows or "").replace("$", "")
+    if ":" in titles:
+        t1, t2 = (int(x) for x in titles.split(":"))
+        title_h = sum(float(ws.row_dimensions[r].height or default_h) if r in ws.row_dimensions else default_h
+                      for r in range(t1, t2 + 1)) * scale
+    tall = height * scale / avail_h
+    if tall > 1 and avail_h > title_h * 2:
+        tall = 1 + (height * scale - avail_h) / (avail_h - title_h)
+    return {"basis": basis, "range": ref, "pages_tall": round(tall, 2), "pages_wide": round(width * scale / avail_w, 2),
+            "scale": round(scale, 2), "fit_w": fit_w, "fit_h": fit_h,
+            "row_breaks_in_range": sum(1 for b in (props.get("row_breaks") or []) if isinstance(b, int) and r1 <= b < r2),
+            "col_breaks_in_range": sum(1 for b in (props.get("col_breaks") or []) if isinstance(b, int) and c1 <= b < c2)}
+
+
+def _print_estimate_lines(s: dict) -> list[str]:
+    pe = s.get("print_estimate")
+    if not isinstance(pe, dict) or _WIDE_OUTLIER_SKIP_SHEETS.search(str(s.get("name") or "")):
+        return []   # the case's own brief / questions sheet is not the agent's print setup
+    tall, wide = float(pe.get("pages_tall") or 0), float(pe.get("pages_wide") or 0)
+    how = (f"fit to {pe['fit_w'] or 'any'} wide x {pe['fit_h'] or 'any'} tall" if pe.get("fit_w") is not None
+           else "no fit-to-page")
+    size = f"about {tall:.1f} pages tall x {wide:.1f} wide" if max(tall, wide) > 1.0 else "fits one page"
+    line = (f"     print estimate ({pe.get('basis')} {pe.get('range')}): {size} at {round(100 * float(pe.get('scale') or 1))}% "
+            f"({how}); manual breaks inside it: {pe.get('row_breaks_in_range', 0)} row, {pe.get('col_breaks_in_range', 0)} col")
+    over = []
+    if tall > PRINT_MULTI_PAGE_MIN and not pe.get("row_breaks_in_range"):
+        over.append("down")
+    if wide > PRINT_MULTI_PAGE_MIN and not pe.get("col_breaks_in_range"):
+        over.append("across")
+    if over:
+        line += f" — MULTI-PAGE, NO MANUAL BREAKS ({' and '.join(over)}): Excel cuts the pages wherever they run out"
+    return [line]
 
 
 def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
@@ -832,6 +1023,7 @@ def _sheet_properties(ws, index: int, output_name: Optional[str], palette=None,
     except Exception:  # noqa: BLE001
         props["row_breaks"] = "unknown"
         props["col_breaks"] = "unknown"
+    props["print_estimate"] = _safe(lambda: _print_estimate(ws, props), "unknown")   # judge v12, check 76
 
     # data validation / conditional formatting / hyperlinks
     try:
@@ -1111,7 +1303,31 @@ def extract_workbook_properties(workbook, excel_file_path, name_map: dict | None
             ws_values = _safe(lambda: workbook_values[ws.title], None)
         sheets.append(_sheet_properties(ws, i, name_map.get(ws.title, ws.title), palette,
                                         ws_values=ws_values, column_fit=column_fit.get(ws.title)))
+    _attach_implicit_intersection_dependents(workbook, sheets)
     return {"schema": SCHEMA_VERSION, "workbook": wb, "sheets": sheets}
+
+
+def _attach_implicit_intersection_dependents(workbook, sheets: list) -> None:
+    """judge v12 (check 32): list, beside every flagged IMPLICIT INTERSECTION cell, the formulas
+    that reference it. One workbook-wide pass, and only when something was flagged."""
+    flagged = {s["name"]: [e["cell"] for e in s["implicit_intersection"].get("examples") or []]
+               for s in sheets if isinstance(s.get("implicit_intersection"), dict)
+               and s["implicit_intersection"].get("count")}
+    if not flagged:
+        return
+    try:
+        try:
+            from .sheet_extent import iter_rows_kwargs as _irk
+        except ImportError:  # bare-module import path
+            from sheet_extent import iter_rows_kwargs as _irk
+        deps = _ii.find_dependents(workbook, flagged, bounds_for=lambda ws: _irk(ws)[0])
+    except Exception as e:  # noqa: BLE001 - evidence must never break extraction
+        logger.warning(f"implicit-intersection dependents scan failed: {e}")
+        return
+    for s in sheets:
+        if s["name"] in flagged:
+            for ex in s["implicit_intersection"]["examples"]:
+                ex["referenced_by"] = deps.get((s["name"], ex["cell"].replace("$", "").upper()), [])
 
 
 def _zip_has_vba(path: Path) -> Optional[bool]:
@@ -1597,6 +1813,7 @@ def render_properties_text(
             "     page breaks: rows " + ("unknown" if rb == "unknown" else (", ".join(str(b) for b in rb) if rb else "none"))
             + "; cols " + ("unknown" if cb == "unknown" else (", ".join(get_column_letter(b) for b in cb) if cb else "none"))
         )
+        lines.extend(_print_estimate_lines(s))
         cw = s.get("column_widths")
         dcw = s.get("default_col_width")
         lines.append(

@@ -162,7 +162,22 @@ single_pass:
   # formatting retired by rule (judge.retired_checks; 129 effective items)
   # and its evidence line left out of the properties block while retired.
   # Prompt version and template unchanged.
-  version: 11
+  # 12 (2026-09-20, the colleague's review of the jv11 GUI gradings 1087 /
+  # 1092 / 1097; 12 rows exist under 11, so every change from it lands
+  # here): the content-fit scan measures a number in its own font's glyph
+  # widths (properties schema 6, CSV caches *_csv_cache_v9; check 69 missed
+  # WACC!C31:C39 of grading 1092, ### in Excel, because Arial 10 was scaled
+  # as a small Calibri); the IMPLICIT INTERSECTION line lists the formulas
+  # that reference each flagged cell (check 32: the master flag stayed OK
+  # over an erroring check row); a print estimate per sheet (pages tall and
+  # wide from heights, widths, margins and fit settings) tagged MULTI-PAGE,
+  # NO MANUAL BREAKS (check 76 flipped on 5 of 12 attempts, all workbooks
+  # with breaks on some long sheets only); guidance 49 -> 53 notes (32, 63,
+  # 76 and 111 new; 64, 81, 99 and 108 extended; 88 reworded: a benchmark bound
+  # typed for the sense check is an outside comparison wherever it sits and
+  # judgment is basis enough, 88 went from 2 to 11 fails of 12 under the jv11
+  # note). Prompt version and template unchanged.
+  version: 12
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500

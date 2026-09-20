@@ -1079,7 +1079,14 @@ def _collect_fit(sink: list, cell, raw_value, display_value: str, row_idx: int, 
         from . import workbook_properties as _wp
     except ImportError:  # bare-module import path
         import workbook_properties as _wp
-    sink.append((row_idx, col_idx, kind, _wp.display_width(text.strip(), size, bold)))
+    if kind == "num":
+        # judge v12: a number is measured in the cell font's own glyph widths, against the
+        # column-width unit of the workbook's Normal font (grading 1092, WACC!C31:C39).
+        unit = _wp.column_unit_px(*_wp.normal_font(getattr(getattr(cell, "parent", None), "parent", None)))
+        need = _wp.numeric_display_width(text.strip(), getattr(font, "name", None), size, bold, unit)
+    else:
+        need = _wp.display_width(text.strip(), size, bold)
+    sink.append((row_idx, col_idx, kind, need))
 
 
 def create_enhanced_cell_variants(

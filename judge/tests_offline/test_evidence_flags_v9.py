@@ -231,6 +231,78 @@ def test_display_width_scales_with_font():
     assert wp.display_width("iiii") < wp.display_width("MMMM")
 
 
+def test_numeric_width_uses_the_cell_font():
+    # judge v12, grading 1092: WACC!C31:C39 "3,276,619.94" in Arial 10, column 9.0, shows ### in
+    # Excel. Arial 10 digits are as wide as Calibri 11's; scaling by size/11 made them 9% narrow.
+    need = wp.numeric_display_width("3,276,619.94", "Arial", 10)
+    assert 11.0 < need < 11.3 and need > 9.0 + wp.NUMERIC_FIT_MARGIN_CHARS, need
+    assert wp.display_width("3,276,619.94", 10) < 9.0 + wp.NUMERIC_FIT_MARGIN_CHARS   # what missed it
+    assert wp.numeric_display_width("73,730.00", "Arial", 10) < 9.0 + wp.NUMERIC_FIT_MARGIN_CHARS   # C30 fits
+    # the CashNiagara golden's borderline cells (10 characters, Aptos Narrow 11, column 9.0) stay unflagged
+    assert wp.numeric_display_width("456,642.66", "Aptos Narrow", 11) < 9.0 + wp.NUMERIC_FIT_MARGIN_CHARS
+    # bold leaves Arial's digits alone and widens Verdana's; an unknown face is measured as Calibri
+    assert wp.numeric_display_width("1,234", "Arial", 10, True) == wp.numeric_display_width("1,234", "Arial", 10)
+    assert wp.numeric_display_width("1,234", "Verdana", 10, True) > wp.numeric_display_width("1,234", "Verdana", 10)
+    assert wp.numeric_display_width("1,234", "No Such Face", 11) == wp.numeric_display_width("1,234", "Calibri", 11)
+    assert wp.numeric_display_width("1,234", "Helvetica", 10) == wp.numeric_display_width("1,234", "Arial", 10)
+    # the unit is the Normal font's digit in whole pixels: 7 for the three defaults in the corpus
+    assert wp.column_unit_px("Calibri", 11) == wp.column_unit_px("Aptos Narrow", 11) == wp.column_unit_px("Arial", 10) == 7.0
+    assert wp.column_unit_px("Arial", 11) == 8.0 and wp.column_unit_px(None, None) == 7.0
+
+
+def test_numeric_fit_end_to_end_arial_10():
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "WACC"
+    ws.column_dimensions["C"].width = 9.0
+    for r, v in ((30, 73730.0), (31, 5157432.5712), (32, 3253445.5946)):
+        ws.cell(r, 3, v).number_format = '#,##0.00;(#,##0.00);"-"'
+        ws.cell(r, 3).font = Font(name="Arial", size=10)
+    props = _extract(wb)
+    cf = _sheet(props, "WACC")["column_fit"]
+    assert [e["ref"] for e in cf["numeric_overflow"]["examples"]] == ["C31", "C32"], cf
+    assert "NUMERIC exceeds width (would render ###): C31, C32" in wp.render_properties_text(props)
+    assert wp.normal_font(wb) == ("Calibri", 11.0) and wp.normal_font(None) == ("Calibri", 11.0)
+
+
+# ---------------------------------------------------------------------------
+# print estimate (check 76, judge v12)
+# ---------------------------------------------------------------------------
+
+def test_print_estimate_tags_multi_page_sheets_without_breaks():
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Summary"
+    for r in range(1, 134):
+        ws.cell(r, 2, f"line {r}")
+    ws.print_area = "A1:I133"
+    ws.page_setup.orientation = "landscape"
+    ws.sheet_properties.pageSetUpPr = openpyxl.worksheet.properties.PageSetupProperties(fitToPage=True)
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0          # one page wide, as many tall as it takes
+    short = wb.create_sheet("Checks")
+    for r in range(1, 21):
+        short.cell(r, 2, r)
+    brief = wb.create_sheet("Instructions")
+    for r in range(1, 300):
+        brief.cell(r, 1, "case text")
+    props = _extract(wb)
+    pe = _sheet(props, "Summary")["print_estimate"]
+    assert pe["basis"] == "print area" and pe["range"] == "A1:I133" and pe["pages_tall"] > 3 and pe["row_breaks_in_range"] == 0, pe
+    text = wp.render_properties_text(props)
+    line = next(l for l in text.splitlines() if "print estimate (print area A1:I133)" in l)
+    assert "MULTI-PAGE, NO MANUAL BREAKS (down)" in line and "fit to 1 wide x any tall" in line, line
+    assert "print estimate (used range B1:B20): fits one page" in text        # short sheet: no tag
+    assert text.count("print estimate") == 2                                   # the case's Instructions sheet is skipped
+    ws.row_breaks.append(openpyxl.worksheet.pagebreak.Break(id=40))
+    ws.row_breaks.append(openpyxl.worksheet.pagebreak.Break(id=85))
+    text = wp.render_properties_text(_extract(wb))
+    line = next(l for l in text.splitlines() if "print estimate (print area A1:I133)" in l)
+    assert "manual breaks inside it: 2 row" in line and "MULTI-PAGE" not in line, line
+    ws.page_setup.fitToHeight = 1                                              # squeezed onto one page: no tag, the scale shows
+    ws.row_breaks = openpyxl.worksheet.pagebreak.RowBreak()
+    line = next(l for l in wp.render_properties_text(_extract(wb)).splitlines() if "print estimate (print area A1:I133)" in l)
+    assert "fits one page at" in line and "MULTI-PAGE" not in line, line
+    for x in props["sheets"]:                                                  # older caches: no key, no line, no crash
+        x.pop("print_estimate", None)
+    assert "print estimate" not in wp.render_properties_text(props)
+
+
 # ---------------------------------------------------------------------------
 # date literal in formula
 # ---------------------------------------------------------------------------

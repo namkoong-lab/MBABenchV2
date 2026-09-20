@@ -310,6 +310,32 @@ def test_end_to_end_properties_and_render():
     assert "IMPLICIT INTERSECTION" not in wp.render_properties_text(props)
 
 
+def test_dependents_of_a_flagged_cell_are_listed():
+    # judge v12, grading 1092: D448 fed Checks!F19 and the COUNTIF roll-up skipped the erroring row
+    wb = openpyxl.Workbook(); eng = wb.active; eng.title = "Sens Engine"
+    eng["D448"] = "=SUMPRODUCT(MAX(ABS(P413:Y445-P376:Y408)))"
+    eng["D450"] = "=D448*2"                                   # same sheet, unqualified
+    eng["D451"] = "=SUM(D440:D449)"                           # a range that contains it: not listed
+    eng["D452"] = "=D4480+AD448"                              # look-alikes: not listed
+    ck = wb.create_sheet("Checks")
+    ck["D19"] = "='Sens Engine'!D448"
+    ck["F19"] = "='Sens Engine'!$D$448<0.0001"
+    ck["F20"] = "=COUNTIF(F6:F42,FALSE)"
+    deps = ii.find_dependents(wb, {"Sens Engine": ["D448"]})
+    assert deps == {("Sens Engine", "D448"): ["Sens Engine!D450", "Checks!D19", "Checks!F19"]}, deps
+    assert ii.find_dependents(wb, {}) == {} and ii.find_dependents(wb, {"Sens Engine": ["Z1"]}) == {}
+    d = Path(tempfile.mkdtemp()); path = d / "t.xlsx"; wb.save(path)
+    excel_utils.process_all_worksheets(str(path), d / "out", quiet=True)
+    props = wp.load_properties(d / "out")
+    ex = next(x for x in props["sheets"] if x["name"] == "Sens Engine")["implicit_intersection"]["examples"]
+    assert ex[0]["referenced_by"] == ["Sens Engine!D450", "Checks!D19", "Checks!F19"], ex
+    line = next(l for l in wp.render_properties_text(props).splitlines() if "IMPLICIT INTERSECTION" in l)
+    assert "referenced by Sens Engine!D450, Checks!D19, Checks!F19: these cells show the error in Excel too" in line
+    many = {"count": 1, "examples": [{"cell": "D1", "formula": "=ABS(A1:A9)", "ranges": ["A1:A9"], "via": "ABS",
+                                      "referenced_by": [f"S!A{i}" for i in range(11)]}]}
+    assert "(+3 more)" in ii.render_lines(many)[0]
+
+
 def test_render_caps_examples():
     ex = [{"cell": f"D{i}", "formula": "=ABS(A1:A10)", "ranges": ["A1:A10"], "via": "ABS"} for i in range(10)]
     lines = ii.render_lines({"count": 37, "examples": ex})

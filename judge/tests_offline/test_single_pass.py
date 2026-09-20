@@ -294,8 +294,8 @@ from utils.misc_utils import load_env_var  # noqa: E402
 
 check(str(load_env_var("AGENTIC_JUDGE_VERSION")) == "4",
       "config: agentic (12-category) judge version is 4")
-check(str(load_env_var("SINGLE_PASS_VERSION")) == "11",
-      "config: single_pass version is 11 (judge v11: IMPLICIT INTERSECTION line, guidance 44->45)")
+check(str(load_env_var("SINGLE_PASS_VERSION")) == "12",
+      "config: single_pass version is 12 (judge v12: typeface-aware numeric fit, II dependents, print estimate, guidance 49->53)")
 check(str(load_env_var("SINGLE_PASS_PROMPT_VERSION")) == "8",
       "config: single_pass prompt_version is 8")
 check(str(load_env_var("JUDGE_VERSION")) != str(load_env_var("SINGLE_PASS_VERSION")),
@@ -332,9 +332,9 @@ check(tier == "forced", "95% pressure is 'forced'")
 orch_src = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
 check("suitability_source_path=suitability_src" in orch_src,
       "orchestrator forwards suitability_source_path (v2 blocker fixed)")
-check("solution_csv_cache_v8" in orch_src and "attempt_csv_cache_v8" in orch_src
-      and "starting_csv_cache_v8" in orch_src,
-      "orchestrator uses the _v8 cache generation (judge v11 implicit-intersection line)")
+check("solution_csv_cache_v9" in orch_src and "attempt_csv_cache_v9" in orch_src
+      and "starting_csv_cache_v9" in orch_src,
+      "orchestrator uses the _v9 cache generation (judge v12 typeface-aware numeric fit)")
 check("accuracy_check=self.accuracy_check" in orch_src and "add_accuracy_check_arg" in orch_src,
       "orchestrator forwards --accuracy-check")
 check('uuid.uuid4().hex[:6]' in orch_src.split("def main")[1],

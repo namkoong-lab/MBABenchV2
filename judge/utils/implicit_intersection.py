@@ -391,6 +391,51 @@ def scan_sheet(ws, bounds: Optional[dict] = None) -> dict:
     return {"count": count, "examples": examples}
 
 
+MAX_DEPENDENTS = 8
+
+
+def find_dependents(workbook, flagged: dict, bounds_for=None) -> dict:
+    """{(sheet, cell): ["Checks!D19", ...]}: formulas anywhere in the workbook that reference a
+    flagged cell directly (judge v12). `flagged` maps sheet title -> cell coordinates;
+    `bounds_for(ws)` returns the iter_rows kwargs of the sheet-extent guard.
+
+    The cached value of a flagged cell looks fine, so everything downstream of it looks fine
+    too: grading 1092 passed Master error flag while Sens_Engine!D448 (#VALUE! in Excel) fed
+    Checks!F19 and the roll-up COUNTIF(F6:F42,FALSE) skipped the erroring row. Only single-cell
+    operands count; a range that merely contains the cell (the COUNTIF above) is not listed,
+    because whether it passes the error on depends on the function around it."""
+    targets = {(s, c.replace("$", "").upper()) for s, cells in (flagged or {}).items() for c in cells}
+    if not targets:
+        return {}
+    needles = {c for _, c in targets}
+    quick = re.compile("|".join(
+        r"(?<![A-Za-z$])\$?" + re.escape(m.group(1)) + r"\$?" + re.escape(m.group(2)) + r"(?![0-9])"
+        for m in (_RE_CELL.match(c) for c in sorted(needles)) if m), re.I)
+    found: dict = {t: [] for t in targets}
+    for ws in getattr(workbook, "worksheets", []):
+        kwargs = bounds_for(ws) if bounds_for else {}
+        for row in ws.iter_rows(**(kwargs or {})):
+            for cell in row:
+                v = cell.value
+                text = v if isinstance(v, str) else getattr(v, "text", None)
+                if not (isinstance(text, str) and text.startswith("=") and quick.search(text)):
+                    continue
+                try:
+                    tokens = Tokenizer(text).items
+                except Exception:  # noqa: BLE001 - tokenizer quirks: a dependent we cannot read is not listed
+                    continue
+                for tok in tokens:
+                    if tok.type != "OPERAND" or tok.subtype != "RANGE" or ":" in tok.value.rsplit("!", 1)[-1]:
+                        continue
+                    sheet, _, ref = tok.value.rpartition("!")
+                    sheet = sheet.strip("'").replace("''", "'") if sheet else ws.title
+                    key = (sheet, ref.replace("$", "").upper())
+                    here = f"{ws.title}!{cell.coordinate}"
+                    if key in found and here not in found[key] and key != (ws.title, cell.coordinate):
+                        found[key].append(here)
+    return {k: v for k, v in found.items() if v}
+
+
 def render_lines(ii: Any) -> list[str]:
     """Properties-block lines for one sheet (empty when nothing was flagged)."""
     if not isinstance(ii, dict) or not ii.get("count"):
@@ -401,7 +446,13 @@ def render_lines(ii: Any) -> list[str]:
     for e in ex:
         via = e.get("via") or "formula"
         how = f"as a single value in {via}( )" if via.isalpha() else f"as a single value beside '{via}'"
-        parts.append(f"{e['cell']} {e['formula']} — uses {', '.join(e['ranges'])} {how}")
+        part = f"{e['cell']} {e['formula']} — uses {', '.join(e['ranges'])} {how}"
+        deps = e.get("referenced_by") or []
+        if deps:
+            shown = ", ".join(deps[:MAX_DEPENDENTS])
+            extra = f" (+{len(deps) - MAX_DEPENDENTS} more)" if len(deps) > MAX_DEPENDENTS else ""
+            part += f" — referenced by {shown}{extra}: these cells show the error in Excel too"
+        parts.append(part)
     more = f"; (+{n - len(ex)} more)" if n > len(ex) else ""
     return [
         f"     IMPLICIT INTERSECTION — {n} plain formula{'s' if n != 1 else ''} without the array marker "
