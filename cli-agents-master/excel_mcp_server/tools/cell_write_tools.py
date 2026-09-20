@@ -119,8 +119,10 @@ async def set_cell_formula(filename: str, worksheet_name: str, cell: str, formul
         except ValueError:
             pass
 
-        if (formula_stripped.startswith('"') and formula_stripped.endswith('"')) or \
-           (formula_stripped.startswith("'") and formula_stripped.endswith("'")):
+        # "Just text" means the WHOLE formula is one quoted literal. The old test
+        # (starts and ends with a quote) also refused real formulas such as
+        # ="FY"&TEXT(B6,"yyyy")&"A" (Fable 5.1 canary, 2026-09-19).
+        if re.fullmatch(r'"(?:[^"]|"")*"', formula_stripped) or re.fullmatch(r"'[^']*'", formula_stripped):
             return json.dumps({
                 "success": False,
                 "cell": cell,
