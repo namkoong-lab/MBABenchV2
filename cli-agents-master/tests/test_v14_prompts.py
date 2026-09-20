@@ -40,7 +40,7 @@ def main() -> int:
     assert parse_prompt_version(sys_path, tpl_path) == 1408
     assert _pv.attachments_for("v14") == ["house_standards/House_Standards_v1.md"]
     assert _pv.attachments_for("v13") == []
-    assert _pv.DEFAULT_V2_PROMPT_VERSION == "v15"  # v14 superseded by the scrubbed v15
+    assert _pv.DEFAULT_V2_PROMPT_VERSION == "v16"  # v14 superseded by the scrubbed v15, then v16
     assert STANDARDS.is_file(), "house_standards/House_Standards_v1.md missing from the monorepo"
     print("OK  v14 registered, shared template, prompt_version 1408, attachment declared")
 

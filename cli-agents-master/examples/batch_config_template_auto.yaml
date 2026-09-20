@@ -51,8 +51,10 @@ benchmark: "v1"
 #   v15 -> system_prompt_v15.txt + task_template_shared_v9.txt         (v14 with
 #          every rubric passage scrubbed; the standards file is delivered
 #          as HOUSE_STANDARDS.md, matching the coding pipeline)
-# Omitting it defaults from the benchmark (v1 -> v10, v2 -> v15). Recorded in
-# the DB as system*100 + template (e.g. v11 = 1105, v15 = 1509).
+#   v16 -> system_prompt_v16.txt + task_template_shared_v9.txt         (v15 with
+#          the tool manual's contradictions of the House Standards removed)
+# Omitting it defaults from the benchmark (v1 -> v10, v2 -> v16). Recorded in
+# the DB as system*100 + template (e.g. v11 = 1105, v16 = 1609).
 prompt_version: "v11"
 
 # Trials mode: max attempts per task+model combo

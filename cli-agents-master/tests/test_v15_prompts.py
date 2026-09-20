@@ -27,9 +27,9 @@ def main() -> int:
     assert _pv.parse_prompt_version(sys_path, tpl_path) == 1509
     assert _pv.attachments_for("v15") == ["house_standards/House_Standards_v1.md"]
     assert _pv.attachment_names_for("v15") == {"House_Standards_v1.md": "HOUSE_STANDARDS.md"}
-    assert _pv.DEFAULT_V2_PROMPT_VERSION == "v15"
+    assert _pv.DEFAULT_V2_PROMPT_VERSION == "v16"  # v15 superseded by v16 (standards-consistent manual)
     assert _pv.rubric_for_prompt_version("v15") == "v2"
-    print("OK  v15 registered, prompt_version 1509, HOUSE_STANDARDS.md delivered name, v2 default")
+    print("OK  v15 registered, prompt_version 1509, HOUSE_STANDARDS.md delivered name")
 
     sys_text, tpl_text = sys_path.read_text(), tpl_path.read_text()
     for text, name in ((sys_text, "system"), (tpl_text, "template")):

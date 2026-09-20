@@ -34,8 +34,8 @@ from config import Config  # noqa: E402
 import psycopg2  # noqa: E402
 
 # Latest prompt generation per pipeline (2026-09-10, House Standards set):
-# GUI/Excel 205 (single-pass + Questions sheet + house standards), CLI 1509
-# (system v15 + template v9, rubric-scrubbed), coding 113 (template v13, rubric-scrubbed). ONLY these count —
+# GUI/Excel 205 (single-pass + Questions sheet + house standards), CLI 1609
+# (system v16 + template v9, rubric-scrubbed), coding 113 (template v13, rubric-scrubbed). ONLY these count —
 # every earlier prompt version is ignored by this manifest, so a task is
 # "missing" until it has a good attempt on the current prompts.
 LATEST_PV = {"gui": 205, "excel": 205}
