@@ -77,6 +77,11 @@ MODEL_PRICING = {
     # DIRECT_API_PRICING after the first isolated run's credit diff.
     "claude-fable-5-1": {"input": 10.00, "output": 50.00},  # Anthropic direct model ID
     "gpt-6-astra": {"input": 10.00, "output": 50.00},  # OpenAI direct model ID
+    # 2026-09-20 backstop for the Forge cohort tensorblock/grok-4.6 (looked up
+    # by its bare id): xAI's list price that day, equal to OpenRouter's
+    # x-ai/grok-4.6. NOT billing-verified - Forge publishes no prices; check
+    # the first run against a Forge credit diff.
+    "grok-4.6": {"input": 2.00, "output": 6.00},
     "google/gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
     "z-ai/glm-4.7": {"input": 0.40, "output": 1.50},
     "x-ai/grok-4": {"input": 3.00, "output": 15.00},
@@ -209,7 +214,8 @@ def _candidate_slugs(model: str) -> list:
 
     Direct-API ids differ from OpenRouter slugs: "claude-fable-5" is listed
     as "anthropic/claude-fable-5", "claude-opus-4-8" as
-    "anthropic/claude-opus-4.8", "gpt-5.6-sol" as "openai/gpt-5.6-sol".
+    "anthropic/claude-opus-4.8", "gpt-5.6-sol" as "openai/gpt-5.6-sol",
+    "grok-4.6" as "x-ai/grok-4.6".
     """
     candidates = [model]
     # TensorBlock Forge ids carry a "tensorblock/" prefix over the bare
@@ -229,6 +235,8 @@ def _candidate_slugs(model: str) -> list:
                 candidates.append(f"anthropic/{name}")
             elif name.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):
                 candidates.append(f"openai/{name}")
+            elif name.startswith("grok"):
+                candidates.append(f"x-ai/{name}")
     return candidates
 
 
@@ -268,11 +276,16 @@ def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
         for slug in _candidate_slugs(model):
             if slug in live:
                 return live[slug]
-    if model in MODEL_PRICING:
+    # A Forge id falls back to its bare id's static price, as it does for the
+    # direct-API and context-window tables.
+    static_id = model
+    if model not in MODEL_PRICING and model.startswith("tensorblock/"):
+        static_id = model[len("tensorblock/"):]
+    if static_id in MODEL_PRICING:
         if live and model not in _pricing_warned:
             _pricing_warned.add(model)
             print(f"⚠️ {model} not in live pricing; using static table price")
-        return MODEL_PRICING[model]
+        return MODEL_PRICING[static_id]
     if model not in _pricing_warned:
         _pricing_warned.add(model)
         print(f"⚠️ No pricing found for {model}; cost will be logged as 0.0")
@@ -293,6 +306,9 @@ MODEL_CONTEXT_WINDOWS = {
     # allowance floors the context budget at 10k tokens - a crippled attempt.
     "claude-fable-5-1": 1_000_000,
     "gpt-6-astra": 1_050_000,
+    # 2026-09-20: xAI's documented window, equal to the live feed's value for
+    # x-ai/grok-4.6 (reached as tensorblock/grok-4.6; the prefix is stripped).
+    "grok-4.6": 500_000,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 

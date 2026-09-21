@@ -171,3 +171,37 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+# ---------------------------------------------------------------------------
+# 2026-09-20: first cohort routed through the TensorBlock Forge gateway
+# (bills Forge credits only; key = keys.forge_api_key). The label says
+# "tensorblock" because that is the API the rows ran against - a direct xAI
+# cohort, if one is ever run, gets its own label.
+#
+#   grok-4.6   listed by Forge's /v1/models as tensorblock/grok-4.6
+#              (2026-09-20). xAI docs the same day: 500,000-token context, no
+#              output limit, reasoning always on (cannot be disabled),
+#              reasoning effort low/medium/high/xhigh with high the default;
+#              xhigh exists from grok-4.6 on. xhigh is therefore the top
+#              tier - the counterpart of fable-5-1-max / gpt-6-astra-xhigh.
+#              Live-probed through Forge 2026-09-20 (12 calls): the gateway
+#              forwards the top-level reasoning_effort this executor sends
+#              (an invalid value 400s at the provider; low vs xhigh = 1.5k vs
+#              9-13k reasoning tokens on one puzzle; xAI's own REST examples
+#              nest it as reasoning.effort - same result) and accepts the
+#              128000 cap. Thinking streams as delta.reasoning_content and is
+#              reported OUTSIDE completion_tokens; the executor handles both.
+#              One call in twelve took a slower upstream route (no streamed
+#              thinking, ~11 tok/s against ~77).
+#
+# Harness settings match the flagship entries above (128000 cap, fresh
+# context, recent_history_count 3).
+- agent_model_name: openpyxl_tensorblock/grok-4.6-xhigh
+  model: tensorblock/grok-4.6
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

@@ -1157,7 +1157,10 @@ class ExcelTaskExecutor:
                             response_text += delta.content
                             has_content = True
                         # For thinking models, reasoning tokens come through delta.reasoning
-                        if hasattr(delta, 'reasoning') and delta.reasoning:
+                        # (OpenRouter) or delta.reasoning_content (xAI wire: Grok 4.6 via
+                        # Forge streamed 152 such chunks in a row before any content,
+                        # probed 2026-09-20 - past the 100-empty-chunk breaker below).
+                        if getattr(delta, 'reasoning', None) or getattr(delta, 'reasoning_content', None):
                             # Don't add reasoning to response_text (it's internal thinking)
                             # But count it as activity to prevent idle timeout
                             has_content = True
@@ -1183,6 +1186,15 @@ class ExcelTaskExecutor:
                         "completion_tokens": chunk.usage.completion_tokens or 0,
                         "total_tokens": chunk.usage.total_tokens or 0
                     }
+                    # xAI reports thinking OUTSIDE completion_tokens (Grok 4.6 via
+                    # Forge, probed 2026-09-20: completion 9, reasoning 12,655,
+                    # total = prompt + both) yet bills it as output. Count it, or
+                    # the row's cost is a fraction of the bill. OpenAI/OpenRouter
+                    # already include it (total = prompt + completion): unchanged.
+                    usage_info["completion_tokens"] = max(
+                        usage_info["completion_tokens"],
+                        usage_info["total_tokens"] - usage_info["prompt_tokens"],
+                    )
                     # OpenRouter returns the actual billed cost (USD) when the
                     # request sets extra_body usage.include — provider-
                     # authoritative, preferred over any price-table estimate.

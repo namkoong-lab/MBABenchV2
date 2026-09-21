@@ -27,3 +27,32 @@ def test_rerun_models_price_and_size_without_the_live_feed(monkeypatch):
         assert window >= 1_000_000, (model, window)
         # budget left for the workbook after the 128k output allowance
         assert window - 128_000 - 3_000 > 800_000
+
+
+def test_forge_grok_maps_to_its_openrouter_slug():
+    c = mc._candidate_slugs("tensorblock/grok-4.6")
+    assert c[0] == "tensorblock/grok-4.6"
+    assert "grok-4.6" in c and "x-ai/grok-4.6" in c
+    # the cohorts already running resolve exactly as before
+    assert mc._candidate_slugs("gpt-6-astra") == ["gpt-6-astra", "openai/gpt-6-astra"]
+    assert mc._candidate_slugs("claude-fable-5-1") == [
+        "claude-fable-5-1", "claude-fable-5.1",
+        "anthropic/claude-fable-5-1", "anthropic/claude-fable-5.1"]
+
+
+def test_forge_grok_prices_and_sizes_from_the_live_feed(monkeypatch):
+    feed = {"x-ai/grok-4.6": {"input": 2.0, "output": 6.0, "context": 500_000}}
+    monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, **k: feed)
+    assert mc.resolve_pricing("tensorblock/grok-4.6") == feed["x-ai/grok-4.6"]
+    assert mc.resolve_context_window("tensorblock/grok-4.6") == 500_000
+
+
+def test_forge_grok_prices_and_sizes_without_the_live_feed(monkeypatch):
+    """A failed OpenRouter fetch must not record the Grok cohort at $0 or
+    floor its workbook context (128k default - 128k output cap = 10k)."""
+    monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, **k: None)
+    assert mc.resolve_pricing("tensorblock/grok-4.6") == {"input": 2.00, "output": 6.00}
+    assert mc.calculate_cost("tensorblock/grok-4.6", 1_000_000, 100_000) > 0
+    window = mc.resolve_context_window("tensorblock/grok-4.6")
+    assert window == 500_000
+    assert window - 128_000 - 3_000 > 300_000
