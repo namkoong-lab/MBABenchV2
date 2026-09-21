@@ -8,6 +8,7 @@ Automated pipeline that handles the full lifecycle:
 Extends BatchRunner with auto-discovery, S3 workspace setup, and result upload.
 """
 
+import fcntl
 import json
 import os
 import shutil
@@ -15,6 +16,8 @@ import time
 import traceback
 import yaml
 import boto3
+from boto3.s3.transfer import TransferConfig
+from contextlib import contextmanager
 from sqlalchemy import inspect as sa_inspect, text as sa_text
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -29,8 +32,8 @@ from .db import database as db_config
 from .db.database import SessionLocal
 from .db.models import Task, TaskAttempt
 from .repo_config import (
-    boto3_credentials, describe_database_target, repo_value, resolve_attachments,
-    resolve_db_url,
+    boto3_credentials, describe_database_target, monorepo_root, repo_value,
+    resolve_attachments, resolve_db_url,
 )
 from .prompt_versions import (
     PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, DEFAULT_V2_PROMPT_VERSION,
@@ -45,6 +48,54 @@ TASK_TEMPLATE_WSP_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERS
 # Local per-attempt record, kept even after the workspace is cleaned up:
 # run_logs/attempt-{model}-{timestamp}/ at the cli-agents-master root.
 RUN_LOGS_DIR: Path = Path(__file__).resolve().parents[1] / "run_logs"
+
+# Result uploads share the uplink with every lane's model calls - and, on Pat's
+# MacBook, with the coding pipeline's Codex lanes. There, on 2026-09-20, all 36
+# API streams that dropped fell inside S3 upload windows (big uploads reach only
+# 0.3-0.8 MB/s on that Mac; a 209 MB one caused a 6-min storm). So an attempt's
+# uploads wait for the coding pipeline's own cross-lane lock (the same file, so
+# the two pipelines take turns) and go out as one 250 KB/s stream - exactly the
+# rule in coding-agents-master/coding_agent/recorder.py. One stream, not boto3's
+# default ten: ten threads sharing 250 KB/s left connections idle past S3's 20 s
+# limit there. The run needs far less on average (CLI attempts: median 9 MB).
+S3_UPLOAD_MAX_BYTES_PER_SEC = 250_000
+S3_UPLOAD_LOCK_WAIT_SECONDS = 45 * 60  # then upload anyway: a wedged lane must not block the rest
+
+
+def _s3_upload_lock_path() -> Path:
+    return monorepo_root() / "coding-agents-master" / "workspaces" / ".s3_upload.lock"
+
+
+@contextmanager
+def _upload_slot(lock_path: Path):
+    """Hold the cross-pipeline upload lock (flock: released when the holder
+    exits, however it exits). A lock that cannot be opened never blocks an
+    upload - the files matter more than the turn-taking."""
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(lock_path, "w")
+    except OSError as e:
+        print(f"  ⚠️ Upload lock unavailable ({e}); uploading without it")
+        yield
+        return
+    try:
+        deadline = time.monotonic() + S3_UPLOAD_LOCK_WAIT_SECONDS
+        waited = False
+        while True:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    print(f"  ⚠️ Upload lock still held after {S3_UPLOAD_LOCK_WAIT_SECONDS // 60} min; uploading anyway")
+                    break
+                if not waited:
+                    print("  ⏳ Another lane is uploading; waiting for the upload lock")
+                    waited = True
+                time.sleep(2)
+        yield
+    finally:
+        lock_file.close()
 
 
 @dataclass
@@ -722,6 +773,23 @@ class AutoBatchRunner(BatchRunner):
 
         return package_dir
 
+    def _upload_files(self, files_to_upload: List[Tuple[Path, str]]) -> List[str]:
+        """Upload one attempt's files under the cross-pipeline upload lock, as
+        one throttled stream (see S3_UPLOAD_MAX_BYTES_PER_SEC). Returns the
+        s3:// URIs that made it."""
+        throttle = TransferConfig(max_bandwidth=S3_UPLOAD_MAX_BYTES_PER_SEC, max_concurrency=1)
+        uploaded = []
+        with _upload_slot(_s3_upload_lock_path()):
+            for local_path, s3_key in files_to_upload:
+                try:
+                    self.s3_client.upload_file(str(local_path), self._s3_bucket, s3_key, Config=throttle)
+                    s3_uri = f"s3://{self._s3_bucket}/{s3_key}"
+                    uploaded.append(s3_uri)
+                    print(f"  📤 {local_path.name} -> {s3_uri}")
+                except Exception as e:
+                    print(f"  ❌ Failed to upload {local_path.name}: {e}")
+        return uploaded
+
     def upload_result(self, task_info: TaskInfo, workspace_path: str, workspace_result: WorkspaceResult):
         """Package the attempt, keep a local copy, upload to S3, insert the DB row.
 
@@ -776,15 +844,7 @@ class AutoBatchRunner(BatchRunner):
                         if transcript.exists():
                             files_to_upload.append((transcript, f"{s3_base}_transcript.md"))
 
-        # Upload files to S3
-        for local_path, s3_key in files_to_upload:
-            try:
-                self.s3_client.upload_file(str(local_path), self._s3_bucket, s3_key)
-                s3_uri = f"s3://{self._s3_bucket}/{s3_key}"
-                attempt_files.append(s3_uri)
-                print(f"  📤 {local_path.name} -> {s3_uri}")
-            except Exception as e:
-                print(f"  ❌ Failed to upload {local_path.name}: {e}")
+        attempt_files.extend(self._upload_files(files_to_upload))
 
         # Times - direct from execution
         start_time_dt = datetime.fromtimestamp(workspace_result.start_time) if workspace_result.start_time else datetime.now()

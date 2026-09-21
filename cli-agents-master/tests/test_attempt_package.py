@@ -3,6 +3,10 @@
 No S3, DB, or network — everything runs against tmp_path.
 """
 
+import fcntl
+import threading
+import time
+
 import pytest
 
 from excel_cli_agent import auto_batch_runner as abr
@@ -92,3 +96,90 @@ def test_v2_keys_mirror_package_layout(runner, workspace):
     assert f"{root}/config/my_batch.yaml" in keys
     # no key escapes the per-attempt folder
     assert all(k.startswith(f"{root}/") for k in keys)
+
+
+# --- uploads: one throttled stream under the lock shared with the coding pipeline ---
+
+class _FakeS3:
+    def __init__(self, during=None, fail=()):
+        self.calls, self.during, self.fail = [], during, set(fail)
+
+    def upload_file(self, filename, bucket, key, Config=None):
+        if self.during:
+            self.during()
+        if key in self.fail:
+            raise RuntimeError("boom")
+        self.calls.append((key, Config.max_bandwidth, Config.max_concurrency))
+
+
+@pytest.fixture
+def lock_path(tmp_path, monkeypatch):
+    path = tmp_path / "coding-agents-master" / "workspaces" / ".s3_upload.lock"
+    monkeypatch.setattr(abr, "_s3_upload_lock_path", lambda: path)
+    return path
+
+
+def _lock_is_free(path):
+    with open(path, "w") as other:
+        try:
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+
+
+def test_lock_is_the_coding_pipelines_own_file():
+    assert abr._s3_upload_lock_path() == (
+        abr.monorepo_root() / "coding-agents-master" / "workspaces" / ".s3_upload.lock")
+
+
+def test_uploads_go_as_one_250kbs_stream_while_holding_the_lock(runner, lock_path):
+    held = []
+    runner._s3_client = _FakeS3(during=lambda: held.append(not _lock_is_free(lock_path)))
+    runner._s3_bucket = "bucket"
+
+    uris = runner._upload_files([(lock_path.parent / "a.xlsx", "k/a.xlsx"), (lock_path.parent / "b.md", "k/b.md")])
+
+    assert uris == ["s3://bucket/k/a.xlsx", "s3://bucket/k/b.md"]
+    assert runner._s3_client.calls == [("k/a.xlsx", 250_000, 1), ("k/b.md", 250_000, 1)]
+    assert held == [True, True]          # the lock covers every file of the attempt
+    assert _lock_is_free(lock_path)      # and is released afterwards
+
+
+def test_upload_waits_while_another_lane_holds_the_lock(runner, lock_path):
+    started = []
+    runner._s3_client = _FakeS3(during=lambda: started.append(time.monotonic()))
+    lock_path.parent.mkdir(parents=True)
+    holder = open(lock_path, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    released = []
+    threading.Timer(0.5, lambda: (released.append(time.monotonic()), holder.close())).start()
+
+    runner._upload_files([(lock_path.parent / "a.xlsx", "k/a.xlsx")])
+
+    assert released and started[0] >= released[0]   # the upload began only after the holder let go
+    assert runner._s3_client.calls == [("k/a.xlsx", 250_000, 1)]
+
+
+def test_a_wedged_lock_holder_never_blocks_the_upload(runner, lock_path, monkeypatch):
+    monkeypatch.setattr(abr, "S3_UPLOAD_LOCK_WAIT_SECONDS", 0)
+    runner._s3_client = _FakeS3()
+    lock_path.parent.mkdir(parents=True)
+    with open(lock_path, "w") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        uris = runner._upload_files([(lock_path.parent / "a.xlsx", "k/a.xlsx")])
+    assert uris == [f"s3://{runner._s3_bucket}/k/a.xlsx"]
+
+
+def test_an_unusable_lock_path_never_blocks_the_upload(runner, tmp_path, monkeypatch):
+    (tmp_path / "not_a_dir").write_text("x")
+    monkeypatch.setattr(abr, "_s3_upload_lock_path", lambda: tmp_path / "not_a_dir" / ".s3_upload.lock")
+    runner._s3_client = _FakeS3()
+    assert runner._upload_files([(tmp_path / "a.xlsx", "k/a.xlsx")]) == [f"s3://{runner._s3_bucket}/k/a.xlsx"]
+
+
+def test_one_failed_file_does_not_stop_the_rest(runner, lock_path):
+    runner._s3_client = _FakeS3(fail={"k/a.xlsx"})
+    uris = runner._upload_files([(lock_path.parent / "a.xlsx", "k/a.xlsx"), (lock_path.parent / "b.md", "k/b.md")])
+    assert uris == [f"s3://{runner._s3_bucket}/k/b.md"]
+    assert _lock_is_free(lock_path)
