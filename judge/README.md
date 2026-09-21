@@ -486,6 +486,9 @@ each; twelve rows exist under 11, so everything lands here.
   of most faces unchanged. The rule and its 1.5-character band are unchanged,
   and text is still measured by `display_width` (that class is not rendered).
   The rebuilt scan lists exactly `C31:C39` on 1092 (`C30` fits).
+  Golden sweep: 2 of 101 listed, both on case-given sheets the agents inherit
+  (CashNiagara `Assumptions!AN18/BP18`, ### confirmed in Excel; Volkswagen
+  `Comp!H11/K11`, 11 characters in a default-width column) — task-creator items.
   Tests: `test_numeric_width_uses_the_cell_font`,
   `test_numeric_fit_end_to_end_arial_10`.
 - **IMPLICIT INTERSECTION lists who references the cell** (check 32;
