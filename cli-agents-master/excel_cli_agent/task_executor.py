@@ -293,6 +293,15 @@ class ExcelTaskExecutor:
         print("🔄 Recreating OpenAI client with fresh connections...")
         self._create_openai_client()
 
+    def _reads_native_tool_calls(self) -> bool:
+        """Gemini only (2026-09-21). No tools are declared in the request, yet
+        Gemini 3.8 Flash answers about half its steps with a native function
+        call (e.g. list_files) instead of the JSON text the prompt asks for,
+        and Google drops some of those as MALFORMED_FUNCTION_CALL, leaving an
+        empty reply. Such a call is read as the same action, and an empty
+        reply is asked again. Every other model is unchanged."""
+        return "gemini" in str(getattr(self, "model", "") or "").lower()
+
     def _forge_status_retry_wait(self, err: Exception, attempt: int) -> Optional[int]:
         """Seconds to wait before retrying a status error from Forge, or None
         when it is not retried here: any other endpoint (its SDK still retries
@@ -1167,6 +1176,9 @@ class ExcelTaskExecutor:
         last_content_time = start_time
         empty_chunk_count = 0
         max_empty_chunks = 100  # Detect dead connection after 100 empty chunks
+        native_calls: Dict[int, Dict[str, str]] = {}  # Gemini only, see _reads_native_tool_calls
+        reads_calls = self._reads_native_tool_calls()
+        finish_reason = None
 
         try:
             for chunk in stream:
@@ -1199,6 +1211,18 @@ class ExcelTaskExecutor:
                         # A live call, not the empty chunks of a dead connection.
                         if getattr(delta, 'extra_content', None):
                             has_content = True
+                        for tc in ((getattr(delta, 'tool_calls', None) or []) if reads_calls else []):
+                            fn = getattr(tc, 'function', None)
+                            name, args = getattr(fn, 'name', None), getattr(fn, 'arguments', None)
+                            idx = getattr(tc, 'index', None)
+                            if idx is None or (name and native_calls.get(idx, {}).get("name")):
+                                idx = max(native_calls, default=-1) + 1   # a new call, not a fragment
+                            slot = native_calls.setdefault(idx, {"name": "", "arguments": ""})
+                            slot["name"] += name or ""
+                            slot["arguments"] += args or ""
+                            has_content = True
+                    if getattr(chunk.choices[0], 'finish_reason', None):
+                        finish_reason = chunk.choices[0].finish_reason
 
                     if has_content:
                         last_content_time = time_module.time()
@@ -1247,6 +1271,22 @@ class ExcelTaskExecutor:
                 raise  # Forge stall: the caller retries the call instead of parsing half of it
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
+        self._last_finish_reason = finish_reason
+        if native_calls and not response_text.strip():
+            actions = []
+            for idx in sorted(native_calls):
+                # Gemini prefixes the tool name at times: "excel:list_files", "default_api.list_files",
+                # "mcp__excel__list_files" (seen 2026-09-21) -> "list_files". No tool name has "__".
+                name = re.split(r"[:./]", native_calls[idx]["name"])[-1].rsplit("__", 1)[-1].strip()
+                try:
+                    params = json.loads(native_calls[idx]["arguments"] or "{}")
+                except ValueError:
+                    params = None
+                if name and isinstance(params, dict):
+                    actions.append({"tool": name, "parameters": params})
+            if actions:
+                response_text = json.dumps({"is_complete": False, "actions": actions})
+                print(f"🔁 Reply came as {len(actions)} native tool call(s); read as actions: {[a['tool'] for a in actions]}")
         return response_text, usage_info
 
     def _log_streaming_request(self, request_data: dict, response_text: str, usage_info: dict, task_id: str = "", iteration: int = 0):
@@ -1784,6 +1824,14 @@ EXECUTION HISTORY:
                             response_text, usage_info = self._call_api_with_hard_timeout(request_data)
                             # Log the streamed response
                             self._log_streaming_request(request_data, response_text, usage_info, task.task_id, task.total_iterations)
+                            # Gemini only: an empty reply (a native call Google dropped as
+                            # malformed) is asked again instead of burning the step.
+                            if (not (response_text or "").strip() and self._reads_native_tool_calls()
+                                    and attempt < MAX_RETRIES - 1):
+                                print(f"⚠️ Empty reply (finish: {getattr(self, '_last_finish_reason', None)}) "
+                                      f"on attempt {attempt+1}/{MAX_RETRIES}; asking again")
+                                time.sleep(2)
+                                continue
                             break  # Success, exit retry loop
                         except StreamTimeoutError as timeout_err:
                             last_error = timeout_err

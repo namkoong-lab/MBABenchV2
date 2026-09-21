@@ -248,3 +248,91 @@ def test_a_forge_429_or_5xx_is_retried_in_the_open_and_nothing_else_is(monkeypat
     left = calls(direct, busy, answer)
     parsed, _ = direct._reason_once(task)
     assert "rate limit" in parsed["error"] and left == [answer] and waits == []
+
+
+def _tool_call_chunk(name=None, arguments=None, index=0, content=None):
+    fn = type("Fn", (), {"name": name, "arguments": arguments})()
+    tc = type("ToolCall", (), {"index": index, "function": fn})()
+    d = type("Delta", (), {"content": content, "role": "assistant", "tool_calls": [tc]})()
+    return type("Chunk", (), {"choices": [type("Choice", (), {"delta": d, "finish_reason": None})()], "usage": None})()
+
+
+def _finish_chunk(reason="stop"):
+    d = type("Delta", (), {"content": None, "role": "assistant"})()
+    return type("Chunk", (), {"choices": [type("Choice", (), {"delta": d, "finish_reason": reason})()], "usage": None})()
+
+
+def test_a_gemini_native_tool_call_is_read_as_the_same_action():
+    """Gemini 3.8 Flash via Forge (2026-09-21): with no tools declared it still
+    answers about half its steps with a native call ("list_files", once
+    "excel:list_files") and no text. Read as the action; other models unchanged."""
+    import json
+    gemini = ExcelTaskExecutor.__new__(ExcelTaskExecutor)
+    gemini.model = "tensorblock/gemini-3.8-flash"
+
+    text, _ = gemini._collect_stream_response(iter([_tool_call_chunk("excel:list_files", "{}"), _finish_chunk()]), 3600)
+    assert json.loads(text) == {"is_complete": False, "actions": [{"tool": "list_files", "parameters": {}}]}
+    assert gemini._last_finish_reason == "stop"
+
+    # arguments in fragments, and a second call under the same index
+    chunks = [_tool_call_chunk("get_cell_range", '{"filename": "sol'), _tool_call_chunk(None, 'ution.xlsx", "range_address": "A1:B2"}'),
+              _tool_call_chunk("default_api.list_worksheets", '{"filename": "solution.xlsx"}'),
+              _tool_call_chunk("mcp__excel__get_used_range", '{"filename": "solution.xlsx"}'), _finish_chunk()]
+    text, _ = gemini._collect_stream_response(iter(chunks), 3600)
+    assert json.loads(text)["actions"] == [
+        {"tool": "get_cell_range", "parameters": {"filename": "solution.xlsx", "range_address": "A1:B2"}},
+        {"tool": "list_worksheets", "parameters": {"filename": "solution.xlsx"}},
+        {"tool": "get_used_range", "parameters": {"filename": "solution.xlsx"}}]
+
+    # text wins when there is any; unparseable arguments are not guessed at
+    text, _ = gemini._collect_stream_response(iter([_tool_call_chunk("list_files", "{}", content='{"is_complete": true}')]), 3600)
+    assert text == '{"is_complete": true}'
+    text, _ = gemini._collect_stream_response(iter([_tool_call_chunk("list_files", "{not json")]), 3600)
+    assert text == ""
+
+    grok = ExcelTaskExecutor.__new__(ExcelTaskExecutor)
+    grok.model = "tensorblock/grok-4.6"
+    text, _ = grok._collect_stream_response(iter([_tool_call_chunk("list_files", "{}"), _finish_chunk()]), 3600)
+    assert text == ""
+
+
+def test_an_empty_gemini_reply_is_asked_again_and_nothing_else_changes(monkeypatch):
+    import json
+    import os
+    from excel_cli_agent import task_executor as te
+
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+
+    def executor(model):
+        ex = ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k", model=model,
+                               reasoning_effort="high", base_url="https://api.forge.tensorblock.co/v1")
+        ex._get_system_prompt = lambda: "system"
+        ex._assemble_context = lambda task, system_prompt: "context"
+        ex._log_streaming_request = lambda *a, **k: None
+        return ex
+
+    waits = []
+    monkeypatch.setattr(te.time, "sleep", waits.append)
+    task = TaskExecution(task_id="t", user_prompt="p", status=te.TaskStatus.IN_PROGRESS, steps=[], start_time=0.0)
+    answer = json.dumps({"actions": [{"tool": "list_files", "parameters": {}}], "is_complete": False})
+
+    def replies(ex, *texts):
+        queue = list(texts)
+        ex._call_api_with_hard_timeout = lambda request_data: (queue.pop(0), {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return queue
+
+    gemini = executor("tensorblock/gemini-3.8-flash")
+    left = replies(gemini, "", "  ", answer)
+    parsed, _ = gemini._reason_once(task)
+    assert parsed["actions"] == [{"tool": "list_files", "parameters": {}}] and left == [] and waits == [2, 2]
+
+    del waits[:]
+    left = replies(gemini, *[""] * 6, answer)                  # six empty replies: the step is lost, as before
+    parsed, _ = gemini._reason_once(task)
+    assert parsed.get("actions") == [] and left == [answer] and waits == [2] * 5
+
+    del waits[:]
+    grok = executor("tensorblock/grok-4.6")                    # other models: an empty reply is not asked again
+    left = replies(grok, "", answer)
+    parsed, _ = grok._reason_once(task)
+    assert parsed.get("actions") == [] and left == [answer] and waits == []
