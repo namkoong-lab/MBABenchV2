@@ -205,3 +205,23 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+#   Kimi-K3    listed by Forge's /v1/models as tensorblock/Kimi-K3 (that
+#              spelling; 2026-09-20). Forge serves it from Fireworks - the
+#              response echoes "FW-Kimi-K3". Moonshot docs the same day:
+#              thinking always on, reasoning_effort low/high/max with max the
+#              default, so max is the top tier - the counterpart of
+#              fable-5-1-max. Live-probed through Forge 2026-09-20: top-level
+#              reasoning_effort is read (an invalid value 400s at the
+#              provider; low/high/max accepted), the 128000 cap is accepted,
+#              thinking streams as delta.reasoning_content and IS counted
+#              inside completion_tokens (the OpenAI convention).
+- agent_model_name: openpyxl_tensorblock/kimi-k3-max
+  model: tensorblock/Kimi-K3
+  reasoning_effort: max
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

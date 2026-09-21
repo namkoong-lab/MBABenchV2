@@ -104,3 +104,44 @@ def test_thinking_reported_outside_completion_tokens_is_still_costed():
     assert openai == {"prompt_tokens": 5000, "completion_tokens": 46823, "total_tokens": 51823}
     _, bare = executor._collect_stream_response(stream(5000, 800, None), timeout_seconds=3600)
     assert bare["completion_tokens"] == 800
+
+
+def test_forge_calls_are_cut_after_ten_silent_minutes_and_nothing_else_changes():
+    """2026-09-21: Forge left Grok requests unanswered (60 min, then 2.6 h, on
+    task 41). Forge tries are cut at 600 s of silence and retried in the open;
+    every other endpoint keeps the one 3600 s window and the SDK defaults."""
+    import httpx
+    from openai import DEFAULT_MAX_RETRIES
+
+    assert mc.resolve_stall_timeout("https://api.forge.tensorblock.co/v1") == 600
+    for url in ("https://api.openai.com/v1", "https://api.anthropic.com", "https://openrouter.ai/api/v1", None):
+        assert mc.resolve_stall_timeout(url) is None, url
+
+    def executor(base_url):
+        return ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k",
+                                 model="m", reasoning_effort="xhigh", base_url=base_url)
+
+    import os
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+    forge = executor("https://api.forge.tensorblock.co/v1")
+    assert forge.api_timeout.read == 600 and forge.hard_timeout_seconds == 3600
+    assert forge.openai_client.max_retries == 0
+    direct = executor("https://api.openai.com/v1")
+    assert direct.stall_timeout_seconds is None
+    assert direct.api_timeout.read == 3600 and direct.openai_client.max_retries == DEFAULT_MAX_RETRIES
+
+    # a Forge stall in mid-stream is raised for the retry loop, not parsed as half a response
+    def stalled_stream():
+        yield type("Chunk", (), {"choices": [], "usage": None})()
+        raise httpx.ReadTimeout("no bytes for 600 s")
+
+    with pytest.raises(httpx.ReadTimeout):
+        forge._collect_stream_response(stalled_stream(), timeout_seconds=3600)
+    text, _ = direct._collect_stream_response(stalled_stream(), timeout_seconds=3600)
+    assert text == ""                                       # unchanged off Forge
+
+    runner = BatchRunner.__new__(BatchRunner)
+    runner.config = {"reasoning_effort": "xhigh", "max_iterations": 40,
+                     "base_url": "https://api.forge.tensorblock.co/v1"}
+    assert runner._run_limit_extra_configs() == {"max_iterations": 40, "api_timeout_seconds": 3600,
+                                                 "stream_stall_seconds": 600}

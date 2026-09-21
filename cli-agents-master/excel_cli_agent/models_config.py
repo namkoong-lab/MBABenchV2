@@ -82,6 +82,10 @@ MODEL_PRICING = {
     # x-ai/grok-4.6. NOT billing-verified - Forge publishes no prices; check
     # the first run against a Forge credit diff.
     "grok-4.6": {"input": 2.00, "output": 6.00},
+    # Same backstop for tensorblock/Kimi-K3 (Forge serves it from Fireworks:
+    # the response echoes "FW-Kimi-K3"): OpenRouter's moonshotai/kimi-k3 list
+    # price on 2026-09-20. NOT billing-verified either.
+    "Kimi-K3": {"input": 1.70, "output": 8.50},
     "google/gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
     "z-ai/glm-4.7": {"input": 0.40, "output": 1.50},
     "x-ai/grok-4": {"input": 3.00, "output": 15.00},
@@ -154,6 +158,24 @@ TIMEOUT_BY_REASONING: Dict[Optional[str], int] = {
     None: 180,
 }
 
+# TensorBlock Forge only: longest silence (no bytes at all, response headers
+# included) before a call is cut and retried. 2026-09-21: Forge left Grok
+# requests unanswered - task 41 sat 60 min on one call, then 2.6 h on another
+# (retry included), while a healthy call streams its thinking from the first
+# seconds and finished in 4-5 min. The per-call budget stays
+# api_timeout_seconds; this only splits it into shorter tries.
+FORGE_STALL_TIMEOUT_SECONDS = 600
+
+
+def resolve_stall_timeout(base_url: Optional[str]) -> Optional[int]:
+    """Seconds of total silence a call may show before it is retried, or None
+    where no such limit applies (every endpoint but Forge: OpenAI does not
+    stream thinking, so a long silence there is a healthy call)."""
+    if base_url and "tensorblock" in base_url.lower():
+        return FORGE_STALL_TIMEOUT_SECONDS
+    return None
+
+
 # Iteration cap (one model call per iteration) when a run config names none.
 # 40 is what every v2 API cohort actually ran with; the old fallback of 30
 # would have silently shortened a cohort whose config omitted the key.
@@ -215,7 +237,7 @@ def _candidate_slugs(model: str) -> list:
     Direct-API ids differ from OpenRouter slugs: "claude-fable-5" is listed
     as "anthropic/claude-fable-5", "claude-opus-4-8" as
     "anthropic/claude-opus-4.8", "gpt-5.6-sol" as "openai/gpt-5.6-sol",
-    "grok-4.6" as "x-ai/grok-4.6".
+    "grok-4.6" as "x-ai/grok-4.6", "Kimi-K3" as "moonshotai/kimi-k3".
     """
     candidates = [model]
     # TensorBlock Forge ids carry a "tensorblock/" prefix over the bare
@@ -237,6 +259,9 @@ def _candidate_slugs(model: str) -> list:
                 candidates.append(f"openai/{name}")
             elif name.startswith("grok"):
                 candidates.append(f"x-ai/{name}")
+            elif name.lower().startswith("kimi"):
+                # Forge spells it "Kimi-K3"; OpenRouter lists "moonshotai/kimi-k3".
+                candidates.append(f"moonshotai/{name.lower()}")
     return candidates
 
 
@@ -309,6 +334,10 @@ MODEL_CONTEXT_WINDOWS = {
     # 2026-09-20: xAI's documented window, equal to the live feed's value for
     # x-ai/grok-4.6 (reached as tensorblock/grok-4.6; the prefix is stripped).
     "grok-4.6": 500_000,
+    # 2026-09-20: the live feed's value for moonshotai/kimi-k3 (reached as
+    # tensorblock/Kimi-K3). Fireworks' own limit is not published through
+    # Forge; a provider context-length 400 still tightens the budget.
+    "Kimi-K3": 1_048_576,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 

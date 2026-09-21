@@ -17,7 +17,8 @@ from datetime import datetime
 from .repo_config import attachment_extra_configs
 from .mcp_client import ExcelMCPClient
 from .task_executor import ExcelTaskExecutor, TaskStatus
-from .models_config import DEFAULT_MAX_COMPLETION_TOKENS, DEFAULT_MAX_ITERATIONS, resolve_api_timeout
+from .models_config import (DEFAULT_MAX_COMPLETION_TOKENS, DEFAULT_MAX_ITERATIONS, resolve_api_timeout,
+                            resolve_stall_timeout)
 
 
 @dataclass
@@ -256,11 +257,17 @@ class BatchRunner:
         iterations (model calls) the agent was allowed and how long one call
         could take. Neither was recorded before 2026-09-19, so earlier rows
         cannot show what they ran under (the lane logs say 40 iterations)."""
-        return {
+        limits = {
             "max_iterations": int(self.config.get("max_iterations", DEFAULT_MAX_ITERATIONS)),
             "api_timeout_seconds": resolve_api_timeout(self.config.get("reasoning_effort"),
                                                        self.config.get("api_timeout_seconds")),
         }
+        # Forge rows only (2026-09-21): the silence after which a try is cut
+        # and retried inside that per-call budget.
+        stall = resolve_stall_timeout(self.config.get("base_url"))
+        if stall:
+            limits["stream_stall_seconds"] = stall
+        return limits
 
     def _recalc_extra_configs(self) -> Dict[str, Any]:
         """The recalc-provenance keys merged into extra_configs per attempt."""

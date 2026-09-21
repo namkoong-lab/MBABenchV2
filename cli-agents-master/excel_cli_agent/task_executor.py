@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 
 # Use sync OpenAI client to avoid asyncio socket issues with CLOSE-WAIT
-from openai import OpenAI
+from openai import APIConnectionError, OpenAI
 import httpx
 
 # Try to import Langfuse for observability (optional)
@@ -36,6 +36,7 @@ except ImportError:
 
 from .mcp_client import ExcelMCPClient
 from .models_config import (DEFAULT_MAX_ITERATIONS, MODEL_PRICING, calculate_cost, resolve_api_timeout,
+                            resolve_stall_timeout,
                             resolve_context_window)
 from .repo_config import repo_value
 
@@ -196,8 +197,13 @@ class ExcelTaskExecutor:
         # mid-reasoning ("Request timed out", observed 2026-07-23). Tie it to
         # the overall timeout instead; the SIGALRM hard timeout still bounds
         # the whole call.
+        # Forge only: total silence longer than the stall limit means the
+        # gateway never answered (see FORGE_STALL_TIMEOUT_SECONDS); cut the try
+        # there and let the logged retry loop below run the call again.
+        self.stall_timeout_seconds = resolve_stall_timeout(self.base_url)
+        read_secs = min(timeout_secs, self.stall_timeout_seconds or timeout_secs)
         self.api_timeout = httpx.Timeout(
-            float(timeout_secs), read=float(timeout_secs), write=60.0, connect=30.0
+            float(timeout_secs), read=float(read_secs), write=60.0, connect=30.0
         )
 
         # Hard timeout for signal.alarm (must be less than cloud NAT timeout ~600s)
@@ -272,6 +278,12 @@ class ExcelTaskExecutor:
         kwargs = {"api_key": self.api_key, "timeout": self.api_timeout}
         if self.base_url:
             kwargs["base_url"] = self.base_url
+        if self.stall_timeout_seconds:
+            # The SDK retries twice on its own, silently - and swallows the
+            # hard-timeout alarm when it fires inside create() (how a hung Forge
+            # call ran past 60 min with nothing in the log). Off for Forge, so
+            # every retry is one of the logged ones in _call_reasoning_engine.
+            kwargs["max_retries"] = 0
         if self.base_url:
             print(f"🔑 Using API: {self.base_url}")
         self.openai_client = OpenAI(**kwargs)
@@ -1208,6 +1220,8 @@ class ExcelTaskExecutor:
             # caller's retry see it.
             raise
         except Exception as e:
+            if isinstance(e, httpx.TimeoutException) and getattr(self, "stall_timeout_seconds", None):
+                raise  # Forge stall: the caller retries the call instead of parsing half of it
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
         return response_text, usage_info
@@ -1738,7 +1752,8 @@ EXECUTION HISTORY:
 
                     # Stream the response with hard timeout and retry logic
                     # This prevents hanging on dead VM connections
-                    MAX_RETRIES = 3
+                    # Forge: six 10-minute tries = the same 60 minutes one call may take.
+                    MAX_RETRIES = 6 if self.stall_timeout_seconds else 3
                     last_error = None
 
                     for attempt in range(MAX_RETRIES):
@@ -1750,6 +1765,21 @@ EXECUTION HISTORY:
                         except StreamTimeoutError as timeout_err:
                             last_error = timeout_err
                             print(f"⚠️ Attempt {attempt+1}/{MAX_RETRIES} failed: {timeout_err}")
+                            if attempt < MAX_RETRIES - 1:
+                                backoff_time = 5 * (attempt + 1)
+                                print(f"⏳ Waiting {backoff_time}s before retry...")
+                                time.sleep(backoff_time)
+                            else:
+                                print(f"❌ All {MAX_RETRIES} attempts failed, raising error")
+                                raise
+                        except APIConnectionError as conn_err:
+                            # Forge only: a request the gateway never answers ends here
+                            # (the SDK wraps the read timeout). Elsewhere unchanged.
+                            if not self.stall_timeout_seconds:
+                                raise
+                            last_error = conn_err
+                            print(f"⚠️ No answer within {self.stall_timeout_seconds}s on attempt {attempt+1}/{MAX_RETRIES}: {conn_err}")
+                            self._recreate_openai_client()
                             if attempt < MAX_RETRIES - 1:
                                 backoff_time = 5 * (attempt + 1)
                                 print(f"⏳ Waiting {backoff_time}s before retry...")

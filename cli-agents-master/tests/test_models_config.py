@@ -56,3 +56,19 @@ def test_forge_grok_prices_and_sizes_without_the_live_feed(monkeypatch):
     window = mc.resolve_context_window("tensorblock/grok-4.6")
     assert window == 500_000
     assert window - 128_000 - 3_000 > 300_000
+
+
+def test_forge_kimi_maps_to_its_lower_case_openrouter_slug():
+    c = mc._candidate_slugs("tensorblock/Kimi-K3")
+    assert c[0] == "tensorblock/Kimi-K3"
+    assert "Kimi-K3" in c and "moonshotai/kimi-k3" in c
+
+
+def test_forge_kimi_prices_and_sizes_with_and_without_the_live_feed(monkeypatch):
+    feed = {"moonshotai/kimi-k3": {"input": 1.7, "output": 8.5, "context": 1_048_576}}
+    monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, **k: feed)
+    assert mc.resolve_pricing("tensorblock/Kimi-K3") == feed["moonshotai/kimi-k3"]
+    assert mc.resolve_context_window("tensorblock/Kimi-K3") == 1_048_576
+    monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, **k: None)
+    assert mc.resolve_pricing("tensorblock/Kimi-K3") == {"input": 1.70, "output": 8.50}
+    assert mc.resolve_context_window("tensorblock/Kimi-K3") - 128_000 - 3_000 > 800_000
