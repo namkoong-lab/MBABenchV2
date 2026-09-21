@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 
 # Use sync OpenAI client to avoid asyncio socket issues with CLOSE-WAIT
-from openai import APIConnectionError, OpenAI
+from openai import APIConnectionError, APIStatusError, OpenAI
 import httpx
 
 # Try to import Langfuse for observability (optional)
@@ -292,6 +292,23 @@ class ExcelTaskExecutor:
         """Recreate OpenAI client to clear stale/dead connections."""
         print("🔄 Recreating OpenAI client with fresh connections...")
         self._create_openai_client()
+
+    def _forge_status_retry_wait(self, err: Exception, attempt: int) -> Optional[int]:
+        """Seconds to wait before retrying a status error from Forge, or None
+        when it is not retried here: any other endpoint (its SDK still retries
+        on its own) and any status but 408/409/429/5xx (a 400 on a bad
+        reasoning_effort, a credit error: the same call would fail again)."""
+        if not getattr(self, "stall_timeout_seconds", None) or not isinstance(err, APIStatusError):
+            return None
+        status = err.status_code
+        if status not in (408, 409, 429) and status < 500:
+            return None
+        try:
+            asked = int(float(err.response.headers.get("retry-after", "")))
+        except (TypeError, ValueError):
+            asked = 0
+        # 15, 30, 60, 120, 120 s - the gateway's own Retry-After if longer, 5 min at most
+        return min(max(asked, min(15 * 2 ** attempt, 120)), 300)
 
     def set_max_iterations(self, n: int) -> None:
         """Set the default maximum iterations for new tasks."""
@@ -1176,6 +1193,12 @@ class ExcelTaskExecutor:
                             # Don't add reasoning to response_text (it's internal thinking)
                             # But count it as activity to prevent idle timeout
                             has_content = True
+                        # Gemini via Forge does not stream its thinking: while it thinks,
+                        # Forge sends chunks carrying only extra_content (Google's thought
+                        # signature) - 83 in a row on a 44k-token think, probed 2026-09-21.
+                        # A live call, not the empty chunks of a dead connection.
+                        if getattr(delta, 'extra_content', None):
+                            has_content = True
 
                     if has_content:
                         last_content_time = time_module.time()
@@ -1787,6 +1810,22 @@ EXECUTION HISTORY:
                             else:
                                 print(f"❌ All {MAX_RETRIES} attempts failed, raising error")
                                 raise
+                        except APIStatusError as status_err:
+                            # Forge only (2026-09-21): with the SDK's retries off (see
+                            # _create_openai_client) one 429 or 5xx from the gateway ended
+                            # the attempt as needs_clarification - under one try per task,
+                            # a lost task. Retried here, in the open. Elsewhere unchanged.
+                            backoff_time = self._forge_status_retry_wait(status_err, attempt)
+                            if backoff_time is None:
+                                raise
+                            last_error = status_err
+                            print(f"⚠️ Forge answered {status_err.status_code} on attempt {attempt+1}/{MAX_RETRIES}: {status_err}")
+                            if attempt < MAX_RETRIES - 1:
+                                print(f"⏳ Waiting {backoff_time}s before retry...")
+                                time.sleep(backoff_time)
+                            else:
+                                print(f"❌ All {MAX_RETRIES} attempts failed, raising error")
+                                raise
                         except httpx.TimeoutException as httpx_err:
                             last_error = httpx_err
                             print(f"⚠️ httpx timeout on attempt {attempt+1}/{MAX_RETRIES}: {httpx_err}")
@@ -1802,7 +1841,11 @@ EXECUTION HISTORY:
                 except Exception as api_err:
                     # Fallback if streaming isn't supported by the model
                     err_text = str(api_err)
-                    if "stream" in err_text.lower() or "unsupported_parameter" in err_text:
+                    # Forge only: a 5xx that ran out of retries fails the call. Its text
+                    # ("upstream ...") contains "stream", and this fallback would rerun it
+                    # unstreamed and without reasoning_effort - at another effort tier.
+                    forge_transient = self._forge_status_retry_wait(api_err, 0) is not None
+                    if not forge_transient and ("stream" in err_text.lower() or "unsupported_parameter" in err_text):
                         request_data = {
                             "model": self.model,
                             "messages": [

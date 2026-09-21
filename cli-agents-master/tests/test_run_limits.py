@@ -88,6 +88,33 @@ def test_a_long_run_of_thinking_chunks_does_not_cut_the_answer_off():
     assert text == ""                                      # the breaker still works
 
 
+def test_gemini_keep_alive_chunks_do_not_cut_a_long_think():
+    """Gemini 3.8 Flash via Forge (probed 2026-09-21) does not stream its
+    thinking: Forge sends chunks carrying only extra_content (the thought
+    signature) - 83 in a row on a 44k-token think - then summary and answer."""
+    executor = ExcelTaskExecutor.__new__(ExcelTaskExecutor)
+
+    def chunk(**delta):
+        d = type("Delta", (), {"content": "", **delta})()
+        return type("Chunk", (), {"choices": [type("Choice", (), {"delta": d})()], "usage": None})()
+
+    def long_think():
+        for _ in range(250):
+            yield chunk(role="assistant", extra_content={"google": {"thought_signature": "c2ln"}})
+        yield chunk(role="assistant", reasoning_content="summary", content='{"is_complete": true}')
+
+    text, _ = executor._collect_stream_response(long_think(), timeout_seconds=3600)
+    assert text == '{"is_complete": true}'
+
+    def dead_connection():
+        for _ in range(250):
+            yield chunk(role="assistant")
+        yield chunk(content="never reached")
+
+    text, _ = executor._collect_stream_response(dead_connection(), timeout_seconds=3600)
+    assert text == ""                                      # the breaker still works
+
+
 def test_thinking_reported_outside_completion_tokens_is_still_costed():
     """xAI's usage (Grok 4.6 via Forge, probed 2026-09-20): completion 9,
     reasoning 12,655, total = prompt + both. OpenAI's already includes it."""
@@ -145,3 +172,79 @@ def test_forge_calls_are_cut_after_ten_silent_minutes_and_nothing_else_changes()
                      "base_url": "https://api.forge.tensorblock.co/v1"}
     assert runner._run_limit_extra_configs() == {"max_iterations": 40, "api_timeout_seconds": 3600,
                                                  "stream_stall_seconds": 600}
+
+
+def test_a_forge_429_or_5xx_is_retried_in_the_open_and_nothing_else_is(monkeypatch):
+    """2026-09-21: with the SDK's retries off for Forge, one 429 or 5xx ended
+    the attempt as needs_clarification - under one try per task, a lost task."""
+    import json
+    import os
+
+    import httpx
+    import openai
+
+    from excel_cli_agent import task_executor as te
+
+    def status_error(cls, status, text, headers=None):
+        request = httpx.Request("POST", "https://api.forge.tensorblock.co/v1/chat/completions")
+        return cls(text, response=httpx.Response(status, request=request, headers=headers), body=None)
+
+    def executor(base_url):
+        ex = ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k",
+                               model="m", reasoning_effort="xhigh", base_url=base_url)
+        ex._get_system_prompt = lambda: "system"
+        ex._assemble_context = lambda task, system_prompt: "context"
+        ex._log_streaming_request = lambda *a, **k: None
+        return ex
+
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+    forge = executor("https://api.forge.tensorblock.co/v1")
+    direct = executor("https://api.openai.com/v1")
+    busy = status_error(openai.RateLimitError, 429, "rate limit")
+    bad_gateway = status_error(openai.InternalServerError, 502, "upstream connect error")
+
+    assert [forge._forge_status_retry_wait(busy, n) for n in range(5)] == [15, 30, 60, 120, 120]
+    assert forge._forge_status_retry_wait(bad_gateway, 0) == 15
+    assert forge._forge_status_retry_wait(status_error(openai.RateLimitError, 429, "x", {"retry-after": "90"}), 0) == 90
+    assert forge._forge_status_retry_wait(status_error(openai.RateLimitError, 429, "x", {"retry-after": "9999"}), 0) == 300
+    for cls, status in ((openai.BadRequestError, 400), (openai.AuthenticationError, 401), (openai.APIStatusError, 402)):
+        assert forge._forge_status_retry_wait(status_error(cls, status, "no"), 0) is None, status
+    assert direct._forge_status_retry_wait(busy, 0) is None          # its SDK still retries on its own
+    assert forge._forge_status_retry_wait(httpx.ReadTimeout("stall"), 0) is None
+
+    waits = []
+    monkeypatch.setattr(te.time, "sleep", waits.append)
+    task = TaskExecution(task_id="t", user_prompt="p", status=te.TaskStatus.IN_PROGRESS, steps=[], start_time=0.0)
+
+    def calls(ex, *outcomes):
+        queue = list(outcomes)
+
+        def call(request_data):
+            outcome = queue.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome, {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        ex._call_api_with_hard_timeout = call
+        # the unstreamed fallback must never run for these
+        ex.openai_client = type("Dead", (), {"chat": property(lambda self: (_ for _ in ()).throw(AssertionError("fallback ran")))})()
+        return queue
+
+    answer = json.dumps({"reasoning": "r", "actions": [], "is_complete": True})
+    left = calls(forge, busy, bad_gateway, answer)
+    parsed, _ = forge._reason_once(task)
+    assert parsed["is_complete"] is True and left == [] and waits == [15, 30]
+
+    # six in a row: the call fails with the gateway's error - not rerun unstreamed ("upstream" contains "stream")
+    del waits[:]
+    left = calls(forge, *[bad_gateway] * 6, answer)
+    parsed, _ = forge._reason_once(task)
+    assert "upstream connect error" in parsed["error"] and left == [answer] and waits == [15, 30, 60, 120, 120]
+
+    # a 400 (bad reasoning_effort) is not retried on Forge; off Forge a 429 is not ours to retry
+    del waits[:]
+    left = calls(forge, status_error(openai.BadRequestError, 400, "provider rejected the request"), answer)
+    parsed, _ = forge._reason_once(task)
+    assert "provider rejected" in parsed["error"] and left == [answer] and waits == []
+    left = calls(direct, busy, answer)
+    parsed, _ = direct._reason_once(task)
+    assert "rate limit" in parsed["error"] and left == [answer] and waits == []

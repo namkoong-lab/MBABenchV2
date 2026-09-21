@@ -65,10 +65,25 @@ def test_forge_kimi_maps_to_its_lower_case_openrouter_slug():
 
 
 def test_forge_kimi_prices_and_sizes_with_and_without_the_live_feed(monkeypatch):
+    """2026-09-21: Forge's usage log bills Kimi at $3.30/$16.50 on every call -
+    1.94x the OpenRouter list the first two rows were recorded at. The billed
+    rate outranks the live feed; the window still comes from it."""
     feed = {"moonshotai/kimi-k3": {"input": 1.7, "output": 8.5, "context": 1_048_576}}
     monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, **k: feed)
-    assert mc.resolve_pricing("tensorblock/Kimi-K3") == feed["moonshotai/kimi-k3"]
+    assert mc.resolve_pricing("tensorblock/Kimi-K3") == {"input": 3.30, "output": 16.50}
     assert mc.resolve_context_window("tensorblock/Kimi-K3") == 1_048_576
     monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, **k: None)
-    assert mc.resolve_pricing("tensorblock/Kimi-K3") == {"input": 1.70, "output": 8.50}
+    assert mc.resolve_pricing("tensorblock/Kimi-K3") == {"input": 3.30, "output": 16.50}
     assert mc.resolve_context_window("tensorblock/Kimi-K3") - 128_000 - 3_000 > 800_000
+
+
+def test_forge_gemini_prices_and_sizes_with_and_without_the_live_feed(monkeypatch):
+    """OpenRouter lists it as google/gemini-3.8-flash, which the bare id never
+    maps to: without the static entries every row would cost $0 and see a
+    10k-token workbook context. Forge bills Google's $0.75/$3.75."""
+    feed = {"google/gemini-3.8-flash": {"input": 0.75, "output": 3.75, "context": 1_048_576}}
+    for live in (feed, None):
+        monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, live=live, **k: live)
+        assert mc.resolve_pricing("tensorblock/gemini-3.8-flash") == {"input": 0.75, "output": 3.75}
+        assert mc.calculate_cost("tensorblock/gemini-3.8-flash", 1_000_000, 100_000) == 1.125
+        assert mc.resolve_context_window("tensorblock/gemini-3.8-flash") - 128_000 - 3_000 > 800_000

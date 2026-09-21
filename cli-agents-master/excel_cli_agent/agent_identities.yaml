@@ -225,3 +225,34 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+#   gemini-3.8-flash  listed by Forge's /v1/models as
+#              tensorblock/gemini-3.8-flash (2026-09-21); upstream answers as
+#              "models/gemini-3.8-flash" (Google's Gemini API). Google docs
+#              the same day: thinking levels low / medium / high, medium the
+#              default, high the top ("maximizes reasoning"); minimal is
+#              rejected; 1M-token context, 64k max output. high is therefore
+#              the top tier - the counterpart of fable-5-1-max /
+#              gpt-6-astra-xhigh. Live-probed through Forge 2026-09-21 (43
+#              calls, ~$0.82) in this executor's request shape: minimal 400s
+#              at Google, so the top-level reasoning_effort reaches it - but
+#              Forge silently accepts values Google does not document (bogus,
+#              xhigh, max), so a typo here would not be caught. Every
+#              max_completion_tokens tried was accepted, up to 1,000,000; no
+#              prompt made the model write past ~44k tokens (it always stopped
+#              on its own), so 128000 is kept, as for the other cohorts: the
+#              model's own ceiling (65,536 per Google) is then the only limit.
+#              Thinking is not streamed: Forge sends keep-alive chunks
+#              (extra_content only) while it thinks, then a thought summary
+#              (delta.reasoning_content) with the answer; thinking is reported
+#              OUTSIDE completion_tokens (total - prompt), which the executor
+#              counts. 250-400 tokens/s, longest silence 42 s, no hangs.
+- agent_model_name: openpyxl_tensorblock/gemini-3.8-flash-high
+  model: tensorblock/gemini-3.8-flash
+  reasoning_effort: high
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

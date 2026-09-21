@@ -82,10 +82,8 @@ MODEL_PRICING = {
     # x-ai/grok-4.6. NOT billing-verified - Forge publishes no prices; check
     # the first run against a Forge credit diff.
     "grok-4.6": {"input": 2.00, "output": 6.00},
-    # Same backstop for tensorblock/Kimi-K3 (Forge serves it from Fireworks:
-    # the response echoes "FW-Kimi-K3"): OpenRouter's moonshotai/kimi-k3 list
-    # price on 2026-09-20. NOT billing-verified either.
-    "Kimi-K3": {"input": 1.70, "output": 8.50},
+    # tensorblock/Kimi-K3 and tensorblock/gemini-3.8-flash: see
+    # DIRECT_API_PRICING (billed rates read from Forge's usage log).
     "google/gemini-3-pro-preview": {"input": 1.25, "output": 10.00},
     "z-ai/glm-4.7": {"input": 0.40, "output": 1.50},
     "x-ai/grok-4": {"input": 3.00, "output": 15.00},
@@ -278,8 +276,27 @@ def _candidate_slugs(model: str) -> list:
 # feed lists for anthropic/claude-fable-5 predicts $54.14, -47%). Single
 # calibration point — input/output split assumes output stayed at the
 # listed $50; re-verify against the next isolated run's credit diff.
+#
+# Forge cohorts, 2026-09-21: Forge publishes no prices, but its usage log
+# (GET /v1/statistic/usage/download with the API key) lists every call's
+# tokens and charge. Keys are Forge's bare ids, looked up with the
+# "tensorblock/" prefix stripped.
+#   Kimi-K3      (served by Fireworks, echoes "FW-Kimi-K3"): all 79 billed
+#                calls = $3.30 in / $16.50 out exactly (cached input $0.33) -
+#                1.94x OpenRouter's moonshotai/kimi-k3 list ($1.70/$8.50),
+#                the rate rows 1881 and 1944 were recorded at. Not in any
+#                rate: Forge also charged $2.21 for each call it left
+#                unanswered for 600 s (zero tokens; 14 of them on task 41).
+#   gemini-3.8-flash  (upstream "models/gemini-3.8-flash"): all 34 billed
+#                calls to 2026-09-21 = $0.75 in / $3.75 out exactly - Google's
+#                introductory price, which it says runs to 2026-12-31 ($1.50 /
+#                $7.50 from 2027-01-01). The live feed never matches the bare
+#                id (OpenRouter lists google/gemini-3.8-flash), so without this
+#                entry every row would cost $0.
 DIRECT_API_PRICING = {
     "claude-fable-5": {"input": 25.00, "output": 50.00},
+    "Kimi-K3": {"input": 3.30, "output": 16.50},
+    "gemini-3.8-flash": {"input": 0.75, "output": 3.75},
 }
 
 
@@ -338,6 +355,11 @@ MODEL_CONTEXT_WINDOWS = {
     # tensorblock/Kimi-K3). Fireworks' own limit is not published through
     # Forge; a provider context-length 400 still tightens the budget.
     "Kimi-K3": 1_048_576,
+    # 2026-09-21: OpenRouter's value for google/gemini-3.8-flash (Google: "1M
+    # token context"), reached as tensorblock/gemini-3.8-flash. The live feed
+    # never matches this id; without the entry the 128k default would squeeze
+    # the workbook context to 10k tokens.
+    "gemini-3.8-flash": 1_048_576,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 
