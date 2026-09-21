@@ -26,6 +26,16 @@ from .agent_identity import AgentIdentity, resolve_agent_identity
 PACKAGE_DIR = Path(__file__).resolve().parent
 PROMPTS_DIR = PACKAGE_DIR / "prompts"
 
+# The trajectory relay runs from the repo's copy, bind-mounted read-only over
+# the one baked into the image (sandbox.run_in_sandbox), so a relay fix never
+# needs a new image tag: the tag is the recorded CLI pin, and v2 has to stay
+# byte-identical for the Fable 5.1 cohort's banked rows. 2026-09-20: the baked
+# relay answered a failed upstream connection with a 502 that never ended and
+# hung Claude Code for 68 min. Rows record the mounted file's hash
+# (extra_configs.relay); rows without that key ran the image's own relay.
+RELAY_SOURCE = PACKAGE_DIR.parent / "docker" / "traj_relay.py"
+RELAY_TARGET = "/usr/local/bin/traj_relay.py"
+
 # Env var name, and the config/config.yaml keys.* fallback, per agent CLI.
 AGENT_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
 AGENT_KEY_CONFIG = {"claude": "anthropic_api_key", "codex": "openai_api_key"}
@@ -163,6 +173,9 @@ class RunConfig:
         from .agents import harness_defaults  # local: agents imports this module
         relay = self.record_trajectory and self.sandbox.mode == "docker"
         out["harness_defaults"] = harness_defaults(self.agent, relay)
+        if relay and RELAY_SOURCE.is_file():
+            out["relay"] = {"source": "docker/traj_relay.py",
+                            "sha256": hashlib.sha256(RELAY_SOURCE.read_bytes()).hexdigest()}
         return out
 
 

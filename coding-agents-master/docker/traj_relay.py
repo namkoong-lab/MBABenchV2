@@ -82,6 +82,7 @@ class Relay(BaseHTTPRequestHandler):
         # dropped and every drop looked the same.
         phase = "upstream_open"
         error = None
+        headers_sent = False
         try:
             try:
                 resp = urllib.request.urlopen(req, timeout=3600)
@@ -95,6 +96,7 @@ class Relay(BaseHTTPRequestHandler):
                     self.send_header(k, v)
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
+            headers_sent = True
             while True:
                 phase = "upstream_read"
                 chunk = resp.read(8192)
@@ -116,8 +118,25 @@ class Relay(BaseHTTPRequestHandler):
             except Exception:
                 pass
             try:
-                self.send_response(502)
-                self.end_headers()
+                if headers_sent:
+                    # Mid-body failure, unchanged: the status line lands inside
+                    # the chunked body, the client's parser rejects it and the
+                    # CLI retries (272 such drops on record, none hung).
+                    self.send_response(502)
+                    self.end_headers()
+                else:
+                    # The upstream connection failed before any reply. This 502
+                    # must carry a length AND end the connection: a bare 502 on
+                    # a keep-alive HTTP/1.1 socket leaves the client waiting
+                    # forever for a body. 2026-09-20: Claude Code sat 68 min on
+                    # one (task 84; with API_FORCE_IDLE_TIMEOUT=0 no runtime
+                    # timeout breaks the wait) until the run was stopped by hand.
+                    # A complete 502 is an ordinary retryable error to both CLIs.
+                    self.close_connection = True
+                    self.send_response(502)
+                    self.send_header("Content-Length", "0")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
             except Exception:
                 pass
             status = -1

@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import RunConfig
+from .config import RELAY_SOURCE, RELAY_TARGET, RunConfig
 
 
 @dataclass
@@ -51,11 +51,15 @@ def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
             "-e", f"ALLOWED_DOMAINS={','.join(cfg.allowed_domains)}",
         ]
         if cfg.record_trajectory:
+            if not RELAY_SOURCE.is_file():  # docker would mount an empty DIRECTORY in its place
+                return SandboxResult(None, 0.0, False, transcript, stderr_log,
+                                     infra_error=f"Sandbox launch failed: relay source missing: {RELAY_SOURCE}")
             traj_dir = attempt_dir / "trajectory"
             traj_dir.mkdir(exist_ok=True)
             upstream = ("https://api.anthropic.com" if cfg.agent.cli == "claude"
                         else "https://api.openai.com")
             cmd += ["-v", f"{traj_dir.resolve()}:/trajectory",
+                    "-v", f"{RELAY_SOURCE}:{RELAY_TARGET}:ro",  # repo relay over the baked one (see config.RELAY_SOURCE)
                     "-e", f"TRAJ_UPSTREAM={upstream}"]
             if cfg.agent.cli == "claude":  # codex is routed via -c provider flags instead
                 agent_env = {**agent_env, "ANTHROPIC_BASE_URL": "http://127.0.0.1:9877"}

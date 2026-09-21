@@ -84,10 +84,47 @@ def main():
         assert r1["response"]["id"] == "msg_1"
         assert r2["response"]["_raw_text"].count("event: delta") == 3, "SSE stored raw"
         print("ok: relay forwards, streams, records, scrubs")
+        dead_upstream_gets_a_complete_502(tmp)
         print("ALL RELAY TESTS PASSED")
     finally:
         relay.terminate()
         up.shutdown()
+
+
+def dead_upstream_gets_a_complete_502(tmp: Path):
+    """The upstream connection fails before any reply: the client must get a
+    502 that ENDS (zero length, connection closed). The old bare 502 on a
+    keep-alive socket left Claude Code waiting 68 min for a body (2026-09-20)."""
+    import http.client
+    import socket
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); dead_port = s.getsockname()[1]; s.close()
+    out = tmp / "dead.jsonl"
+    env = {**os.environ, "TRAJ_UPSTREAM": f"http://127.0.0.1:{dead_port}",
+           "TRAJ_PATH": str(out), "TRAJ_PORT": "19878"}
+    relay = subprocess.Popen([sys.executable, str(ROOT / "docker" / "traj_relay.py")],
+                             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(40):
+            try:
+                socket.create_connection(("127.0.0.1", 19878), 0.5).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        conn = http.client.HTTPConnection("127.0.0.1", 19878, timeout=10)  # a hang fails here
+        t0 = time.time()
+        conn.request("POST", "/v1/messages", body=b"{}",
+                     headers={"content-type": "application/json", "x-api-key": "sk-secret"})
+        resp = conn.getresponse()
+        body = resp.read()  # the old reply never finished this read
+        assert resp.status == 502 and body == b"", (resp.status, body)
+        assert resp.getheader("Content-Length") == "0" and resp.getheader("Connection") == "close"
+        assert time.time() - t0 < 5
+        time.sleep(0.3)
+        rec = json.loads(open(out).readline())
+        assert rec["status"] == -1 and rec["error"]["phase"] == "upstream_open", rec
+        print("ok: a dead upstream gets a complete, connection-closing 502")
+    finally:
+        relay.terminate()
 
 
 if __name__ == "__main__":

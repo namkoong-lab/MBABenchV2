@@ -266,6 +266,18 @@ it is routed via `-c model_providers.traj.*` flags (API-key billing preserved
 through `env_key`). Disable per run with `record_trajectory: false`. Docker
 mode only; the egress firewall still sees only the vendor API.
 
+The relay runs from the repo: `docker/traj_relay.py` is bind-mounted read-only
+over the copy baked into the image, so a relay fix never needs a new image tag
+(the tag is the CLI-version pin). Rows record the mounted file's hash as
+`extra_configs.relay`; rows without that key ran the image's own relay. Every
+failed call is recorded with `error {phase, type, repr, bytes_relayed,
+elapsed_ms}` and appended to `trajectory.jsonl.errors.log`:
+`upstream_open` (the vendor connection failed before any reply — the CLI gets
+a complete, connection-closing 502 and retries it; the old bare 502 on a
+keep-alive socket hung Claude Code for 68 min on 2026-09-20), `upstream_read`
+(the vendor cut the reply mid-stream — fatal to Claude Code while the
+non-streaming fallback is disabled) or `client_write` (the CLI went away).
+
 ## Validation and failure taxonomy
 
 Success requires **all** of: `solution.xlsx` exists · opens as a valid
