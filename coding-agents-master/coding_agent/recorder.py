@@ -18,8 +18,11 @@ Internal mode — same conventions as the CLI wave, root chosen by `benchmark`:
 
 External mode — everything stays local in a results folder; no DB, no S3.
 """
+import fcntl
 import json
 import shutil
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +35,39 @@ from .validate import Verdict
 from .workspace import Attempt
 
 RECORDABLE = {"success", "timeout", "agent_failure"}
+
+# Finished attempts upload to S3 slowly and ONE LANE AT A TIME, so the lanes
+# still running keep the uplink. 2026-09-20, 12 lanes on one Mac: every one of
+# 36 dropped API connections (relay: upstream_open SSLZeroReturnError, both
+# vendors) fell inside an S3 upload window; a 209 MB solution.xlsx (GPT-6
+# Astra, task 89) caused a 6-min storm of 21, and an 82 MB one the afternoon's
+# first hang. Measured: big uploads reach only 0.3-0.8 MB/s here, so the first
+# cap (1 MB/s) capped nothing, and up to five lanes uploaded at once. Claude
+# Code retries for ~6 min only and treats a drop in mid-stream as fatal
+# (task 35 lost that way), so the uploads have to stay out of the way.
+# The run needs ~125 KB/s on average (giants included); 250 KB/s, serialized.
+S3_UPLOAD_MAX_BYTES_PER_SEC = 250_000
+S3_UPLOAD_LOCK_WAIT_SECONDS = 45 * 60  # then upload anyway: a wedged lane must not block the rest
+
+
+@contextmanager
+def _upload_slot(workspaces_dir: Path):
+    """Hold the cross-lane upload lock (flock: released when the holder exits,
+    however it exits)."""
+    lock_file = open(workspaces_dir / ".s3_upload.lock", "w")
+    try:
+        deadline = time.monotonic() + S3_UPLOAD_LOCK_WAIT_SECONDS
+        while True:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(2)
+        yield
+    finally:
+        lock_file.close()
 
 
 def _extras_stamp(cfg: RunConfig) -> dict:
@@ -97,34 +133,42 @@ def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxRes
     import psycopg2
     from psycopg2.extras import Json
 
+    from boto3.s3.transfer import TransferConfig
+
     s3 = s3_client()
+    # One stream, not the default ten: ten multipart threads sharing 250 KB/s left
+    # some connections idle past S3's 20 s limit -> "RequestTimeout ... UploadPart
+    # (reached max retries: 4)", and a finished 44 MB attempt went unrecorded
+    # (Fable 5.1, task 85, 2026-09-20 20:56).
+    throttle = TransferConfig(max_bandwidth=S3_UPLOAD_MAX_BYTES_PER_SEC, max_concurrency=1)
     bucket, root = cfg.s3_bucket, cfg.s3_root
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Prompt snapshot (system + the template actually used + its attachments).
-    prompt_uris = []
-    for path in [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg),
-                 *[src for src, _ in prompt_extra_paths(cfg)]]:
-        key = f"{root}/prompts/{cfg.agent_model_name}/{ts}_{path.name}"
-        s3.upload_file(str(path), bucket, key)
-        prompt_uris.append(f"s3://{bucket}/{key}")
+    with _upload_slot(cfg.workspaces_dir):
+        # Prompt snapshot (system + the template actually used + its attachments).
+        prompt_uris = []
+        for path in [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg),
+                     *[src for src, _ in prompt_extra_paths(cfg)]]:
+            key = f"{root}/prompts/{cfg.agent_model_name}/{ts}_{path.name}"
+            s3.upload_file(str(path), bucket, key, Config=throttle)
+            prompt_uris.append(f"s3://{bucket}/{key}")
 
-    # Attempt artifacts — solution first (the judge takes the first xlsx).
-    base = f"{root}/attempts/{cfg.agent_model_name}/task_source={spec.task_source}/task_id={spec.task_id}/{ts}"
-    uploads = []
-    if verdict.solution_path and verdict.solution_path.exists():
-        uploads.append((verdict.solution_path, f"{base}_solution.xlsx"))
-    uploads.append((attempt.workspace / "PROMPT.md", f"{base}_PROMPT.md"))
-    for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "trajectory.jsonl.gz",
-                 "run_config.yaml"):
-        path = attempt.attempt_dir / name
-        if path.exists():
-            uploads.append((path, f"{base}_{name}"))
+        # Attempt artifacts — solution first (the judge takes the first xlsx).
+        base = f"{root}/attempts/{cfg.agent_model_name}/task_source={spec.task_source}/task_id={spec.task_id}/{ts}"
+        uploads = []
+        if verdict.solution_path and verdict.solution_path.exists():
+            uploads.append((verdict.solution_path, f"{base}_solution.xlsx"))
+        uploads.append((attempt.workspace / "PROMPT.md", f"{base}_PROMPT.md"))
+        for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "trajectory.jsonl.gz",
+                     "run_config.yaml"):
+            path = attempt.attempt_dir / name
+            if path.exists():
+                uploads.append((path, f"{base}_{name}"))
 
-    attempt_files = []
-    for local, key in uploads:
-        s3.upload_file(str(local), bucket, key)
-        attempt_files.append(f"s3://{bucket}/{key}")
+        attempt_files = []
+        for local, key in uploads:
+            s3.upload_file(str(local), bucket, key, Config=throttle)
+            attempt_files.append(f"s3://{bucket}/{key}")
 
     agent_failed = verdict.status != "success"
     extra_supported = has_extra_configs_column(cfg.db_url)

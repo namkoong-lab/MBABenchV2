@@ -320,6 +320,15 @@ Locally, every attempt dir (`workspaces/task{id}_{ts}_{pid}/`) also holds
 template attachment), written before the agent starts — the record
 survives an upload failure.
 
+Finished attempts upload to S3 one lane at a time (`flock` on
+`workspaces/.s3_upload.lock`), at 250 KB/s, in a single stream
+(`recorder.S3_UPLOAD_MAX_BYTES_PER_SEC`). With 12 lanes on one uplink, every
+one of 36 dropped API connections on 2026-09-20 fell inside an upload window
+(a 209 MB workbook caused a 6-minute storm), and a throttle spread over
+boto3's default ten streams let S3 time out an idle part and lose a finished
+attempt's row. A recording failure is an `infra_failure`: no row, the attempt
+folder is kept.
+
 Registered cohorts:
 `claudecode_anthropic/claude-fable-5-max` · `codex_openai/gpt-5.6-sol-xhigh`
 (v1 wave) · `claudecode_anthropic/claude-haiku-4-5` (pipeline shakeout only).
