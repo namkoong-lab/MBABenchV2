@@ -284,9 +284,12 @@ def test_a_gemini_native_tool_call_is_read_as_the_same_action():
         {"tool": "list_worksheets", "parameters": {"filename": "solution.xlsx"}},
         {"tool": "get_used_range", "parameters": {"filename": "solution.xlsx"}}]
 
-    # text wins when there is any; unparseable arguments are not guessed at
+    # a JSON text reply wins; other text beside a call is kept as reasoning; unparseable arguments are not guessed at
     text, _ = gemini._collect_stream_response(iter([_tool_call_chunk("list_files", "{}", content='{"is_complete": true}')]), 3600)
     assert text == '{"is_complete": true}'
+    text, _ = gemini._collect_stream_response(iter([_tool_call_chunk("list_files", "{}", content="Let me look at the files.")]), 3600)
+    assert json.loads(text) == {"reasoning": "Let me look at the files.", "is_complete": False,
+                                "actions": [{"tool": "list_files", "parameters": {}}]}
     text, _ = gemini._collect_stream_response(iter([_tool_call_chunk("list_files", "{not json")]), 3600)
     assert text == ""
 
@@ -336,3 +339,47 @@ def test_an_empty_gemini_reply_is_asked_again_and_nothing_else_changes(monkeypat
     left = replies(grok, "", answer)
     parsed, _ = grok._reason_once(task)
     assert parsed.get("actions") == [] and left == [answer] and waits == []
+
+
+def test_gemini_gets_the_excel_tools_declared_and_no_other_model_does():
+    import os
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+    schemas = [{"name": "list_files", "description": "List files.", "inputSchema": {"properties": {}, "type": "object"}},
+               {"name": "get_cell_range", "description": "Read cells.", "inputSchema": {"properties": {
+                   "filename": {"type": "string"}}, "required": ["filename"], "type": "object"}}]
+    client = type("C", (), {"storage_path": "/tmp", "tool_schemas": schemas})()
+    sent = []
+
+    def executor(model):
+        ex = ExcelTaskExecutor(excel_client=client, api_key="k", model=model, reasoning_effort="high",
+                               base_url="https://api.forge.tensorblock.co/v1")
+        ex._get_system_prompt = lambda: "system"
+        ex._assemble_context = lambda task, system_prompt: "context"
+        ex._log_streaming_request = lambda *a, **k: None
+        ex._call_api_with_hard_timeout = lambda request_data: (sent.append(request_data) or '{"is_complete": true}', {})
+        return ex
+
+    from excel_cli_agent import task_executor as te
+    task = TaskExecution(task_id="t", user_prompt="p", status=te.TaskStatus.IN_PROGRESS, steps=[], start_time=0.0)
+    executor("tensorblock/gemini-3.8-flash")._reason_once(task)
+    assert sent[-1]["tools"] == [
+        {"type": "function", "function": {"name": "list_files", "description": "List files.", "parameters": schemas[0]["inputSchema"]}},
+        {"type": "function", "function": {"name": "get_cell_range", "description": "Read cells.", "parameters": schemas[1]["inputSchema"]}}]
+    for model in ("tensorblock/grok-4.6", "tensorblock/Kimi-K3"):
+        executor(model)._reason_once(task)
+        assert "tools" not in sent[-1], model
+
+
+def test_the_tool_server_list_is_kept_with_its_schemas(tmp_path):
+    import contextlib
+    import io
+    from excel_cli_agent.mcp_client import ExcelMCPClient
+    client = ExcelMCPClient("./excel_mcp_server/server.py", str(tmp_path))
+    with contextlib.redirect_stdout(io.StringIO()):
+        client.connect()
+        try:
+            names = [t["name"] for t in client.tool_schemas]
+            assert names == client.available_tools and "get_cell_range" in names
+            assert all(t.get("inputSchema", {}).get("type") == "object" for t in client.tool_schemas)
+        finally:
+            client.disconnect()

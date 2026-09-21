@@ -294,13 +294,36 @@ class ExcelTaskExecutor:
         self._create_openai_client()
 
     def _reads_native_tool_calls(self) -> bool:
-        """Gemini only (2026-09-21). No tools are declared in the request, yet
-        Gemini 3.8 Flash answers about half its steps with a native function
-        call (e.g. list_files) instead of the JSON text the prompt asks for,
-        and Google drops some of those as MALFORMED_FUNCTION_CALL, leaving an
-        empty reply. Such a call is read as the same action, and an empty
-        reply is asked again. Every other model is unchanged."""
+        """Gemini only (2026-09-21). Gemini 3.8 Flash answers about half its
+        steps with a native function call instead of the JSON text the prompt
+        asks for. With no tools declared, Google dropped every such call that
+        carried arguments as MALFORMED_FUNCTION_CALL, leaving an empty reply
+        (one step of task 8: 6 of 6 empty). So for Gemini the Excel tools are
+        declared as functions (_gemini_tool_declarations), a call is read as
+        the same action, and an empty reply is asked again. Every other model
+        is unchanged."""
         return "gemini" in str(getattr(self, "model", "") or "").lower()
+
+    def _gemini_tool_declarations(self) -> List[Dict[str, Any]]:
+        """The Excel tools as function declarations, straight from the tool
+        server's own list (name, description, input schema) - the same tools
+        the prompt describes. Probed 2026-09-21: the step that came back empty
+        6 of 6 times gave an intact call with its arguments 4 of 4 times."""
+        schemas = getattr(getattr(self, "excel_client", None), "tool_schemas", None) or []
+        return [{"type": "function", "function": {
+                    "name": t["name"], "description": t.get("description") or "",
+                    "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}}
+                for t in schemas if isinstance(t, dict) and t.get("name")]
+
+    @staticmethod
+    def _is_json_object(text: str) -> bool:
+        t = (text or "").strip()
+        if t.startswith("```"):
+            t = "\n".join(t.splitlines()[1:]).rsplit("```", 1)[0]
+        try:
+            return isinstance(json.loads(t), dict)
+        except ValueError:
+            return False
 
     def _forge_status_retry_wait(self, err: Exception, attempt: int) -> Optional[int]:
         """Seconds to wait before retrying a status error from Forge, or None
@@ -1272,7 +1295,7 @@ class ExcelTaskExecutor:
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
         self._last_finish_reason = finish_reason
-        if native_calls and not response_text.strip():
+        if native_calls and not self._is_json_object(response_text):
             actions = []
             for idx in sorted(native_calls):
                 # Gemini prefixes the tool name at times: "excel:list_files", "default_api.list_files",
@@ -1285,7 +1308,10 @@ class ExcelTaskExecutor:
                 if name and isinstance(params, dict):
                     actions.append({"tool": name, "parameters": params})
             if actions:
-                response_text = json.dumps({"is_complete": False, "actions": actions})
+                reply = {"is_complete": False, "actions": actions}
+                if response_text.strip():     # text beside the call that is not the JSON reply: kept as reasoning
+                    reply = {"reasoning": response_text.strip(), **reply}
+                response_text = json.dumps(reply)
                 print(f"🔁 Reply came as {len(actions)} native tool call(s); read as actions: {[a['tool'] for a in actions]}")
         return response_text, usage_info
 
@@ -1769,6 +1795,11 @@ EXECUTION HISTORY:
                         "stream": True,  # Enable streaming to prevent Cloudflare timeout
                         "stream_options": {"include_usage": True}  # Get token usage in stream
                     }
+
+                    if self._reads_native_tool_calls():
+                        declared = self._gemini_tool_declarations()
+                        if declared:
+                            request_data["tools"] = declared
 
                     # Add reasoning effort for reasoning models (GPT-5 series, o3, etc.)
                     if self.reasoning_effort:

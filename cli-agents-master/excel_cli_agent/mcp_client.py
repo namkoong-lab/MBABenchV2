@@ -42,6 +42,9 @@ class ExcelMCPClient:
         self.server_args: List[str] = list(server_args or [])
         self.process: Optional[subprocess.Popen] = None
         self.available_tools: List[str] = []
+        # The server's own tool list (name, description, inputSchema) - declared
+        # to Gemini as functions (see ExcelTaskExecutor._gemini_tool_declarations).
+        self.tool_schemas: List[Dict[str, Any]] = []
         self.created_files: List[str] = []
         self._request_id = 0
         self._connected = False
@@ -206,6 +209,7 @@ class ExcelMCPClient:
 
             if "tools" in tools_result:
                 self.available_tools = [tool["name"] for tool in tools_result["tools"]]
+                self.tool_schemas = list(tools_result["tools"])
 
             self._connected = True
             print(f"✅ Connected to Excel MCP Server")
