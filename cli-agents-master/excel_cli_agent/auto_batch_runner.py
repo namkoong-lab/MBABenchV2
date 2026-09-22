@@ -729,6 +729,10 @@ class AutoBatchRunner(BatchRunner):
         def _include(p: Path) -> bool:
             if p.name == "solution.xlsx":
                 return True
+            if p.name.startswith('.'):
+                # a save killed mid-write can leave .solution.xlsx.tmp-<pid> behind
+                # (see _save_workbook_sync); dotfiles are never part of an attempt.
+                return False
             return not p.name.lower().endswith(('.xlsx', '.xlsm', '.xlsb', '.xls'))
 
         return [

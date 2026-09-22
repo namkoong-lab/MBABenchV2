@@ -42,11 +42,31 @@ def _auto_fit_columns(wb: Workbook) -> None:
 
 
 def _save_workbook_sync(wb: Workbook, file_path: Path) -> None:
-    """Save workbook with fsync to ensure data is written to disk."""
+    """Save the workbook atomically, with fsync, so an interrupted save cannot destroy it.
+
+    2026-09-22: a format_cells call over 1.4M cells overran its 120 s tool timeout and the
+    client killed the server process while openpyxl was rewriting solution.xlsx in place.
+    The file was left a truncated zip - 15.6 MB, no central directory, so no styles, no
+    shared strings, no workbook index - and the attempt's whole deliverable was
+    ungradeable (gpt-6-astra task 89, attempt 2005; 1 of 208 attempts in that run).
+    Writing to a temp file beside it and renaming over the target makes the swap atomic:
+    a save killed at any moment leaves the previous good workbook untouched. The temp name
+    is dot-prefixed so list_files (globs *.xlsx) never shows it and the attempt packager
+    never uploads it if a SIGKILL leaves one behind.
+    """
     _auto_fit_columns(wb)
-    wb.save(file_path)
-    with open(file_path, 'r+b') as f:
-        os.fsync(f.fileno())
+    tmp_path = file_path.with_name(f".{file_path.name}.tmp-{os.getpid()}")
+    try:
+        wb.save(tmp_path)
+        with open(tmp_path, 'r+b') as f:
+            os.fsync(f.fileno())
+        os.replace(tmp_path, file_path)          # atomic on the same filesystem
+    except BaseException:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
     dir_fd = os.open(str(file_path.parent), os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(dir_fd)
