@@ -208,7 +208,7 @@ class ExcelTaskExecutor:
         # Forge only: total silence longer than the stall limit means the
         # gateway never answered (see FORGE_STALL_TIMEOUT_SECONDS); cut the try
         # there and let the logged retry loop below run the call again.
-        self.stall_timeout_seconds = resolve_stall_timeout(self.base_url)
+        self.stall_timeout_seconds = resolve_stall_timeout(self.base_url, model)
         read_secs = min(timeout_secs, self.stall_timeout_seconds or timeout_secs)
         self.api_timeout = httpx.Timeout(
             float(timeout_secs), read=float(read_secs), write=60.0, connect=30.0
@@ -1655,9 +1655,26 @@ EXECUTION HISTORY:
         "request too large",
     )
 
+    # Forge only (2026-09-22): Forge answers a too-long prompt with the same
+    # generic 400 it gives any provider rejection, so none of the wordings
+    # above appear (probed: a harmless 2.6M-char prompt and task 68's
+    # ~1.07M-token first prompt both got it; task 68's first 300k chars went
+    # through). That killed gpt-6-astra's task 68 at step 1 instead of
+    # shrinking the prompt. The 400 counts as a size rejection only when the
+    # prompt just sent was large (over half the model's window), so a genuine
+    # rejection of a normal prompt still fails as before - and a genuine one
+    # of a large prompt still fails once the two rebuilds are used up.
+    _FORGE_GENERIC_REJECTION = "the configured provider rejected the request"
+
     def _is_context_overflow_error(self, exc: Exception) -> bool:
         text = str(exc).lower()
-        return any(sig in text for sig in self._OVERFLOW_SIGNATURES)
+        if any(sig in text for sig in self._OVERFLOW_SIGNATURES):
+            return True
+        if getattr(self, "stall_timeout_seconds", None) and self._FORGE_GENERIC_REJECTION in text:
+            window = self.context_window or resolve_context_window(self.model)
+            sent_tokens = len(getattr(self, "_last_user_message", "") or "") / self._chars_per_token
+            return sent_tokens > 0.5 * window
+        return False
 
     def _context_budget_chars(self, system_prompt_chars: int) -> int:
         """Char budget for the user message, derived from the token window."""

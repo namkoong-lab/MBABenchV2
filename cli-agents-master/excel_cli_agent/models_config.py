@@ -164,13 +164,21 @@ TIMEOUT_BY_REASONING: Dict[Optional[str], int] = {
 # api_timeout_seconds; this only splits it into shorter tries.
 FORGE_STALL_TIMEOUT_SECONDS = 600
 
+# 2026-09-22 (Pat): gpt-6-astra through Forge sends NO byte - not even the
+# response headers - until its thinking is done (probed 2026-09-22; Forge
+# serves it from Azure OpenAI), so a long think looks exactly like a hang. Its
+# longest genuine think on the direct OpenAI cohort (pv 1609) was ~14 min
+# (57k tokens); Pat set 15 min. Every other Forge model streams its thinking
+# from the first seconds and keeps the 10-minute limit.
+FORGE_SILENT_THINKING_STALL_SECONDS = {"tensorblock/gpt-6-astra": 900}
 
-def resolve_stall_timeout(base_url: Optional[str]) -> Optional[int]:
+
+def resolve_stall_timeout(base_url: Optional[str], model: Optional[str] = None) -> Optional[int]:
     """Seconds of total silence a call may show before it is retried, or None
     where no such limit applies (every endpoint but Forge: OpenAI does not
     stream thinking, so a long silence there is a healthy call)."""
     if base_url and "tensorblock" in base_url.lower():
-        return FORGE_STALL_TIMEOUT_SECONDS
+        return FORGE_SILENT_THINKING_STALL_SECONDS.get(model or "", FORGE_STALL_TIMEOUT_SECONDS)
     return None
 
 

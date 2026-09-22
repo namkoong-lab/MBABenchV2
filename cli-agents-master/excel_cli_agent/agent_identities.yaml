@@ -280,3 +280,28 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+#   gpt-6-astra  listed by Forge's /v1/models as tensorblock/gpt-6-astra
+#              (2026-09-22). Added so the 12 tasks of the direct
+#              openpyxl_openai/gpt-6-astra-xhigh cohort that died on the
+#              2026-09-22 OpenAI credit outage ("no credits remaining") can be
+#              run on Forge credits (Pat 2026-09-22: "we have to use
+#              tensorblock"); same model and effort as that entry, only the
+#              route differs. Probed through Forge 2026-09-22 (sub-dollar):
+#              top-level reasoning_effort is forwarded (bogus -> provider 400;
+#              xhigh answers as gpt-6-astra-2026-09-03, OpenAI's usage shape,
+#              reasoning counted inside completion_tokens); the stream carries
+#              Azure content_filter_results, i.e. Forge serves it from Azure
+#              OpenAI; no byte - not even the headers - arrives until the
+#              thinking is done, so a long think looks like a hang: this model
+#              gets a 900 s Forge stall limit instead of 600 (Pat 2026-09-22;
+#              FORGE_SILENT_THINKING_STALL_SECONDS in models_config.py).
+- agent_model_name: openpyxl_tensorblock/gpt-6-astra-xhigh
+  model: tensorblock/gpt-6-astra
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

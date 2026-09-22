@@ -264,7 +264,7 @@ class BatchRunner:
         }
         # Forge rows only (2026-09-21): the silence after which a try is cut
         # and retried inside that per-call budget.
-        stall = resolve_stall_timeout(self.config.get("base_url"))
+        stall = resolve_stall_timeout(self.config.get("base_url"), self.config.get("model"))
         if stall:
             limits["stream_stall_seconds"] = stall
         return limits

@@ -174,6 +174,30 @@ def test_forge_calls_are_cut_after_ten_silent_minutes_and_nothing_else_changes()
                                                  "stream_stall_seconds": 600}
 
 
+def test_astra_through_forge_gets_fifteen_silent_minutes_and_nothing_else_changes():
+    """2026-09-22 (Pat): gpt-6-astra through Forge sends no byte until its thinking is
+    done, so its tries are cut at 900 s of silence, not 600; every other Forge model
+    (they stream their thinking) keeps 600, and the direct endpoints keep no limit."""
+    import os
+    forge_url = "https://api.forge.tensorblock.co/v1"
+    assert mc.resolve_stall_timeout(forge_url, "tensorblock/gpt-6-astra") == 900
+    for model in ("tensorblock/grok-4.6", "tensorblock/Kimi-K3", "tensorblock/gemini-3.8-flash", None):
+        assert mc.resolve_stall_timeout(forge_url, model) == 600, model
+    assert mc.resolve_stall_timeout("https://api.openai.com/v1", "gpt-6-astra") is None
+
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+    astra = ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k",
+                              model="tensorblock/gpt-6-astra", reasoning_effort="xhigh", base_url=forge_url)
+    assert astra.stall_timeout_seconds == 900 and astra.api_timeout.read == 900
+    assert astra.hard_timeout_seconds == 3600 and astra.openai_client.max_retries == 0
+
+    runner = BatchRunner.__new__(BatchRunner)
+    runner.config = {"reasoning_effort": "xhigh", "max_iterations": 40, "base_url": forge_url,
+                     "model": "tensorblock/gpt-6-astra"}
+    assert runner._run_limit_extra_configs() == {"max_iterations": 40, "api_timeout_seconds": 3600,
+                                                 "stream_stall_seconds": 900}
+
+
 def test_a_forge_429_or_5xx_is_retried_in_the_open_and_nothing_else_is(monkeypatch):
     """2026-09-21: with the SDK's retries off for Forge, one 429 or 5xx ended
     the attempt as needs_clarification - under one try per task, a lost task."""

@@ -153,6 +153,22 @@ def test_overflow_detection(tmp_path):
     assert not ex._is_context_overflow_error(Exception("connection reset"))
 
 
+def test_forge_generic_rejection_of_a_large_prompt_counts_as_overflow(tmp_path):
+    """2026-09-22: Forge answers a too-long prompt with its generic provider 400,
+    which killed gpt-6-astra task 68 at step 1. It is a size rejection only on
+    Forge and only when the prompt just sent was over half the window."""
+    generic = Exception("Error code: 400 - {'error': {'message': 'The configured provider rejected the "
+                        "request. Please check your model name and request parameters.', 'type': "
+                        "'provider_error', 'code': 400}}")
+    forge_big = make_executor(tmp_path, stall_timeout_seconds=900, _last_user_message="x" * 240_000)  # 60k tokens
+    assert forge_big._is_context_overflow_error(generic)
+    forge_small = make_executor(tmp_path, stall_timeout_seconds=900, _last_user_message="x" * 120_000)  # 30k
+    assert not forge_small._is_context_overflow_error(generic)
+    direct_big = make_executor(tmp_path, stall_timeout_seconds=None, _last_user_message="x" * 240_000)
+    assert not direct_big._is_context_overflow_error(generic)
+    assert forge_small._is_context_overflow_error(Exception("maximum context length is 1050000 tokens"))
+
+
 def test_context_window_resolution():
     """Static fallback and default when the live fetch is unavailable."""
     old = (models_config._live_pricing, models_config._live_pricing_attempted)
