@@ -337,11 +337,19 @@ class ExcelTaskExecutor:
         """Seconds to wait before retrying a status error from Forge, or None
         when it is not retried here: any other endpoint (its SDK still retries
         on its own) and any status but 408/409/429/5xx (a 400 on a bad
-        reasoning_effort, a credit error: the same call would fail again)."""
+        reasoning_effort, a credit error: the same call would fail again).
+
+        One 400 is retried too (2026-09-22): Forge's generic "The configured
+        provider rejected the request" came back on single calls mid-task for
+        Grok 4.6 (3 of ~5,000 calls, small and large requests alike, twice
+        within minutes of a load step) - each one ended its task. The same
+        request succeeds when asked again; a genuinely bad request still fails
+        after the six tries."""
         if not getattr(self, "stall_timeout_seconds", None) or not isinstance(err, APIStatusError):
             return None
         status = err.status_code
-        if status not in (408, 409, 429) and status < 500:
+        provider_rejected = status == 400 and "configured provider rejected the request" in str(err).lower()
+        if status not in (408, 409, 429) and status < 500 and not provider_rejected:
             return None
         try:
             asked = int(float(err.response.headers.get("retry-after", "")))

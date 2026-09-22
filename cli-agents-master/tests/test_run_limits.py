@@ -450,3 +450,63 @@ def test_a_forge_reply_that_breaks_off_before_any_text_is_asked_again(monkeypatc
     left = calls(*[broke] * 6, answer)
     parsed, _ = forge._reason_once(task)
     assert parsed.get("actions") == [] and "error" not in parsed and left == [answer] and waits == [15, 30, 60, 120, 120]
+
+
+def test_forge_provider_rejected_400_is_retried_and_other_400s_are_not(monkeypatch):
+    """2026-09-22: Forge's generic "The configured provider rejected the request" ended three Grok
+    tasks mid-run (rows 2098, 2489, 2490) on single calls that succeed when asked again."""
+    import json
+    import os
+
+    import httpx
+    import openai
+
+    from excel_cli_agent import task_executor as te
+
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+
+    def status_error(cls, status, text):
+        request = httpx.Request("POST", "https://api.forge.tensorblock.co/v1/chat/completions")
+        return cls(text, response=httpx.Response(status, request=request), body=None)
+
+    def executor(base_url):
+        ex = ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k",
+                               model="tensorblock/grok-4.6", reasoning_effort="xhigh", base_url=base_url)
+        ex._get_system_prompt = lambda: "system"
+        ex._assemble_context = lambda task, system_prompt: "context"
+        ex._log_streaming_request = lambda *a, **k: None
+        ex.openai_client = type("Dead", (), {"chat": property(lambda self: (_ for _ in ()).throw(AssertionError("fallback ran")))})()
+        return ex
+
+    rejected = status_error(openai.BadRequestError, 400, "Error code: 400 - {'error': {'message': 'The configured provider "
+                            "rejected the request. Please check your model name and request parameters.', 'type': 'provider_error'}}")
+    other_400 = status_error(openai.BadRequestError, 400, "Error code: 400 - {'error': {'message': 'reasoning_effort must be one of low, medium, high'}}")
+    forge, direct = executor("https://api.forge.tensorblock.co/v1"), executor("https://api.openai.com/v1")
+    assert [forge._forge_status_retry_wait(rejected, n) for n in range(5)] == [15, 30, 60, 120, 120]
+    assert forge._forge_status_retry_wait(other_400, 0) is None
+    assert direct._forge_status_retry_wait(rejected, 0) is None
+
+    waits = []
+    monkeypatch.setattr(te.time, "sleep", waits.append)
+    task = TaskExecution(task_id="t", user_prompt="p", status=te.TaskStatus.IN_PROGRESS, steps=[], start_time=0.0)
+    answer = json.dumps({"actions": [{"tool": "list_files", "parameters": {}}], "is_complete": False})
+
+    def calls(*outcomes):
+        queue = list(outcomes)
+
+        def call(request_data):
+            o = queue.pop(0)
+            if isinstance(o, Exception):
+                raise o
+            return o, {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        forge._call_api_with_hard_timeout = call
+        return queue
+
+    left = calls(rejected, answer)
+    parsed, _ = forge._reason_once(task)
+    assert parsed["actions"] == [{"tool": "list_files", "parameters": {}}] and left == [] and waits == [15]
+
+    del waits[:]
+    left = calls(other_400, answer)          # a real bad request still fails at once, never unstreamed
+    parsed, _ = forge._reason_once(task)
+    assert "reasoning_effort" in parsed["error"] and left == [answer] and waits == []
