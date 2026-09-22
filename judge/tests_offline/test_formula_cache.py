@@ -319,5 +319,47 @@ with tempfile.TemporaryDirectory() as tmp:
         raised = str(e)
     ok(raised is not None and "csv census" in raised, "unreadable workbook -> CSV decides (refuses)")
 
+    # ----------------------------------------- namespace-prefixed sheet XML
+    print("\n[6] workbook census reads sheets whose tags carry a namespace prefix")
+
+    # Valid SpreadsheetML may bind the main namespace to a prefix (<s:c>,
+    # <s:f>, <s:v>); 21 Codex coding workbooks were saved that way and the
+    # unprefixed-only census counted 0 formulas in them (2026-09-22).
+    import re
+
+    def _prefixed(src_path, dst_path):
+        with zipfile.ZipFile(src_path) as src, zipfile.ZipFile(dst_path, "w") as dst:
+            for item in src.infolist():
+                data = src.read(item.filename)
+                if item.filename.startswith("xl/worksheets/") and item.filename.endswith(".xml"):
+                    xml = data.decode("utf-8")
+                    xml = xml.replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"',
+                                      'xmlns:s="http://schemas.openxmlformats.org/spreadsheetml/2006/main"')
+                    xml = re.sub(r"<(/?)(?!\?)([A-Za-z]\w*)", r"<\1s:\2", xml)
+                    data = xml.encode("utf-8")
+                dst.writestr(item, data)
+
+    pre_uncalc = Path(tmp) / "prefixed_uncalc.xlsx"
+    _prefixed(uncalc_path, pre_uncalc)
+    with zipfile.ZipFile(pre_uncalc) as z:
+        ok("<s:c " in z.read("xl/worksheets/sheet1.xml").decode(), "fixture really uses <s:c> tags")
+    c = formula_cache.census_workbook(pre_uncalc)
+    ok(c["formula_cells"] == 2, f"prefixed: counted 2 formula cells (got {c['formula_cells']})")
+    ok(c["ratio"] == 1.0, f"prefixed never-calculated -> ratio 1.0 (got {c['ratio']})")
+
+    pre_excel = Path(tmp) / "prefixed_excel_like.xlsx"
+    _prefixed(excel_path, pre_excel)
+    c = formula_cache.census_workbook(pre_excel)
+    ok(
+        c["formula_cells"] == 2 and c["uncached_formula_cells"] == 0 and c["empty_string_results"] == 1,
+        f"prefixed calculated workbook: 2 formulas, 0 uncached, 1 empty-string result (got {c})",
+    )
+    raised = None
+    try:
+        formula_cache.check_case(good, good, attempt_xlsx=pre_uncalc)
+    except formula_cache.FormulaCacheError as e:
+        raised = str(e)
+    ok(raised is not None and "workbook census" in raised, "prefixed uncalculated workbook refused on the workbook census")
+
 print("\n" + ("ALL FORMULA-CACHE CHECKS PASSED" if not failures else f"{len(failures)} FAILURE(S)"))
 sys.exit(1 if failures else 0)

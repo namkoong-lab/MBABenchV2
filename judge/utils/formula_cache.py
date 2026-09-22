@@ -74,9 +74,16 @@ _FORMULA_MARKER = "FORMULA:"
 # Worksheet XML: one <c> element per cell, self-closing or with content. The
 # sheet parts are small enough (a few MB at most) to scan with a regex; no
 # openpyxl load, which is the thing that loses the str-vs-untyped distinction.
-_CELL_RE = re.compile(r"<c\b([^>]*?)(?:/>|>(.*?)</c>)", re.S)
+# Tags may carry a namespace prefix: valid SpreadsheetML can bind the main
+# namespace to a prefix (<s:c>, <s:f>, <s:v>), and 21 Codex coding workbooks
+# do. Unprefixed-only patterns counted 0 formula cells in those files, so the
+# workbook census passed them at ratio 0 while 7 were 80-91% uncached
+# (2026-09-22).
+_NS = r"(?:[A-Za-z_][\w.-]*:)?"
+_CELL_RE = re.compile(rf"<{_NS}c\b([^>]*?)(?:/>|>(.*?)</{_NS}c>)", re.S)
 _TYPE_RE = re.compile(r'\bt="([^"]*)"')
-_VALUE_RE = re.compile(r"<v\b[^>]*?(?:/>|>(.*?)</v>)", re.S)
+_VALUE_RE = re.compile(rf"<{_NS}v\b[^>]*?(?:/>|>(.*?)</{_NS}v>)", re.S)
+_FORMULA_RE = re.compile(rf"<{_NS}f\b")
 
 
 class FormulaCacheError(Exception):
@@ -180,7 +187,7 @@ def census_csv_dir(csv_dir) -> dict:
 def _census_cell_xml(attrs: str, body: str | None) -> str | None:
     """Classify one <c> element: 'cached', 'empty_string', 'uncached', or
     None when the cell holds no formula."""
-    if not body or "<f" not in body:
+    if not body or not _FORMULA_RE.search(body):
         return None
     m = _VALUE_RE.search(body)
     has_value = m is not None and bool((m.group(1) or "").strip())
