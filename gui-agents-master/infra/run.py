@@ -732,6 +732,14 @@ def _count_formulas(solution_file: Path) -> int | None:
         return None
 
 
+# Signatures of a lane-level environment stop that is NOT a usage cap: the
+# browser session no longer authenticates. Signing in is the operator's job,
+# so the lane must stop rather than spend its remaining tasks on failed rows.
+AUTH_LOST_LOG_SIGNATURES = (
+    "Authentication required",
+)
+
+
 USAGE_CAP_LOG_SIGNATURES = (
     "Rate limit persisted",            # claude: limit banner during the wait
     "Usage/plan limit persisted",      # chatgpt: limit banner during the wait
@@ -768,7 +776,7 @@ def usage_cap_hit(run_dir: Path) -> str | None:
                 text = lg.read_text(errors="ignore")
             except Exception:
                 continue
-            for sig in USAGE_CAP_LOG_SIGNATURES:
+            for sig in USAGE_CAP_LOG_SIGNATURES + AUTH_LOST_LOG_SIGNATURES:
                 if sig in text:
                     return f"engine log contains {sig!r} ({lg.name})"
     except Exception as e:  # noqa: BLE001
@@ -1389,10 +1397,12 @@ def main() -> int:
             if cap_reason:
                 cap_stop = cap_reason
                 logger.error(
-                    f"ACCOUNT USAGE CAP on task {spec.task_name}: {cap_reason}. "
+                    f"ACCOUNT BLOCKED on task {spec.task_name} (usage cap, or a "
+                    f"signed-out browser session): {cap_reason}. "
                     f"Stopping this lane (exit {EXIT_ENV_BLOCKED}) — the remaining "
                     f"{len(prepared) - i - 1} task(s) are untouched; relaunch the "
-                    f"same run config after the account's reset."
+                    f"same run config once the account resets or is signed in "
+                    f"again."
                 )
                 break
 

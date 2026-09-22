@@ -36,7 +36,10 @@ class ChatGPTWebAgent(WebAgent):
         "textarea_project": 'textarea[placeholder*="New chat in"]',
         "textarea_conversation": 'textarea[placeholder="Ask anything"]',
         # Buttons
-        "send_button": 'button:has-text("Send prompt"), button[aria-label="Send prompt"], [data-testid="send-button"]',
+        # 2026-09-22 composer: the label is a bare "Send" and the testid is
+        # gone; the older wordings stay first so the other generation is
+        # untouched. Never match "Send" as a substring of a longer label.
+        "send_button": 'button:has-text("Send prompt"), button[aria-label="Send prompt"], [data-testid="send-button"], button[aria-label="Send"]',
         "plus_menu_button": '[data-testid="composer-plus-btn"]',
         "stop_button": 'button:has-text("Stop")',
         "answer_now_button": 'button:has-text("Answer now")',
@@ -230,6 +233,7 @@ class ChatGPTWebAgent(WebAgent):
 
             if state_info["hasLogin"]:
                 return WebAgentState.AUTH_REQUIRED
+
             if state_info["hasStop"] or state_info["hasThinking"]:
                 return WebAgentState.RUNNING
             if state_info["hasInput"]:
@@ -489,12 +493,23 @@ class ChatGPTWebAgent(WebAgent):
         return model_label, intel_label
 
     async def _get_pill(self):
-        """The composer pill that opens the Intelligence/model menu. Its
-        visible text is the CURRENT intelligence level (e.g. "Medium")."""
-        pill = await self.page.query_selector(self.SELECTORS["model_selector"])
-        if pill:
-            return pill
-        return await self.page.query_selector('form button[aria-haspopup="menu"]')
+        """The composer pill that opens the Intelligence/model menu.
+
+        Its visible text is the CURRENT state, but WHAT it shows differs by
+        UI generation: the older pill reads model+tier glued together
+        ("6Pro"), the 2026-09-22 composer reads "Thinking effortPro" — the
+        tier only. Callers that need the model must read it inside the menu
+        (see _chat_menu_model_text), never from this button's text.
+        """
+        for sel in (
+            self.SELECTORS["model_selector"],
+            'button[aria-label="Select ChatGPT model"]',
+            'form button[aria-haspopup="menu"]',
+        ):
+            pill = await self.page.query_selector(sel)
+            if pill:
+                return pill
+        return None
 
     async def _open_pill_menu(self) -> bool:
         # Already open? (Clicking the pill again would toggle it closed.)
@@ -824,14 +839,36 @@ class ChatGPTWebAgent(WebAgent):
         label = "Work" if mode == "work" else "Chat"
 
         async def _find():
+            # Two generations. Old: button[role=radio] with aria-checked.
+            # New (2026-09-22): a [role=group][aria-label="Composer mode"] of
+            # plain buttons with aria-pressed — no radio role anywhere, so the
+            # old lookup returned None and a chat run passed as "chat-only
+            # surface" while a work run failed outright.
             h = await self.page.evaluate_handle(
-                """(label) => Array.from(document.querySelectorAll(
-                    'button[role="radio"]'
-                )).filter(el => el.getClientRects().length > 0)
-                  .find(el => (el.textContent || '').trim().endsWith(label)) || null""",
+                """(label) => {
+                    const vis = el => el.getClientRects().length > 0;
+                    const hit = el => (el.textContent || '').trim().endsWith(label);
+                    const radios = Array.from(document.querySelectorAll(
+                        'button[role="radio"]')).filter(vis);
+                    const found = radios.find(hit);
+                    if (found) return found;
+                    const group = Array.from(document.querySelectorAll(
+                        '[role="group"]')).filter(vis).find(
+                            g => (g.getAttribute('aria-label') || '')
+                                .toLowerCase().includes('composer mode'));
+                    if (!group) return null;
+                    return Array.from(group.querySelectorAll('button'))
+                        .filter(vis).find(hit) || null;
+                }""",
                 label,
             )
             return h.as_element()
+
+        async def _checked(el) -> bool:
+            for attr in ("aria-checked", "aria-pressed"):
+                if (await el.get_attribute(attr)) == "true":
+                    return True
+            return False
 
         # Poll rather than read once: the toggle hydrates after the chat
         # input. This matters in BOTH directions — a work run fails outright
@@ -860,7 +897,7 @@ class ChatGPTWebAgent(WebAgent):
             )
             return False
 
-        if (await radio.get_attribute("aria-checked")) == "true":
+        if await _checked(radio):
             logger.info(f"Mode already '{mode}'")
             return True
 
@@ -871,7 +908,7 @@ class ChatGPTWebAgent(WebAgent):
             await radio.evaluate(self._JS_CLICK)
         await asyncio.sleep(1.5)
         radio = await _find()
-        if radio is not None and (await radio.get_attribute("aria-checked")) == "true":
+        if radio is not None and await _checked(radio):
             logger.info(f"Mode set to '{mode}' (verified)")
             return True
         logger.error(f"Mode toggle to '{mode}' did not verify")
@@ -1268,6 +1305,21 @@ class ChatGPTWebAgent(WebAgent):
                     return True
         return False
 
+    async def _chat_menu_model_text(self) -> Optional[str]:
+        """The open picker's "Select model" row text, e.g. "6\\nPro".
+
+        This row carries the model token in every generation seen so far,
+        which the 2026-09-22 composer button no longer does. None when the
+        menu is closed or the row is absent."""
+        try:
+            return await self.page.evaluate(
+                """(sel) => { const el = document.querySelector(sel);
+                    return el ? (el.innerText || '').trim() : null; }""",
+                self._SLIDER_TOGGLE_SEL,
+            )
+        except Exception:
+            return None
+
     async def _chat_slider_radio_state(self, radio_label: str) -> Optional[bool]:
         """aria-checked of the chat model radio whose FIRST text line is
         ``radio_label`` (rows append hints: "GPT-5.5 / Leaving on …").
@@ -1382,12 +1434,22 @@ class ChatGPTWebAgent(WebAgent):
             ):
                 await self._close_pill_menu()
                 return False
+        # Read the model+tier the menu itself shows BEFORE closing it: the
+        # 2026-09-22 composer's button reads "Thinking effortPro" — the tier
+        # only — so the pill alone can no longer prove which model answers.
+        menu_text = await self._chat_menu_model_text()
         await self._close_pill_menu()
 
         pill = await self._get_pill()
         pill_text = ((await pill.text_content()) or "").strip() if pill else ""
+        source, shown = "pill", pill_text
         if intel_label and token:
             ok = self._chat_pill_matches(pill_text, token, intel_label)
+            if not ok and menu_text is not None:
+                # Older pill wording is gone — fall back to the menu row,
+                # which still carries the model token ("6" + "Pro").
+                ok = self._chat_pill_matches(menu_text, token, intel_label)
+                source, shown = "menu 'Select model' row", menu_text
             want = f"{token}{intel_label}"
         elif intel_label:
             ok = self._pill_intel_matches(pill_text, intel_label)
@@ -1396,11 +1458,11 @@ class ChatGPTWebAgent(WebAgent):
             ok, want = True, ""
         if not ok:
             logger.error(
-                f"Chat pill verification failed: wanted {want!r}, pill reads "
-                f"{pill_text!r}"
+                f"Chat model/tier verification failed: wanted {want!r}, pill "
+                f"reads {pill_text!r}, menu row reads {menu_text!r}"
             )
             return False
-        logger.info(f"Chat settings verified (pill: {pill_text!r})")
+        logger.info(f"Chat settings verified ({source}: {shown!r})")
         return True
 
     async def ensure_work_settings(self) -> bool:
@@ -1526,6 +1588,52 @@ class ChatGPTWebAgent(WebAgent):
             return await self.ensure_work_settings()
         return await self.ensure_model_and_intelligence()
 
+    # The composer's permanent hidden <input type=file>, newest UI first.
+    # 2026-09-22: the id disappeared — the composer rebuild ships React-
+    # generated ids ("_r_hp_") and identifies the inputs by aria-label
+    # instead, with photo/video inputs alongside the general one. A run that
+    # still looked only for #upload-files lost both chooser paths too and
+    # failed every task on that account with upload_failed (lane B, task 70).
+    # Never match an input with an `accept` filter: those are the photo and
+    # camera paths and they reject .xlsx.
+    UPLOAD_INPUT_SELECTORS = (
+        'input#upload-files[type="file"]',
+        'input[type="file"][aria-label="Attach files"]',
+        'input[type="file"][multiple]:not([accept])',
+        'input[type="file"]:not([accept])',
+    )
+
+    @staticmethod
+    def _chip_selector(stem: str) -> str:
+        """Selector for the composer's attachment tile of a file whose name
+        contains ``stem``, across both composer generations.
+
+        Old: a div[role="group"] carrying the displayed name as aria-label.
+        New (2026-09-22): a plain <button aria-label="Name.xlsx"> beside a
+        <button aria-label="Remove Name.xlsx">. The Remove twin has to be
+        excluded or every file counts twice. Missing the tile does not just
+        mis-report: upload_files re-SETS the input up to four times when no
+        tile is seen, so a stale selector attaches the same file repeatedly
+        before giving up.
+        """
+        return (
+            f'[role="group"][aria-label*="{stem}"], '
+            f'button[aria-label*="{stem}"]:not([aria-label^="Remove"])'
+        )
+
+    async def _direct_upload_input(self):
+        """The hidden file input to set files on, or None if the page has
+        none. Returns a Locator already narrowed to one element."""
+        for sel in self.UPLOAD_INPUT_SELECTORS:
+            try:
+                loc = self.page.locator(sel)
+                if await loc.count() > 0:
+                    logger.info(f"Composer file input: {sel}")
+                    return loc.first
+            except Exception:
+                continue
+        return None
+
     async def upload_files(self, file_paths: list[str]) -> bool:
         """Upload files via the + menu > Add photos & files flow.
 
@@ -1552,9 +1660,8 @@ class ChatGPTWebAgent(WebAgent):
                 # the attachment tile to appear — otherwise fall through
                 # to the menu approaches for builds without this input.
                 try:
-                    direct_input = self.page.locator(
-                        'input#upload-files[type="file"]')
-                    if await direct_input.count() > 0:
+                    direct_input = await self._direct_upload_input()
+                    if direct_input is not None:
                         # Match the tile on the file's STEM, not its full
                         # name: chatgpt.com de-duplicates an upload whose
                         # name already exists in the account by appending a
@@ -1569,8 +1676,7 @@ class ChatGPTWebAgent(WebAgent):
                         # it is NOT a <button>, so the old
                         # button[aria-label=...] half never matched at all.
                         stem = Path(file_path).stem.replace('"', '')
-                        chip = self.page.locator(
-                            f'[role="group"][aria-label*="{stem}"]')
+                        chip = self.page.locator(self._chip_selector(stem))
                         before = await chip.count()
 
                         # Retry the set: for the first ~3s after
@@ -1600,17 +1706,17 @@ class ChatGPTWebAgent(WebAgent):
                                 )
                         if not uploaded:
                             raise RuntimeError(
-                                "hidden input#upload-files accepted the file "
-                                "but no attachment tile appeared"
+                                "the hidden file input accepted the file but "
+                                "no attachment tile appeared"
                             )
                         shown = await chip.nth(before).get_attribute(
                             "aria-label")
                         logger.info(
-                            f"Uploaded via hidden input#upload-files "
+                            f"Uploaded via the hidden file input "
                             f"(direct set_input_files); tile shows {shown!r}")
                 except Exception as e_direct:
                     logger.info(
-                        f"Direct input#upload-files upload failed — "
+                        f"Direct hidden-input upload failed — "
                         f"falling back to + menu ({e_direct!r:.200})"
                     )
 
@@ -1742,8 +1848,7 @@ class ChatGPTWebAgent(WebAgent):
                 # which surfaced as a spurious "not confirmed" warning on
                 # an upload that had in fact succeeded.
                 stem = Path(file_path).stem.replace('"', '')
-                attachment = self.page.locator(
-                    f'[role="group"][aria-label*="{stem}"]')
+                attachment = self.page.locator(self._chip_selector(stem))
                 try:
                     await attachment.first.wait_for(
                         state="attached", timeout=5000)
@@ -1786,7 +1891,8 @@ class ChatGPTWebAgent(WebAgent):
                     """() => {
                     const s = document.querySelector(
                         'button[data-testid="send-button"], '
-                        + 'button[aria-label="Send prompt"]');
+                        + 'button[aria-label="Send prompt"], '
+                        + 'button[aria-label="Send"]');
                     const t = document.body.innerText || '';
                     return {
                         enabled: s ? (!s.disabled
@@ -1930,7 +2036,8 @@ class ChatGPTWebAgent(WebAgent):
                         """() => {
                         const b = document.querySelector(
                             'button[data-testid="send-button"], '
-                            + 'button[aria-label="Send prompt"]');
+                            + 'button[aria-label="Send prompt"], '
+                            + 'button[aria-label="Send"]');
                         return b ? !b.disabled
                             && b.getClientRects().length > 0 : false;
                     }""")
@@ -2001,6 +2108,13 @@ class ChatGPTWebAgent(WebAgent):
                 const mainArea = document.querySelector('main') || document.body;
                 const btns = Array.from(mainArea.querySelectorAll('button'));
                 const hasStop = btns.some(b => b.textContent.trim() === 'Stop');
+                // 2026-09-22 composer: the Stop control carries only an
+                // aria-label — its text is empty — so the test above misses
+                // it and a healthy turn reads as "generation never started"
+                // (lane B, every task). Exact label, and mainArea scope, as
+                // sidebar chat titles have matched a loose "Stop" before.
+                const hasStopAria = btns.some(
+                    b => (b.getAttribute('aria-label') || '').trim() === 'Stop');
                 const hasAnswerNow = btns.some(b => b.textContent.trim() === 'Answer now');
                 const hasThinking = btns.some(b => b.textContent.includes('Pro thinking'));
                 const hasGenerating = !!document.querySelector('[class*="result-streaming"]');
@@ -2010,7 +2124,7 @@ class ChatGPTWebAgent(WebAgent):
                 const mainText = mainArea.innerText || '';
                 const hasWritingCode = mainText.includes('Writing code');
                 const hasAnalyzing = /Analyz(ing|ed)/.test(mainText) && (hasStop || hasStopBtn);
-                return hasStopBtn || hasStop || hasAnswerNow || hasThinking || hasGenerating || hasWritingCode || hasAnalyzing;
+                return hasStopBtn || hasStop || hasStopAria || hasAnswerNow || hasThinking || hasGenerating || hasWritingCode || hasAnalyzing;
             }"""
             )
         except Exception:
@@ -2259,7 +2373,15 @@ class ChatGPTWebAgent(WebAgent):
                 const turns = Array.from(document.querySelectorAll('[data-turn]'))
                     .filter(el => el.getAttribute('data-turn') !== 'user');
                 if (turns.length > 0) return turns.length;
-                return document.querySelectorAll('.agent-turn').length;
+                const agentTurns = document.querySelectorAll('.agent-turn').length;
+                if (agentTurns > 0) return agentTurns;
+                // 2026-09-22 composer: an exchange is a [data-turn-key]
+                // wrapper holding a [data-user-message-bubble] and a hidden
+                // [data-chatgpt-agent-turn-start] anchor. None of the older
+                // markers exist there, so this returned 0 and the wait loop
+                // lost both its "a turn appeared" and liveness signals.
+                return document.querySelectorAll(
+                    '[data-chatgpt-agent-turn-start]').length;
             }"""
             )
         except Exception:
@@ -2703,6 +2825,26 @@ class ChatGPTWebAgent(WebAgent):
                 const agentTurns = document.querySelectorAll('.agent-turn');
                 if (agentTurns.length > 0) {
                     return Array.from(agentTurns).map(el => el.innerText || '').join('\\n\\n');
+                }
+                // Strategy 3 (2026-09-22 composer): no author-role, no
+                // [data-turn], no .agent-turn. An exchange is one
+                // [data-turn-key] wrapper whose text starts with the user's
+                // own message (inside [data-user-message-bubble]); the
+                // assistant's words are whatever follows it. Subtracting the
+                // bubble matters — otherwise every poll reads the prompt
+                // back, the text never changes, and a live turn looks
+                // finished the moment it starts.
+                const keyed = document.querySelectorAll('[data-turn-key]');
+                if (keyed.length > 0) {
+                    const turn = keyed[keyed.length - 1];
+                    let text = turn.innerText || '';
+                    const bubble = turn.querySelector('[data-user-message-bubble]');
+                    if (bubble) {
+                        const said = bubble.innerText || '';
+                        const at = text.indexOf(said);
+                        if (at >= 0) text = text.slice(at + said.length);
+                    }
+                    return text.replace(/^\\s*(You said:)?\\s*/, '');
                 }
                 return null;
             }"""
