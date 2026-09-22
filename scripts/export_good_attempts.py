@@ -12,7 +12,9 @@ to look in Neon (task_attempts.id, gradings.id) and in S3.
 Cohorts = COHORTS below: the eight production cohorts of the 101-task rerun -
 GUI (Fable 5.1 cowork/max, GPT-6 Astra work/ultra), Excel add-in (Fable 5.1,
 GPT-5.6 Sol xhigh), CLI harness (Fable 5.1 max, GPT-6 Astra xhigh) and coding
-agents (Claude Code Fable 5.1 max, Codex GPT-6 Astra xhigh). To fold in another
+agents (Claude Code Fable 5.1 max, Codex GPT-6 Astra xhigh) - plus the six
+added 2026-09-21: GUI chat mode (GPT-6 Pro), Excel add-in Opus 5, CLI Grok 4.6
+and Kimi K3, and Codex on Gemini 3.8 Flash and Grok 4.6. To fold in another
 LLM + pipeline combo, add one line to COHORTS; a cohort still running simply
 shows its open tasks under missing_tasks.
 
@@ -79,7 +81,17 @@ COHORTS = [
     ("cli",    "astra", "api",        "openpyxl_openai/gpt-6-astra-xhigh"),
     ("coding", "fable", "coding_cli", "claudecode_anthropic/claude-fable-5-1-max"),
     ("coding", "astra", "coding_cli", "codex_openai/gpt-6-astra-xhigh"),
+    # Added 2026-09-21 while their runs were in flight. gui_chat = ChatGPT chat mode, "Latest" at
+    # the Pro stop: the chat UI never names Astra, hence gpt6_pro (the gui cohorts above are work mode).
+    ("gui_chat", "gpt6_pro", "gui",      "chatgpt_gpt_6_pro"),
+    ("excel",  "opus",   "excel",      "claude_excel_opus_5"),
+    ("cli",    "grok",   "api",        "openpyxl_tensorblock/grok-4.6-xhigh"),
+    ("cli",    "kimi",   "api",        "openpyxl_tensorblock/kimi-k3-max"),
+    ("coding", "gemini", "coding_cli", "codex_tensorblock/gemini-3.8-flash-high"),
+    ("coding", "grok",   "coding_cli", "codex_tensorblock/grok-4.6-xhigh"),
 ]
+# (pipeline, model) names a leaderboard row, and the v12 grading driver keys on it too.
+assert len({c[:2] for c in COHORTS}) == len(COHORTS), "two cohorts share a (pipeline, model) pair"
 
 def jsonable(v):
     if isinstance(v, Decimal): return float(v)
