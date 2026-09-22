@@ -38,7 +38,9 @@ from .repo_config import (
 from .prompt_versions import (
     PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, DEFAULT_V2_PROMPT_VERSION,
     attachment_names_for, attachments_for, parse_prompt_version, rubric_for_prompt_version,
+    system_prompt_file,
 )
+from .models_config import uses_gemini_tool_calls
 
 # Resolved prompt paths (set by load_config based on prompt_version)
 SYSTEM_PROMPT_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERSION]["system"]
@@ -298,7 +300,11 @@ class AutoBatchRunner(BatchRunner):
                     f"a cross-benchmark run."
                 )
         ver_files = PROMPT_VERSIONS[prompt_ver]
-        SYSTEM_PROMPT_PATH = PROMPTS_DIR / ver_files["system"]
+        # The set's system prompt - or, for Gemini 3.8 Flash alone, its
+        # function-call variant (prompt_versions.MODEL_SYSTEM_PROMPT_VARIANTS);
+        # parse_prompt_version still records the set's version for it.
+        SYSTEM_PROMPT_PATH = PROMPTS_DIR / system_prompt_file(
+            prompt_ver, self._identity.model, require_variant=uses_gemini_tool_calls(self._identity.model))
         TASK_TEMPLATE_FMWC_PATH = PROMPTS_DIR / ver_files["fmwc"]
         TASK_TEMPLATE_WSP_PATH = PROMPTS_DIR / ver_files["wsp"]
 
@@ -345,6 +351,7 @@ class AutoBatchRunner(BatchRunner):
         cfg.update(self._run_limit_extra_configs())
         cfg.update(self._recalc_extra_configs())
         cfg.update(self._attachment_extra_configs())
+        cfg.update(self._response_contract_extra_configs())
         db.execute(
             sa_text("UPDATE task_attempts SET extra_configs = CAST(:cfg AS jsonb) WHERE id = :id"),
             {"cfg": json.dumps(cfg), "id": attempt_id},

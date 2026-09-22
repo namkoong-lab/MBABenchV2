@@ -43,7 +43,7 @@ class ExcelMCPClient:
         self.process: Optional[subprocess.Popen] = None
         self.available_tools: List[str] = []
         # The server's own tool list (name, description, inputSchema) - declared
-        # to Gemini as functions (see ExcelTaskExecutor._gemini_tool_declarations).
+        # to Gemini 3.8 Flash as functions (see ExcelTaskExecutor._gemini_tool_declarations).
         self.tool_schemas: List[Dict[str, Any]] = []
         self.created_files: List[str] = []
         self._request_id = 0

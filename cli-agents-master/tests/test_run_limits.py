@@ -388,7 +388,8 @@ def test_gemini_gets_the_excel_tools_declared_and_no_other_model_does():
     executor("tensorblock/gemini-3.8-flash")._reason_once(task)
     assert sent[-1]["tools"] == [
         {"type": "function", "function": {"name": "list_files", "description": "List files.", "parameters": schemas[0]["inputSchema"]}},
-        {"type": "function", "function": {"name": "get_cell_range", "description": "Read cells.", "parameters": schemas[1]["inputSchema"]}}]
+        {"type": "function", "function": {"name": "get_cell_range", "description": "Read cells.", "parameters": schemas[1]["inputSchema"]}},
+        ExcelTaskExecutor.COMPLETE_TASK_FUNCTION]
     for model in ("tensorblock/grok-4.6", "tensorblock/Kimi-K3"):
         executor(model)._reason_once(task)
         assert "tools" not in sent[-1], model
@@ -534,3 +535,32 @@ def test_forge_provider_rejected_400_is_retried_and_other_400s_are_not(monkeypat
     left = calls(other_400, answer)          # a real bad request still fails at once, never unstreamed
     parsed, _ = forge._reason_once(task)
     assert "reasoning_effort" in parsed["error"] and left == [answer] and waits == []
+
+
+def test_only_gemini_38_flash_declares_complete_task_and_reads_it_as_completion():
+    """2026-09-22: the native-tool-call gate is the exact model id, the
+    declarations end with complete_task, and a complete_task call is the
+    step's is_complete=true (other calls beside it run first)."""
+    import json
+    from excel_cli_agent.models_config import uses_gemini_tool_calls
+    assert uses_gemini_tool_calls("tensorblock/gemini-3.8-flash")
+    for model in ("google/gemini-3.8-flash", "tensorblock/gemini-3-pro", "tensorblock/grok-4.6", None, ""):
+        assert not uses_gemini_tool_calls(model), model
+
+    schemas = [{"name": "list_files", "description": "List files.", "inputSchema": {"properties": {}, "type": "object"}}]
+    gemini = ExcelTaskExecutor.__new__(ExcelTaskExecutor)
+    gemini.model = "tensorblock/gemini-3.8-flash"
+    gemini.excel_client = type("C", (), {"tool_schemas": schemas})()
+    declared = gemini._gemini_tool_declarations()
+    assert [d["function"]["name"] for d in declared] == ["list_files", "complete_task"]
+    assert declared[-1]["function"]["parameters"]["required"] == ["completion_summary"]
+
+    chunks = [_tool_call_chunk("complete_task", '{"completion_summary": "Model built."}'), _finish_chunk()]
+    text, _ = gemini._collect_stream_response(iter(chunks), 3600)
+    assert json.loads(text) == {"is_complete": True, "actions": [], "completion_summary": "Model built."}
+
+    chunks = [_tool_call_chunk("list_files", "{}", index=0), _tool_call_chunk("complete_task", '{"completion_summary": "Done"}', index=1),
+              _finish_chunk()]
+    text, _ = gemini._collect_stream_response(iter(chunks), 3600)
+    assert json.loads(text) == {"is_complete": True, "actions": [{"tool": "list_files", "parameters": {}}],
+                                "completion_summary": "Done"}

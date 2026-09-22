@@ -1,4 +1,5 @@
 """Centralized model configuration: pricing, defaults, and cost calculation."""
+
 import json
 import re
 import urllib.request
@@ -6,6 +7,17 @@ from typing import Dict, Optional
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_MAX_COMPLETION_TOKENS = 8000
+
+# Gemini 3.8 Flash only (2026-09-22) flag. Allow custom tool calls setup and prompt
+GEMINI_TOOL_CALL_MODELS = frozenset({"tensorblock/gemini-3.8-flash"})
+
+
+def uses_gemini_tool_calls(model: Optional[str]) -> bool:
+    """True only for the models in GEMINI_TOOL_CALL_MODELS (the exact model
+    id the identity sends), so the Gemini path can never switch on by a
+    substring of some other model's name."""
+    return (model or "") in GEMINI_TOOL_CALL_MODELS
+
 
 # Model pricing (per 1M tokens) - Updated January 2026
 # FALLBACK ONLY: calculate_cost() prefers live prices fetched from
@@ -17,12 +29,10 @@ MODEL_PRICING = {
     "gpt-5-mini": {"input": 0.250, "output": 2.00},
     "gpt-5-nano": {"input": 0.050, "output": 0.400},
     "gpt-5-pro": {"input": 15.00, "output": 120.00},
-
     # GPT-4.1 series (Updated models with fine-tuning support)
     "gpt-4.1": {"input": 3.00, "output": 12.00},
     "gpt-4.1-mini": {"input": 0.80, "output": 3.20},
     "gpt-4.1-nano": {"input": 0.20, "output": 0.80},
-
     # GPT-4o family (Legacy - still available via API)
     "gpt-4o": {"input": 3.00, "output": 10.00},
     "gpt-4o-mini": {"input": 0.150, "output": 0.600},
@@ -30,32 +40,26 @@ MODEL_PRICING = {
     "gpt-4o-2024-08-06": {"input": 3.00, "output": 10.00},
     "gpt-4o-2024-05-13": {"input": 5.00, "output": 15.00},
     "gpt-4o-mini-2024-07-18": {"input": 0.150, "output": 0.600},
-
     # Realtime API models (Text pricing)
     "gpt-realtime": {"input": 4.00, "output": 16.00},
     "gpt-realtime-mini": {"input": 0.60, "output": 2.40},
-
     # GPT-4 Turbo family (Legacy)
     "gpt-4-turbo": {"input": 10.00, "output": 30.00},
     "gpt-4-turbo-2024-04-09": {"input": 10.00, "output": 30.00},
     "gpt-4-turbo-preview": {"input": 10.00, "output": 30.00},
-
     # GPT-4 family (Legacy)
     "gpt-4": {"input": 30.00, "output": 60.00},
     "gpt-4-0613": {"input": 30.00, "output": 60.00},
     "gpt-4-32k": {"input": 60.00, "output": 120.00},
-
     # GPT-3.5 Turbo family (Legacy)
     "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
     "gpt-3.5-turbo-0125": {"input": 0.50, "output": 1.50},
     "gpt-3.5-turbo-1106": {"input": 1.00, "output": 2.00},
-
     # O1/O4 family (Reasoning models)
     "o1": {"input": 15.00, "output": 60.00},
     "o1-mini": {"input": 3.00, "output": 12.00},
     "o1-preview": {"input": 15.00, "output": 60.00},
     "o4-mini": {"input": 4.00, "output": 16.00},
-
     # OpenRouter models (third-party via OpenRouter) - Updated Jan 2026
     "moonshotai/kimi-k2-thinking": {"input": 0.57, "output": 2.42},
     "deepseek/deepseek-r1": {"input": 0.55, "output": 2.19},
@@ -68,7 +72,10 @@ MODEL_PRICING = {
     "anthropic/claude-opus-4.6": {"input": 5.00, "output": 25.00},
     "claude-opus-4-6": {"input": 5.00, "output": 25.00},  # Anthropic direct model ID
     "claude-opus-4-8": {"input": 5.00, "output": 25.00},  # Anthropic direct model ID
-    "claude-fable-5": {"input": 25.00, "output": 50.00},  # Anthropic direct model ID; see DIRECT_API_PRICING
+    "claude-fable-5": {
+        "input": 25.00,
+        "output": 50.00,
+    },  # Anthropic direct model ID; see DIRECT_API_PRICING
     "gpt-5.6-sol": {"input": 5.00, "output": 30.00},  # OpenAI direct model ID
     # 2026-09-19 backstop for the 101-task rerun cohorts: the OpenRouter list
     # price on that day, used only when the live fetch fails (a failed fetch
@@ -173,12 +180,16 @@ FORGE_STALL_TIMEOUT_SECONDS = 600
 FORGE_SILENT_THINKING_STALL_SECONDS = {"tensorblock/gpt-6-astra": 900}
 
 
-def resolve_stall_timeout(base_url: Optional[str], model: Optional[str] = None) -> Optional[int]:
+def resolve_stall_timeout(
+    base_url: Optional[str], model: Optional[str] = None
+) -> Optional[int]:
     """Seconds of total silence a call may show before it is retried, or None
     where no such limit applies (every endpoint but Forge: OpenAI does not
     stream thinking, so a long silence there is a healthy call)."""
     if base_url and "tensorblock" in base_url.lower():
-        return FORGE_SILENT_THINKING_STALL_SECONDS.get(model or "", FORGE_STALL_TIMEOUT_SECONDS)
+        return FORGE_SILENT_THINKING_STALL_SECONDS.get(
+            model or "", FORGE_STALL_TIMEOUT_SECONDS
+        )
     return None
 
 
@@ -188,7 +199,9 @@ def resolve_stall_timeout(base_url: Optional[str], model: Optional[str] = None) 
 DEFAULT_MAX_ITERATIONS = 40
 
 
-def resolve_api_timeout(reasoning_effort: Optional[str], explicit: Optional[int] = None) -> int:
+def resolve_api_timeout(
+    reasoning_effort: Optional[str], explicit: Optional[int] = None
+) -> int:
     """Seconds one model call may take: the run config's api_timeout_seconds
     if set, else the effort tier's. The runner records the result on every
     attempt row (extra_configs.api_timeout_seconds)."""
@@ -232,7 +245,9 @@ def _fetch_live_pricing(timeout: int = 10) -> Optional[Dict[str, Dict[str, float
         if _live_pricing:
             print(f"💲 Live pricing loaded from OpenRouter ({len(pricing)} models)")
     except Exception as e:
-        print(f"⚠️ Live pricing fetch failed ({e}); using static MODEL_PRICING fallback")
+        print(
+            f"⚠️ Live pricing fetch failed ({e}); using static MODEL_PRICING fallback"
+        )
         _live_pricing = None
     return _live_pricing
 
@@ -251,7 +266,7 @@ def _candidate_slugs(model: str) -> list:
     # from the bare id's usual sources. Forge publishes no prices, so this
     # is the OpenRouter/list rate, not necessarily what Forge credits charge.
     if model.startswith("tensorblock/"):
-        bare = model[len("tensorblock/"):]
+        bare = model[len("tensorblock/") :]
         candidates.append(bare)
         model = bare
     dotted = re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", model)
@@ -325,8 +340,11 @@ def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
     """
     if model in DIRECT_API_PRICING:
         return DIRECT_API_PRICING[model]
-    if model.startswith("tensorblock/") and model[len("tensorblock/"):] in DIRECT_API_PRICING:
-        return DIRECT_API_PRICING[model[len("tensorblock/"):]]
+    if (
+        model.startswith("tensorblock/")
+        and model[len("tensorblock/") :] in DIRECT_API_PRICING
+    ):
+        return DIRECT_API_PRICING[model[len("tensorblock/") :]]
     live = _fetch_live_pricing()
     if live:
         for slug in _candidate_slugs(model):
@@ -336,7 +354,7 @@ def resolve_pricing(model: str) -> Optional[Dict[str, float]]:
     # direct-API and context-window tables.
     static_id = model
     if model not in MODEL_PRICING and model.startswith("tensorblock/"):
-        static_id = model[len("tensorblock/"):]
+        static_id = model[len("tensorblock/") :]
     if static_id in MODEL_PRICING:
         if live and model not in _pricing_warned:
             _pricing_warned.add(model)
@@ -397,8 +415,11 @@ def resolve_context_window(model: str) -> int:
                 return ctx
     if model in MODEL_CONTEXT_WINDOWS:
         return MODEL_CONTEXT_WINDOWS[model]
-    if model.startswith("tensorblock/") and model[len("tensorblock/"):] in MODEL_CONTEXT_WINDOWS:
-        return MODEL_CONTEXT_WINDOWS[model[len("tensorblock/"):]]
+    if (
+        model.startswith("tensorblock/")
+        and model[len("tensorblock/") :] in MODEL_CONTEXT_WINDOWS
+    ):
+        return MODEL_CONTEXT_WINDOWS[model[len("tensorblock/") :]]
     key = f"ctx:{model}"
     if key not in _pricing_warned:
         _pricing_warned.add(key)

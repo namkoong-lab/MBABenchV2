@@ -35,7 +35,7 @@ except ImportError:
     anthropic = None
 
 from .mcp_client import ExcelMCPClient
-from .models_config import (DEFAULT_MAX_ITERATIONS, MODEL_PRICING, calculate_cost, resolve_api_timeout,
+from .models_config import (DEFAULT_MAX_ITERATIONS, MODEL_PRICING, calculate_cost, resolve_api_timeout, uses_gemini_tool_calls,
                             resolve_stall_timeout,
                             resolve_context_window)
 from .repo_config import repo_value
@@ -301,27 +301,44 @@ class ExcelTaskExecutor:
         print("🔄 Recreating OpenAI client with fresh connections...")
         self._create_openai_client()
 
-    def _reads_native_tool_calls(self) -> bool:
-        """Gemini only (2026-09-21). Gemini 3.8 Flash answers about half its
-        steps with a native function call instead of the JSON text the prompt
-        asks for. With no tools declared, Google dropped every such call that
-        carried arguments as MALFORMED_FUNCTION_CALL, leaving an empty reply
-        (one step of task 8: 6 of 6 empty). So for Gemini the Excel tools are
-        declared as functions (_gemini_tool_declarations), a call is read as
-        the same action, and an empty reply is asked again. Every other model
-        is unchanged."""
-        return "gemini" in str(getattr(self, "model", "") or "").lower()
+    def _uses_gemini_tool_calls(self) -> bool:
+        """THE Gemini 3.8 Flash gate (models_config.GEMINI_TOOL_CALL_MODELS;
+        2026-09-21/22). That model answers with native function calls instead
+        of the JSON text the prompt asks every other model for; with no tools
+        declared Google dropped the calls as MALFORMED_FUNCTION_CALL (empty
+        replies), and against the JSON contract it issued one call per step.
+        So for exactly that model: the Excel tools plus complete_task are
+        declared as functions (_gemini_tool_declarations), the system prompt
+        is the v16 variant asking for function calls (prompt_versions.
+        system_prompt_file), the runtime JSON appendix is left off, native
+        calls are read as the step's actions, and an empty reply is asked
+        again. Every other model's request, prompt and reply are unchanged."""
+        return uses_gemini_tool_calls(getattr(self, "model", None))
+
+    # Harness-owned function, declared only for the native-tool-call model:
+    # the counterpart of the JSON reply's is_complete=true. Read back in
+    # _collect_stream_response; never sent to the tool server.
+    COMPLETE_TASK_FUNCTION = {"type": "function", "function": {
+        "name": "complete_task",
+        "description": "Finish the task. Call it alone, after every Excel operation is done, with a summary "
+                       "of the work; for a plain question, with the answer.",
+        "parameters": {"type": "object",
+                       "properties": {"completion_summary": {"type": "string",
+                                                             "description": "What was built, or the answer."}},
+                       "required": ["completion_summary"]}}}
 
     def _gemini_tool_declarations(self) -> List[Dict[str, Any]]:
         """The Excel tools as function declarations, straight from the tool
         server's own list (name, description, input schema) - the same tools
-        the prompt describes. Probed 2026-09-21: the step that came back empty
-        6 of 6 times gave an intact call with its arguments 4 of 4 times."""
+        the prompt describes - plus complete_task. Probed 2026-09-21: the step
+        that came back empty 6 of 6 times gave an intact call with its
+        arguments 4 of 4 times once the tools were declared."""
         schemas = getattr(getattr(self, "excel_client", None), "tool_schemas", None) or []
-        return [{"type": "function", "function": {
-                    "name": t["name"], "description": t.get("description") or "",
-                    "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}}
-                for t in schemas if isinstance(t, dict) and t.get("name")]
+        declared = [{"type": "function", "function": {
+                        "name": t["name"], "description": t.get("description") or "",
+                        "parameters": t.get("inputSchema") or {"type": "object", "properties": {}}}}
+                    for t in schemas if isinstance(t, dict) and t.get("name")]
+        return declared + [self.COMPLETE_TASK_FUNCTION] if declared else []
 
     @staticmethod
     def _is_json_object(text: str) -> bool:
@@ -1215,8 +1232,8 @@ class ExcelTaskExecutor:
         last_content_time = start_time
         empty_chunk_count = 0
         max_empty_chunks = 100  # Detect dead connection after 100 empty chunks
-        native_calls: Dict[int, Dict[str, str]] = {}  # Gemini only, see _reads_native_tool_calls
-        reads_calls = self._reads_native_tool_calls()
+        native_calls: Dict[int, Dict[str, str]] = {}  # Gemini only, see _uses_gemini_tool_calls
+        uses_gemini = self._uses_gemini_tool_calls()
         finish_reason = None
 
         try:
@@ -1250,7 +1267,7 @@ class ExcelTaskExecutor:
                         # A live call, not the empty chunks of a dead connection.
                         if getattr(delta, 'extra_content', None):
                             has_content = True
-                        for tc in ((getattr(delta, 'tool_calls', None) or []) if reads_calls else []):
+                        for tc in ((getattr(delta, 'tool_calls', None) or []) if uses_gemini else []):
                             fn = getattr(tc, 'function', None)
                             name, args = getattr(fn, 'name', None), getattr(fn, 'arguments', None)
                             idx = getattr(tc, 'index', None)
@@ -1325,12 +1342,20 @@ class ExcelTaskExecutor:
                     params = None
                 if name and isinstance(params, dict):
                     actions.append({"tool": name, "parameters": params})
-            if actions:
-                reply = {"is_complete": False, "actions": actions}
+            # complete_task (declared by this harness, never a tool-server tool) is
+            # the native form of is_complete=true; any other calls beside it run
+            # first, exactly as a JSON reply carrying both actions and is_complete.
+            done = [a for a in actions if a["tool"] == "complete_task"]
+            actions = [a for a in actions if a["tool"] != "complete_task"]
+            if actions or done:
+                reply = {"is_complete": bool(done), "actions": actions}
+                if done:
+                    reply["completion_summary"] = str(done[-1]["parameters"].get("completion_summary") or "Task completed")
                 if response_text.strip():     # text beside the call that is not the JSON reply: kept as reasoning
                     reply = {"reasoning": response_text.strip(), **reply}
                 response_text = json.dumps(reply)
-                print(f"🔁 Reply came as {len(actions)} native tool call(s); read as actions: {[a['tool'] for a in actions]}")
+                print(f"🔁 Reply came as {len(actions) + len(done)} native tool call(s); read as actions: "
+                      f"{[a['tool'] for a in actions]}{' + complete_task' if done else ''}")
         return response_text, usage_info
 
     def _log_streaming_request(self, request_data: dict, response_text: str, usage_info: dict, task_id: str = "", iteration: int = 0):
@@ -1384,6 +1409,12 @@ class ExcelTaskExecutor:
 
         try:
             prompt = system_prompt_file.read_text(encoding='utf-8')
+
+            # The native-tool-call model (Gemini 3.8 Flash) answers with function
+            # calls; its prompt variant says so, and the JSON appendix below would
+            # contradict it. Every other model gets the appendix as before.
+            if self._uses_gemini_tool_calls():
+                return prompt
 
             # Add JSON format instructions based on custom_reasoning flag
             if not self.custom_reasoning:
@@ -1510,7 +1541,10 @@ The extracted text from these PDFs will appear below in sections marked like thi
                 name = Path(text_path).name
                 context += f"- {name}  (full text below under '{self._text_context_label(name)}'; not an Excel file - do NOT open it with Excel tools)\n"
 
-        context += f"\n🎯 FOCUS: Use the current file state above to determine your next action."
+        if self._uses_gemini_tool_calls():   # Gemini 3.8 Flash: one reply carries every call of the step
+            context += "\n🎯 FOCUS: Use the current file state above to decide the next step, and put EVERY function call it needs into this one reply."
+        else:
+            context += f"\n🎯 FOCUS: Use the current file state above to determine your next action."
         context += f"\n💡 TIP: You can see exactly what's in each cell with column letters and row numbers."
         context += f"\n⚠️  CRITICAL: Never reference the same cell you're putting a formula in (circular reference)."
 
@@ -1831,7 +1865,7 @@ EXECUTION HISTORY:
                         "stream_options": {"include_usage": True}  # Get token usage in stream
                     }
 
-                    if self._reads_native_tool_calls():
+                    if self._uses_gemini_tool_calls():      # Gemini 3.8 Flash only
                         declared = self._gemini_tool_declarations()
                         if declared:
                             request_data["tools"] = declared
@@ -1892,7 +1926,7 @@ EXECUTION HISTORY:
                             self._log_streaming_request(request_data, response_text, usage_info, task.task_id, task.total_iterations)
                             # Gemini only: an empty reply (a native call Google dropped as
                             # malformed) is asked again instead of burning the step.
-                            if (not (response_text or "").strip() and self._reads_native_tool_calls()
+                            if (not (response_text or "").strip() and self._uses_gemini_tool_calls()
                                     and attempt < MAX_RETRIES - 1):
                                 print(f"⚠️ Empty reply (finish: {getattr(self, '_last_finish_reason', None)}) "
                                       f"on attempt {attempt+1}/{MAX_RETRIES}; asking again")
@@ -2901,7 +2935,11 @@ EXECUTION HISTORY:
             request_data = {
                 "model": self.model,
                 "messages": messages,
-                "max_completion_tokens": 400
+                # Gemini 3.8 Flash bills its thinking against this cap (a 400 cap
+                # gave a 13-token summary cut at "length", 2026-09-22), so it gets
+                # the identity's own ceiling (max_completion_tokens in
+                # agent_identities.yaml), as its main calls do. Others unchanged.
+                "max_completion_tokens": self.max_completion_tokens if self._uses_gemini_tool_calls() else 400
             }
 
             # Add Langfuse metadata if enabled

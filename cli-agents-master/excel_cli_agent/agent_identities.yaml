@@ -247,6 +247,15 @@
 #              (delta.reasoning_content) with the answer; thinking is reported
 #              OUTSIDE completion_tokens (total - prompt), which the executor
 #              counts. 250-400 tokens/s, longest silence 42 s, no hangs.
+#              THE ONE MODEL ON NATIVE FUNCTION CALLS (2026-09-22): it answers
+#              with function calls, not the JSON reply, so the executor
+#              declares the Excel tools (+ complete_task) for exactly this
+#              model id and it runs the v16 system prompt VARIANT
+#              system_prompt_v16_gemini-3.8-flash.txt (function-call
+#              contract; prompt_versions.MODEL_SYSTEM_PROMPT_VARIANTS). Rows
+#              still record prompt_version 1609; extra_configs carries
+#              response_contract=native_tools and system_prompt_file. See
+#              models_config.GEMINI_TOOL_CALL_MODELS for the probes.
 - agent_model_name: openpyxl_tensorblock/gemini-3.8-flash-high
   model: tensorblock/gemini-3.8-flash
   reasoning_effort: high

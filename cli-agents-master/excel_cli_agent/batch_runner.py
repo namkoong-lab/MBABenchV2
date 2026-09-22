@@ -252,6 +252,26 @@ class BatchRunner:
         """The attachment-provenance keys merged into extra_configs per attempt."""
         return attachment_extra_configs(self._attachments, getattr(self, "_attachment_names", {}))
 
+    def _response_contract_extra_configs(self) -> Dict[str, Any]:
+        """How the model was asked to answer, merged into extra_configs per
+        attempt. Every model but Gemini 3.8 Flash answers in JSON text with
+        the prompt set's own system prompt (json_actions); that one model
+        (models_config.GEMINI_TOOL_CALL_MODELS) answers with native function
+        calls and runs the set's variant system prompt, recorded here by file
+        name while prompt_version stays the set's (1609 for v16) - see
+        prompt_versions.MODEL_SYSTEM_PROMPT_VARIANTS."""
+        from .models_config import uses_gemini_tool_calls
+        from .prompt_versions import PROMPT_VERSIONS
+        identity = getattr(self, "_identity", None)
+        model = getattr(identity, "model", None) or self.config.get("model")
+        native = uses_gemini_tool_calls(model)
+        system_file = Path(self.config.get("system_prompt_path") or "").name or None
+        cfg = {"response_contract": "native_tools" if native else "json_actions"}
+        prompt_ver = self.config.get("prompt_version")
+        if system_file and system_file != PROMPT_VERSIONS.get(prompt_ver, {}).get("system"):
+            cfg["system_prompt_file"] = system_file   # a variant: name it; the set's own file needs no note
+        return cfg
+
     def _run_limit_extra_configs(self) -> Dict[str, Any]:
         """The two run limits, merged into extra_configs per attempt: how many
         iterations (model calls) the agent was allowed and how long one call
