@@ -293,10 +293,16 @@ def _candidate_slugs(model: str) -> list:
 #                $7.50 from 2027-01-01). The live feed never matches the bare
 #                id (OpenRouter lists google/gemini-3.8-flash), so without this
 #                entry every row would cost $0.
+#   qwen3.8-max  every Forge-billed probe call on 2026-09-21 (16 calls) =
+#                $2.00 in / $6.00 out exactly, cached input $0.25. The live
+#                feed never matches the bare id (OpenRouter lists
+#                qwen/qwen3.8-max), so without this entry every row would
+#                cost $0.
 DIRECT_API_PRICING = {
     "claude-fable-5": {"input": 25.00, "output": 50.00},
     "Kimi-K3": {"input": 3.30, "output": 16.50},
     "gemini-3.8-flash": {"input": 0.75, "output": 3.75},
+    "qwen3.8-max": {"input": 2.00, "output": 6.00},
 }
 
 
@@ -360,6 +366,11 @@ MODEL_CONTEXT_WINDOWS = {
     # never matches this id; without the entry the 128k default would squeeze
     # the workbook context to 10k tokens.
     "gemini-3.8-flash": 1_048_576,
+    # 2026-09-21: OpenRouter's value for qwen/qwen3.8-max, reached as
+    # tensorblock/qwen3.8-max. The live feed never matches this id; without
+    # the entry the 128k default would squeeze the workbook context to 10k
+    # tokens.
+    "qwen3.8-max": 1_000_000,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 

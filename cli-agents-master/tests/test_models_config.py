@@ -87,3 +87,15 @@ def test_forge_gemini_prices_and_sizes_with_and_without_the_live_feed(monkeypatc
         assert mc.resolve_pricing("tensorblock/gemini-3.8-flash") == {"input": 0.75, "output": 3.75}
         assert mc.calculate_cost("tensorblock/gemini-3.8-flash", 1_000_000, 100_000) == 1.125
         assert mc.resolve_context_window("tensorblock/gemini-3.8-flash") - 128_000 - 3_000 > 800_000
+
+
+def test_forge_qwen_prices_and_sizes_with_and_without_the_live_feed(monkeypatch):
+    """Re-added 2026-09-21 evening (Pat). Every billed probe call was $2/$6
+    exactly; OpenRouter lists qwen/qwen3.8-max, which the bare id never maps
+    to: without the static entries every row would cost $0 and see a 10k-token
+    workbook context."""
+    for live in ({"qwen/qwen3.8-max": {"input": 2.0, "output": 6.0, "context": 1_000_000}}, None):
+        monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, live=live, **k: live)
+        assert mc.resolve_pricing("tensorblock/qwen3.8-max") == {"input": 2.00, "output": 6.00}
+        assert mc.calculate_cost("tensorblock/qwen3.8-max", 1_000_000, 100_000) == 2.6
+        assert mc.resolve_context_window("tensorblock/qwen3.8-max") - 128_000 - 3_000 > 800_000

@@ -256,3 +256,27 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+#   qwen3.8-max  listed by Forge's /v1/models as tensorblock/qwen3.8-max
+#              (2026-09-21), served by Fireworks. Live-probed through Forge
+#              2026-09-21 in this executor's request shape (16 calls, ~$0.17,
+#              billed exactly $2 / $6 per M, cached input $0.25 per M):
+#              reasoning_effort maps to thinking budgets low / medium / xhigh
+#              = 4,096 / 16,384 / 262,144; xhigh is both the default and the
+#              top tier (high and max are aliases of it; bogus and minimal are
+#              400s), so xhigh is pinned - the counterpart of
+#              grok-4.6-xhigh / kimi-k3-max. Thinking streams as
+#              delta.reasoning_content and is billed inside completion_tokens.
+#              max_completion_tokens 128000 accepted (like the other Forge
+#              identities; not validated upstream, real output far below it).
+#              Dropped for Gemini on 2026-09-21 pm, re-added on Pat's order
+#              the same evening as the third Forge cohort.
+- agent_model_name: openpyxl_tensorblock/qwen3.8-max-xhigh
+  model: tensorblock/qwen3.8-max
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
