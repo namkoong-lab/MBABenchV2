@@ -67,8 +67,9 @@ config/                    The two-tiered config system (ThomsonYen/config).
   config.yaml              Local overrides (gitignored, auto-created).
   python/                  Upstream package; config.py is installed as `config`.
 scripts/
-  export_good_attempts.py  Export the banked good-attempt manifest per
-                           (pipeline, model, task) for the v2 study cohorts.
+  export_good_attempts.py  Export the leaderboard's two pointer manifests:
+                           the attempt that counts per (pipeline, model, task)
+                           and the gradings that count for those attempts.
 operation/v1/              v1 results assembly and paper figures.
 house_standards/           House modelling conventions handed to every v2
                            attempt with the starting files (append-only,
@@ -123,12 +124,21 @@ aws sts get-caller-identity
 aws s3 ls s3://mbabench/
 ```
 
-## Exporting the good-attempt manifest
+## Exporting the good-attempt and good-grading manifests
 
 ```bash
-python scripts/export_good_attempts.py --out scripts/good_attempts_v2.json
+uv run python scripts/export_good_attempts.py
 ```
 
-Writes one entry per (pipeline, model, task) for the eight study cohorts,
-picking the latest non-deprecated, non-failed `task_attempts` row per cell.
-The output is DB-derived and should not be committed.
+Writes two pointer files next to the script - ids and S3 paths only, no
+workbooks and no scores:
+
+- `good_attempts_v2.json`: one entry per (pipeline, model, task) for the
+  production cohorts, picking the latest non-deprecated, non-failed
+  `task_attempts` row on the pipeline's latest prompt version.
+- `good_gradings_v2.json`: every non-deprecated, non-failed `gradings` row for
+  those attempts under one judge version (`--judge-version`, default the
+  judge's current `single_pass.version`).
+
+To add an LLM + pipeline combo, add one line to `COHORTS` in the script. The
+output is DB-derived and should not be committed.
