@@ -363,6 +363,8 @@ def squircle_bar_ends(ax, rects, horizontal: bool) -> None:
             [(rect.get_x(), rect.get_y()),
              (rect.get_x() + rect.get_width(), rect.get_y() + rect.get_height())]
         )
+        x0, x1 = sorted((x0, x1))  # an inverted axis (rows top-down) flips the pixel order
+        y0, y1 = sorted((y0, y1))
         thickness = (y1 - y0) if horizontal else (x1 - x0)
         r = min(r_max, thickness / 2)
         pts = to_data.transform(_squircle_end_path(x0, y0, x1, y1, r, horizontal))

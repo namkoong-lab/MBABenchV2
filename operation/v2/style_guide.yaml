@@ -5,7 +5,7 @@ font: Gill Sans            # macOS system font; falls back to sans-serif when ab
 
 ink:
   primary: "#0b0b0b"       # titles, value labels, category labels
-  muted: "#898781"         # axis titles, tick numbers
+  muted: "#7f8a9c"         # axis titles, tick numbers; cool grey between slate and slate_light
   grid: "#e1e0d9"          # hairline gridlines
   baseline: "#c3c2b7"      # axis spines
   surface: "#ffffff"       # figure and axes background; also the gap between stacked segments
@@ -20,6 +20,23 @@ difficulty:
   Medium: "#3987e5"
   Medium-Hard: "#1c5cab"
   Hard: "#0d366b"
+
+# Model vendors, brand hue where one exists (plot_leaderboard.py). Bars carry the agent name, so identity never rests on hue alone.
+# Validated with dataviz validate_palette.js --pairs all: xAI takes ink.slate because its brand is black; Anthropic/OpenAI sit at CVD dE 6.8.
+company:
+  Anthropic: "#d97757"    # terracotta
+  OpenAI: "#10a37f"       # green
+  Google: "#4285f4"       # blue
+  xAI: "#5b6b84"          # slate, same as ink.slate
+  Moonshot: "#c2418f"     # magenta
+  Alibaba: "#7c3aed"      # violet
+
+# Harness on the leaderboard bars: share of the vendor hue mixed toward the surface (plot_leaderboard.py adds a hatch too).
+harness_tint:
+  GUI: 0.0
+  Excel: 0.14
+  Code: 0.28
+  In-house: 0.42
 
 # Categorical slots in fixed order for future multi-series figures (assign by entity, never cycle).
 categorical:
