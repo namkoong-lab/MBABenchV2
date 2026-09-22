@@ -1664,24 +1664,38 @@ def process_all_worksheets(
     """
 
     def recalculate_xlsx(filepath: str, outdir: str = "."):
-        """Re-save xlsx through LibreOffice to trigger formula calculation."""
+        """Re-save xlsx through LibreOffice to trigger formula calculation.
+
+        Each call gets its own throwaway LibreOffice profile: parallel grading
+        processes otherwise share the default one, and a second soffice on a
+        profile that is in use hands its arguments to the running instance and
+        can exit without converting. The timeout bounds a pathological
+        workbook (a 2026-09-07 recalc ran 7 hours at 100% CPU).
+        """
         ### Note: This function assumes LibreOffice is installed and added to PATH, or the path is provided through environment variable. Otherwise, call the function with run_calculation=False to skip recalculation step.
         import subprocess
+        import tempfile
 
-        subprocess.run(
-            [
-                load_env_var("PATHS_LIBREOFFICE_PATH", required=True),
-                "--headless",
-                "--calc",
-                "--convert-to",
-                "xlsx",
-                "--outdir",
-                outdir,
-                filepath,
-            ],
-            check=True,
-            cwd=os.getcwd(),
-        )
+        profile_dir = tempfile.mkdtemp(prefix="judge_lo_profile_")
+        try:
+            subprocess.run(
+                [
+                    load_env_var("PATHS_LIBREOFFICE_PATH", required=True),
+                    f"-env:UserInstallation={Path(profile_dir).as_uri()}",
+                    "--headless",
+                    "--calc",
+                    "--convert-to",
+                    "xlsx",
+                    "--outdir",
+                    outdir,
+                    filepath,
+                ],
+                check=True,
+                cwd=os.getcwd(),
+                timeout=int(load_env_var("JUDGE_RECALC_TIMEOUT_SECONDS", default=1800)),
+            )
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
 
     if run_calculation:
         # Sometimes. Excel files created by openpyxl won't calculate the cached values from the formulas. This process triggers a recalculation through Libreoffice.

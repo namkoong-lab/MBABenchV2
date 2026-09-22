@@ -461,11 +461,18 @@ def _uncached_count(wb_f, wb_v, targets) -> int:
 
 def _recalculate_copy(xlsx_path: Path, outdir: Path) -> Path:
     soffice = load_env_var("PATHS_LIBREOFFICE_PATH", required=True)
-    subprocess.run(
-        [soffice, "--headless", "--calc", "--convert-to", "xlsx",
-         "--outdir", str(outdir), str(xlsx_path)],
-        check=True, capture_output=True, timeout=300,
-    )
+    # Own throwaway profile per call: parallel graders share the default one
+    # otherwise (see excel_utils.recalculate_xlsx).
+    profile_dir = tempfile.mkdtemp(prefix="judge_lo_profile_")
+    try:
+        subprocess.run(
+            [soffice, f"-env:UserInstallation={Path(profile_dir).as_uri()}",
+             "--headless", "--calc", "--convert-to", "xlsx",
+             "--outdir", str(outdir), str(xlsx_path)],
+            check=True, capture_output=True, timeout=300,
+        )
+    finally:
+        shutil.rmtree(profile_dir, ignore_errors=True)
     out = outdir / xlsx_path.name
     if not out.exists():
         raise FileNotFoundError(f"LibreOffice produced no output for {xlsx_path}")
