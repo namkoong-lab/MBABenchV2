@@ -102,3 +102,18 @@
   thinking_effort: null
   agent_folder: claude_excel_fable_5_1
   agent_model_type: excel
+
+# 2026-09-21: Opus 5 in the Claude add-in. Probed live the same day on the
+# 9222 Chrome, no message sent — model dropdown "Fable 5.1" / "Opus 5" /
+# "Sonnet 5" / "Fable 5" / "Opus 4.8", Fable 5.1 the default. Selecting
+# Opus 5 raised no "About this model" notice and added no effort control:
+# the only reasoning control is still the "Toggle extended thinking" button,
+# ON by default and a live toggle under Opus 5 (under Fable 5.1 it is locked
+# on). Extended thinking pinned ON by handle_initial_setup, as for every
+# Claude identity.
+- agent_model_name: claude_excel_opus_5
+  provider: claude_excel_agent
+  ui_model_label: "Opus 5"
+  thinking_effort: null
+  agent_folder: claude_excel_opus_5
+  agent_model_type: excel
