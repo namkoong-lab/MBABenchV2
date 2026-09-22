@@ -383,3 +383,70 @@ def test_the_tool_server_list_is_kept_with_its_schemas(tmp_path):
             assert all(t.get("inputSchema", {}).get("type") == "object" for t in client.tool_schemas)
         finally:
             client.disconnect()
+
+
+def test_a_forge_reply_that_breaks_off_before_any_text_is_asked_again(monkeypatch):
+    """2026-09-21: "TensorBlock model provider is temporarily unavailable" ended 4 Kimi calls
+    mid-stream before any answer text; each came back as an empty reply and burned a step."""
+    import json
+    import os
+
+    import httpx
+    import openai
+
+    from excel_cli_agent import task_executor as te
+
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+
+    def executor(base_url):
+        ex = ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k",
+                               model="tensorblock/Kimi-K3", reasoning_effort="max", base_url=base_url)
+        ex._get_system_prompt = lambda: "system"
+        ex._assemble_context = lambda task, system_prompt: "context"
+        ex._log_streaming_request = lambda *a, **k: None
+        ex._recreate_openai_client = lambda: None
+        # the unstreamed fallback must never run for these
+        ex.openai_client = type("Dead", (), {"chat": property(lambda self: (_ for _ in ()).throw(AssertionError("fallback ran")))})()
+        return ex
+
+    def outage(text=None):
+        if text:
+            d = type("Delta", (), {"content": text, "role": "assistant"})()
+            yield type("Chunk", (), {"choices": [type("Choice", (), {"delta": d, "finish_reason": None})()], "usage": None})()
+        raise openai.APIError("TensorBlock model provider is temporarily unavailable. Please retry shortly.",
+                              httpx.Request("POST", "https://api.forge.tensorblock.co/v1/chat/completions"), body=None)
+
+    forge = executor("https://api.forge.tensorblock.co/v1")
+    direct = executor("https://api.openai.com/v1")
+
+    with pytest.raises(te.ForgeStreamError, match="temporarily unavailable"):
+        forge._collect_stream_response(outage(), 3600)
+    assert forge._collect_stream_response(outage('{"is_comp'), 3600)[0] == '{"is_comp'   # text arrived: unchanged
+    assert direct._collect_stream_response(outage(), 3600)[0] == ""                        # off Forge: unchanged
+
+    waits = []
+    monkeypatch.setattr(te.time, "sleep", waits.append)
+    task = TaskExecution(task_id="t", user_prompt="p", status=te.TaskStatus.IN_PROGRESS, steps=[], start_time=0.0)
+    answer = json.dumps({"actions": [{"tool": "list_files", "parameters": {}}], "is_complete": False})
+    broke = te.ForgeStreamError("TensorBlock model provider is temporarily unavailable. Please retry shortly.")
+
+    def calls(*outcomes):
+        queue = list(outcomes)
+
+        def call(request_data):
+            outcome = queue.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome, {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        forge._call_api_with_hard_timeout = call
+        return queue
+
+    left = calls(broke, broke, answer)
+    parsed, _ = forge._reason_once(task)
+    assert parsed["actions"] == [{"tool": "list_files", "parameters": {}}] and left == [] and waits == [15, 30]
+
+    # six in a row: the step gets the empty reply it always got (no failed task), never rerun unstreamed
+    del waits[:]
+    left = calls(*[broke] * 6, answer)
+    parsed, _ = forge._reason_once(task)
+    assert parsed.get("actions") == [] and "error" not in parsed and left == [answer] and waits == [15, 30, 60, 120, 120]

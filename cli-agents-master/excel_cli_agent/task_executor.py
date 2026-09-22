@@ -91,6 +91,14 @@ class StreamTimeoutError(Exception):
     pass
 
 
+class ForgeStreamError(Exception):
+    """Forge only (2026-09-21): a streamed reply that broke off before any answer text
+    arrived. "TensorBlock model provider is temporarily unavailable" ended 4 Kimi calls
+    at 20:15-20:19 after minutes of thinking; each came back as an empty reply and
+    burned one of the task's steps. The caller asks again instead."""
+    pass
+
+
 class ExcelTaskExecutor:
     def __init__(self, excel_client: ExcelMCPClient, api_key: str, model: str = "gpt-5-nano-2025-08-07", custom_reasoning: bool = False, fresh_context_mode: bool = False, enhanced_excel_context: bool = True, recent_history_count: int = 5, max_completion_tokens: int = 65535, reasoning_effort: str = None, api_timeout_seconds: int = None, use_anthropic_direct: bool = False, anthropic_api_key: str = None, thinking_budget_tokens: int = None, use_openai_direct: bool = False, system_prompt_path: str = None, base_url: str = None):
         self.excel_client = excel_client
@@ -1292,6 +1300,8 @@ class ExcelTaskExecutor:
         except Exception as e:
             if isinstance(e, httpx.TimeoutException) and getattr(self, "stall_timeout_seconds", None):
                 raise  # Forge stall: the caller retries the call instead of parsing half of it
+            if getattr(self, "stall_timeout_seconds", None) and not response_text.strip() and not native_calls:
+                raise ForgeStreamError(str(e)) from e   # nothing to parse: the caller asks again
             print(f"⚠️ Stream error: {e}, returning partial response ({len(response_text)} chars)")
 
         self._last_finish_reason = finish_reason
@@ -1905,6 +1915,21 @@ EXECUTION HISTORY:
                             else:
                                 print(f"❌ All {MAX_RETRIES} attempts failed, raising error")
                                 raise
+                        except ForgeStreamError as stream_err:
+                            last_error = stream_err
+                            print(f"⚠️ Forge reply broke off before any text on attempt {attempt+1}/{MAX_RETRIES}: {stream_err}")
+                            self._recreate_openai_client()
+                            if attempt < MAX_RETRIES - 1:
+                                backoff_time = min(15 * 2 ** attempt, 120)   # 15, 30, 60, 120, 120 s: the provider is down, not the call
+                                print(f"⏳ Waiting {backoff_time}s before retry...")
+                                time.sleep(backoff_time)
+                            else:
+                                # No worse than before the retries: the step gets the empty
+                                # reply it always got, and the task goes on.
+                                print(f"❌ All {MAX_RETRIES} attempts broke off before any text; continuing with an empty reply")
+                                response_text = ""
+                                usage_info = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                                self._log_streaming_request(request_data, response_text, usage_info, task.task_id, task.total_iterations)
                         except httpx.TimeoutException as httpx_err:
                             last_error = httpx_err
                             print(f"⚠️ httpx timeout on attempt {attempt+1}/{MAX_RETRIES}: {httpx_err}")
@@ -1923,7 +1948,8 @@ EXECUTION HISTORY:
                     # Forge only: a 5xx that ran out of retries fails the call. Its text
                     # ("upstream ...") contains "stream", and this fallback would rerun it
                     # unstreamed and without reasoning_effort - at another effort tier.
-                    forge_transient = self._forge_status_retry_wait(api_err, 0) is not None
+                    forge_transient = (isinstance(api_err, ForgeStreamError)
+                                       or self._forge_status_retry_wait(api_err, 0) is not None)
                     if not forge_transient and ("stream" in err_text.lower() or "unsupported_parameter" in err_text):
                         request_data = {
                             "model": self.model,
