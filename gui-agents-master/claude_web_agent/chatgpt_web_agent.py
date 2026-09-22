@@ -80,6 +80,17 @@ class ChatGPTWebAgent(WebAgent):
         "A network error occurred",
     )
 
+    # A turn that died with NO way to resume it. Live 2026-09-21, chat mode at
+    # Pro, ~80 min into task 14 (DailyCash): the assistant turn collapsed to a
+    # bare "Thinking failed" chip — no text, no file, no Retry button — so
+    # neither stream-error recovery nor "Continue" applies. The wait loop
+    # used to sit on it until the dead-page watchdog fired 30 minutes later.
+    # Matched against the WHOLE response text, never as a substring: a model
+    # may well write the words in prose. Chat mode only — work-mode turns go
+    # quiet for minutes mid-build and have their own end-of-turn handling.
+    TURN_FAILED_TEXTS = ("Thinking failed",)
+    TURN_FAILED_GRACE_SEC = 90
+
     def __init__(self, page, config: dict, shutdown_event=None, completion_logger=None):
         super().__init__(page, config, shutdown_event, completion_logger)
         self.agent_config = config.get("chatgpt_web", {})
@@ -368,6 +379,36 @@ class ChatGPTWebAgent(WebAgent):
     # check → send) respects this.
     _SLIDER_EFFORT_LADDER = ("Light", "Medium", "High", "Extra High", "Max", "Ultra")
 
+    # Slider-generation CHAT picker (probed live 2026-09-21, two Pro
+    # accounts). Chat mode now renders the same widget family as work mode
+    # — the "Select model" toggle, the "Power" slider row and a
+    # menuitemradio model list — and the model/Effort submenus that
+    # ensure_model_and_intelligence drove are gone. What differs from work:
+    #  - models:  "Latest" / "GPT-5.6 Sol" / "GPT-5.5". The GPT-6 generation
+    #             is offered ONLY as "Latest"; work mode's "GPT-6 Astra"
+    #             radio does not exist here and the word "Astra" appears
+    #             nowhere in chat. So the chat cohort is keyed `gpt_6`, not
+    #             `gpt_6_astra`, and its radio is "Latest".
+    #  - ladder:  Instant / Medium / High / Extra High / Pro (5 stops).
+    #  - no fast-mode checkbox.
+    #  - the top stop HOLDS across a menu reopen (work's Ultra snaps back).
+    #  - pill:    model token + tier with no separator — "6Pro" under Latest
+    #             at Pro. Under Latest the token is what "Latest" currently
+    #             resolves to, so the pill is the only on-screen evidence of
+    #             the model; it is matched EXACTLY, and a re-pointed "Latest"
+    #             ("6.1Pro") stops the lane rather than mixing models under
+    #             one label. (At Instant the pill drops the token and reads
+    #             just "Instant" — only the pinned tier's form is relied on.)
+    # These tables are read by the chat slider branch only; work mode never
+    # touches them.
+    CHAT_SLIDER_MODEL_RADIOS = {
+        "gpt_6": "Latest",
+    }
+    CHAT_SLIDER_PILL_TOKENS = {
+        "gpt_6": "6",
+    }
+    _CHAT_SLIDER_LADDER = ("Instant", "Medium", "High", "Extra High", "Pro")
+
     # JS-dispatched hover/click — skip pointer-events actionability checks
     # (submenu flyouts overlay their sibling menu items).
     _JS_HOVER = (
@@ -654,6 +695,27 @@ class ChatGPTWebAgent(WebAgent):
         if not model_label and not intel_label:
             logger.info("No ChatGPT model/intelligence configured — using defaults")
             return True
+
+        # Slider-generation chat picker (2026-09-21) — see the
+        # CHAT_SLIDER_* block. Detected per run, like work mode's two
+        # generations; on the submenu generation the menu is closed again
+        # and the code below runs exactly as it always has.
+        try:
+            if not await self._open_pill_menu_patient():
+                return False
+            if await self._slider_picker_present():
+                model = self.agent_config.get("model")
+                model = model.lower() if model else None
+                if model in self.ONE_AXIS_MODEL_TO_INTELLIGENCE:
+                    model = None  # routed to the tier by _resolve_targets
+                return await self._ensure_chat_slider(
+                    model, model_label, intel_label
+                )
+            await self._close_pill_menu()
+        except Exception as e:
+            logger.error(f"Error selecting model/intelligence (slider): {e}")
+            await self._close_pill_menu()
+            return False
 
         try:
             # ---- Model (nested submenu) ----
@@ -1053,19 +1115,27 @@ class ChatGPTWebAgent(WebAgent):
         logger.info(f"Slider picker: model {short!r} selected (verified)")
         return True
 
-    async def _slider_set_effort(self, effort_label: str) -> bool:
+    async def _slider_set_effort(
+        self, effort_label: str, ladder: Optional[tuple] = None
+    ) -> bool:
         """Walk the Power slider to the target effort with arrow keys.
 
         Label-driven: the announcement text is re-read after every press,
         and positions are never trusted (they shift with the model's
-        available range)."""
-        if effort_label not in self._SLIDER_EFFORT_LADDER:
+        available range).
+
+        ``ladder`` is the UI order of the stops, low → high. Omitted, it is
+        the work-mode ladder, so work-mode callers behave exactly as before;
+        the chat slider branch passes ``_CHAT_SLIDER_LADDER``."""
+        work_ladder = ladder is None
+        ladder = self._SLIDER_EFFORT_LADDER if work_ladder else ladder
+        if effort_label not in ladder:
             logger.error(
                 f"Slider picker: effort {effort_label!r} not in ladder "
-                f"{self._SLIDER_EFFORT_LADDER}"
+                f"{ladder}"
             )
             return False
-        target_idx = self._SLIDER_EFFORT_LADDER.index(effort_label)
+        target_idx = ladder.index(effort_label)
         state = await self._slider_effort_state()
         if state is None:
             logger.error("Slider picker: cannot read Power slider state")
@@ -1078,10 +1148,14 @@ class ChatGPTWebAgent(WebAgent):
             )
             return True
         if target_idx >= total:
+            hint = (
+                "Ultra requires an explicit model, not 'Default'"
+                if work_ladder
+                else "this model's chat ladder stops short of it"
+            )
             logger.error(
                 f"Slider picker: {effort_label!r} needs stop "
-                f"{target_idx + 1} but the slider offers {total} — Ultra "
-                f"requires an explicit model, not 'Default'"
+                f"{target_idx + 1} but the slider offers {total} — {hint}"
             )
             return False
         sc = await self.page.query_selector(self._SLIDER_POWER_SEL)
@@ -1098,7 +1172,7 @@ class ChatGPTWebAgent(WebAgent):
             logger.error("Slider picker: Power row did not take focus")
             return False
         # Bounded walk: one press per iteration, re-read, stop on match.
-        for _ in range(len(self._SLIDER_EFFORT_LADDER) + 2):
+        for _ in range(len(ladder) + 2):
             state = await self._slider_effort_state()
             if state is None:
                 logger.error("Slider picker: Power state unreadable mid-walk")
@@ -1111,7 +1185,7 @@ class ChatGPTWebAgent(WebAgent):
                 )
                 return True
             try:
-                cur_idx = self._SLIDER_EFFORT_LADDER.index(label)
+                cur_idx = ladder.index(label)
             except ValueError:
                 logger.error(
                     f"Slider picker: unknown effort label {label!r} — "
@@ -1148,6 +1222,185 @@ class ChatGPTWebAgent(WebAgent):
             )
             return False
         logger.info(f"Slider picker: speed set to {speed_label!r} (verified)")
+        return True
+
+    @staticmethod
+    def _chat_pill_matches(pill_text: str, token: str, intel_label: str) -> bool:
+        """True iff the chat pill reads exactly ``<token><tier>``.
+
+        Whitespace- and case-insensitive, otherwise exact: "6Pro" and
+        "6 Pro" both satisfy ("6", "Pro"); "6.1Pro", "6 AstraPro", "5.5Pro"
+        and a bare "Pro" do not. Exactness is the point — under "Latest"
+        the token is the only on-screen evidence of which model answers."""
+        def squash(s: str) -> str:
+            return "".join((s or "").split()).lower()
+
+        want = squash(token) + squash(intel_label)
+        return bool(want) and squash(pill_text) == want
+
+    async def _open_pill_menu_patient(self) -> bool:
+        """_open_pill_menu, then a slower second try. Chat path only.
+
+        On a loaded machine the menu can render later than the 1.2 s
+        _open_pill_menu allows; its second click then lands on the
+        late-opening menu and closes it again (live 2026-09-21, load ~20,
+        right after a Work→Chat flip: "pill menu did not open"). So: wait,
+        look before clicking, click once, and poll for the open state."""
+        if await self._open_pill_menu():
+            return True
+        open_sel = '[role="menu"][data-state="open"]'
+        for _ in range(2):
+            await asyncio.sleep(3.0)
+            if await self.page.query_selector(open_sel):
+                logger.info("ChatGPT pill menu opened late")
+                return True
+            pill = await self._get_pill()
+            if pill is None:
+                continue
+            try:
+                await pill.click()
+            except Exception:
+                await pill.evaluate(self._JS_CLICK)
+            for _ in range(10):
+                await asyncio.sleep(0.5)
+                if await self.page.query_selector(open_sel):
+                    logger.info("ChatGPT pill menu opened on the patient retry")
+                    return True
+        return False
+
+    async def _chat_slider_radio_state(self, radio_label: str) -> Optional[bool]:
+        """aria-checked of the chat model radio whose FIRST text line is
+        ``radio_label`` (rows append hints: "GPT-5.5 / Leaving on …").
+        None when no such radio is in the open menu."""
+        return await self.page.evaluate(
+            """(label) => {
+                const radios = [...document.querySelectorAll(
+                    '[role="menu"][data-state="open"] [role="menuitemradio"]')]
+                    .filter(r => r.getClientRects().length > 0);
+                const t = radios.find(r => ((r.innerText || '').trim()
+                    .split('\\n')[0] || '').trim() === label);
+                return t ? t.getAttribute('aria-checked') === 'true' : null;
+            }""",
+            radio_label,
+        )
+
+    async def _chat_slider_set_model(self, radio_label: str) -> bool:
+        """Select ``radio_label`` in the chat slider picker's model list.
+
+        Unlike work mode, an already-checked radio is left alone: work's
+        toggle shows what "Default" RESOLVES to, so a displayed name proved
+        nothing there, whereas this reads the radio's own aria-checked — an
+        explicit selection. Verified on aria-checked after a click, reopening
+        the menu first if the click closed it."""
+        state = await self._chat_slider_radio_state(radio_label)
+        if state is None:
+            # List collapsed behind the view toggle — expand it once.
+            toggle = await self.page.query_selector(self._SLIDER_TOGGLE_SEL)
+            if toggle is not None:
+                await toggle.evaluate(self._JS_POINTER_CLICK)
+                await asyncio.sleep(1.0)
+                state = await self._chat_slider_radio_state(radio_label)
+        if state is None:
+            logger.error(
+                f"Chat slider picker: model radio {radio_label!r} not found"
+            )
+            return False
+        if state:
+            logger.info(f"Chat slider picker: model already {radio_label!r}")
+            return True
+
+        clicked = await self.page.evaluate(
+            """(label) => {
+                const radios = [...document.querySelectorAll(
+                    '[role="menu"][data-state="open"] [role="menuitemradio"]')]
+                    .filter(r => r.getClientRects().length > 0);
+                const t = radios.find(r => ((r.innerText || '').trim()
+                    .split('\\n')[0] || '').trim() === label);
+                if (!t) return false;
+                const r = t.getBoundingClientRect();
+                const opts = {bubbles: true, cancelable: true, view: window,
+                              clientX: r.left + r.width / 2,
+                              clientY: r.top + r.height / 2};
+                for (const ev of ['pointerdown','mousedown','pointerup',
+                                  'mouseup','click'])
+                    t.dispatchEvent(new MouseEvent(ev, opts));
+                return true;
+            }""",
+            radio_label,
+        )
+        if not clicked:
+            logger.error(
+                f"Chat slider picker: model radio {radio_label!r} vanished"
+            )
+            return False
+        await asyncio.sleep(1.2)
+        if not await self._open_pill_menu_patient():
+            return False
+        if await self._chat_slider_radio_state(radio_label) is not True:
+            logger.error(
+                f"Chat slider picker: model {radio_label!r} did not verify "
+                f"as checked"
+            )
+            return False
+        logger.info(f"Chat slider picker: model {radio_label!r} selected (verified)")
+        return True
+
+    async def _ensure_chat_slider(
+        self, model: Optional[str], model_label: Optional[str],
+        intel_label: Optional[str],
+    ) -> bool:
+        """Chat mode on the slider-generation picker (pill menu is open).
+
+        Model radio, then the Power slider on the chat ladder, then the pill.
+        Nothing reopens the menu after the slider is set."""
+        radio_label = None
+        token = None
+        if model:
+            radio_label = self.CHAT_SLIDER_MODEL_RADIOS.get(model, model_label)
+            token = self.CHAT_SLIDER_PILL_TOKENS.get(
+                model, (model_label or "").replace("GPT-", "")
+            )
+        if radio_label and not await self._chat_slider_set_model(radio_label):
+            await self._close_pill_menu()
+            return False
+
+        if intel_label:
+            # The model-list view disables the Power row; a reopen lands on
+            # the simple view. Harmless before the slider is set.
+            disabled = await self.page.evaluate(
+                """(sel) => { const el = document.querySelector(sel);
+                    return !!el && (el.getAttribute('aria-disabled') === 'true'
+                                    || el.hasAttribute('data-disabled')); }""",
+                self._SLIDER_POWER_SEL,
+            )
+            if disabled:
+                await self._close_pill_menu()
+                if not await self._open_pill_menu_patient():
+                    return False
+            if not await self._slider_set_effort(
+                intel_label, ladder=self._CHAT_SLIDER_LADDER
+            ):
+                await self._close_pill_menu()
+                return False
+        await self._close_pill_menu()
+
+        pill = await self._get_pill()
+        pill_text = ((await pill.text_content()) or "").strip() if pill else ""
+        if intel_label and token:
+            ok = self._chat_pill_matches(pill_text, token, intel_label)
+            want = f"{token}{intel_label}"
+        elif intel_label:
+            ok = self._pill_intel_matches(pill_text, intel_label)
+            want = f"…{intel_label}"
+        else:
+            ok, want = True, ""
+        if not ok:
+            logger.error(
+                f"Chat pill verification failed: wanted {want!r}, pill reads "
+                f"{pill_text!r}"
+            )
+            return False
+        logger.info(f"Chat settings verified (pill: {pill_text!r})")
         return True
 
     async def ensure_work_settings(self) -> bool:
@@ -1258,8 +1511,9 @@ class ChatGPTWebAgent(WebAgent):
     async def ensure_features_enabled(self) -> bool:
         """Assert mode, then select the mode's picker settings.
 
-        chat mode → model + intelligence via the flat pill menu.
-        work mode → model + effort + speed via the Advanced rows.
+        chat mode → model + intelligence, on whichever picker generation the
+                    pill menu renders (slider, or the older submenus).
+        work mode → model + effort + speed, likewise (slider or Advanced rows).
         """
         await asyncio.sleep(2)
         # Re-assert mode (cheap when already correct — navigation set it
@@ -2224,6 +2478,23 @@ class ChatGPTWebAgent(WebAgent):
                         stable_since = asyncio.get_event_loop().time()
 
                 elapsed = asyncio.get_event_loop().time() - start_time
+
+                # Dead turn with nothing to click (see TURN_FAILED_TEXTS):
+                # fail the attempt now so the engine starts a fresh chat,
+                # instead of idling out the 30-minute dead-page watchdog.
+                if (
+                    not work_mode
+                    and stable_since is not None
+                    and current_response.strip() in self.TURN_FAILED_TEXTS
+                    and (asyncio.get_event_loop().time() - stable_since)
+                    >= self.TURN_FAILED_GRACE_SEC
+                ):
+                    logger.error(
+                        f"Turn ended with {current_response.strip()!r} and no "
+                        f"Retry control ({int(elapsed)}s elapsed) — failing "
+                        f"this attempt so the engine retries in a fresh chat"
+                    )
+                    return None
 
                 if stable_count >= required_stable:
                     # Content is stable and generation stopped.

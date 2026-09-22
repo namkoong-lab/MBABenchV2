@@ -158,6 +158,55 @@ def rename_solution_file(
     return new_path
 
 
+def set_aside_failed_attempt_files(
+    paths,
+    attempt_no: int,
+    task_name: str,
+    solution_name: str | None = None,
+) -> list[Path]:
+    """Rename what a FAILED attempt's archival download brought in.
+
+    The archival download lands in the same solutions/ folder a later
+    attempt delivers into, and infra/run.py's find_solution_file picks the
+    task's workbook there by task name, then quality, then SIZE. So a dead
+    turn's leftovers could outrank the workbook the successful attempt
+    actually handed over (live 2026-09-21, DailyCash: attempt 1 died with
+    "Thinking failed" and its sandbox still held a 1.2 MB
+    DailyCash_Completed_Model.xlsx the model never delivered).
+
+    The files stay in solutions/ — they still reach S3 as extra workbooks —
+    but under ``failed_attempt{N}__…`` with the task name masked, so the
+    finder's name match can never select them. Never raises.
+    """
+    needle = _sanitize_name(solution_name or task_name).lower()
+    out: list[Path] = []
+    for i, raw in enumerate(paths or [], start=1):
+        try:
+            p = Path(raw)
+            if not p.is_file() or p.name.startswith("failed_attempt"):
+                continue
+            masked = p.name
+            for word in {needle, task_name.lower()}:
+                if word:
+                    masked = re.sub(re.escape(word), "TASK", masked, flags=re.IGNORECASE)
+            new_name = f"failed_attempt{attempt_no}__{masked}"
+            if needle and needle in new_name.lower():
+                new_name = f"failed_attempt{attempt_no}__artifact_{i:02d}{p.suffix}"
+            new_path = p.parent / new_name
+            counter = 1
+            while new_path.exists():
+                new_path = p.parent / (
+                    f"{Path(new_name).stem}_{counter}{Path(new_name).suffix}"
+                )
+                counter += 1
+            shutil.move(str(p), str(new_path))
+            logger.info(f"Set aside failed-attempt file: {p.name} -> {new_path.name}")
+            out.append(new_path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not set aside {raw}: {e}")
+    return out
+
+
 def mark_json_deprecated(
     json_path: str | Path, reason: str = "Superseded by later attempt"
 ):
@@ -687,10 +736,15 @@ async def run_automation(config: dict) -> bool:
                     agent_json_paths.append(completion_logger.session_file)
                     logger.warning(f"Agent failure: {status.value}")
 
-                    # Best-effort archival download
+                    # Best-effort archival download — set aside at once, so
+                    # a later attempt's deliverable is the only workbook the
+                    # runner's solution finder can match by task name.
                     try:
-                        await agent.download_all_artifacts(
+                        archived = await agent.download_all_artifacts(
                             download_dir=str(solutions_dir)
+                        )
+                        set_aside_failed_attempt_files(
+                            archived, total_attempts, task_name, solution_name
                         )
                     except Exception:
                         pass

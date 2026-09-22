@@ -225,6 +225,17 @@ _V2_CHATGPT_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("work", "gpt_6_astra", "ultra", "standard"): AgentIdentity(
         "chatgpt_gpt_6_astra_work_ultra", "chatgpt_gpt_6_astra_work_ultra"
     ),
+    # 2026-09-21 (101-task chat cohort): the GPT-6 generation in CHAT mode at
+    # Pro. Probed live on chatgpt.com the same day, two Pro accounts — chat
+    # now has the slider picker; its model list is Latest / GPT-5.6 Sol /
+    # GPT-5.5, the ladder under Latest is Instant..Pro (5 stops), and the
+    # pill at the top stop reads "6Pro". Work mode's "GPT-6 Astra" radio does
+    # not exist in chat and "Astra" appears nowhere there, so this label says
+    # gpt_6, not gpt_6_astra: it claims only what the UI shows. The agent
+    # refuses to send unless the pill reads exactly "6Pro".
+    ("chat", "gpt_6", "pro"): AgentIdentity(
+        "chatgpt_gpt_6_pro", "chatgpt_gpt_6_pro"
+    ),
 }
 
 

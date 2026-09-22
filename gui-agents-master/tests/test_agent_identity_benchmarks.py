@@ -65,6 +65,14 @@ CASES = [
      "chatgpt_gpt_5_5_instant"),
     ("v2", "chatgpt", dict(model="gpt_5_6_sol", intelligence=None),
      "chatgpt_gpt_5_6_sol"),
+    # the GPT-6 generation in chat is "Latest" in the UI (no Astra radio), so
+    # the chat cohort is keyed gpt_6 — and work-mode knobs left in the block
+    # do not move a chat label
+    ("v2", "chatgpt", dict(mode="chat", model="gpt_6", intelligence="pro"),
+     "chatgpt_gpt_6_pro"),
+    ("v2", "chatgpt", dict(mode="chat", model="gpt_6", intelligence="pro",
+                           effort=None, speed=None),
+     "chatgpt_gpt_6_pro"),
     # work mode has no intelligence axis; setting one must not move its label
     ("v2", "chatgpt", dict(mode="work", model="gpt_5_6_sol", effort="ultra",
                            speed="standard", intelligence="pro"),
