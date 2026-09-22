@@ -1030,6 +1030,44 @@ def grade_single_attempt(
         remove_log_file(log_path)
 
 
+def prune_workbook_copies(result):
+    """Delete an attempt's local workbook copies once its grade is stored.
+
+    Removes the staged attempt/solution/starting workbooks and their CSV
+    exports under judge_results/ (~500 MB per attempt; left in scratch they
+    filled the disk mid-run on 2026-09-22). Scores, logs, and judge
+    conversations stay. Only paths inside the attempt's own task folder are
+    touched, so the shared CSV caches are never affected. Returns bytes freed.
+    """
+    task_folder = Path(result["task_folder"]).resolve()
+    targets = [
+        result.get("solution_csv_dir"),
+        result.get("attempt_csv_dir"),
+        result.get("starting_csv_dir"),
+        task_folder / "ai_attempt.xlsx",
+        task_folder / "solution",
+        task_folder / "starting",
+    ]
+    freed = 0
+    for target in targets:
+        if not target:
+            continue
+        path = Path(target).resolve()
+        if task_folder not in path.parents or not path.exists():
+            continue
+        try:
+            if path.is_dir():
+                freed += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+                shutil.rmtree(path)
+            else:
+                freed += path.stat().st_size
+                path.unlink()
+        except OSError as e:
+            logger.warning(f"  Could not remove {path}: {e}")
+    logger.info(f"  Removed local workbook copies ({freed / 1e6:.0f} MB)")
+    return freed
+
+
 def write_grading_to_db(conn, attempt, result, model, agentic=False):
     """Persist a grading result to the gradings table."""
     # Prefer the versions the grading itself reports (threaded through
@@ -1583,6 +1621,15 @@ def main(args):
             elif args.no_db_write:
                 logger.info("  Skipping DB write (--no-db-write)")
 
+            # With the grade in the DB and the full bundle in S3, the local
+            # workbook copies are redundant.
+            if (
+                result.get("grading_id")
+                and str(result.get("raw_files_path", "")).startswith("s3://")
+                and not getattr(args, "keep_workbook_copies", False)
+            ):
+                prune_workbook_copies(result)
+
         # Save run summary
         summary = {
             "run_id": run_id,
@@ -1874,6 +1921,15 @@ Examples:
             "Skip uploading grading artifacts to S3. raw_files_path will be "
             "set to the local output_dir instead, and raw_files will list "
             "relative paths under it."
+        ),
+    )
+    parser.add_argument(
+        "--keep-workbook-copies",
+        action="store_true",
+        help=(
+            "Keep each attempt's local workbook copies and CSV exports after "
+            "its grade is saved. By default they are deleted once the grade "
+            "is in the DB and its bundle is in S3."
         ),
     )
 
