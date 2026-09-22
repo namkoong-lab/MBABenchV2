@@ -10,6 +10,8 @@ ink:
   baseline: "#c3c2b7"      # axis spines
   surface: "#ffffff"       # figure and axes background; also the gap between stacked segments
   unknown: "#c3c2b7"       # any category the palettes below do not name
+  slate: "#5b6b84"         # secondary text next to the blue ramp (counts, notes, "not covered")
+  slate_light: "#b9c3d2"   # empty markers and hairlines in the same slate family
 
 # tasks.human_difficulty_measure, easiest -> hardest: one blue ramp, light -> dark.
 # Ordinal ramp validated against the light surface (dataviz validate_palette.js --ordinal).
