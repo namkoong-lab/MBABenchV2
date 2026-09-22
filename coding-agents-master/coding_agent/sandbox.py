@@ -18,7 +18,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import RELAY_SOURCE, RELAY_TARGET, RunConfig
+from .config import (CODEX_CATALOG_SOURCE, CODEX_CATALOG_TARGET, RELAY_SOURCE, RELAY_TARGET,
+                     RunConfig, uses_codex_catalog)
 
 
 @dataclass
@@ -63,6 +64,11 @@ def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
                     "-e", f"TRAJ_UPSTREAM={upstream}"]
             if cfg.agent.cli == "claude":  # codex is routed via -c provider flags instead
                 agent_env = {**agent_env, "ANTHROPIC_BASE_URL": "http://127.0.0.1:9877"}
+        if uses_codex_catalog(cfg.agent):
+            if not CODEX_CATALOG_SOURCE.is_file():  # codex would refuse to start: no trial burned
+                return SandboxResult(None, 0.0, False, transcript, stderr_log,
+                                     infra_error=f"Sandbox launch failed: codex model catalog missing: {CODEX_CATALOG_SOURCE}")
+            cmd += ["-v", f"{CODEX_CATALOG_SOURCE}:{CODEX_CATALOG_TARGET}:ro"]  # see config.CODEX_CATALOG_SOURCE
         for key, value in agent_env.items():
             cmd += ["-e", f"{key}={value}"]
         cmd += [cfg.sandbox.image] + agent_cmd

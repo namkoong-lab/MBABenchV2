@@ -13,8 +13,10 @@ text. Auth headers are scrubbed. Streaming responses are passed through
 chunk-by-chunk, so agent latency is unaffected. Stdlib only.
 """
 import base64
+import copy
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -25,6 +27,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 UPSTREAM = os.environ["TRAJ_UPSTREAM"].rstrip("/")
 OUT = os.environ.get("TRAJ_PATH", "/trajectory/trajectory.jsonl")
 PORT = int(os.environ.get("TRAJ_PORT", "9877"))
+# Seconds of upstream silence — connecting, waiting for the reply to start, or
+# between body bytes — before the call counts as dropped. One hour for the
+# vendor APIs. The TensorBlock Forge identities set 600 through their env
+# (agent_identities.yaml): Forge has left calls unanswered for hours, and
+# Codex has no timeout of its own while it waits for a reply to START
+# (2026-09-21 probe: stream_idle_timeout_ms 15 s, still waiting at 150 s), so
+# every such hang would sit here for the full hour.
+UPSTREAM_TIMEOUT = float(os.environ.get("TRAJ_UPSTREAM_TIMEOUT") or 3600)
+# Request rewrites for providers whose Responses API is stricter than OpenAI's,
+# switched on per identity by TRAJ_REQUEST_FIXES (a comma list in the
+# identity's env, so every row records it). A record keeps the request as the
+# CLI sent it and names the rewrites applied ("request_fixes").
+#   reasoning_null_content  drop "content": null from the reasoning items Codex
+#                           sends back: xAI (Grok through TensorBlock) answers
+#                           400 to every call that carries one (2026-09-21).
+REQUEST_FIXES = {f.strip() for f in os.environ.get("TRAJ_REQUEST_FIXES", "").split(",") if f.strip()}
+KNOWN_FIXES = {"reasoning_null_content"}
 
 SCRUB = {"authorization", "x-api-key", "cookie", "set-cookie", "openai-organization"}
 HOP = {"transfer-encoding", "content-length", "connection", "keep-alive", "content-encoding"}
@@ -45,6 +64,347 @@ def _jsonable(raw: bytes, content_type: str):
         return {"_raw_text": raw.decode()}
     except UnicodeDecodeError:
         return {"_raw_b64": base64.b64encode(raw).decode()}
+
+
+def rewrite_request(body: bytes):
+    """(the body to forward, names of the rewrites applied to it)."""
+    if not REQUEST_FIXES or not body:
+        return body, []
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return body, []
+    items = data.get("input") if isinstance(data, dict) else None
+    applied = set()
+    if "reasoning_null_content" in REQUEST_FIXES and isinstance(items, list):
+        for item in items:
+            if (isinstance(item, dict) and item.get("type") == "reasoning"
+                    and "content" in item and item["content"] is None):
+                del item["content"]
+                applied.add("reasoning_null_content")
+    if not applied:
+        return body, []
+    return json.dumps(data).encode(), sorted(applied)
+
+
+# ---------------------------------------------------------------------------
+# Chat Completions wire (TRAJ_WIRE=chat, set per identity). Codex speaks only
+# the Responses API, and some providers are only complete on TensorBlock's
+# /v1/chat/completions (2026-09-21): on /v1/responses Fireworks cuts every
+# Kimi K3 reply at 4,096 tokens and refuses its "max" tier, and Google's
+# Gemini never gets back the thought signature it needs after each tool call.
+# In chat mode each /v1/responses call becomes one streamed chat call and the
+# reply is turned back into the Responses events Codex reads. Content is only
+# re-packaged: the instructions and leading developer messages become the one
+# system message, later developer messages user messages, function calls and
+# their outputs assistant tool_calls and tool messages. Every assistant
+# message is kept exactly as the provider returned it (Kimi's
+# reasoning_content, Gemini's extra_content signatures) and sent back verbatim
+# whenever Codex's history replays that turn. Records carry "wire": "chat",
+# the chat request actually sent and the provider's raw stream.
+WIRE = os.environ.get("TRAJ_WIRE", "responses")
+KNOWN_WIRES = {"responses", "chat"}
+# Reply cap sent as max_completion_tokens (the identity's TRAJ_CHAT_MAX_TOKENS):
+# the model's own output limit, so the provider's default never cuts a reply.
+CHAT_MAX_TOKENS = int(os.environ.get("TRAJ_CHAT_MAX_TOKENS") or 0)
+_turns = {}  # turn number -> the assistant message exactly as returned
+_turn_lock = threading.Lock()
+_turn_seq = [0]
+_OUR_ITEM = re.compile(r"^(?:rs|msg|fc)_tr(\d+)_\d+$")
+
+
+def _text(content) -> str:
+    if isinstance(content, str):
+        return content
+    return "\n\n".join(p.get("text", "") for p in content or []
+                       if isinstance(p, dict) and p.get("type") in ("input_text", "output_text", "text"))
+
+
+def _user_content(content):
+    """A string, or a list of chat parts when the message carries images."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for p in content or []:
+        if not isinstance(p, dict):
+            continue
+        if p.get("type") in ("input_text", "output_text", "text"):
+            parts.append({"type": "text", "text": p.get("text", "")})
+        elif p.get("type") == "input_image" and p.get("image_url"):
+            parts.append({"type": "image_url", "image_url": {"url": p["image_url"]}})
+    if all(p["type"] == "text" for p in parts):
+        return "\n\n".join(p["text"] for p in parts)
+    return parts
+
+
+def responses_to_chat(req: dict):
+    """(chat request body, notes on anything that could not be carried over)."""
+    notes = []
+    items = req.get("input") or []
+    if isinstance(items, str):
+        items = [{"type": "message", "role": "user", "content": items}]
+    system = [req["instructions"]] if req.get("instructions") else []
+    k = 0
+    while (k < len(items) and items[k].get("type", "message") == "message"
+           and items[k].get("role") in ("system", "developer")):
+        system.append(_text(items[k].get("content")))
+        k += 1
+    msgs = [{"role": "system", "content": "\n\n".join(s for s in system if s)}] if system else []
+    call_ids = {it.get("call_id") for it in items if it.get("type") == "function_call"}
+    replayed, loose = set(), None
+
+    def flush():
+        nonlocal loose
+        if loose is not None:
+            if not loose["tool_calls"]:
+                del loose["tool_calls"]
+            msgs.append(loose)
+            loose = None
+
+    for it in items[k:]:
+        kind, role = it.get("type", "message"), it.get("role")
+        if kind in ("reasoning", "function_call") or (kind == "message" and role == "assistant"):
+            ours = _OUR_ITEM.match(str(it.get("id") or ""))
+            turn = int(ours.group(1)) if ours else None
+            with _turn_lock:
+                orig = copy.deepcopy(_turns.get(turn)) if turn is not None else None
+            if orig is not None:
+                if turn not in replayed:
+                    flush()
+                    replayed.add(turn)
+                    if orig.get("tool_calls"):  # only calls still in Codex's history
+                        orig["tool_calls"] = [c for c in orig["tool_calls"] if c.get("id") in call_ids]
+                        if not orig["tool_calls"]:
+                            del orig["tool_calls"]
+                    if orig.get("content") or orig.get("tool_calls"):
+                        msgs.append(orig)
+                continue
+            if kind == "reasoning":
+                notes.append("reasoning item from another source dropped")
+                continue
+            if loose is None:
+                loose = {"role": "assistant", "content": None, "tool_calls": []}
+            if kind == "message":
+                loose["content"] = (loose["content"] or "") + _text(it.get("content"))
+            else:
+                loose["tool_calls"].append({"id": it.get("call_id"), "type": "function",
+                                            "function": {"name": it.get("name"),
+                                                         "arguments": it.get("arguments") or "{}"}})
+            continue
+        flush()
+        if kind == "function_call_output":
+            out = it.get("output")
+            images = []
+            if isinstance(out, list):
+                parts = _user_content(out)
+                if not isinstance(parts, str):
+                    images = [p for p in parts if p["type"] == "image_url"]
+                out = _text(out)
+            msgs.append({"role": "tool", "tool_call_id": it.get("call_id"), "content": out or ""})
+            if images:
+                msgs.append({"role": "user", "content": images})
+        elif kind == "message":
+            msgs.append({"role": "user" if role in ("system", "developer", None) else role,
+                         "content": _user_content(it.get("content"))})
+        else:
+            notes.append(f"input item of type {kind} dropped")
+    flush()
+
+    body = {"model": req.get("model"), "messages": msgs, "stream": True,
+            "stream_options": {"include_usage": True}}
+    tools = []
+    for tool in req.get("tools") or []:
+        if tool.get("type") != "function":
+            notes.append(f"tool of type {tool.get('type')} dropped")
+            continue
+        fn = {"name": tool.get("name"),
+              "parameters": tool.get("parameters") or {"type": "object", "properties": {}}}
+        if tool.get("description"):
+            fn["description"] = tool["description"]
+        tools.append({"type": "function", "function": fn})
+    if tools:
+        body["tools"] = tools
+        choice = req.get("tool_choice")
+        if isinstance(choice, str):
+            body["tool_choice"] = choice
+        elif isinstance(choice, dict) and choice.get("name"):
+            body["tool_choice"] = {"type": "function", "function": {"name": choice["name"]}}
+        if "parallel_tool_calls" in req:
+            body["parallel_tool_calls"] = req["parallel_tool_calls"]
+    effort = (req.get("reasoning") or {}).get("effort")
+    if effort:
+        body["reasoning_effort"] = effort
+    if CHAT_MAX_TOKENS:
+        body["max_completion_tokens"] = CHAT_MAX_TOKENS
+    return body, notes
+
+
+class ChatStream:
+    """Turns one streamed chat completion into the Responses events Codex
+    reads (the same event shapes Forge's own /v1/responses sends)."""
+
+    def __init__(self, emit, model, turn):
+        self.emit, self.model, self.turn = emit, model, turn
+        self.rid, self.created, self.seq = f"resp_tr{turn}", int(time.time()), 0
+        self.items = []  # output items in order of first appearance
+        self.reasoning = self.message = None
+        self.calls = {}  # chat tool-call index -> accumulated call
+        self.extra = {}  # other assistant-message fields the provider sent
+        self.usage = self.finish_reason = self.error = None
+
+    def _ev(self, kind, **fields):
+        self.seq += 1
+        self.emit(kind, {"type": kind, **fields, "sequence_number": self.seq})
+
+    def _response(self, status, **fields):
+        return {"id": self.rid, "object": "response", "created_at": self.created, "status": status,
+                "model": self.model, "output": [], **fields}
+
+    def start(self):
+        self._ev("response.created", response=self._response("in_progress"))
+
+    def _open(self, kind):
+        entry = {"kind": kind, "index": len(self.items), "text": "",
+                 "id": f"{'rs' if kind == 'reasoning' else 'msg'}_tr{self.turn}_{len(self.items)}"}
+        self.items.append(entry)
+        if kind == "reasoning":
+            self._ev("response.output_item.added", output_index=entry["index"],
+                     item={"id": entry["id"], "type": "reasoning", "summary": [], "content": []})
+            self._ev("response.reasoning_summary_part.added", item_id=entry["id"], output_index=entry["index"],
+                     summary_index=0, part={"type": "summary_text", "text": ""})
+        else:
+            self._ev("response.output_item.added", output_index=entry["index"],
+                     item={"id": entry["id"], "type": "message", "role": "assistant",
+                           "status": "in_progress", "content": []})
+            self._ev("response.content_part.added", item_id=entry["id"], output_index=entry["index"],
+                     content_index=0, part={"type": "output_text", "annotations": [], "logprobs": [], "text": ""})
+        return entry
+
+    def feed(self, chunk: dict):
+        if chunk.get("error"):
+            self.error = chunk["error"]
+            return
+        if chunk.get("usage"):
+            self.usage = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            self.finish_reason = choice.get("finish_reason") or self.finish_reason
+            delta = choice.get("delta") or {}
+            thought = delta.get("reasoning_content") or delta.get("reasoning")
+            if isinstance(thought, str) and thought:
+                if self.reasoning is None:
+                    self.reasoning = self._open("reasoning")
+                self.reasoning["text"] += thought
+                self._ev("response.reasoning_summary_text.delta", item_id=self.reasoning["id"],
+                         output_index=self.reasoning["index"], summary_index=0, delta=thought)
+            text = delta.get("content")
+            if isinstance(text, str) and text:
+                if self.message is None:
+                    self.message = self._open("message")
+                self.message["text"] += text
+                self._ev("response.output_text.delta", item_id=self.message["id"],
+                         output_index=self.message["index"], content_index=0, delta=text, logprobs=[])
+            for call in delta.get("tool_calls") or []:
+                acc = self.calls.setdefault(call.get("index", len(self.calls)),
+                                            {"id": None, "name": "", "arguments": "", "extra": {}})
+                acc["id"] = call.get("id") or acc["id"]
+                fn = call.get("function") or {}
+                if fn.get("name") and not acc["name"]:
+                    acc["name"] = fn["name"]
+                acc["arguments"] += fn.get("arguments") or ""
+                acc["extra"].update({k: v for k, v in call.items()
+                                     if k not in ("index", "id", "type", "function") and v is not None})
+            self.extra.update({k: v for k, v in delta.items()
+                               if k not in ("role", "content", "reasoning_content", "reasoning", "tool_calls")
+                               and v is not None})
+
+    def _usage(self):
+        u = self.usage or {}
+        prompt, completion = u.get("prompt_tokens") or 0, u.get("completion_tokens") or 0
+        # Thinking a provider bills but leaves out of completion_tokens (Gemini).
+        hidden = max(0, (u.get("total_tokens") or 0) - prompt - completion)
+        reasoning = ((u.get("completion_tokens_details") or {}).get("reasoning_tokens")
+                     or (u.get("output_tokens_details") or {}).get("reasoning_tokens") or 0)
+        return {"input_tokens": prompt,
+                "input_tokens_details": {"cached_tokens": (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0},
+                "output_tokens": completion + hidden,
+                "output_tokens_details": {"reasoning_tokens": reasoning + hidden},
+                "total_tokens": prompt + completion + hidden}
+
+    def _outcome(self):
+        """("completed" | "incomplete" | "failed", detail) for the whole reply."""
+        if self.error is not None:
+            err = self.error if isinstance(self.error, dict) else {"message": str(self.error)}
+            return "failed", {"code": str(err.get("code") or "server_error"),
+                              "message": str(err.get("message") or err)[:2000]}
+        if self.finish_reason == "length":
+            return "incomplete", {"reason": "max_output_tokens"}
+        if self.finish_reason == "content_filter":
+            return "incomplete", {"reason": "content_filter"}
+        if self.finish_reason is None and not (self.reasoning or self.message or self.calls):
+            return "failed", {"code": "server_error", "message": "upstream stream ended without a reply"}
+        if self.finish_reason not in (None, "stop", "tool_calls", "function_call"):
+            # The provider stopped the reply for its own reason, e.g. Gemini's
+            # "function_call_filter: MALFORMED_FUNCTION_CALL" (a tool call it
+            # could not parse, sent back as plain text): passed on as a
+            # finished answer, Codex would end the task there (2026-09-21,
+            # Gemini light test).
+            return "failed", {"code": "server_error",
+                              "message": f"provider stopped the reply: {self.finish_reason}"}
+        return "completed", None
+
+    def finish(self):
+        status, detail = self._outcome()
+        if status != "completed":
+            # No item of a reply that did not finish is completed: Codex adds
+            # completed items to its history, and the retry it makes must not
+            # carry a cut-off or garbled turn.
+            if status == "failed":
+                self._ev("response.failed", response=self._response("failed", error=detail))
+            else:
+                self._ev("response.incomplete", response=self._response(
+                    "incomplete", incomplete_details=detail, usage=self._usage()))
+            return
+        output = []
+        if self.reasoning:
+            r = self.reasoning
+            part = {"type": "summary_text", "text": r["text"]}
+            self._ev("response.reasoning_summary_text.done", item_id=r["id"], output_index=r["index"],
+                     summary_index=0, text=r["text"])
+            self._ev("response.reasoning_summary_part.done", item_id=r["id"], output_index=r["index"],
+                     summary_index=0, part=part)
+            item = {"id": r["id"], "type": "reasoning", "summary": [part], "content": []}
+            self._ev("response.output_item.done", output_index=r["index"], item=item)
+            output.append(item)
+        if self.message:
+            m = self.message
+            part = {"type": "output_text", "annotations": [], "logprobs": [], "text": m["text"]}
+            self._ev("response.output_text.done", item_id=m["id"], output_index=m["index"], content_index=0,
+                     text=m["text"], logprobs=[])
+            self._ev("response.content_part.done", item_id=m["id"], output_index=m["index"], content_index=0, part=part)
+            item = {"id": m["id"], "type": "message", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": m["text"], "annotations": []}]}
+            self._ev("response.output_item.done", output_index=m["index"], item=item)
+            output.append(item)
+        tool_calls = []
+        for n in sorted(self.calls):
+            acc = self.calls[n]
+            call_id = acc["id"] or f"call_tr{self.turn}_{n}"
+            index = len(self.items) + len(tool_calls)
+            item = {"id": f"fc_tr{self.turn}_{index}", "type": "function_call", "status": "completed",
+                    "call_id": call_id, "name": acc["name"], "arguments": acc["arguments"] or "{}"}
+            self._ev("response.output_item.done", output_index=index, item=item)
+            output.append(item)
+            tool_calls.append({"id": call_id, "type": "function",
+                               "function": {"name": acc["name"], "arguments": acc["arguments"] or "{}"},
+                               **acc["extra"]})
+        message = {"role": "assistant", "content": (self.message or {}).get("text") or None, **self.extra}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        if self.reasoning:
+            message["reasoning_content"] = self.reasoning["text"]
+        with _turn_lock:
+            _turns[self.turn] = message
+        self._ev("response.completed", response=self._response("completed", output=output, usage=self._usage()))
 
 
 def record(entry: dict):
@@ -69,9 +429,10 @@ class Relay(BaseHTTPRequestHandler):
         fwd_headers = {k: v for k, v in self.headers.items()
                        if k.lower() not in ("host", "content-length", "accept-encoding")}
         fwd_headers["accept-encoding"] = "identity"
-        req = urllib.request.Request(UPSTREAM + self.path,
-                                     data=body if body else None,
-                                     headers=fwd_headers, method=self.command)
+        fwd_body, fixes = rewrite_request(body)
+        path = self.path.split("?")[0].rstrip("/")
+        chat = WIRE == "chat" and self.command == "POST" and path.endswith("/responses")
+        url, chat_body, notes, sent = UPSTREAM + self.path, None, [], []
         chunks = []
         # Where a failure happened, so a status -1 record says WHO dropped the
         # connection: "upstream_open" (no response headers ever arrived),
@@ -79,35 +440,86 @@ class Relay(BaseHTTPRequestHandler):
         # client was still connected) or "client_write" (Claude Code / Codex
         # closed its side while the upstream body was still flowing, e.g. its
         # own timeout or watchdog). Before 2026-09-11 the exception was
-        # dropped and every drop looked the same.
+        # dropped and every drop looked the same. "translate": the chat-wire
+        # translation itself failed (answered like a failed connection).
         phase = "upstream_open"
         error = None
         headers_sent = False
         try:
+            if chat:
+                phase = "translate"
+                chat_body, notes = responses_to_chat(json.loads(fwd_body))
+                url = UPSTREAM + path[: -len("/responses")] + "/chat/completions"
+                fwd_body = json.dumps(chat_body).encode()
+                with _turn_lock:
+                    _turn_seq[0] += 1
+                    turn = _turn_seq[0]
+                phase = "upstream_open"
+            req = urllib.request.Request(url, data=fwd_body if fwd_body else None,
+                                         headers=fwd_headers, method=self.command)
             try:
-                resp = urllib.request.urlopen(req, timeout=3600)
+                resp = urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT)
             except urllib.error.HTTPError as e:
                 resp = e
             status = resp.code
             rheaders = list(resp.headers.items())
-            self.send_response(status)
-            for k, v in rheaders:
-                if k.lower() not in HOP:
-                    self.send_header(k, v)
-            self.send_header("Transfer-Encoding", "chunked")
-            self.end_headers()
-            headers_sent = True
-            while True:
-                phase = "upstream_read"
-                chunk = resp.read(8192)
-                if not chunk:
-                    break
-                chunks.append(chunk)
+            if chat and status == 200:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                headers_sent = True
+
+                def emit(kind, payload):
+                    data = f"event: {kind}\ndata: {json.dumps(payload)}\n\n".encode()
+                    sent.append(data)
+                    self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
+                    self.wfile.flush()
+
+                stream = ChatStream(emit, chat_body.get("model"), turn)
                 phase = "client_write"
-                self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
-                self.wfile.flush()
-            phase = "client_write"
-            self.wfile.write(b"0\r\n\r\n")
+                stream.start()
+                while True:
+                    phase = "upstream_read"
+                    line = resp.readline()
+                    if not line:
+                        break
+                    chunks.append(line)
+                    data = line.strip()
+                    if not data.startswith(b"data:"):
+                        continue
+                    data = data[5:].strip()
+                    if data == b"[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except ValueError:
+                        continue
+                    phase = "client_write"
+                    stream.feed(obj)
+                resp.close()
+                phase = "client_write"
+                stream.finish()
+                self.wfile.write(b"0\r\n\r\n")
+            else:
+                self.send_response(status)
+                for k, v in rheaders:
+                    if k.lower() not in HOP:
+                        self.send_header(k, v)
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                headers_sent = True
+                while True:
+                    phase = "upstream_read"
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    phase = "client_write"
+                    self.wfile.write(f"{len(chunk):X}\r\n".encode() + chunk + b"\r\n")
+                    self.wfile.flush()
+                phase = "client_write"
+                self.wfile.write(b"0\r\n\r\n")
         except Exception as e:  # noqa: BLE001 — recorded, then propagated as 502
             error = {"phase": phase, "type": type(e).__name__, "repr": repr(e)[:500],
                      "bytes_relayed": sum(len(c) for c in chunks),
@@ -144,7 +556,7 @@ class Relay(BaseHTTPRequestHandler):
 
         raw = b"".join(chunks)
         ct = dict((k.lower(), v) for k, v in rheaders).get("content-type", "")
-        record({
+        entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "method": self.command,
             "path": self.path,
@@ -152,15 +564,30 @@ class Relay(BaseHTTPRequestHandler):
                                 for k, v in self.headers.items()},
             "request": _jsonable(body, self.headers.get("content-type", "")),
             "status": status,
-            "response": _jsonable(raw, ct),
+            "response": _jsonable(b"".join(sent), "text/event-stream") if sent else _jsonable(raw, ct),
             "latency_ms": round((time.time() - t0) * 1000),
             "error": error,
-        })
+        }
+        if fixes:
+            entry["request_fixes"] = fixes
+        if chat:
+            entry["wire"] = "chat"
+            entry["upstream_request"] = chat_body
+            if sent:  # what the provider streamed, before translation
+                entry["upstream_response"] = _jsonable(raw, ct)
+            if notes:
+                entry["translation_notes"] = notes
+        record(entry)
 
     do_POST = do_GET = do_PUT = do_DELETE = _handle
 
 
 if __name__ == "__main__":
+    unknown = sorted(REQUEST_FIXES - KNOWN_FIXES)
+    if unknown:  # a misspelt fix must not run silently; the entrypoint then aborts (97, no row)
+        raise SystemExit(f"traj_relay: unknown TRAJ_REQUEST_FIXES {unknown}; known: {sorted(KNOWN_FIXES)}")
+    if WIRE not in KNOWN_WIRES:
+        raise SystemExit(f"traj_relay: unknown TRAJ_WIRE {WIRE!r}; known: {sorted(KNOWN_WIRES)}")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Relay)
     print(f"traj_relay: 127.0.0.1:{PORT} -> {UPSTREAM}, recording to {OUT}", flush=True)

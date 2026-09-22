@@ -121,3 +121,81 @@
   effort: xhigh
   extra_args: []
   env: {}
+
+# ---------------------------------------------------------------------------
+# 2026-09-21: Codex CLI through TensorBlock Forge, billed to Forge credits only.
+# env.TRAJ_UPSTREAM points the relay at the gateway, which makes the run use
+# keys.forge_api_key and never the OpenAI key (config.resolve_api_key) and
+# lets the container reach TensorBlock only; run on image v3 (Codex 0.155.1,
+# the Astra cohort's image). Each model gets its own ceilings, measured
+# through TensorBlock the same day (cents-level calls):
+#   - Memory: Codex does not know these ids and would give them its fallback
+#     272,000-token window (it compacts at ~245k). The mounted model catalog
+#     (docker/codex_model_catalog.json, -c model_catalog_json=...) reproduces
+#     that fallback exactly and sets each model's real window: Grok 500,000
+#     (TensorBlock took 469,751 input tokens, refused 530k), Kimi 650,000
+#     (TensorBlock took 649,757 and refused 850k and 1.02M with a 429 "rate
+#     limit, quota, or billing limit" even after a pause — its own cap, below
+#     Kimi's 1,048,576), Gemini 1,048,576 (took 1,000,532, refused 1.1M).
+#     Codex compacts at 90% of the window.
+#   - Tools: Forge's /v1/responses refuses the two non-function tools Codex
+#     adds for Grok (web_search 400, the multi_agent_v1 namespace 422). Both
+#     are off on every Forge entry so the cohorts get the same tools:
+#     exec_command, write_stdin, request_user_input, view_image,
+#     get/create/update_goal.
+#   - TRAJ_UPSTREAM_TIMEOUT 600: the relay cuts a call Forge leaves silent for
+#     10 min and Codex retries it (Codex has no timeout before a reply starts;
+#     Forge has left calls unanswered for hours). Streams stay well inside it
+#     (longest silence seen: 15 s Grok, 19 s Kimi).
+#   - Reply length: Grok has no cap on its route. Kimi and Gemini go over
+#     TensorBlock's chat route (TRAJ_WIRE=chat, docker/traj_relay.py): on
+#     /v1/responses Kimi's replies are cut at 4,096 tokens and its max tier is
+#     refused, and Gemini cannot finish a single tool call.
+- agent_model_name: codex_tensorblock/grok-4.6-xhigh
+  cli: codex
+  model: tensorblock/grok-4.6
+  # xAI's top tier, honoured on this route (one puzzle: 1.7k reasoning
+  # tokens at low, 12.8k at xhigh).
+  effort: xhigh
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false",
+               "-c", 'model_catalog_json="/etc/codex/model_catalog.json"']
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    # xAI answers 400 to every call that sends back a reasoning item carrying
+    # "content": null, which Codex writes into each one (docker/traj_relay.py).
+    TRAJ_REQUEST_FIXES: reasoning_null_content
+
+- agent_model_name: codex_tensorblock/kimi-k3-max
+  cli: codex
+  model: tensorblock/Kimi-K3
+  # Moonshot's top tier (and its default), accepted on the chat route.
+  effort: max
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false",
+               "-c", 'model_catalog_json="/etc/codex/model_catalog.json"']
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    TRAJ_WIRE: chat
+    # Kimi K3's published output limit; TensorBlock does not count it against
+    # the input (100k input + a 1,000,000 cap accepted).
+    TRAJ_CHAT_MAX_TOKENS: "943718"
+
+- agent_model_name: codex_tensorblock/gemini-3.8-flash-high
+  cli: codex
+  model: tensorblock/gemini-3.8-flash
+  # Google's top thinking level (its levels: low / medium / high, medium the
+  # default). reasoning_effort does reach Google through TensorBlock's chat
+  # route ("minimal" is refused upstream), though TensorBlock silently accepts
+  # values Google does not document, and Google's own thinking_config is
+  # refused. Same tier as the CLI cohort openpyxl_tensorblock/gemini-3.8-flash-high.
+  effort: high
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false",
+               "-c", 'model_catalog_json="/etc/codex/model_catalog.json"']
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    TRAJ_WIRE: chat
+    # Gemini 3.8 Flash's output limit (thinking included): a reply asked for
+    # more stopped at 65,536 whatever cap was sent.
+    TRAJ_CHAT_MAX_TOKENS: "65536"

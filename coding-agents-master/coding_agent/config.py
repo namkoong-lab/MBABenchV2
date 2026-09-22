@@ -17,6 +17,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -36,9 +37,31 @@ PROMPTS_DIR = PACKAGE_DIR / "prompts"
 RELAY_SOURCE = PACKAGE_DIR.parent / "docker" / "traj_relay.py"
 RELAY_TARGET = "/usr/local/bin/traj_relay.py"
 
+# Codex model catalog for model ids Codex does not know (the TensorBlock Forge
+# cohorts). Codex gives an unknown id "fallback metadata" with a 272,000-token
+# window it will not raise (model_context_window is capped at the model's
+# max_context_window), so it compacts at ~245k however large the model's real
+# window is. Each entry here reproduces Codex 0.155.1's fallback metadata
+# exactly — same instructions, tools and request fields, checked request by
+# request against the fallback on 2026-09-21 — and changes only
+# context_window / max_context_window to the model's own limit. Mounted
+# read-only when an identity names it in extra_args (-c model_catalog_json=...);
+# rows record the file's hash (extra_configs.codex_model_catalog). Tied to the
+# Codex version of image v3: regenerate it for another Codex version.
+CODEX_CATALOG_SOURCE = PACKAGE_DIR.parent / "docker" / "codex_model_catalog.json"
+CODEX_CATALOG_TARGET = "/etc/codex/model_catalog.json"
+
 # Env var name, and the config/config.yaml keys.* fallback, per agent CLI.
 AGENT_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
 AGENT_KEY_CONFIG = {"claude": "anthropic_api_key", "codex": "openai_api_key"}
+
+# A TensorBlock Forge identity (its env.TRAJ_UPSTREAM points the relay at the
+# gateway) is keyed on its own and never falls back to the vendor key — that
+# fallback would send the OpenAI key to TensorBlock. Same rule as the CLI
+# harness. The key still enters the container under the CLI's usual name
+# (OPENAI_API_KEY): `codex login` and the traj provider's env_key read it.
+FORGE_KEY_ENV = "FORGE_API_KEY"
+FORGE_KEY_CONFIG = "forge_api_key"
 
 # Egress allowlist per agent CLI: the model API only — CLI telemetry is
 # disabled via env, and the firewall fails closed on unresolvable domains.
@@ -153,7 +176,14 @@ class RunConfig:
 
     @property
     def allowed_domains(self) -> list[str]:
-        return DEFAULT_ALLOWED_DOMAINS[self.agent.cli] + self.sandbox.network_allow
+        # A Forge run reaches TensorBlock only: without the vendor's API in the
+        # allowlist, nothing in the container can send the Forge key there.
+        if is_forge(self.agent):
+            host = urlparse(self.agent.env["TRAJ_UPSTREAM"]).hostname
+            base = [host] if host else []
+        else:
+            base = DEFAULT_ALLOWED_DOMAINS[self.agent.cli]
+        return list(dict.fromkeys(base + self.sandbox.network_allow))
 
     @property
     def s3_bucket(self) -> str:
@@ -176,6 +206,10 @@ class RunConfig:
         if relay and RELAY_SOURCE.is_file():
             out["relay"] = {"source": "docker/traj_relay.py",
                             "sha256": hashlib.sha256(RELAY_SOURCE.read_bytes()).hexdigest()}
+        if uses_codex_catalog(self.agent) and CODEX_CATALOG_SOURCE.is_file():
+            out["codex_model_catalog"] = {
+                "source": "docker/codex_model_catalog.json",
+                "sha256": hashlib.sha256(CODEX_CATALOG_SOURCE.read_bytes()).hexdigest()}
         return out
 
 
@@ -290,8 +324,23 @@ def load_config(path: str | Path) -> RunConfig:
     return cfg
 
 
+def is_forge(agent: AgentConfig) -> bool:
+    """True when the identity sends its calls to TensorBlock Forge."""
+    return "tensorblock" in agent.env.get("TRAJ_UPSTREAM", "").lower()
+
+
+def uses_codex_catalog(agent: AgentConfig) -> bool:
+    """True when the identity points Codex at the mounted model catalog."""
+    return agent.cli == "codex" and any(CODEX_CATALOG_TARGET in a for a in agent.extra_args)
+
+
 def resolve_api_key(cfg: RunConfig) -> str:
-    """The agent's API key: environment first, then config/config.yaml keys.*."""
+    """The agent's API key: environment first, then config/config.yaml keys.*.
+    A Forge identity resolves the Forge key or nothing (see FORGE_KEY_ENV)."""
+    if is_forge(cfg.agent):
+        return (os.environ.get(FORGE_KEY_ENV)
+                or repo_config.repo_value("keys", FORGE_KEY_CONFIG)
+                or "")
     return (os.environ.get(cfg.api_key_env)
             or repo_config.repo_value("keys", AGENT_KEY_CONFIG[cfg.agent.cli])
             or "")
@@ -303,8 +352,23 @@ def resolve_secrets(cfg: RunConfig) -> str:
     Returns the agent API key and, in internal mode, fills cfg.db_url /
     cfg.db_source from the benchmark-keyed ladder in repo_config.
     """
+    forge = is_forge(cfg.agent)
+    # Only the relay reads TRAJ_UPSTREAM. Without it the CLI would call its
+    # vendor's API directly — carrying the Forge key.
+    if forge and not (cfg.record_trajectory and cfg.sandbox.mode == "docker"):
+        raise SystemExit(
+            f"{cfg.agent_model_name} reaches TensorBlock Forge only through the "
+            f"trajectory relay: it needs sandbox.mode docker and record_trajectory on"
+        )
     api_key = resolve_api_key(cfg)
     if not api_key:
+        if forge:
+            raise SystemExit(
+                f"Missing {FORGE_KEY_ENV}: set it in the environment, a .env next "
+                f"to coding_agent/, or <MBABenchV2>/config/config.yaml "
+                f"keys.{FORGE_KEY_CONFIG} (a Forge identity never falls back to "
+                f"{cfg.api_key_env})"
+            )
         raise SystemExit(
             f"Missing {cfg.api_key_env}: set it in the environment, a .env next "
             f"to coding_agent/, or <MBABenchV2>/config/config.yaml "

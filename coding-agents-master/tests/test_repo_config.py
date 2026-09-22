@@ -107,6 +107,47 @@ def main() -> int:
         assert resolve_secrets(cfg) == "sk-ant-env"
         print("OK  api key: env first, then config/config.yaml keys.*")
 
+        # A TensorBlock Forge identity takes the Forge key or nothing: the
+        # OpenAI key must never reach TensorBlock, from config or env.
+        saved = {k: os.environ.pop(k, None) for k in ("OPENAI_API_KEY", "FORGE_API_KEY")}
+        forge_run = ("mode: internal\nbenchmark: v2\n"
+                     "agent_model_name: codex_tensorblock/grok-4.6-xhigh\n")
+        (cfg_dir / "config.yaml").write_text(
+            f"database:\n  v1_url: {V1_URL}\n  v2_url: {V2_URL}\n"
+            "keys:\n  openai_api_key: sk-openai-test\n"
+        )
+        fcfg = _run_cfg(tmp, forge_run)
+        os.environ["OPENAI_API_KEY"] = "sk-openai-env"
+        try:
+            resolve_secrets(fcfg)
+            raise AssertionError("a Forge identity must not fall back to the OpenAI key")
+        except SystemExit as e:
+            assert "FORGE_API_KEY" in str(e)
+        (cfg_dir / "config.yaml").write_text(
+            f"database:\n  v1_url: {V1_URL}\n  v2_url: {V2_URL}\n"
+            "keys:\n  openai_api_key: sk-openai-test\n  forge_api_key: sk-forge-test\n"
+        )
+        assert resolve_secrets(fcfg) == "sk-forge-test"
+        os.environ["FORGE_API_KEY"] = "sk-forge-env"
+        assert resolve_secrets(fcfg) == "sk-forge-env"
+        ocfg = _run_cfg(tmp, "mode: internal\nbenchmark: v2\n"
+                             "agent_model_name: codex_openai/gpt-6-astra-xhigh\n")
+        assert resolve_secrets(ocfg) == "sk-openai-env", "vendor identities keep their own key"
+        assert fcfg.allowed_domains == ["api.forge.tensorblock.co"], fcfg.allowed_domains
+        assert ocfg.allowed_domains == ["api.openai.com"], ocfg.allowed_domains
+        # Without the relay Codex would call api.openai.com with the Forge key.
+        hcfg = _run_cfg(tmp, forge_run + "sandbox:\n  mode: host\n")
+        try:
+            resolve_secrets(hcfg)
+            raise AssertionError("a Forge identity must refuse to run without the relay")
+        except SystemExit as e:
+            assert "relay" in str(e)
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+        print("OK  a Forge identity takes the Forge key only, and only through the relay")
+
         (cfg_dir / "config.yaml").write_text(
             f"database:\n  v1_url: {V1_URL}\n  v2_url: {V1_URL}\n"
         )
