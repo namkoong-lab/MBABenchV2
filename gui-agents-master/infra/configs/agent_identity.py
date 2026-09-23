@@ -167,6 +167,12 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("cowork", "fable_5_1", "max"): AgentIdentity(
         "claude_fable_5_1_cowork_max", "claude_fable_5_1_cowork_max"
     ),
+    # 2026-09-23: Opus 5.5 in cowork at Max, run as four disjoint lanes on
+    # four accounts. Cowork-only, like the Fable 5.1 rerun above — a
+    # chat-mode config naming opus_5_5 is refused before the browser opens.
+    ("cowork", "opus_5_5", "max"): AgentIdentity(
+        "claude_opus_5_5_cowork_max", "claude_opus_5_5_cowork_max"
+    ),
 }
 
 

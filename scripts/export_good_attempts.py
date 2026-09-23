@@ -116,6 +116,9 @@ COHORTS = [
     ("coding", "grok",   "coding_cli", "codex_tensorblock/grok-4.6-xhigh"),
     ("coding", "kimi",   "coding_cli", "codex_tensorblock/kimi-k3-max"),  # added 2026-09-22
     ("cli",    "gemini", "api",        "openpyxl_tensorblock/gemini-3.8-flash-high"),  # added 2026-09-23
+    # GUI cowork on Opus 5.5, four disjoint lanes on four accounts (2026-09-23).
+    # One cohort, one label — the lane split is an operational detail, not an axis.
+    ("gui",    "opus",   "gui",        "claude_opus_5_5_cowork_max"),
 ]
 # (pipeline, model) names a leaderboard row, and the v12 grading driver keys on it too.
 assert len({c[:2] for c in COHORTS}) == len(COHORTS), "two cohorts share a (pipeline, model) pair"

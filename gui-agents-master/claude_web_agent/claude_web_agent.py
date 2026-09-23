@@ -271,6 +271,7 @@ class ClaudeWebAgent(WebAgent):
     # (claude_fable_5_1_cowork_max, 2026-09-10); a chat-mode config naming
     # it is still refused before the browser opens.
     MODEL_LABELS = {
+        "opus_5_5": "Opus 5.5",
         "opus_5": "Opus 5",
         "fable_5_1": "Fable 5.1",
         "fable_5": "Fable 5",
