@@ -35,6 +35,13 @@ PORT = int(os.environ.get("TRAJ_PORT", "9877"))
 # (2026-09-21 probe: stream_idle_timeout_ms 15 s, still waiting at 150 s), so
 # every such hang would sit here for the full hour.
 UPSTREAM_TIMEOUT = float(os.environ.get("TRAJ_UPSTREAM_TIMEOUT") or 3600)
+# An upstream 429 (rate limit) is retried HERE, with backoff, so the CLI never sees it:
+# Codex treats one 429 as "exceeded retry limit" and ends the task (2026-09-22, two
+# Kimi attempts lost that way when TensorBlock rate-limited five concurrent streams).
+# Retry-After wins when the provider sends one (capped at 120 s); otherwise the delay
+# doubles from TRAJ_RETRY_429_BASE seconds up to 60 s. 0 attempts = old behaviour.
+RETRY_429_MAX = int(os.environ.get("TRAJ_RETRY_429_MAX") or 8)
+RETRY_429_BASE = float(os.environ.get("TRAJ_RETRY_429_BASE") or 5)
 # Request rewrites for providers whose Responses API is stricter than OpenAI's,
 # switched on per identity by TRAJ_REQUEST_FIXES (a comma list in the
 # identity's env, so every row records it). A record keeps the request as the
@@ -340,8 +347,15 @@ class ChatStream:
             return "incomplete", {"reason": "max_output_tokens"}
         if self.finish_reason == "content_filter":
             return "incomplete", {"reason": "content_filter"}
-        if self.finish_reason is None and not (self.reasoning or self.message or self.calls):
-            return "failed", {"code": "server_error", "message": "upstream stream ended without a reply"}
+        if self.finish_reason is None:
+            # The provider closed the stream before its finish_reason chunk: a
+            # dropped call, whatever had already arrived. Passed on as
+            # "completed", a reply of reasoning alone made Codex end the task
+            # (2026-09-23, Kimi task 43: 471 s of thinking, stream cut, no
+            # answer, no tool call, exit 0, no workbook). Failed → Codex retries.
+            partial = bool(self.reasoning or self.message or self.calls)
+            return "failed", {"code": "server_error", "message": "upstream stream ended without a finish_reason"
+                              + (" (partial reply discarded)" if partial else " (no reply)")}
         if self.finish_reason not in (None, "stop", "tool_calls", "function_call"):
             # The provider stopped the reply for its own reason, e.g. Gemini's
             # "function_call_filter: MALFORMED_FUNCTION_CALL" (a tool call it
@@ -434,6 +448,7 @@ class Relay(BaseHTTPRequestHandler):
         chat = WIRE == "chat" and self.command == "POST" and path.endswith("/responses")
         url, chat_body, notes, sent = UPSTREAM + self.path, None, [], []
         chunks = []
+        retries = []  # upstream 429s answered here before the final reply
         # Where a failure happened, so a status -1 record says WHO dropped the
         # connection: "upstream_open" (no response headers ever arrived),
         # "upstream_read" (the API side closed or errored mid-body — the
@@ -455,13 +470,29 @@ class Relay(BaseHTTPRequestHandler):
                     _turn_seq[0] += 1
                     turn = _turn_seq[0]
                 phase = "upstream_open"
-            req = urllib.request.Request(url, data=fwd_body if fwd_body else None,
-                                         headers=fwd_headers, method=self.command)
-            try:
-                resp = urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT)
-            except urllib.error.HTTPError as e:
-                resp = e
-            status = resp.code
+            while True:
+                req = urllib.request.Request(url, data=fwd_body if fwd_body else None,
+                                             headers=fwd_headers, method=self.command)
+                try:
+                    resp = urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT)
+                except urllib.error.HTTPError as e:
+                    resp = e
+                status = resp.code
+                if status != 429 or len(retries) >= RETRY_429_MAX:
+                    break
+                snippet = resp.read(500).decode(errors="replace")
+                resp.close()
+                delay = min(RETRY_429_BASE * (2 ** len(retries)), 60.0)
+                try:
+                    if resp.headers.get("retry-after"):
+                        delay = min(float(resp.headers.get("retry-after")), 120.0)
+                except ValueError:
+                    pass
+                retries.append({"ts": datetime.now(timezone.utc).isoformat(), "status": 429,
+                                "delay_s": round(delay, 2), "body": snippet})
+                phase = "upstream_retry"
+                time.sleep(delay)
+                phase = "upstream_open"
             rheaders = list(resp.headers.items())
             if chat and status == 200:
                 self.send_response(200)
@@ -570,6 +601,8 @@ class Relay(BaseHTTPRequestHandler):
         }
         if fixes:
             entry["request_fixes"] = fixes
+        if retries:
+            entry["upstream_retries"] = retries
         if chat:
             entry["wire"] = "chat"
             entry["upstream_request"] = chat_body

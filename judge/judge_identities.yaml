@@ -82,6 +82,15 @@
   model: claude-opus-5
   effort: null                        # anthropic path drops reasoning_effort; Opus 5 thinking is always-on (its floor)
 
+# Stage 3 "better judge" arm (2026-09-22): Fable 5.1 as grader at its default
+# effort (null = output_config.effort omitted), native Anthropic path. No
+# price line in llm_utils: rows carry the (10, 30) fallback estimate; ground
+# truth is the Anthropic credits delta.
+- grader_model: anthropic/claude-fable-5-1
+  provider: anthropic
+  model: claude-fable-5-1
+  effort: null
+
 # Judge-effort canary graders (2026-09-01). One label per model — the low/high
 # arms run via --reasoning-effort overrides on the same label, recorded in
 # gradings.grader_reasoning, so each model stays ONE grader population.
