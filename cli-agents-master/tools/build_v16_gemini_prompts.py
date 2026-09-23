@@ -24,8 +24,14 @@ Minimal edits, nothing else touched:
      is_complete=true" -> "calling complete_task" (three places).
   3. PHASE 2 batching line: "in the same batch" -> "in the same reply".
   4. RESPONSE FORMAT (STRICT JSON) block, up to the closing "If the task is
-     complete..." line: replaced by the FUNCTION-CALL contract - one function
-     call per Excel operation, every call of the step in one reply, in order,
+     complete..." line: replaced by (a) a "build, do not re-read" passage -
+     in every local fresh-context run the model spent all its iterations
+     re-reading sheets the grid dump already showed it (list_files x11,
+     Assumptions x10 in 40 iterations) while every other model built from
+     the dump - plus an "only K iterations" passage tying the ITERATION
+     n/K line of every message to how much each reply must carry - and (b)
+     the FUNCTION-CALL contract - one function call per
+     Excel operation, every call of the step in one reply, in order,
      stopping at the first failure; complete_task(completion_summary) to
      finish; no JSON, no prose.
 
@@ -45,7 +51,23 @@ SYS_IN, SYS_OUT = PROMPTS / "system_prompt_v16.txt", PROMPTS / "system_prompt_v1
 JSON_CONTRACT_START = "RESPONSE FORMAT (STRICT JSON - NO COMMENTS):\n"
 JSON_CONTRACT_END = "If the task is complete, set is_complete to true and provide a completion_summary.\n"
 
-FUNCTION_CONTRACT = """RESPONSE FORMAT (FUNCTION CALLS - NO JSON, NO PROSE):
+FUNCTION_CONTRACT = """THE WORKBOOK IS ALREADY IN FRONT OF YOU - BUILD, DO NOT RE-READ:
+Your message shows the current contents of every worksheet in solution.xlsx (and the source workbook)
+cell by cell - values and formulas - under the "=== SOLUTION FILE" / "=== WORKSHEET" headings. That IS
+the model's state. Do not spend a reply on list_files, list_worksheets, get_cell_range or
+get_file_metadata to look at what is already shown: those calls return nothing you do not have.
+
+YOU HAVE ONLY K ITERATIONS - DO AS MUCH AS POSSIBLE IN EACH:
+The message states "ITERATION n/K". K is the total number of replies you get for the whole task; when
+it runs out the workbook is graded as it stands, finished or not. One tool call per reply therefore
+means an unfinished model. Every reply must carry as much of the build as you can write - dozens of
+calls are normal: create every sheet AND write its labels, inputs and formulas in the same reply;
+fill a whole cashflow table in one reply; write the Summary analysis together with the sheets it
+plans. Once solution.xlsx exists, the very next reply builds - the Summary analysis, then the working
+sheets, cells and formulas - and each reply after it finishes as much of what remains as possible.
+Read only a cell whose computed value you cannot see, and only after building.
+
+RESPONSE FORMAT (FUNCTION CALLS - NO JSON, NO PROSE):
 
 You act ONLY through the declared functions. Every Excel operation is one function call with the
 tool's own parameters; the JSON text formats other agents use do NOT apply to you.

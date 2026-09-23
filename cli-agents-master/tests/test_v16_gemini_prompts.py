@@ -61,6 +61,8 @@ def main() -> int:
     for gone in ("is_complete", "STRICT JSON", '"actions"', '"action"', "Return ONLY valid JSON", "completion_summary\""):
         assert gone not in text, f"JSON contract survived: {gone!r}"
     for present in ("RESPONSE FORMAT (FUNCTION CALLS - NO JSON, NO PROSE)", "complete_task",
+                    "THE WORKBOOK IS ALREADY IN FRONT OF YOU - BUILD, DO NOT RE-READ",
+                    "YOU HAVE ONLY K ITERATIONS - DO AS MUCH AS POSSIBLE IN EACH", 'The message states "ITERATION n/K"',
                     "Put EVERY call the step needs into ONE reply", "execute SEQUENTIALLY",
                     "Do not combine it with other\n  calls"):
         assert present in text, present
