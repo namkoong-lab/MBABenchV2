@@ -262,3 +262,40 @@
     # Gemini 3.8 Flash's output limit (thinking included): a reply asked for
     # more stopped at 65,536 whatever cap was sent.
     TRAJ_CHAT_MAX_TOKENS: "65536"
+
+# 2026-09-23 (Patrick, Stage 5 prompt ablation): Codex CLI driving Claude Fable 5.1 at max effort through
+# TensorBlock Forge, billed to Forge credits. Claude Code cannot use Forge: its Anthropic route answers 405 "The
+# Claude Code API is no longer supported by Forge", so the Codex harness carries the model. Forge serves the model
+# as us.anthropic.claude-fable-5-1 (Amazon Bedrock) on its chat route; probed the same day (cents): tool calls
+# come back well-formed, reasoning_effort reaches the model (max adds hidden reasoning, low answers directly;
+# Forge does not report reasoning tokens separately), max_tokens 128000 (Fable's output limit) is accepted.
+# Chat wire (TRAJ_WIRE=chat) with the cap pinned, as for Kimi/Gemini. No model catalog on this box: Codex gives
+# the id its fallback 272,000-token window (compacts at ~245k), above the 200,000 Claude Code ran Fable with.
+# Same tools as the other Forge entries. Image v3 (Codex 0.155.1).
+- agent_model_name: codex_tensorblock/claude-fable-5-1-max
+  cli: codex
+  model: tensorblock/claude-fable-5-1
+  effort: max
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false"]
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    TRAJ_WIRE: chat
+    TRAJ_CHAT_MAX_TOKENS: "128000"
+
+# 2026-09-23 (Patrick): full 101-task run of Codex CLI driving Claude Opus 5 at max effort through TensorBlock
+# Forge, billed to Forge credits, prompt v13 (pv 113). Same harness and pins as claude-fable-5-1-max above (Claude
+# Code cannot use Forge); only the model differs. Probed the same day (cents): Forge serves it as
+# us.anthropic.claude-opus-5 (Amazon Bedrock) on the chat route, tool calls come back well-formed, max_tokens
+# 128000 is accepted, reasoning_effort reaches the model (an unknown value is refused 400; max spent 2.5x the
+# completion tokens of low on the same puzzle). Codex fallback 272,000-token window, as for Fable. Image v3.
+- agent_model_name: codex_tensorblock/claude-opus-5-max
+  cli: codex
+  model: tensorblock/claude-opus-5
+  effort: max
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false"]
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    TRAJ_WIRE: chat
+    TRAJ_CHAT_MAX_TOKENS: "128000"
