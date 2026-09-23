@@ -98,3 +98,14 @@ SKIPPED_TASKS.md
 tests/test_recalc_smoke_local.py
 workspaces_*/
 err.txt
+
+# Full-run lane configs, plans, queues, samplers and probes that live in this
+# directory (Forge Tier 2 + the v2 Fable/Astra runs, 2026-09) — operational
+# files under the same standing rule as run_configs/. Anchored to this dir.
+/forge_*
+/v2_*_lane*.yaml
+/v2_*_canary_*.yaml
+/v2_full_run_lane_plan.json
+/kimi_stepper.events.jsonl
+/preflight_tools.py
+/backfill_attempt_row.py

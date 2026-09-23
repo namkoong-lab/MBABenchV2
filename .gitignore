@@ -19,3 +19,5 @@ operation/results/
 # DB-derived manifests written by scripts/export_good_attempts.py; never commit.
 scripts/good_attempts_v2.json
 scripts/good_gradings_v2.json
+# Grading run logs written beside the judge.
+judge/*.log
