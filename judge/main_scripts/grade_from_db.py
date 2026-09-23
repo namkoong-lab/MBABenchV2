@@ -1030,16 +1030,38 @@ def grade_single_attempt(
         remove_log_file(log_path)
 
 
+_KEEP_IN_OUTPUT_DIR = frozenset({"judge_conversation_logs"})
+
+
+def _is_workbook_export_dir(path):
+    """True for a CSV-export folder of one workbook (no subfolders, has CSVs).
+
+    Used to find the export folders of a FAILED grading, whose result dict
+    carries no *_csv_dir keys. Deliberately narrow: judge_conversation_logs
+    (json/yaml) and any future results folder are left alone.
+    """
+    try:
+        entries = list(path.iterdir())
+    except OSError:
+        return False
+    return any(p.is_file() and p.suffix == ".csv" for p in entries) and not any(
+        p.is_dir() for p in entries
+    )
+
+
 def prune_workbook_copies(result):
-    """Delete an attempt's local workbook copies once its grade is stored.
+    """Delete an attempt's local workbook copies once the attempt is finished.
 
     Removes the staged attempt/solution/starting workbooks and their CSV
-    exports under judge_results/ (~500 MB per attempt; left in scratch they
-    filled the disk mid-run on 2026-09-22). Scores, logs, and judge
-    conversations stay. Only paths inside the attempt's own task folder are
-    touched, so the shared CSV caches are never affected. Returns bytes freed.
+    exports under judge_results/ (~500 MB per attempt, up to 2 GB for the
+    biggest workbooks; left in scratch they filled the disk on 2026-09-22).
+    They are re-downloadable inputs and re-derivable exports, and the graded
+    bundle itself is in S3. Scores, logs, and judge conversations stay. Only
+    paths inside the attempt's own task folder are touched, so the shared CSV
+    caches are never affected. Returns bytes freed.
     """
     task_folder = Path(result["task_folder"]).resolve()
+    output_dir = Path(result.get("output_dir") or task_folder / "judge_results")
     targets = [
         result.get("solution_csv_dir"),
         result.get("attempt_csv_dir"),
@@ -1048,6 +1070,14 @@ def prune_workbook_copies(result):
         task_folder / "solution",
         task_folder / "starting",
     ]
+    if output_dir.is_dir():
+        targets += [
+            d
+            for d in output_dir.iterdir()
+            if d.is_dir()
+            and d.name not in _KEEP_IN_OUTPUT_DIR
+            and _is_workbook_export_dir(d)
+        ]
     freed = 0
     for target in targets:
         if not target:
@@ -1065,6 +1095,49 @@ def prune_workbook_copies(result):
         except OSError as e:
             logger.warning(f"  Could not remove {path}: {e}")
     logger.info(f"  Removed local workbook copies ({freed / 1e6:.0f} MB)")
+    return freed
+
+
+def enforce_cache_cap(cache_base, cap_bytes, min_age_seconds=3600):
+    """Evict the oldest entries of a CSV cache directory to keep it under a cap.
+
+    The per-attempt cache is unbounded by nature — one entry per attempt, about
+    40 MB each — and refilled ~5 GB/hour during a prod run. Entries are whole
+    `attempt_id=…` folders; only ones untouched for min_age_seconds are
+    candidates, so a concurrent grader copying a fresh entry is never pulled
+    out from under it. Best effort: errors are logged, never raised, and a
+    cap of 0 disables eviction. Returns bytes freed.
+    """
+    cache_base = Path(cache_base)
+    if cap_bytes <= 0 or not cache_base.is_dir():
+        return 0
+    entries, total = [], 0
+    for entry in cache_base.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            size = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+            entries.append((entry.stat().st_mtime, size, entry))
+        except OSError:
+            continue  # evicted by a concurrent grader
+        total += size
+    if total <= cap_bytes:
+        return 0
+    freed, cutoff = 0, time.time() - min_age_seconds
+    for mtime, size, entry in sorted(entries):
+        if total - freed <= cap_bytes:
+            break
+        if mtime > cutoff:
+            continue
+        try:
+            shutil.rmtree(entry)
+            freed += size
+        except OSError as e:
+            logger.warning(f"  Could not evict cache entry {entry.name}: {e}")
+    logger.info(
+        f"  Cache {cache_base.name}: {total / 1e9:.1f} GB over the "
+        f"{cap_bytes / 1e9:.0f} GB cap — evicted {freed / 1e9:.1f} GB"
+    )
     return freed
 
 
@@ -1576,6 +1649,9 @@ def main(args):
                             f"concurrently ({e.__class__.__name__}); using it"
                         )
                 attempt_csv_cache[attempt_id] = str(attempt_cache_dir)
+                enforce_cache_cap(
+                    attempt_cache_base, args.cache_cap_gb * 1_000_000_000
+                )
 
             # If judge_case auto-routed to the agentic judge due to context
             # overflow, the run that actually produced these scores was agentic.
@@ -1621,14 +1697,20 @@ def main(args):
             elif args.no_db_write:
                 logger.info("  Skipping DB write (--no-db-write)")
 
-            # With the grade in the DB and the full bundle in S3, the local
-            # workbook copies are redundant.
+            # Drop the local workbook copies once the attempt is finished:
+            # after its grade is stored (bundle is in S3), or right away if the
+            # grading failed — a failure's copies are re-downloadable inputs,
+            # and its logs, which are what gets read, are kept either way.
             if (
-                result.get("grading_id")
-                and str(result.get("raw_files_path", "")).startswith("s3://")
-                and not getattr(args, "keep_workbook_copies", False)
+                not getattr(args, "keep_workbook_copies", False)
+                and result.get("task_folder")
+                and not result.get("skipped")
             ):
-                prune_workbook_copies(result)
+                stored = result.get("grading_id") and str(
+                    result.get("raw_files_path", "")
+                ).startswith("s3://")
+                if stored or not result.get("success"):
+                    prune_workbook_copies(result)
 
         # Save run summary
         summary = {
@@ -1921,6 +2003,17 @@ Examples:
             "Skip uploading grading artifacts to S3. raw_files_path will be "
             "set to the local output_dir instead, and raw_files will list "
             "relative paths under it."
+        ),
+    )
+    parser.add_argument(
+        "--cache-cap-gb",
+        type=float,
+        default=5.0,
+        help=(
+            "Keep the per-attempt CSV cache under this many GB by evicting its "
+            "oldest entries (default 5; 0 disables eviction). The per-task "
+            "solution and starting caches are bounded by the task count and "
+            "are never evicted."
         ),
     )
     parser.add_argument(
