@@ -540,8 +540,20 @@ def _workbook_rank(path: Path) -> tuple[bool, int, int]:
     return (size >= QUALITY_MIN_BYTES and n_sheets >= QUALITY_MIN_SHEETS), size, n_sheets
 
 
+def _input_digests(inputs) -> set[str]:
+    """sha1 of each starting file, for spotting a copy of one in solutions/."""
+    out = set()
+    for raw in inputs or []:
+        try:
+            out.add(hashlib.sha1(Path(raw).read_bytes()).hexdigest())
+        except Exception:
+            continue
+    return out
+
+
 def find_solution_file(
-    run_dir: Path, task_name: str, solution_name: str | None, after: datetime
+    run_dir: Path, task_name: str, solution_name: str | None, after: datetime,
+    inputs=None,
 ) -> Path | None:
     """The attempt's deliverable workbook.
 
@@ -573,6 +585,31 @@ def find_solution_file(
         return None
     if len(matches) == 1:
         return matches[0]
+
+    # A COPY OF THE INPUT is never the deliverable. It is routinely among the
+    # downloads, it clears the quality floor, and ranking is size-first — so a
+    # starting workbook larger than the model's output wins and the attempt is
+    # failed by the quality gate with the real deliverable sitting beside it
+    # (live 2026-09-23, task 99 TAM: 4.4 MB input copy chosen over the 2.6 MB
+    # model with 87,198 formulas). Drop those candidates before ranking, but
+    # never drop the last one — a caller with nothing left is worse off.
+    digests = _input_digests(inputs)
+    if digests and len(matches) > 1:
+        kept = []
+        for p in matches:
+            try:
+                if hashlib.sha1(p.read_bytes()).hexdigest() in digests:
+                    logger.info(
+                        f"Ignoring {p.name}: byte-identical to a starting file"
+                    )
+                    continue
+            except Exception:
+                pass
+            kept.append(p)
+        if kept:
+            matches = kept
+        if len(matches) == 1:
+            return matches[0]
 
     scored = []
     for p in matches:
@@ -1338,7 +1375,8 @@ def main() -> int:
             rc = run_engine(engine_config, engine_script, deadman, cdp_port)
             finished = datetime.now()
             solution_file = find_solution_file(
-                run_dir, spec.task_name, spec.solution_name, started
+                run_dir, spec.task_name, spec.solution_name, started,
+                inputs=list(spec.upload_files or []),
             )
             if rc == 0:
                 status = "success"

@@ -1871,10 +1871,70 @@ class ChatGPTWebAgent(WebAgent):
                     "Uploads never finished processing — not proceeding "
                     "(would fail to submit)")
                 return False
+            # Remember what the composer is supposed to be carrying: an
+            # attachment can still vanish between here and the send (see
+            # _missing_attachments).
+            self._expected_attachments = [str(p) for p in file_paths]
             return True
         except Exception as e:
             logger.error(f"File upload failed: {e}")
             return False
+
+    async def _missing_attachments(self) -> list[str]:
+        """Files uploaded earlier whose tile is no longer in the composer.
+
+        Live 2026-09-22/23 (lane B, several tasks): uploads settled, the
+        picker verified, and then ONE of the two tiles quietly disappeared —
+        the case workbook on one task, House_Standards on another. With an
+        attachment missing the composer refuses to submit: the Send click
+        does nothing, Enter does nothing, and the attempt burns both wait
+        windows before failing. Checking costs one DOM query and turns a
+        silent 75-second stall into a re-upload.
+        """
+        missing = []
+        for path in getattr(self, "_expected_attachments", []) or []:
+            stem = Path(path).stem.replace('"', "")
+            try:
+                if await self.page.locator(self._chip_selector(stem)).count() == 0:
+                    missing.append(path)
+            except Exception:
+                continue
+        return missing
+
+    async def _restore_attachments(self) -> bool:
+        """Re-upload any attachment that vanished. True if the composer ends
+        up carrying everything it should."""
+        missing = await self._missing_attachments()
+        if not missing:
+            return True
+        logger.warning(
+            "Attachment(s) vanished from the composer before send: "
+            + ", ".join(Path(p).name for p in missing)
+            + " — re-uploading"
+        )
+        direct = await self._direct_upload_input()
+        if direct is None:
+            return False
+        for path in missing:
+            stem = Path(path).stem.replace('"', "")
+            chip = self.page.locator(self._chip_selector(stem))
+            await self._set_input_files_cdp_safe(direct, path)
+            try:
+                await chip.first.wait_for(state="attached", timeout=15000)
+            except Exception:
+                logger.error(f"Re-upload of {Path(path).name} did not attach")
+                return False
+        if not await self._wait_for_uploads_complete(len(missing)):
+            return False
+        still = await self._missing_attachments()
+        if still:
+            logger.error(
+                "Still missing after re-upload: "
+                + ", ".join(Path(p).name for p in still)
+            )
+            return False
+        logger.info("Attachments restored — proceeding to send")
+        return True
 
     async def _wait_for_uploads_complete(
         self, n_files: int, timeout_sec: int = 240
@@ -1921,7 +1981,38 @@ class ChatGPTWebAgent(WebAgent):
         return False
 
     async def submit_prompt(self, prompt: str, prompt_number: int = 1) -> bool:
-        """Type prompt text and click send."""
+        """Type prompt text and click send.
+
+        Retries once through a page RELOAD when the composer refuses to
+        submit: live 2026-09-22/23 on one account, a composer holding the
+        prompt and both attachments, with Send enabled and focus in the
+        editor, silently swallowed every click AND the Enter key — the same
+        click succeeded on the same page seconds after a reload. The engine's
+        own attempt-retry did not clear it, so the recovery belongs here.
+        """
+        if await self._submit_prompt_once(prompt, prompt_number):
+            return True
+        if getattr(self, "_send_reload_used", False):
+            return False
+        self._send_reload_used = True
+        logger.warning("Send was swallowed — reloading the page and retrying once")
+        try:
+            await self.page.reload(wait_until="domcontentloaded", timeout=90000)
+            await self.page.wait_for_timeout(8000)
+            files = list(getattr(self, "_expected_attachments", []) or [])
+            if files:
+                self._expected_attachments = []
+                if not await self.upload_files(files):
+                    logger.error("Re-upload after reload failed")
+                    return False
+            # The picker is re-asserted by _submit_prompt_once itself on the
+            # first prompt, so it is not repeated here.
+        except Exception as e:
+            logger.error(f"Reload recovery failed: {e}")
+            return False
+        return await self._submit_prompt_once(prompt, prompt_number)
+
+    async def _submit_prompt_once(self, prompt: str, prompt_number: int = 1) -> bool:
         try:
             logger.info(f"Submitting prompt {prompt_number} ({len(prompt)} chars)")
 
@@ -2027,6 +2118,16 @@ class ChatGPTWebAgent(WebAgent):
             # and the send silently no-ops. Seen live 2026-07-23: two tasks
             # in a row failed to submit with send-button disabled=true.
             # Poll for the button to become ENABLED, then click; retry.
+            # Last check before the send: everything that was uploaded must
+            # still be attached, or the composer silently refuses to submit.
+            if not await self._restore_attachments():
+                logger.error(
+                    "Composer is missing an attachment and it could not be "
+                    "restored — failing this attempt rather than sending an "
+                    "incomplete prompt"
+                )
+                return False
+
             url_before = self.page.url
             send_btn = self.page.locator(self.SELECTORS["send_button"])
             sent_click = False
@@ -2060,8 +2161,35 @@ class ChatGPTWebAgent(WebAgent):
             # For prompt 1: URL changes from project page to /c/{id}
             # For prompts 2+: URL already has /c/ — check generation indicators
             already_in_conversation = "/c/" in url_before
-            for _ in range(30):  # 30s max wait for send confirmation
+            enter_tried = False
+            for tick in range(45):  # 45s max wait for send confirmation
                 await self.page.wait_for_timeout(1000)
+                # A click that silently does nothing leaves the prompt sitting
+                # in the composer (live 2026-09-22, lane B CFForecast: uploads
+                # and picker fine, then "URL unchanged" three attempts in a
+                # row). Text still in the composer after ~10s means the turn
+                # was never submitted, so press Enter once — the same key a
+                # person would use. Harmless if the click did land: the
+                # composer is empty by then and Enter does nothing.
+                if tick == 10 and not enter_tried:
+                    enter_tried = True
+                    try:
+                        left = await self.page.evaluate(
+                            """() => { const c = document.querySelector(
+                                'div.ProseMirror[contenteditable="true"]');
+                                return c ? (c.innerText || '').trim().length : 0; }"""
+                        )
+                    except Exception:
+                        left = 0
+                    if left > 0:
+                        logger.warning(
+                            f"No send confirmation after 10s and {left} chars "
+                            f"still in the composer — pressing Enter"
+                        )
+                        try:
+                            await self.page.keyboard.press("Enter")
+                        except Exception as e:
+                            logger.warning(f"Enter fallback failed: {e}")
                 current_url = self.page.url
                 if current_url != url_before and "/c/" in current_url:
                     logger.info(f"Prompt sent — conversation: {current_url}")
