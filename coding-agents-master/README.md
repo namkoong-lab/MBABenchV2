@@ -174,6 +174,8 @@ One container per attempt, from a pinned image:
 
   | Template | `prompt_version` | Source | Attachments seeded into `starting_files/` |
   |---|---|---|---|
+  | `v15` (Stage 5 arm) | 115 | `v10` byte-identical (the production prompt minus the house standards) | — |
+  | `v14` (Stage 5 arm) | 114 | `v9` byte-identical (rubric added back, no house standards) | — |
   | `v13` (v2 default) | 113 | `v11` byte-identical (rubric-free + `HOUSE_STANDARDS.md` pointer) | `coding_agent/prompts/house_standards_v1.md` → workspace root as `HOUSE_STANDARDS.md` |
   | `v12` (superseded) | 112 | `gui-agents-master/tasks_configs/prompts_v4/` (pre-2026-09-10 cut, rubric-bearing) | `house_standards/House_Standards_v1.md` |
   | `v11` (experiment, frozen) | 111 | `v10` + a pointer to `HOUSE_STANDARDS.md` | `coding_agent/prompts/house_standards_v1.md` → workspace root as `HOUSE_STANDARDS.md` |
@@ -184,6 +186,18 @@ One container per attempt, from a pinned image:
   | `v6` | 106 | CLI-wave adaptation | — |
   | `v5` | 105 | CLI-wave byte-exact | — |
 
+  - `v14` / `v15` (Stage 5 prompt ablation, 2026-09-23, on the production
+    Claude Code / Fable 5.1 max identity; `v13` stays the master prompt):
+    existing templates re-cut **byte-identical** under new numbers. `v14` is
+    the `v9` text — the current prompt with the 132-check rubric added back
+    and **no** house standards; `v15` is the `v10` text — the current prompt
+    minus the house standards (rubric-free, no pointer). Neither stages or
+    seeds anything, so their rows carry no `house_standards` provenance.
+    New numbers because 109/110 already carry the 2026-09-08 experiment's
+    graded rows on another identity (same reason as v13 vs 111). Generated
+    by `tools/build_v14_v15_templates.py`; `v14` whole-file md5-pinned
+    (`RECUT_MD5`, plus v9's rubric-section guard), `v15` pinned in
+    `SCRUBBED_MD5` and guarded rubric-free.
   - `v13` (v2 default, 2026-09-10 — the 101-task rerun): the `v11` text
     **byte-identical** — no rubric material at all, plus the pointer to
     `HOUSE_STANDARDS.md` staged into the workspace root — under a new
@@ -244,7 +258,7 @@ One container per attempt, from a pinned image:
     checksum-guarded. They reference harness tools that don't exist here —
     kept only for strict prompt-comparability experiments.
 - `prompt_version` recorded per attempt = system version × 100 + template
-  version (v1 wrapper + v13 → **113**; + v12 → 112; + v11 → 111; + v10 → 110; + v9 → 109; + v8 → 108; + v7 → 107;
+  version (v1 wrapper + v13 → **113**; + v15 → 115; + v14 → 114; + v12 → 112; + v11 → 111; + v10 → 110; + v9 → 109; + v8 → 108; + v7 → 107;
   + v6 → 106; + v5 → 105), continuing the CLI pipeline's numbering scheme
   (its wave was 1105; GUI was 9).
 

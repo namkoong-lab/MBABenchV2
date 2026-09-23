@@ -1,6 +1,7 @@
 """Offline checks for the benchmark (v1|v2) switch and the v8/v9/v12/v13
 templates, including v12's House_Standards_v1.md attachment and v13's
-HOUSE_STANDARDS.md workspace extra.
+HOUSE_STANDARDS.md workspace extra, plus the Stage 5 ablation arms v14/v15
+(re-cuts of v9/v10 under new numbers that stage nothing).
 
 Run from coding-agents-master:  python tests/test_benchmark_config.py
 (or pytest tests/). No Docker, DB, S3, or API keys needed; the v12 checks
@@ -171,6 +172,7 @@ def main() -> int:
 
     check_seeded_workspace()
     check_v13_workspace()
+    check_v14_v15_arms()
 
     print("ALL BENCHMARK CONFIG CHECKS PASSED")
     return 0
@@ -266,6 +268,69 @@ def check_v13_workspace() -> None:
         assert (attempt.attempt_dir / "prompts" / "task_template_shared_v13.txt").exists()
         assert cfg.extra_configs()["house_standards"]["sha256"] == hashlib.sha256(canonical.read_bytes()).hexdigest()
         print("OK  v13 workspace: HOUSE_STANDARDS.md staged at root, PROMPT.md lists it, rubric-free, provenance stamped")
+
+
+def check_v14_v15_arms() -> None:
+    """Stage 5 prompt ablation (2026-09-23): v14 is the v9 text byte-identical
+    (rubric added back, no house standards) and v15 the v10 text byte-identical
+    (the production prompt minus the house standards), each under a new
+    prompt_version (114 / 115) on the production identity. Neither stages or
+    seeds anything, so a row carries no house_standards provenance, and each
+    passes its own guard (v14: whole-file pin + v9's rubric-section guard;
+    v15: SCRUBBED_MD5 pin + rubric-free words)."""
+    import subprocess
+    from coding_agent.prompt_builder import RECUT_MD5, SCRUBBED_MD5
+    prompts = ROOT / "coding_agent" / "prompts"
+    for version, pv, source in (("v14", 114, "v9"), ("v15", 115, "v10")):
+        cfg = load_config(_cfg(f"benchmark: v2\ntemplate_version: {version}\n"))
+        assert cfg.template_version == version and cfg.s3_root == "MBABenchV2"
+        for src in ("fmwc", "modeloff", "wsp", "jp"):
+            assert template_name(src, version) == f"task_template_shared_{version}.txt"
+        sys_path, tpl_path = prompt_file_paths(cfg, "jp")  # md5 pin + (v14) rubric-section / (v15) rubric-free guards
+        assert parse_prompt_version(sys_path.name, tpl_path.name) == pv
+        assert tpl_path.read_bytes() == (prompts / f"task_template_shared_{source}.txt").read_bytes(), \
+            f"{version} must be {source} byte-identical"
+        assert template_attachments(cfg) == [] and "house_standards" not in cfg.extra_configs()
+        text = tpl_path.read_text()
+        assert "HOUSE_STANDARDS" not in text and "House_Standards" not in text
+        assert "ANSWERS (the 'Questions' sheet)" in text  # the judge's answer check needs the Questions-sheet mechanics
+        if version == "v14":
+            assert V8_RUBRIC_MARKER in text and tpl_path.name in RECUT_MD5 and tpl_path.name not in SCRUBBED_MD5
+        else:
+            assert V8_RUBRIC_MARKER not in text and "rubric" not in text.lower() and tpl_path.name in SCRUBBED_MD5
+
+        # A workspace built on the arm: PROMPT.md carries the arm's text, nothing
+        # is staged into the root or starting_files/, the snapshot holds the template.
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            task = tmp / "task"
+            (task / "starting_files").mkdir(parents=True)
+            (task / "task.yaml").write_text(f"task_name: arm{version}\ntask_source: jp\n")
+            (task / "starting_files" / "case.xlsx").write_bytes(b"not really xlsx")
+            run_yaml = tmp / "run.yaml"
+            run_yaml.write_text(
+                f"mode: external\nbenchmark: v2\ntemplate_version: {version}\n"
+                "agent_model_name: claudecode_anthropic/claude-haiku-4-5\n"
+            )
+            ext = load_config(run_yaml)
+            ext.workspaces_dir = tmp / "workspaces"
+            spec = ExternalSource(task).fetch(tmp / "_staging")
+            assert seed_template_attachments(ext, spec) == []
+            attempt = create_attempt(ext.workspaces_dir, spec)
+            _snapshot_run_inputs(ext, spec, attempt)
+            prompt, got = build_prompt(ext, spec, attempt.workspace, attempt=attempt)
+            assert got == pv
+            assert not (attempt.workspace / "HOUSE_STANDARDS.md").exists()
+            assert not (attempt.workspace / "starting_files" / "House_Standards_v1.md").exists()
+            assert "HOUSE_STANDARDS" not in prompt and "HOUSE_STANDARDS.md" not in attempt.manifest
+            assert (V8_RUBRIC_MARKER in prompt) == (version == "v14")
+            assert (attempt.attempt_dir / "prompts" / f"task_template_shared_{version}.txt").exists()
+        print(f"OK  {version} = {source} byte-identical, pv={pv}, guard passed, nothing staged, no house_standards provenance")
+
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "build_v14_v15_templates.py"), "--check"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    print("OK  tools/build_v14_v15_templates.py --check reproduces both arms")
 
 
 def test_benchmark_config():

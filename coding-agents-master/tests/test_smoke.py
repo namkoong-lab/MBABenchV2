@@ -57,6 +57,11 @@ def test_config_and_prompt_versions():
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v7.txt") == 107
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v9.txt") == 109
     assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v10.txt") == 110
+    # Stage 5 ablation arms: shared (task-invariant) templates, pv 114 / 115
+    assert template_name("jp", "v14") == template_name("wsp", "v14") == "task_template_shared_v14.txt"
+    assert template_name("fmwc", "v15") == template_name("wsp", "v15") == "task_template_shared_v15.txt"
+    assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v14.txt") == 114
+    assert parse_prompt_version("system_prompt_coding_v1.txt", "task_template_shared_v15.txt") == 115
     print("ok: config + prompt versions")
 
 
@@ -139,6 +144,19 @@ def test_scrubbed_templates_v10_v11():
     r13 = subprocess.run([sys.executable, str(ROOT / "tools" / "build_v13_template.py"), "--check"],
                          capture_output=True, text=True)
     assert r13.returncode == 0, r13.stdout + r13.stderr
+    # Stage 5 arms (2026-09-23): v15 = v10 byte-identical under a new number (same pin, rubric-free);
+    # v14 = v9 byte-identical (rubric by design, so pinned in RECUT_MD5, not here)
+    from coding_agent.prompt_builder import RECUT_MD5
+    v9 = (prompts / "task_template_shared_v9.txt").read_bytes()
+    v14 = (prompts / "task_template_shared_v14.txt").read_bytes()
+    v15 = (prompts / "task_template_shared_v15.txt").read_text()
+    assert v15 == v10 and SCRUBBED_MD5["task_template_shared_v15.txt"] == SCRUBBED_MD5["task_template_shared_v10.txt"]
+    assert v14 == v9 and hashlib.md5(v14).hexdigest() == RECUT_MD5["task_template_shared_v14.txt"]
+    assert "task_template_shared_v14.txt" not in SCRUBBED_MD5 and "== FULL RUBRIC" in v14.decode()
+    assert "v14" not in TEMPLATE_EXTRAS and "v15" not in TEMPLATE_EXTRAS  # the ablation stages nothing
+    r1415 = subprocess.run([sys.executable, str(ROOT / "tools" / "build_v14_v15_templates.py"), "--check"],
+                           capture_output=True, text=True)
+    assert r1415.returncode == 0, r1415.stdout + r1415.stderr
     assert (prompts / "house_standards_v1.md").exists()
     # One standards text everywhere: the copy staged into v11 workspaces must be
     # byte-identical to the monorepo's canonical house_standards/ file (the
