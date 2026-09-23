@@ -365,8 +365,25 @@ class ClaudeWebAgent(WebAgent):
         change what a chat-configured run benchmarks.
 
         Backward compatible: if the toggle isn't on the page (e.g. /new, or
-        an account without the feature), chat mode passes (that's the only
-        behavior such a surface has) and cowork mode fails loudly.
+        an account without the feature), chat mode passes — that's the only
+        behavior such a surface has.
+
+        Cowork on a surface with no toggle depends on WHICH radio is missing
+        (2026-09-23: the accounts are split across two claude.ai UI
+        generations, two with the toggle and two without):
+
+          - a visible "Chat" radio but no "Cowork" one is the old chat-only
+            surface — an account without the feature, and a cowork run there
+            would silently benchmark chat. Fails loudly, as before.
+          - NEITHER radio, on a page that has otherwise rendered (the model
+            button is up), is the newer UI that dropped the distinction and
+            is always cowork. The requested mode is what the surface does,
+            so this passes.
+
+        The model-button check is what separates "this UI has no toggle"
+        from "the page hasn't finished rendering yet" — without it, a slow
+        load would read as implicit cowork and a chat surface could slip
+        through.
         """
         mode = (self.agent_config.get("mode") or "chat").lower()
         if mode not in self.MODE_VALUES:
@@ -382,12 +399,28 @@ class ClaudeWebAgent(WebAgent):
             if mode == "chat":
                 logger.info("Chat/Cowork toggle not present — chat-only surface")
                 return True
-            logger.error(
-                "claude_web.mode=cowork but the Chat/Cowork toggle was not "
-                "found. It only exists on the home and project surfaces — "
-                "set claude_web.project_id, or the UI has drifted."
+            other = await self._find_mode_radio(self.MODE_RADIO_LABELS["chat"])
+            if other is not None:
+                logger.error(
+                    "claude_web.mode=cowork but only the Chat radio is on "
+                    "this surface — the account has no Cowork mode, and the "
+                    "run would benchmark chat under a cowork label."
+                )
+                return False
+            if await self._get_model_button() is None:
+                logger.error(
+                    "claude_web.mode=cowork but neither mode radio nor the "
+                    "model button is on the page — the surface has not "
+                    "rendered, so 'no toggle' cannot be trusted to mean "
+                    "cowork-only."
+                )
+                return False
+            logger.info(
+                "No Chat/Cowork toggle on a rendered surface — this UI has "
+                "no mode distinction and is always cowork; mode 'cowork' "
+                "is satisfied"
             )
-            return False
+            return await self.ensure_cowork_approval()
 
         if (await radio.get_attribute("aria-checked")) == "true":
             logger.info(f"Mode already '{mode}'")
@@ -463,19 +496,25 @@ class ClaudeWebAgent(WebAgent):
             logger.info(f"Cowork approval already {target!r}")
             return True
 
+        target_short = self.COWORK_APPROVAL_SHORT.get(target, "")
         try:
             await btn.evaluate(self._JS_CLICK)
             await asyncio.sleep(1.2)
-            item = await self.page.evaluate_handle(
-                """(label) => Array.from(document.querySelectorAll(
-                    '[role="menuitemradio"]'
-                )).filter(el => el.getClientRects().length > 0)
-                  .find(el => (el.textContent || '').includes(label)) || null""",
-                target_label,
-            )
-            el = item.as_element()
+            el = None
+            seen = []
+            for cand in await self.page.query_selector_all('[role="menuitemradio"]'):
+                if not await cand.is_visible():
+                    continue
+                text = (await cand.text_content()) or ""
+                seen.append(text.strip()[:40])
+                if self._approval_option_matches(target_label, target_short, text):
+                    el = cand
+                    break
             if el is None:
-                logger.error(f"Approval option {target_label!r} not in menu")
+                logger.error(
+                    f"Approval option {target_label!r}/{target_short!r} not in "
+                    f"menu. Rows: {seen}"
+                )
                 await self.page.keyboard.press("Escape")
                 return False
             await el.evaluate(self._JS_CLICK)
@@ -494,6 +533,27 @@ class ClaudeWebAgent(WebAgent):
             except Exception:
                 pass
             return False
+
+    @staticmethod
+    def _approval_option_matches(full_label: str, short_label: str, text: str) -> bool:
+        """True when a menu row is the option for one approval mode.
+
+        Two UI generations, as with the trigger itself. The older menu's
+        rows read the full label ("Automatically approve"); the cowork-only
+        UI (2026-09-23) reads the SHORT label glued to its description
+        ("AutoClaude runs on its own and pauses to ask..."), and offers no
+        Skip row at all — a config asking for skip there finds nothing and
+        fails loudly, which is right.
+
+        Substring for the full label, prefix for the short one: "Auto" must
+        not be found inside "ManualClaude asks before using new tools".
+        """
+        t = (text or "").strip().lower()
+        if not t:
+            return False
+        if full_label and full_label.lower() in t:
+            return True
+        return bool(short_label) and t.startswith(short_label.lower())
 
     async def _get_model_button(self):
         for sel in self.MODEL_BUTTON_SELECTORS:
