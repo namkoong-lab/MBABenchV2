@@ -109,3 +109,14 @@ err.txt
 /kimi_stepper.events.jsonl
 /preflight_tools.py
 /backfill_attempt_row.py
+
+# Lane bookkeeping for the 2026-09-20/22 full runs (diversion plan + guard,
+# Kimi lane maker / launcher / watcher) and the Forge single-task probe
+# configs — operational, same rule as run_configs/. Anchored to this dir.
+/lane_guard.py
+/lane_diversions.json
+/rebalance_lanes.py
+/make_kimi_lanes.py
+/launch_kimi_lanes.sh
+/kimi_lane_watch.py
+/v2_*_forge_task*.yaml

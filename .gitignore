@@ -21,3 +21,6 @@ scripts/good_attempts_v2.json
 scripts/good_gradings_v2.json
 # Grading run logs written beside the judge.
 judge/*.log
+
+# Model-request log written by a lane launched from the repo root.
+/agent_logs/

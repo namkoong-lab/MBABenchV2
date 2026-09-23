@@ -16,3 +16,8 @@ __pycache__/
 
 # Manual-upload staging tree (drag into OneDrive web, then delete)
 onedrive_staging/
+
+# Per-attempt run logs and the dated lane / smoke configs (account, port and
+# DB pins) — operational files, never tracked.
+logs/
+infra/configs/run_configs/lanes_*/

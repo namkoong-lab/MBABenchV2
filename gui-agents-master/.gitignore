@@ -102,3 +102,7 @@ smoke_rung2.log
 20*_chatgptGUI/
 20*_smoke_*/
 20*_ladder*/
+
+# Dated lane folders (configs, logs, pids) of the 2026-09 full runs —
+# operational, same rule as the prod_/exp_/ladder_ configs above.
+infra/configs/run_configs/lanes_*/
