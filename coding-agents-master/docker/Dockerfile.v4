@@ -1,0 +1,19 @@
+# mbabench-coding-agent:v4 = v2 with ONLY Claude Code upgraded (2.1.251 -> 2.1.280).
+#
+# Why (2026-09-23): Claude Opus 5.5 (claude-opus-5-5, released 2026-09-21) is refused by
+# Claude Code 2.1.251 at the API: "400 Claude Code 2.1.251 does not support this model;
+# version 2.1.280 or newer is required". 2.1.280 is the newest published version on npm
+# at build time and the minimum the API demands.
+#
+# Built FROM the v2 image, not from the base Dockerfile, so everything else - OS packages,
+# LibreOffice 7.4.7, openpyxl/pandas, Codex 0.150.1, relay, firewall, entrypoint - is
+# inherited byte-for-byte from the v2 layers. Used ONLY by the claudecode_anthropic/
+# claude-opus-5-5-{max,high,low} cohorts (run_configs/prod_v2_opus55_*.yaml); the Fable 5.1
+# cohorts stay on v2.
+#
+#   cd docker && docker build -f Dockerfile.v4 -t mbabench-coding-agent:v4 .
+FROM mbabench-coding-agent:v2
+
+ARG CLAUDE_CODE_VERSION=2.1.280
+
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force

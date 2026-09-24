@@ -1,0 +1,18 @@
+# mbabench-coding-agent:v3 = v2 with ONLY the Codex CLI upgraded (0.150.1 -> 0.155.1).
+#
+# Why (2026-09-20): Codex 0.150.1 predates GPT-6 Astra. It runs the model, but on
+# "fallback metadata" ("Model metadata for `gpt-6-astra` not found ... this can degrade
+# performance and cause issues"): the generic legacy prompt and tool set instead of the
+# model-specific harness Codex gives the models it knows. 0.155.1 knows gpt-6-astra.
+#
+# Built FROM the v2 image, not from the base Dockerfile, so everything else - OS packages,
+# LibreOffice 7.4.7, openpyxl/pandas, Claude Code 2.1.251, relay, firewall, entrypoint -
+# is inherited byte-for-byte from the v2 layers. Used ONLY by the codex_openai/gpt-6-astra-xhigh
+# cohort (run_configs/prod_v2_astra_101.yaml); the Claude Code / Fable 5.1 cohort stays on v2.
+#
+#   cd docker && docker build -f Dockerfile.v3 -t mbabench-coding-agent:v3 .
+FROM mbabench-coding-agent:v2
+
+ARG CODEX_VERSION=0.155.1
+
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" && npm cache clean --force
