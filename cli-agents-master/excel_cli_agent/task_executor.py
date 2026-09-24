@@ -312,6 +312,24 @@ class ExcelTaskExecutor:
         is unchanged."""
         return "gemini" in str(getattr(self, "model", "") or "").lower()
 
+    def _forge_claude_extra_body(self) -> Optional[Dict[str, Any]]:
+        """Claude through Forge only (2026-09-23): ask for the thinking summary.
+
+        Forge sends nothing while a Claude model thinks (no byte until the text
+        starts, even with the summary requested - it buffers the summary and
+        releases it with the answer), and its upstream connection is cut after
+        ~600 s of silence: every Opus 5 call that thought past 10 minutes died
+        with "The model request timed out before completion" (43 of 43 on the
+        2026-09-23 launch). With the summary requested, Bedrock streams summary
+        deltas to Forge as the model thinks, the upstream connection stays busy,
+        and a 25-minute think (128k tokens, task 28 step 1) completed. This is
+        exactly what the direct Anthropic path sends (_call_anthropic_api);
+        Anthropic documents display as visibility-only - reasoning depth, output
+        and billing are unchanged. Every other model is unchanged."""
+        if self.stall_timeout_seconds and "claude" in str(self.model or "").lower():
+            return {"thinking": {"type": "adaptive", "display": "summarized"}}
+        return None
+
     def _gemini_tool_declarations(self) -> List[Dict[str, Any]]:
         """The Excel tools as function declarations, straight from the tool
         server's own list (name, description, input schema) - the same tools
@@ -1835,6 +1853,10 @@ EXECUTION HISTORY:
                         declared = self._gemini_tool_declarations()
                         if declared:
                             request_data["tools"] = declared
+
+                    claude_extra = self._forge_claude_extra_body()
+                    if claude_extra:
+                        request_data["extra_body"] = dict(claude_extra)
 
                     # Add reasoning effort for reasoning models (GPT-5 series, o3, etc.)
                     if self.reasoning_effort:

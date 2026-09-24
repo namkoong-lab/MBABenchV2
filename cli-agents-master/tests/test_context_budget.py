@@ -235,3 +235,12 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def test_claude_through_forge_asks_for_the_thinking_summary(tmp_path):
+    """2026-09-23: Forge cuts a Claude call that is silent for ~10 min; asking for the
+    thinking summary keeps its upstream connection busy. Only Claude, only Forge."""
+    ex = make_executor(tmp_path, stall_timeout_seconds=1800, model="tensorblock/claude-opus-5")
+    assert ex._forge_claude_extra_body() == {"thinking": {"type": "adaptive", "display": "summarized"}}
+    assert make_executor(tmp_path, stall_timeout_seconds=600, model="tensorblock/grok-4.6")._forge_claude_extra_body() is None
+    assert make_executor(tmp_path, stall_timeout_seconds=None, model="claude-fable-5-1")._forge_claude_extra_body() is None

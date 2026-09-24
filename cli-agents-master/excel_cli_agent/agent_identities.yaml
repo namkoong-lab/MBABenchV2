@@ -305,3 +305,33 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+#   claude-opus-5  listed by Forge's /v1/models as tensorblock/claude-opus-5;
+#              answers as us.anthropic.claude-opus-5 (Forge serves it from AWS
+#              Bedrock). Added 2026-09-23 so an Opus 5 cohort runs on Forge
+#              credits (Pat: "use opus 5 instead of opus 5.5"; the Opus 5.5 run
+#              was cancelled the same day before writing any row). Anthropic's
+#              docs: thinking on by default (adaptive), effort low / medium /
+#              high / xhigh / max with max the top - the counterpart of
+#              openpyxl_anthropic/claude-fable-5-1-max; 1M context, 128K output;
+#              $5 / $25 per M. Route: Forge's Anthropic-native endpoint returns
+#              405 ("The Claude Code API is no longer supported by Forge"), so
+#              the executor reaches it through OpenAI-style chat completions
+#              (top-level reasoning_effort), not the output_config.effort request
+#              the direct Anthropic cohorts send. Probed through Forge 2026-09-23
+#              in this executor's request shape (3 calls, $0.32): reasoning_effort
+#              is forwarded (one finance puzzle: max 11,587 completion tokens /
+#              117 s, low 1,060 / 16 s, same answer; bogus "ultra" -> provider
+#              400); thinking is counted inside completion_tokens and billed at
+#              exactly $5 / $25; thinking is NOT streamed - no byte arrives until
+#              it is done - so this model gets a 30-minute Forge stall limit
+#              (FORGE_SILENT_THINKING_STALL_SECONDS in models_config.py).
+- agent_model_name: openpyxl_tensorblock/claude-opus-5-max
+  model: tensorblock/claude-opus-5
+  reasoning_effort: max
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

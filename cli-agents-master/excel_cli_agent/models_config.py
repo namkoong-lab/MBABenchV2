@@ -170,7 +170,15 @@ FORGE_STALL_TIMEOUT_SECONDS = 600
 # longest genuine think on the direct OpenAI cohort (pv 1609) was ~14 min
 # (57k tokens); Pat set 15 min. Every other Forge model streams its thinking
 # from the first seconds and keeps the 10-minute limit.
-FORGE_SILENT_THINKING_STALL_SECONDS = {"tensorblock/gpt-6-astra": 900}
+#
+# 2026-09-23: claude-opus-5 through Forge is silent the same way - probed at
+# max effort, the first byte came after 114 s, when the 11.6k-token think was
+# done. Its sibling claude-opus-5-5 ran single CLI steps of 67k-128k output
+# tokens (up to ~21 min) through Forge that day, and a think can run to the
+# 128000-token cap (~22 min at ~100 tokens/s). 30 min covers that with margin;
+# a gateway that never answers waits 30 min, not 10.
+FORGE_SILENT_THINKING_STALL_SECONDS = {"tensorblock/gpt-6-astra": 900,
+                                       "tensorblock/claude-opus-5": 1800}
 
 
 def resolve_stall_timeout(base_url: Optional[str], model: Optional[str] = None) -> Optional[int]:
@@ -306,11 +314,15 @@ def _candidate_slugs(model: str) -> list:
 #                feed never matches the bare id (OpenRouter lists
 #                qwen/qwen3.8-max), so without this entry every row would
 #                cost $0.
+#   claude-opus-5  the 2026-09-23 probe calls = $5.00 in / $25.00 out exactly
+#                (Anthropic's list price, also OpenRouter's
+#                anthropic/claude-opus-5); no cached tokens reported.
 DIRECT_API_PRICING = {
     "claude-fable-5": {"input": 25.00, "output": 50.00},
     "Kimi-K3": {"input": 3.30, "output": 16.50},
     "gemini-3.8-flash": {"input": 0.75, "output": 3.75},
     "qwen3.8-max": {"input": 2.00, "output": 6.00},
+    "claude-opus-5": {"input": 5.00, "output": 25.00},
 }
 
 
@@ -379,6 +391,11 @@ MODEL_CONTEXT_WINDOWS = {
     # the entry the 128k default would squeeze the workbook context to 10k
     # tokens.
     "qwen3.8-max": 1_000_000,
+    # 2026-09-23: Anthropic's documented window for claude-opus-5, equal to the
+    # live feed's value for anthropic/claude-opus-5 (reached as
+    # tensorblock/claude-opus-5). Without the entry a failed fetch would squeeze
+    # the workbook context to 10k tokens.
+    "claude-opus-5": 1_000_000,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 
