@@ -14,6 +14,7 @@ chunk-by-chunk, so agent latency is unaffected. Stdlib only.
 """
 import base64
 import copy
+import io
 import json
 import os
 import re
@@ -447,6 +448,22 @@ class ChatStream:
         self._ev("response.completed", response=self._response("completed", output=output, usage=self._usage()))
 
 
+class _Replayed:
+    """An upstream error reply whose body was read to inspect it, handed on unchanged."""
+
+    def __init__(self, body: bytes, resp):
+        self.code, self.headers, self._buf = resp.code, resp.headers, io.BytesIO(body)
+
+    def read(self, n=-1):
+        return self._buf.read(n)
+
+    def readline(self):
+        return self._buf.readline()
+
+    def close(self):
+        pass
+
+
 def record(entry: dict):
     with _lock:
         _step[0] += 1
@@ -504,7 +521,19 @@ class Relay(BaseHTTPRequestHandler):
                 except urllib.error.HTTPError as e:
                     resp = e
                 status = resp.code
-                if status != 429 or len(retries) >= RETRY_429_MAX:
+                quota = False
+                if status == 400:
+                    # 2026-09-24: Forge passes a Bedrock throttle through as a 400
+                    # provider_error "The configured provider rate limit, quota, or
+                    # billing limit was reached" - a 429 in all but name, lasting ~10 s
+                    # (11:03 and 12:44 bursts: every in-flight call on the box, 24
+                    # attempts lost, Codex treats a 400 as final). Retried here like a
+                    # 429; any other 400 is handed on unchanged.
+                    peek = resp.read()
+                    resp.close()
+                    quota = b"rate limit, quota, or billing limit" in peek
+                    resp = _Replayed(peek, resp)
+                if not (status == 429 or quota) or len(retries) >= RETRY_429_MAX:
                     break
                 snippet = resp.read(500).decode(errors="replace")
                 resp.close()
@@ -514,7 +543,7 @@ class Relay(BaseHTTPRequestHandler):
                         delay = min(float(resp.headers.get("retry-after")), 120.0)
                 except ValueError:
                     pass
-                retries.append({"ts": datetime.now(timezone.utc).isoformat(), "status": 429,
+                retries.append({"ts": datetime.now(timezone.utc).isoformat(), "status": status,
                                 "delay_s": round(delay, 2), "body": snippet})
                 phase = "upstream_retry"
                 time.sleep(delay)

@@ -254,8 +254,12 @@ class FakeChatUpstream(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
         FakeChatUpstream.seen.append((self.path, body))
-        if body["model"] == "bad":
-            out = b'{"error": {"message": "rejected", "type": "provider_error", "code": 400}}'
+        quota_first = body["model"] == "quota-once" and not any(
+            b["model"] == "quota-once" for _, b in FakeChatUpstream.seen[:-1])
+        if body["model"] == "bad" or quota_first:
+            out = (b'{"error": {"message": "The configured provider rate limit, quota, or billing limit was reached.'
+                   b' Please check your provider account or try again later.", "type": "provider_error", "code": 400}}'
+                   if quota_first else b'{"error": {"message": "rejected", "type": "provider_error", "code": 400}}')
             self.send_response(400)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(out)))
@@ -380,6 +384,12 @@ def chat_wire_translates_both_ways(tmp: Path):
 
         status, raw = post(dict(first, model="bad"))
         assert status == 400 and json.loads(raw)["error"]["message"] == "rejected", (status, raw)
+        # A Bedrock throttle arrives from Forge as a 400 "rate limit, quota, or billing
+        # limit"; the relay retries it like a 429 and the client never sees it (2026-09-24).
+        n_before = len(FakeChatUpstream.seen)
+        status, raw = post(dict(first, model="quota-once"))
+        assert status == 200 and _sse_events(raw)[-1]["type"] == "response.completed", (status, raw[:300])
+        assert len(FakeChatUpstream.seen) == n_before + 2, "the quota 400 is retried upstream"
         status, raw = post(dict(first, model="cut"))
         last = _sse_events(raw)[-1]
         assert last["type"] == "response.incomplete" and \
