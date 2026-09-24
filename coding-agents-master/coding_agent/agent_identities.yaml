@@ -145,6 +145,25 @@
     CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
     CLAUDE_CODE_MAX_RETRIES: "15"
 
+# 2026-09-24 (Pat): Claude Code on Claude Opus 5 at effort max, Anthropic API direct, to
+# finish the Opus 5 coding run after TensorBlock's Opus route went 402 at 14:13 EDT with
+# 36 tasks left. A different harness from the 65 banked codex_tensorblock/claude-opus-5-max
+# rows, so a separate cohort label. Claude Code applies prompt caching itself (cache_control
+# on the system prompt and the conversation); rung 0 checks cache_read tokens. Same env pin
+# as the Opus 5.5 entry below; image v4.
+- agent_model_name: claudecode_anthropic/claude-opus-5-max
+  cli: claude
+  model: claude-opus-5
+  effort: max
+  extra_args: []
+  env:
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
+    API_TIMEOUT_MS: "3600000"
+    CLAUDE_STREAM_IDLE_TIMEOUT_MS: "1800000"
+    CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS: "1800000"
+    CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
+    CLAUDE_CODE_MAX_RETRIES: "15"
+
 # ---------------------------------------------------------------------------
 # 2026-09-23: Stage 5 prompt ablation runs on Claude Opus 5.5 at max effort
 # (Pat), in place of Fable 5.1. Live-probed the same day (GET /v1/models, free):
