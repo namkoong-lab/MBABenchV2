@@ -24,3 +24,5 @@ judge/*.log
 
 # Model-request log written by a lane launched from the repo root.
 /agent_logs/
+scripts/good_attempts_stage5.json
+scripts/good_gradings_stage5.json
