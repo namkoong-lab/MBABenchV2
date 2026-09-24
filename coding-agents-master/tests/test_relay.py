@@ -364,7 +364,7 @@ def chat_wire_translates_both_ways(tmp: Path):
         assert sent["messages"] == [{"role": "system", "content": "INS\n\nDEV"}, {"role": "user", "content": "hi"}]
         assert [t["function"]["name"] for t in sent["tools"]] == ["exec_command"], "non-function tools are dropped"
         assert sent["reasoning_effort"] == "max" and sent["max_completion_tokens"] == 65536 and sent["stream"]
-        assert "store" not in sent and "include" not in sent
+        assert "store" not in sent and "include" not in sent and "thinking" not in sent
 
         # Codex's next call replays the turn from the items it was given.
         echoed = [dict(items[0], content=None), items[1], items[2],
@@ -387,6 +387,12 @@ def chat_wire_translates_both_ways(tmp: Path):
         status, raw = post(dict(first, model="malformed"))
         last = _sse_events(raw)[-1]
         assert last["type"] == "response.failed" and "MALFORMED_FUNCTION_CALL" in last["response"]["error"]["message"], last
+
+        # A Claude model on the chat wire (Forge) asks for the thinking summary so the
+        # upstream connection stays busy through a long think (responses_to_chat, 2026-09-23).
+        status, raw = post(dict(first, model="tensorblock/claude-fable-5-1"))
+        assert status == 200 and _sse_events(raw)[-1]["type"] == "response.completed", raw
+        assert FakeChatUpstream.seen[-1][1]["thinking"] == {"type": "adaptive", "display": "summarized"}
 
         time.sleep(0.3)
         recs = [json.loads(l) for l in open(out)]

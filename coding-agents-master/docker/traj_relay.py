@@ -241,6 +241,16 @@ def responses_to_chat(req: dict):
     effort = (req.get("reasoning") or {}).get("effort")
     if effort:
         body["reasoning_effort"] = effort
+    if "claude" in str(req.get("model") or "").lower():  # the chat wire is Forge-only
+        # 2026-09-23: Forge sends no byte while a Claude model thinks and cuts its
+        # upstream connection after ~600 s of silence ("The model request timed out
+        # before completion" after exactly 40 keep-alive pings; 214 of 641 Fable-max
+        # calls on the Stage 5 v15 launch, every long think). Asking for the thinking
+        # summary makes Bedrock stream summary deltas while the model thinks, so the
+        # connection stays busy and a 25-minute think completes - the cli pipeline's
+        # fix (task_executor._forge_claude_extra_body, commit 9bd2ac1). Display only:
+        # reasoning depth, output and billing are unchanged. Claude on Forge only.
+        body["thinking"] = {"type": "adaptive", "display": "summarized"}
     if CHAT_MAX_TOKENS:
         body["max_completion_tokens"] = CHAT_MAX_TOKENS
     return body, notes
