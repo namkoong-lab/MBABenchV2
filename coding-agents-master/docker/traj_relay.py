@@ -146,6 +146,53 @@ def _user_content(content):
     return parts
 
 
+_CACHE = {"cache_control": {"type": "ephemeral"}}
+
+
+def _mark_last_text(m):
+    """cache_control on the message's last non-empty text block; a string content
+    becomes one text block. False when there is nothing to mark (an empty block is refused)."""
+    c = m.get("content")
+    if isinstance(c, str) and c:
+        m["content"] = [{"type": "text", "text": c, **_CACHE}]
+        return True
+    if isinstance(c, list):
+        for i in range(len(c) - 1, -1, -1):
+            if isinstance(c[i], dict) and c[i].get("type") == "text" and c[i].get("text"):
+                c[i] = {**c[i], **_CACHE}
+                return True
+    return False
+
+
+def _cache_breakpoints(msgs):
+    """Anthropic prompt caching through Forge's chat route (2026-09-24, probed on the
+    shared key). The route passes caching through, but only with explicit breakpoints,
+    as Anthropic's own API: without them every call re-bills its whole context (the
+    Opus 5 run: 96% input tokens, cached_tokens 0 on every reply). Breakpoints, four
+    at most as Anthropic allows: the system message; the last user message when the
+    request ends with one (first call, compaction); the last two assistant messages
+    that carry text. Each call then reads the prefix its predecessor wrote and writes
+    only the tail (probe: call 2 read 28,103 of 29,696 tokens). Never a tool message:
+    a cache_control block inside a tool result is refused by one of Forge's two
+    backends (400 "provider rejected", 5 of 6 tries) and a message-level marker is
+    accepted but ignored. A marked assistant message is the replayed copy, its string
+    content turned into one text block, which hashes the same (probed): the model sees
+    the same text. Billing only. Returns the number of marks placed."""
+    marked = 0
+    if msgs and msgs[0].get("role") == "system" and _mark_last_text(msgs[0]):
+        marked += 1
+    if len(msgs) > 1 and msgs[-1].get("role") == "user" and _mark_last_text(msgs[-1]):
+        marked += 1
+    assistant_marks = 0
+    for m in reversed(msgs[1:]):
+        if assistant_marks >= 2 or marked >= 4:
+            break
+        if m.get("role") == "assistant" and _mark_last_text(m):
+            marked += 1
+            assistant_marks += 1
+    return marked
+
+
 def responses_to_chat(req: dict):
     """(chat request body, notes on anything that could not be carried over)."""
     notes = []
@@ -268,6 +315,9 @@ def responses_to_chat(req: dict):
         # fix (task_executor._forge_claude_extra_body, commit 9bd2ac1). Display only:
         # reasoning depth, output and billing are unchanged. Claude on Forge only.
         body["thinking"] = {"type": "adaptive", "display": "summarized"}
+        marks = _cache_breakpoints(msgs)
+        if marks:
+            notes.append(f"cache_control on {marks} block(s)")
     if CHAT_MAX_TOKENS:
         body["max_completion_tokens"] = CHAT_MAX_TOKENS
     return body, notes

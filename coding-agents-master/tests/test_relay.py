@@ -403,6 +403,20 @@ def chat_wire_translates_both_ways(tmp: Path):
         status, raw = post(dict(first, model="tensorblock/claude-fable-5-1"))
         assert status == 200 and _sse_events(raw)[-1]["type"] == "response.completed", raw
         assert FakeChatUpstream.seen[-1][1]["thinking"] == {"type": "adaptive", "display": "summarized"}
+        # ... and cache breakpoints on the system message and the trailing user message,
+        # the only way Forge caches (2026-09-24). Non-Claude requests above are untouched.
+        claude_sent = FakeChatUpstream.seen[-1][1]["messages"]
+        assert claude_sent[0] == {"role": "system", "content": [
+            {"type": "text", "text": "INS\n\nDEV", "cache_control": {"type": "ephemeral"}}]}, claude_sent[0]
+        assert claude_sent[-1] == {"role": "user", "content": [
+            {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}]}, claude_sent[-1]
+        # A replay ending in a tool result marks the last assistant text, never the tool message.
+        status, raw = post(dict(first, model="tensorblock/claude-fable-5-1", input=[dev, user] + echoed))
+        assert status == 200, raw[:200]
+        replay = FakeChatUpstream.seen[-1][1]["messages"]
+        assert replay[-1] == {"role": "tool", "tool_call_id": "call_A", "content": "hi\n"}, replay[-1]
+        assert replay[-2]["role"] == "assistant" and replay[-2]["content"] == [
+            {"type": "text", "text": "Running it.", "cache_control": {"type": "ephemeral"}}], replay[-2]
 
         # Codex's context compaction sends the tool history with no tools, which Bedrock
         # refuses; the attempt's last tool list goes back with it, no tool_choice (2026-09-24).
