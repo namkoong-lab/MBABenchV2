@@ -394,6 +394,16 @@ def chat_wire_translates_both_ways(tmp: Path):
         assert status == 200 and _sse_events(raw)[-1]["type"] == "response.completed", raw
         assert FakeChatUpstream.seen[-1][1]["thinking"] == {"type": "adaptive", "display": "summarized"}
 
+        # Codex's context compaction sends the tool history with no tools, which Bedrock
+        # refuses; the attempt's last tool list goes back with it, no tool_choice (2026-09-24).
+        compact = {k: v for k, v in first.items() if k not in ("tools", "tool_choice", "parallel_tool_calls")}
+        status, raw = post(dict(compact, input=[dev, user] + echoed
+                                + [{"type": "message", "role": "user", "content": "COMPACT"}]))
+        assert status == 200 and _sse_events(raw)[-1]["type"] == "response.completed", raw
+        sent = FakeChatUpstream.seen[-1][1]
+        assert [t["function"]["name"] for t in sent["tools"]] == ["exec_command"], sent
+        assert "tool_choice" not in sent and "parallel_tool_calls" not in sent, sent
+
         time.sleep(0.3)
         recs = [json.loads(l) for l in open(out)]
         assert all(r["wire"] == "chat" for r in recs) and recs[0]["request"] == first

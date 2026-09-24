@@ -117,6 +117,7 @@ CHAT_MAX_TOKENS = int(os.environ.get("TRAJ_CHAT_MAX_TOKENS") or 0)
 _turns = {}  # turn number -> the assistant message exactly as returned
 _turn_lock = threading.Lock()
 _turn_seq = [0]
+_last_tools = [None]  # the attempt's latest tool list, for requests that arrive without one
 _OUR_ITEM = re.compile(r"^(?:rs|msg|fc)_tr(\d+)_\d+$")
 
 
@@ -238,6 +239,21 @@ def responses_to_chat(req: dict):
             body["tool_choice"] = {"type": "function", "function": {"name": choice["name"]}}
         if "parallel_tool_calls" in req:
             body["parallel_tool_calls"] = req["parallel_tool_calls"]
+        with _turn_lock:
+            _last_tools[0] = copy.deepcopy(tools)
+    elif any(m.get("tool_calls") or m.get("role") == "tool" for m in msgs):
+        # 2026-09-24: Codex's context compaction ("CONTEXT CHECKPOINT COMPACTION", at
+        # ~245k tokens) sends the whole history, tool calls and results included, with
+        # no tools. Bedrock refuses a history that uses tools without a tool list
+        # (Forge: 400 "The configured provider rejected the request"); Codex retried 15
+        # times and the attempt would have failed (Opus 5 task 13). One relay serves one
+        # attempt, so its own last tool list goes back, with no tool_choice: Bedrock
+        # has no "none" (400), and "auto" is the default.
+        with _turn_lock:
+            last = copy.deepcopy(_last_tools[0])
+        if last:
+            body["tools"] = last
+            notes.append("tools re-attached: history has tool calls, request had no tools")
     effort = (req.get("reasoning") or {}).get("effort")
     if effort:
         body["reasoning_effort"] = effort
