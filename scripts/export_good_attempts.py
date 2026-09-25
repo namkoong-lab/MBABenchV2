@@ -138,22 +138,62 @@ COHORTS = [
     # arms of the same model as separate rows (effort is part of the label).
     # The three coding Opus 5.5 effort cohorts that sat here were removed the same
     # evening on Pat's word ("no longer relevant"); their labels are in RETIRED_LABELS.
-    ("cli",    "qwen",      "api",        "openpyxl_tensorblock/qwen3.8-max-xhigh"),
-    # CLI Opus through Forge, max effort only. Pat cancelled the Opus 5.5 attempt at
-    # this (openpyxl_tensorblock/claude-opus-5-5-max, 0 rows, dead) on 2026-09-23 and
-    # relaunched on Opus 5 the same evening; 24 lanes, first rows expected 09-24.
-    ("cli",    "opus",      "api",        "openpyxl_tensorblock/claude-opus-5-max"),
+    # CLI Qwen and CLI GLM (openpyxl_tensorblock/{qwen3.8-max-xhigh,glm-5.3-max}) were
+    # cohorts until 2026-09-24 midday; Pat removed both (one row each). See RETIRED_LABELS.
+    # CLI Opus 5 (openpyxl_tensorblock/claude-opus-5-max) was a cohort 2026-09-23/24;
+    # Pat removed it on 09-24 evening after it stalled at 4 rows. See RETIRED_LABELS.
     # Coding Fable 5.1 effort arms (relayed from Patrick via the stage 4 session,
     # 2026-09-23, replacing the scrapped coding Opus 5.5 max run). coding/fable is
     # the max arm of the same model.
     ("coding", "fable_high", "coding_cli", "claudecode_anthropic/claude-fable-5-1-high"),
     ("coding", "fable_low",  "coding_cli", "claudecode_anthropic/claude-fable-5-1-low"),
-    # Opus 5 at max through Codex on Forge (Patrick 2026-09-23 evening).
-    ("coding", "opus5_max",  "coding_cli", "codex_tensorblock/claude-opus-5-max"),
+    # Opus 5 at max on the coding harness, ONE cohort over two labels (Patrick, relayed
+    # 2026-09-24 18:xx): Codex through Forge did tasks 1-53, 55-64, 66, 67 before
+    # TensorBlock's Opus route failed; Claude Code on the Anthropic API does the
+    # remaining 36 (54, 65, 68-101). Same model, effort and v13 prompt; each attempt
+    # keeps the label it ran under, as with cli/astra.
+    ("coding", "opus5_max",  "coding_cli", ("codex_tensorblock/claude-opus-5-max",
+                                            "claudecode_anthropic/claude-opus-5-max")),
+    # Stage 5 prompt-ablation arms, promoted into the leaderboard table on Pat's word
+    # (2026-09-24 16:xx): the Codex-route Fable 5.1 max identity under two alternate task
+    # prompts, so these are the only cohorts here with an explicit prompt version. They
+    # are labelled "(stage 5 - rubric inlined)" / "(stage 5 - no standards)" wherever
+    # the table is shown (Pat, 09-24: v14 = rubric written into the prompt, v15 = neither
+    # rubric nor House Standards; both arms omit the House Standards file), and the
+    # judge grades them like every other cohort. Same rows as STAGE5_COHORTS below.
+    ("coding", "fable_v14", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 114),
+    ("coding", "fable_v15", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 115),
     # Awaiting their first rows; labels unconfirmed, so they are NOT listed yet and
-    # UNASSIGNED_SINCE below reports them the moment they land: Qwen through the
-    # coding harness, GLM on both.
+    # UNASSIGNED_SINCE below reports them the moment they land: Qwen and GLM
+    # through the coding harness.
 ]
+
+# How each cohort is named in the summary table (Pat's wording, 2026-09-24). Also
+# used by leaderboard_ids.json below.
+DISPLAY_NAMES = {
+    ("gui", "fable"): "GUI Fable 5.1 (work mode)",
+    ("gui", "astra"): "GUI Astra (work mode)",
+    ("gui", "opus"): "GUI Opus 5 (work mode)",
+    ("gui_chat", "gpt6_pro"): "GUI chat GPT-6 Pro",
+    ("excel", "fable"): "Excel Fable 5.1",
+    ("excel", "sol"): "Excel Sol 5.6",
+    ("excel", "opus"): "Excel Opus 5",
+    ("cli", "fable"): "CLI Fable 5.1",
+    ("cli", "astra"): "CLI Astra",
+    ("cli", "grok"): "CLI Grok 4.6",
+    ("cli", "kimi"): "CLI Kimi K3",
+    ("cli", "gemini"): "CLI Gemini 3.8 Flash",
+    ("coding", "fable"): "Coding Fable 5.1 (max)",
+    ("coding", "fable_high"): "Coding Fable 5.1 high (stage 4)",
+    ("coding", "fable_low"): "Coding Fable 5.1 low (stage 4)",
+    ("coding", "fable_v14"): "Coding Fable 5.1 max (stage 5 - rubric inlined)",
+    ("coding", "fable_v15"): "Coding Fable 5.1 max (stage 5 - no standards)",
+    ("coding", "astra"): "Coding Astra",
+    ("coding", "gemini"): "Coding Gemini 3.8 Flash",
+    ("coding", "grok"): "Coding Grok 4.6",
+    ("coding", "kimi"): "Coding Kimi K3",
+    ("coding", "opus5_max"): "Coding Opus 5 max",
+}
 
 # Labels Pat has retired from the study (2026-09-23: "remove any row that references
 # Opus 5.5"). Their rows stay in the database untouched; they are simply not cohorts,
@@ -164,6 +204,9 @@ RETIRED_LABELS = {
     "claudecode_anthropic/claude-opus-5-5-high",   # coding, complete at 101, graded
     "claudecode_anthropic/claude-opus-5-5-low",    # coding, complete at 101, graded
     "openpyxl_tensorblock/claude-opus-5-5-max",    # CLI, cancelled at 0 rows
+    "openpyxl_tensorblock/qwen3.8-max-xhigh",      # CLI Qwen, removed 2026-09-24 (1 row)
+    "openpyxl_tensorblock/claude-opus-5-max",      # CLI Opus 5, removed 2026-09-24 (4 rows, stalled)
+    "openpyxl_tensorblock/glm-5.3-max",            # CLI GLM, removed 2026-09-24 (1 row)
 }
 
 # Stage 5, the coding prompt ablation (Patrick 2026-09-23): the same identity run
@@ -175,13 +218,19 @@ RETIRED_LABELS = {
 # Opus 5.5 on Pat's word the same evening.
 STAGE5_COHORTS = [
     # (pipeline, model, agent_model_type, agent_model_name, prompt_version)
-    # Fable 5.1 max through Codex on Forge, on the v15 prompt (Patrick 2026-09-23 evening).
+    # Fable 5.1 max through Codex on Forge under the ablation prompts: v14 = rubric added
+    # back, v15 = no house standards (Patrick 2026-09-23/24). The v13 production-prompt
+    # baseline for this identity is the leaderboard's coding/fable cohort (Claude Code route).
+    ("coding", "fable_max_v14_codex", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 114),
     ("coding", "fable_max_v15_codex", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 115),
 ]
 # (pipeline, model) names a leaderboard row, and the v12 grading driver keys on it too.
 assert len({c[:2] for c in COHORTS}) == len(COHORTS), "two cohorts share a (pipeline, model) pair"
-_names = [n for c in COHORTS for n in ((c[3],) if isinstance(c[3], str) else c[3])]
-assert len(set(_names)) == len(_names), "an agent_model_name belongs to two cohorts"
+# One (label, prompt version) pair belongs to exactly one cohort. The same label MAY
+# appear twice when the prompt version differs (the Stage 5 arms).
+_keys = [(n, c[4] if len(c) > 4 else LATEST_PV[c[2]]) for c in COHORTS
+         for n in ((c[3],) if isinstance(c[3], str) else c[3])]
+assert len(set(_keys)) == len(_keys), "a (label, prompt_version) pair belongs to two cohorts"
 
 def jsonable(v):
     if isinstance(v, Decimal): return float(v)
@@ -202,6 +251,8 @@ def main():
     ap.add_argument("--judge-version", type=int, default=None,
                     help="judge version whose gradings count (default: single_pass.version in judge/project_configs.yaml)")
     ap.add_argument("--max-task-id", type=int, default=None, help="restrict to task ids 1..N (default: all jp tasks)")
+    ap.add_argument("--ids-out", default=os.path.join(HERE, "leaderboard_ids.json"),
+                    help="flat cohort / attempt_id / grading_id list (one entry per attempt)")
     ap.add_argument("--stage5-out", default=os.path.join(HERE, "good_attempts_stage5.json"))
     ap.add_argument("--stage5-gradings-out", default=os.path.join(HERE, "good_gradings_stage5.json"))
     ap.add_argument("--graders", nargs="*", default=list(SOL_GRADERS),
@@ -349,6 +400,27 @@ def main():
                        "cohorts": grading_summary, "gradings": gradings}, f, indent=2, default=jsonable)
 
     write_pair(COHORTS, attempts, cohort_summary, gradings, grading_summary, args.out, args.gradings_out)
+
+    # Flat pointer list for the leaderboard (Pat, 2026-09-24): one entry per attempt
+    # with the table's cohort label, the attempt id and its grading id. grading_id is
+    # the FIRST live Sol v12 row (the production pass); grading_ids lists every live
+    # one, so the stage-2 repeat rows stay visible without being mistaken for it.
+    by_attempt = {}
+    for g in gradings:
+        by_attempt.setdefault(g["attempt_id"], []).append(g["grading_id"])
+    ids = [{"cohort": DISPLAY_NAMES.get((x["pipeline"], x["model"]), f"{x['pipeline']}/{x['model']}"),
+            "task_id": x["task_id"], "attempt_id": x["attempt_id"],
+            "grading_id": min(by_attempt[x["attempt_id"]]) if x["attempt_id"] in by_attempt else None,
+            "grading_ids": sorted(by_attempt.get(x["attempt_id"], []))}
+           for x in attempts]
+    ids.sort(key=lambda r: (r["cohort"].lower(), r["task_id"]))
+    with open(args.ids_out, "w") as f:
+        json.dump({"generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                   "database": dbname, "judge_version": judge_version,
+                   "graders": sorted(graders) if graders else "all",
+                   "note": "grading_id = first live Sol judge-v12 row per attempt; grading_ids = all live ones",
+                   "attempts": len(ids), "graded": sum(r["grading_id"] is not None for r in ids),
+                   "rows": ids}, f, indent=2)
     s_attempts, s_cohorts, s_gradings, s_grading_summary = collect(STAGE5_COHORTS)
     write_pair(STAGE5_COHORTS, s_attempts, s_cohorts, s_gradings, s_grading_summary,
                args.stage5_out, args.stage5_gradings_out,
@@ -357,6 +429,7 @@ def main():
 
     print(f"{dbname}: {len(attempts)} good attempts of {len(COHORTS)*len(tasks)} expected (tasks 1-{max_id}) -> {args.out}")
     print(f"  {len(gradings)} gradings under judge v{judge_version} -> {args.gradings_out}")
+    print(f"  {len(ids)} cohort/attempt/grading rows -> {args.ids_out}")
     print(f"  stage 5 ablation: {len(s_attempts)} attempts, {len(s_gradings)} gradings -> {args.stage5_out}")
     for c, g in zip(s_cohorts, s_grading_summary):
         print(f"    {c['pipeline']}/{c['model']:<13} pv{c['approved_prompt_versions'][0]}  "

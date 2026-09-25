@@ -26,3 +26,4 @@ judge/*.log
 /agent_logs/
 scripts/good_attempts_stage5.json
 scripts/good_gradings_stage5.json
+scripts/leaderboard_ids.json
