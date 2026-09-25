@@ -6,7 +6,7 @@ through a real Microsoft 365/OneDrive browser session, and records attempts
 to the benchmark DB exactly like the gui / cli / coding pipelines
 (`task_attempts.agent_model_type = "excel"`).
 
-Ported 2026-08-26 from the public `namkoong-lab/MBABench` excel-agents tree
+Ported 2026-08-26 from the original public MBABench excel-agents tree
 (@ e17a27e) with the V2 conventions and the verified correctness fixes —
 see `plan/excel_agents_port.md` at the repo root for the full decision and
 fix record. TabAI/Firefox support was dropped in the port.

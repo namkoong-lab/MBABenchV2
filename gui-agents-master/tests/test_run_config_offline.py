@@ -95,10 +95,10 @@ def test_v2():
     assert not errors, errors
     resolved = resolve_prompts(dict(ec))
     # The repo default is 205 — the single-pass prompt (one turn). Single-pass
-    # is the default for every run going forward (Patrick, 2026-09-10).
+    # is the default for every run going forward (maintainer, 2026-09-10).
     assert len(resolved["prompts"]) == 1, len(resolved["prompts"])
     # 205 is the rubric-free House Standards prompt: no rubric material, the
-    # house-standards directive instead (Patrick, 2026-09-10).
+    # house-standards directive instead (maintainer, 2026-09-10).
     assert "House_Standards_v1.md" in resolved["prompts"][0]
     assert "FULL RUBRIC" not in resolved["prompts"][0]
     assert "rubric" not in resolved["prompts"][0].lower()

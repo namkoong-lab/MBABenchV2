@@ -42,7 +42,7 @@
   model: claude-fable-5
   effort: max
   extra_args: []
-  # 2026-08-30 mid-wave (Pat): raise Claude Code's default 64k output cap —
+  # 2026-08-30 mid-wave (maintainer): raise Claude Code's default 64k output cap —
   # it terminally failed ~7 wave attempts — and lengthen the per-request
   # timeout (terminal "Request timed out" killed ~6 more; value matches the
   # haiku entry). Rows before/after distinguishable via extra_configs.env.
@@ -94,7 +94,7 @@
   env:
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000"
     API_TIMEOUT_MS: "3600000"
-    # 2026-09-11 (Pat, in-place env edit like the fable-5 entry on 08-30 —
+    # 2026-09-11 (maintainer, in-place env edit like the fable-5 entry on 08-30 —
     # rows before/after distinguishable via extra_configs.env). The 10-task
     # rubric-coverage run lost 4 of 10 tasks (28, 41, 43, 48) to one shape:
     # Fable 5.1 at max effort thinks silently for >5 min on a hard step,
@@ -145,7 +145,7 @@
     CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
     CLAUDE_CODE_MAX_RETRIES: "15"
 
-# 2026-09-24 (Pat): Claude Code on Claude Opus 5 at effort max, Anthropic API direct, to
+# 2026-09-24 (maintainer): Claude Code on Claude Opus 5 at effort max, Anthropic API direct, to
 # finish the Opus 5 coding run after TensorBlock's Opus route went 402 at 14:13 EDT with
 # 36 tasks left. A different harness from the 65 banked codex_tensorblock/claude-opus-5-max
 # rows, so a separate cohort label. Claude Code applies prompt caching itself (cache_control
@@ -166,7 +166,7 @@
 
 # ---------------------------------------------------------------------------
 # 2026-09-23: Stage 5 prompt ablation runs on Claude Opus 5.5 at max effort
-# (Pat), in place of Fable 5.1. Live-probed the same day (GET /v1/models, free):
+# (maintainer), in place of Fable 5.1. Live-probed the same day (GET /v1/models, free):
 #
 #   claude-opus-5-5   created 2026-09-21; max_input_tokens 1,000,000;
 #                     max_tokens 128000; effort low/medium/high/xhigh/max;
@@ -185,7 +185,7 @@
 # the env below tunes is the same in both versions. Same env pin as
 # fable-5-1-max, so the two entries differ only in model.
 #
-# 2026-09-23 (Pat): Stage 4 re-pointed at Claude Opus 5.5 (claude-opus-5-5,
+# 2026-09-23 (maintainer): Stage 4 re-pointed at Claude Opus 5.5 (claude-opus-5-5,
 # live on /v1/models since 2026-09-21: 1M context, 128k output, effort
 # low..max, adaptive thinking only). Three effort arms on the same Claude Code
 # harness, image and v13 prompt as the Fable 5.1 cohorts; same env pin. The
@@ -314,7 +314,7 @@
     # more stopped at 65,536 whatever cap was sent.
     TRAJ_CHAT_MAX_TOKENS: "65536"
 
-# 2026-09-23 (Patrick, Stage 5 prompt ablation): Codex CLI driving Claude Fable 5.1 at max effort through
+# 2026-09-23 (maintainer, Stage 5 prompt ablation): Codex CLI driving Claude Fable 5.1 at max effort through
 # TensorBlock Forge, billed to Forge credits. Claude Code cannot use Forge: its Anthropic route answers 405 "The
 # Claude Code API is no longer supported by Forge", so the Codex harness carries the model. Forge serves the model
 # as us.anthropic.claude-fable-5-1 (Amazon Bedrock) on its chat route; probed the same day (cents): tool calls
@@ -334,7 +334,7 @@
     TRAJ_WIRE: chat
     TRAJ_CHAT_MAX_TOKENS: "128000"
 
-# 2026-09-23 (Patrick): full 101-task run of Codex CLI driving Claude Opus 5 at max effort through TensorBlock
+# 2026-09-23 (maintainer): full 101-task run of Codex CLI driving Claude Opus 5 at max effort through TensorBlock
 # Forge, billed to Forge credits, prompt v13 (pv 113). Same harness and pins as claude-fable-5-1-max above (Claude
 # Code cannot use Forge); only the model differs. Probed the same day (cents): Forge serves it as
 # us.anthropic.claude-opus-5 (Amazon Bedrock) on the chat route, tool calls come back well-formed, max_tokens
@@ -351,7 +351,7 @@
     TRAJ_WIRE: chat
     TRAJ_CHAT_MAX_TOKENS: "128000"
 
-# 2026-09-24 (Pat): full 101-task runs of Codex CLI driving Qwen 3.8 Max and GLM 5.3 through TensorBlock Forge,
+# 2026-09-24 (maintainer): full 101-task runs of Codex CLI driving Qwen 3.8 Max and GLM 5.3 through TensorBlock Forge,
 # billed to Forge credits, prompt v13 (pv 113), image v3 (Codex 0.155.1); the same harness as kimi-k3-max above
 # (chat wire, same tools, model catalog). Both are served by Fireworks (usage log: qwen3p8-2p4t-a95b, FW-GLM-5.3).
 # Probed through TensorBlock the same evening in the chat request shape (cents):

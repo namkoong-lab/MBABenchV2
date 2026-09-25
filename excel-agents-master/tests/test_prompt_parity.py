@@ -94,7 +94,7 @@ def test_registry_entries_match_gui_registry():
 
 def test_house_standards_versions_are_rubric_free():
     """204/205 hand the agent the house standards INSTEAD of the rubric
-    (Patrick, 2026-09-10): no rubric block, no Good/Bad standards, no
+    (maintainer, 2026-09-10): no rubric block, no Good/Bad standards, no
     rubric back-references — and the attachment is named in every file."""
     for rel in SHARED_SETS[204] + SHARED_SETS[205]:
         data = (MEMBER_ROOT / rel).read_bytes()
@@ -105,7 +105,7 @@ def test_house_standards_versions_are_rubric_free():
 
 
 def test_202_rubric_body_revised_from_200():
-    # The 2026-08 rubric revision (Patrick-approved in-place text update from
+    # The 2026-08 rubric revision (maintainer-approved in-place text update from
     # the canonical checklist xlsx) deliberately changed the live 202/203
     # rubric bodies while leaving the frozen 200/201 sets untouched. The two
     # live sets must carry the SAME revised rubric; the frozen 200 set must

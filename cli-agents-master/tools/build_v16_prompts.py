@@ -3,7 +3,7 @@
 from v15: the same tool manual with the passages that contradicted the House
 Standards removed, so the attached standards govern.
 
-Why (Pat, 2026-09-19): the manual's style advice predates
+Why (maintainer, 2026-09-19): the manual's style advice predates
 house_standards/House_Standards_v1.md and told the agent the opposite of it in
 five places. The agent is told to "conform to it throughout" and then handed
 specific instructions that break it; specific instructions win. The GUI and

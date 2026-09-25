@@ -1,6 +1,6 @@
 """Judge-only grading guidance, layered onto rubric checks at prompt time.
 
-Why this file exists (2026-09-01, Patrick): repeat gradings of the same
+Why this file exists (2026-09-01, maintainer): repeat gradings of the same
 attempt flip on checks whose *scope* is ambiguous — does formatting count
 against Accuracy? do hardcodes inherited from the starting workbook count
 against Flexibility? The guidance notes answer exactly those scope

@@ -13,7 +13,7 @@
 # add any missing v1-era label with its historical provider before
 # re-grading under it).
 #
-# Policy (Pat, 2026-08-25): OpenAI grader models always use the OpenAI API
+# Policy (maintainer, 2026-08-25): OpenAI grader models always use the OpenAI API
 # directly — never register an openai/* label with provider: openrouter.
 
 # Default grader (project_configs.yaml judge.default_grader).
@@ -54,7 +54,7 @@
   model: gpt-5.5
   effort: none                        # only effort chat/completions accepts with tools
 
-# Judge bake-off 2026-08, revised roster (Patrick 2026-08-31): the evaluation
+# Judge bake-off 2026-08, revised roster (maintainer 2026-08-31): the evaluation
 # is gemini-3.7-flash @low vs @high vs gpt-5.6-sol; gemini-3.5-flash and
 # claude-opus-5 arms are retired. 3.7-flash's effort scale is low / medium
 # (provider default) / high — both our lanes set it explicitly, so neither

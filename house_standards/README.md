@@ -40,7 +40,7 @@ other pipeline reads this directory directly. Edit here, then copy.
 
 ## Amendments
 
-- **2026-09-18, v1 amended in place (Patrick's decision; the one exception to
+- **2026-09-18, v1 amended in place (the maintainer's decision; the one exception to
   the append-only rule above).** The Rounding line changed from `"$mm, rounded
   to $0.01mm" at the head of the block` to wording that must match what the
   model does: `"shown to $0.01mm"` for display-only precision, `"rounded to"`

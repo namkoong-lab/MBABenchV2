@@ -1,4 +1,4 @@
-# Judge-only grading guidance for rubric_9 (Patrick, 2026-09-01).
+# Judge-only grading guidance for rubric_9 (maintainer, 2026-09-01).
 #
 # These notes change how the JUDGE applies the rubric, not what agents are
 # asked to do. They are layered onto the rendered checks at prompt time by
@@ -125,7 +125,7 @@ checks:
       the same cells.
 
   # ---------------------------------------------------------------------
-  # Repeat-grading stability notes (Pat, 2026-09-02). Added after grading
+  # Repeat-grading stability notes (maintainer, 2026-09-02). Added after grading
   # the same ten attempts twice with one judge (Sol@none): mean total swing
   # 5.1%, max 10.1%, and every point of it traced to judgement checks
   # flipping — never to a harness-decided check. The flips were opposite
@@ -519,7 +519,7 @@ checks:
       not the first tab.
 
   # --- 2026-09-16 judge v9: toy-reliability runs 2-3 walkthrough --------------
-  # Decisions log: JUDGE_DECISIONS_2026-09-16.md (Patrick + Claude). Every
+  # Decisions log: JUDGE_DECISIONS_2026-09-16.md (maintainer + Claude). Every
   # note below was checked against the 101 golden solutions before adoption.
 
   - category: Structure

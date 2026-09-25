@@ -18,7 +18,7 @@ Rules (numbering matches render_rules_text and the v6 spec §3):
      golden is a rounded figure; an unrounded attempt that rounds to it holds
      the same underlying value) — and a full unit only when BOTH sides are
      rounded figures (two correct roundings can sit one notch apart at a
-     boundary). v6.4 (Pat 2026-09-02): the band no longer requires the
+     boundary). v6.4 (maintainer 2026-09-02): the band no longer requires the
      attempt to be rounded — 22 of 454 attempts failed the binary check on
      presentation alone; not rounding as instructed is instead judged
      under Rounding / Rounded outputs (by the judge — the v6.4 harness
@@ -29,7 +29,7 @@ Rules (numbering matches render_rules_text and the v6 spec §3):
   2. Sign convention, GUARDED by an outflow lexicon on the question text:
      |a| == |b| within tolerance is accepted ONLY for such rows. One-off
      flips on every other row stay failures — for a "difference" question
-     the sign IS the answer. (Patrick 2026-09-02: lexicon only; the earlier
+     the sign IS the answer. (maintainer 2026-09-02: lexicon only; the earlier
      "consistent across the block" clause was dropped as too loose.) v6.4:
      the core lexicon (expense/cost/spend/outflow/depreciation/amortization/
      capex/tax) is unconditional; an EXTENDED list of P&L line items the
@@ -38,7 +38,7 @@ Rules (numbering matches render_rules_text and the v6 spec §3):
      (loan), repayments... — 219 flagged flips over 19 labels) is accepted
      only when no INFLOW_GUARD word (income/revenue/net/change/difference/
      growth/asset/value...) marks the row as a net or inflow quantity.
-     v6.5 (Patrick 2026-09-10): loan-schedule "payment" / "principal" rows
+     v6.5 (maintainer 2026-09-10): loan-schedule "payment" / "principal" rows
      join the extended list — House Standards attempts sign them negative
      while the goldens are positive; "balance" rows stay guarded.
   3. Percent x100 / fraction form: when the Unit column says %, the question
@@ -53,7 +53,7 @@ Rules (numbering matches render_rules_text and the v6 spec §3):
   7. Dates: ISO / US / Excel serial are equal when they name the same day.
   8. Zero forms: 0 / 0.0 / accounting "-" equal zero. A BLANK cell is
      "unanswered" — completeness, not equivalence.
-  9. Units scale (x1000 / x1e6) is NEVER auto-accepted (Patrick): flagged
+  9. Units scale (x1000 / x1e6) is NEVER auto-accepted (maintainer): flagged
      as `possible_unit_scale_difference` for human review; verdict stays
      mismatch.
 
@@ -75,7 +75,7 @@ REL_TOL = 1e-6
 
 # Rule 2 — question-text lexicon under which a sign flip is a convention,
 # not an error. Word-boundary matched, case-insensitive. The CORE list is
-# Patrick's (2026-09-02): rows whose quantity is unambiguously an outflow,
+# the maintainer's (2026-09-02): rows whose quantity is unambiguously an outflow,
 # accepted unconditionally.
 OUTFLOW_LEXICON_CORE = (
     "expense", "expenses", "cost", "costs", "spend", "spending", "spent",
@@ -95,7 +95,7 @@ OUTFLOW_LEXICON_EXTENDED = (
     "insurance", "maintenance", "repairs", "fees", "purchases", "interest",
     "interest expense", "interest paid", "repayment", "repayments",
     "dividends paid", "dividend paid",
-    # v6.5 (Patrick 2026-09-10): loan-schedule rows. Attempts built under the
+    # v6.5 (maintainer 2026-09-10): loan-schedule rows. Attempts built under the
     # House Standards ("costs and outflows negative, everywhere") sign the
     # scheduled payment and principal negative while the goldens are
     # positive; the magnitude is the answer. "Balance" stays guarded.
@@ -384,7 +384,7 @@ def tolerance_for(expected: float, got: float, precision: Precision,
                   source: Optional[str] = None) -> tuple[float, str]:
     """Absolute tolerance for one comparison plus a label of what set it.
 
-    Scale-aware by construction (Patrick 2026-09-02: "if the answer is 0.5,
+    Scale-aware by construction (maintainer 2026-09-02: "if the answer is 0.5,
     a .005 delta is a lot; if it is 5,000 it is not"):
 
       tolerance = max( relative noise band, rounding band )
@@ -688,11 +688,11 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
 # Prompt rendering (the second consumer)
 # ---------------------------------------------------------------------------
 
-# v6.4 (Pat 2026-09-02, after the 454-attempt sweep): rounds-to-golden
+# v6.4 (maintainer 2026-09-02, after the 454-attempt sweep): rounds-to-golden
 # tolerance (attempt need not be rounded), golden ROUND() read from array
 # formulas and authoritative for the decimals, outflow lexicon extended with
 # an inflow guard, rounding compliance moved to Rounding / Rounded outputs.
-# v6.3: prompt text trimmed (Patrick 2026-09-02); rules unchanged.
+# v6.3: prompt text trimmed (maintainer 2026-09-02); rules unchanged.
 # v6.6 (2026-09-14, toy-reliability walkthrough): the harness verdict for
 # Rounding / Rounded outputs is retired — the judge decides it from every
 # final output a reader sees, and a number format counts as rounding. Rule

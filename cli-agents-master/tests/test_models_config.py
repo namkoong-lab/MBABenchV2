@@ -90,7 +90,7 @@ def test_forge_gemini_prices_and_sizes_with_and_without_the_live_feed(monkeypatc
 
 
 def test_forge_qwen_prices_and_sizes_with_and_without_the_live_feed(monkeypatch):
-    """Re-added 2026-09-21 evening (Pat). Every billed probe call was $2/$6
+    """Re-added 2026-09-21 evening (maintainer). Every billed probe call was $2/$6
     exactly; OpenRouter lists qwen/qwen3.8-max, which the bare id never maps
     to: without the static entries every row would cost $0 and see a 10k-token
     workbook context."""

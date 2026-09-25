@@ -96,7 +96,7 @@ versions:
       The file itself is declared under `attachments` and is uploaded with
       the case files on every run of this version - the version selects the
       text AND the attachment. Same design as the coding pipeline's
-      rubric-scrubbed v10/v11 templates (Patrick, 2026-09-10). The
+      rubric-scrubbed v10/v11 templates (maintainer, 2026-09-10). The
       Questions-sheet answer mechanics are unchanged from 202.
       (Cut 2026-09-10 as "202 + house standards, rubric untouched" and
       redefined the same day before any 204 run was recorded.)

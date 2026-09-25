@@ -49,7 +49,7 @@ TASK_TEMPLATE_WSP_PATH: Path = PROMPTS_DIR / PROMPT_VERSIONS[DEFAULT_PROMPT_VERS
 # run_logs/attempt-{model}-{timestamp}/ at the cli-agents-master root.
 RUN_LOGS_DIR: Path = Path(__file__).resolve().parents[1] / "run_logs"
 
-# Result uploads share the uplink with every lane's model calls - and, on Pat's
+# Result uploads share the uplink with every lane's model calls - and, on the maintainer's
 # MacBook, with the coding pipeline's Codex lanes. There, on 2026-09-20, all 36
 # API streams that dropped fell inside S3 upload windows (big uploads reach only
 # 0.3-0.8 MB/s on that Mac; a 209 MB one caused a 6-min storm). So an attempt's

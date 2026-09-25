@@ -83,7 +83,7 @@ V8_RUBRIC_MARKER = "== FULL RUBRIC"
 # v9 (benchmark v2, Questions-sheet revision) embeds the 132-check rubric
 # byte-exact from gui-agents-master/tasks_configs/prompts_v3/step2_build.txt.
 # Since the 2026-08 rubric revision (in-place text update from the canonical
-# checklist xlsx, Patrick-approved) it deliberately DIFFERS from v8's frozen
+# checklist xlsx, maintainer-approved) it deliberately DIFFERS from v8's frozen
 # rubric. Regenerate with tools/build_v9_template.py; never edit the rubric
 # section by hand.
 V9_RUBRIC_MD5 = "b11e174d69a74d239437c572584041ab"

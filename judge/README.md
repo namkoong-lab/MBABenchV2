@@ -405,7 +405,7 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     Test: `tests_offline/test_actual_value_tag.py`.
   - `rounding statements` line (check 105; judge v11): each sheet's typed
     rounding statements ("USD, rounded to $0.01") beside the number of
-    formulas on that sheet using ROUND/ROUNDUP/ROUNDDOWN/MROUND. Patrick's
+    formulas on that sheet using ROUND/ROUNDUP/ROUNDDOWN/MROUND. the maintainer's
     ruling 2026-09-18: a "rounded to" label over figures that are only
     displayed to that precision misdescribes the model (the colleague's
     point on 1084 `Owning model!B3` and 1085 `Owning!B4`); "shown to" /
@@ -445,7 +445,7 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     assumptions that drive the compared figures (3.0% appreciation vs the
     3% growth input, to 1e-8), while 1085 — same agent, same pattern,
     "no external market benchmark is assumed" — and 1086 were failed.
-    Patrick's ruling 2026-09-19: an input or assumption that is part of the
+    the maintainer's ruling 2026-09-19: an input or assumption that is part of the
     model is never a valid benchmark, and one isolated outside comparison
     among unchecked key outputs does not pass. 1075 (typed EV/EBITDA, P/E,
     WACC ranges) and 1076 (peer percentiles) are the passing shape. The
@@ -468,7 +468,7 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
 Rows record `judge_version` 12 / `prompt_version` 8 (template unchanged) and are
 not comparable to version 11 rows. Cut from the colleague's second review: he
 re-annotated four of the twelve jv11 GUI gradings (1087 LeaseorKeys, 1091 Bosch,
-1092 ApfelInc, 1097 NestQuest) and disagreed on 11 decisions. Patrick ruled on
+1092 ApfelInc, 1097 NestQuest) and disagreed on 11 decisions. the maintainer ruled on
 each; twelve rows exist under 11, so everything lands here.
 
 - **Numbers are measured in their own font** (check 69; properties schema 6,
@@ -504,7 +504,7 @@ each; twelve rows exist under 11, so everything lands here.
   it. New note on 32: a master flag that stays OK while a check row is in
   error fails, and only then (8 of the 10 roll-ups among the twelve attempts
   count failures and would skip an error; a by-design rule was not adopted).
-  Patrick's ruling: no cascade. One formula costs 22 and 32; 23 (No unresolved
+  the maintainer's ruling: no cascade. One formula costs 22 and 32; 23 (No unresolved
   cell warnings) and 31 (Error-check sheet) stand as graded.
   Test: `test_dependents_of_a_flagged_cell_are_listed`.
 - **Print estimate per sheet** (check 76; `_print_estimate`, stored as
@@ -552,7 +552,7 @@ each; twelve rows exist under 11, so everything lands here.
   "a typed bound whose basis is stated") took 88 from 2 to 11 fails of 12, and
   failed 1092 — the workbook this README names as the passing shape — by
   reading the benchmark bounds typed in `Inputs!D56:D63` (source "Judgment")
-  as model inputs. Patrick's ruling: a bound typed for the sense check is an
+  as model inputs. the maintainer's ruling: a bound typed for the sense check is an
   outside comparison wherever it sits, and the modeller's judgment is basis
   enough (the rubric says "against intuition"); only an input that DRIVES the
   model is never a benchmark.

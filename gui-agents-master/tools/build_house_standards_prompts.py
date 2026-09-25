@@ -3,7 +3,7 @@
 prompts_v4/) and 205 (single-pass, prompts/v2_3.txt) — from the frozen 202 /
 203 sources.
 
-Patrick, 2026-09-10: the House Standards versions carry NO rubric material —
+maintainer, 2026-09-10: the House Standards versions carry NO rubric material —
 the agent gets the house standards file instead of the grading rubric — the
 same design as the coding pipeline's rubric-scrubbed templates v10/v11
 (coding-agents-master/tools/build_v10_v11_templates.py). 204/205 had been

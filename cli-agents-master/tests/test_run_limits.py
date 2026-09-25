@@ -1,4 +1,4 @@
-"""Run limits are pinned and recorded (2026-09-19, Pat).
+"""Run limits are pinned and recorded (2026-09-19, maintainer).
 
 40 iterations is the default everywhere (what every v2 API cohort ran with; the
 old fallback was 30), both top effort tiers get 60 minutes per model call
@@ -175,7 +175,7 @@ def test_forge_calls_are_cut_after_ten_silent_minutes_and_nothing_else_changes()
 
 
 def test_astra_through_forge_gets_fifteen_silent_minutes_and_nothing_else_changes():
-    """2026-09-22 (Pat): gpt-6-astra through Forge sends no byte until its thinking is
+    """2026-09-22 (maintainer): gpt-6-astra through Forge sends no byte until its thinking is
     done, so its tries are cut at 900 s of silence, not 600; every other Forge model
     (they stream their thinking) keeps 600, and the direct endpoints keep no limit."""
     import os

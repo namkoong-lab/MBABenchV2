@@ -9,7 +9,7 @@
                           the same two files for STAGE5_COHORTS, the coding
                           prompt ablation. Separate because its arms run other
                           task prompts and are not comparable with the
-                          leaderboard (Patrick, 2026-09-23).
+                          leaderboard (maintainer, 2026-09-23).
 
 Neither file holds workbooks or scores - only the ids and paths that say where
 to look in Neon (task_attempts.id, gradings.id) and in S3.
@@ -48,7 +48,7 @@ Grading policy, per good attempt:
      judge/project_configs.yaml - one leaderboard, one judge);
   3. not deprecated and not failed;
   4. grader_model is one of --graders (default SOL_GRADERS: the two billing
-     routes of the same Sol grader). Patrick 2026-09-22: the leaderboard is
+     routes of the same Sol grader). maintainer 2026-09-22: the leaderboard is
      Sol-judged only, so rows from any other judge model (a Fable-judge
      bake-off, say) are counted under live_gradings_other_graders and left out;
   5. every surviving row is listed - the repeat Sol pass over ~90 attempts is
@@ -110,7 +110,7 @@ COHORTS = [
     ("excel",  "fable", "excel",      "claude_excel_fable_5_1"),
     ("excel",  "sol",   "excel",      "chatgpt_excel_gpt_5_6_sol_xhigh"),
     ("cli",    "fable", "api",        "openpyxl_anthropic/claude-fable-5-1-max"),
-    # Patrick 2026-09-22: the 11 tasks the OpenAI credit outage killed were re-run
+    # maintainer 2026-09-22: the 11 tasks the OpenAI credit outage killed were re-run
     # through TensorBlock Forge under their own label; both routes count as one
     # CLI Astra row for the benchmark, and each attempt keeps the label it ran under.
     ("cli",    "astra", "api",        ("openpyxl_openai/gpt-6-astra-xhigh",
@@ -134,41 +134,46 @@ COHORTS = [
     # manifest passes over them. The label below also carries 46 pv201 rows from
     # an older prompt generation, which LATEST_PV already excludes.
     ("gui",    "opus",   "gui",        "claude_opus_5_cowork_max"),
-    # Patrick 2026-09-23: Qwen and GLM on the CLI and coding harnesses, plus effort
+    # maintainer 2026-09-23: Qwen and GLM on the CLI and coding harnesses, plus effort
     # arms of the same model as separate rows (effort is part of the label).
     # The three coding Opus 5.5 effort cohorts that sat here were removed the same
-    # evening on Pat's word ("no longer relevant"); their labels are in RETIRED_LABELS.
+    # evening on the maintainer's word ("no longer relevant"); their labels are in RETIRED_LABELS.
     # CLI Qwen and CLI GLM (openpyxl_tensorblock/{qwen3.8-max-xhigh,glm-5.3-max}) were
-    # cohorts until 2026-09-24 midday; Pat removed both (one row each). See RETIRED_LABELS.
+    # cohorts until 2026-09-24 midday; the maintainer removed both (one row each). See RETIRED_LABELS.
     # CLI Opus 5 (openpyxl_tensorblock/claude-opus-5-max) was a cohort 2026-09-23/24;
-    # Pat removed it on 09-24 evening after it stalled at 4 rows. See RETIRED_LABELS.
-    # Coding Fable 5.1 effort arms (relayed from Patrick via the stage 4 session,
+    # the maintainer removed it on 09-24 evening after it stalled at 4 rows. See RETIRED_LABELS.
+    # Coding Fable 5.1 effort arms (relayed from the maintainer via the stage 4 session,
     # 2026-09-23, replacing the scrapped coding Opus 5.5 max run). coding/fable is
     # the max arm of the same model.
     ("coding", "fable_high", "coding_cli", "claudecode_anthropic/claude-fable-5-1-high"),
     ("coding", "fable_low",  "coding_cli", "claudecode_anthropic/claude-fable-5-1-low"),
-    # Opus 5 at max on the coding harness, ONE cohort over two labels (Patrick, relayed
+    # Opus 5 at max on the coding harness, ONE cohort over two labels (maintainer, relayed
     # 2026-09-24 18:xx): Codex through Forge did tasks 1-53, 55-64, 66, 67 before
     # TensorBlock's Opus route failed; Claude Code on the Anthropic API does the
     # remaining 36 (54, 65, 68-101). Same model, effort and v13 prompt; each attempt
     # keeps the label it ran under, as with cli/astra.
     ("coding", "opus5_max",  "coding_cli", ("codex_tensorblock/claude-opus-5-max",
                                             "claudecode_anthropic/claude-opus-5-max")),
-    # Stage 5 prompt-ablation arms, promoted into the leaderboard table on Pat's word
+    # Stage 5 prompt-ablation arms, promoted into the leaderboard table on the maintainer's word
     # (2026-09-24 16:xx): the Codex-route Fable 5.1 max identity under two alternate task
     # prompts, so these are the only cohorts here with an explicit prompt version. They
     # are labelled "(stage 5 - rubric inlined)" / "(stage 5 - no standards)" wherever
-    # the table is shown (Pat, 09-24: v14 = rubric written into the prompt, v15 = neither
+    # the table is shown (maintainer, 09-24: v14 = rubric written into the prompt, v15 = neither
     # rubric nor House Standards; both arms omit the House Standards file), and the
     # judge grades them like every other cohort. Same rows as STAGE5_COHORTS below.
+    # Qwen and GLM on the coding harness, added 2026-09-25 on the maintainer's word when their
+    # first rows landed overnight; the CLI pair of the same models stays retired.
+    # CLI Qwen and CLI GLM: cohorts 09-23, removed 09-24 when each had a single row,
+    # restored 09-25 on the maintainer's word once their runs proved live (Qwen 36 rows, GLM 2).
+    ("cli",    "qwen",  "api",        "openpyxl_tensorblock/qwen3.8-max-xhigh"),
+    ("cli",    "glm",   "api",        "openpyxl_tensorblock/glm-5.3-max"),
+    ("coding", "qwen",  "coding_cli", "codex_tensorblock/qwen3.8-max-xhigh"),
+    ("coding", "glm",   "coding_cli", "codex_tensorblock/glm-5.3-max"),
     ("coding", "fable_v14", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 114),
     ("coding", "fable_v15", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 115),
-    # Awaiting their first rows; labels unconfirmed, so they are NOT listed yet and
-    # UNASSIGNED_SINCE below reports them the moment they land: Qwen and GLM
-    # through the coding harness.
 ]
 
-# How each cohort is named in the summary table (Pat's wording, 2026-09-24). Also
+# How each cohort is named in the summary table (the maintainer's wording, 2026-09-24). Also
 # used by leaderboard_ids.json below.
 DISPLAY_NAMES = {
     ("gui", "fable"): "GUI Fable 5.1 (work mode)",
@@ -183,6 +188,8 @@ DISPLAY_NAMES = {
     ("cli", "grok"): "CLI Grok 4.6",
     ("cli", "kimi"): "CLI Kimi K3",
     ("cli", "gemini"): "CLI Gemini 3.8 Flash",
+    ("cli", "qwen"): "CLI Qwen 3.8 max",
+    ("cli", "glm"): "CLI GLM 5.3 max",
     ("coding", "fable"): "Coding Fable 5.1 (max)",
     ("coding", "fable_high"): "Coding Fable 5.1 high (stage 4)",
     ("coding", "fable_low"): "Coding Fable 5.1 low (stage 4)",
@@ -193,9 +200,11 @@ DISPLAY_NAMES = {
     ("coding", "grok"): "Coding Grok 4.6",
     ("coding", "kimi"): "Coding Kimi K3",
     ("coding", "opus5_max"): "Coding Opus 5 max",
+    ("coding", "qwen"): "Coding Qwen 3.8 max",
+    ("coding", "glm"): "Coding GLM 5.3 max",
 }
 
-# Labels Pat has retired from the study (2026-09-23: "remove any row that references
+# Labels the maintainer has retired from the study (2026-09-23: "remove any row that references
 # Opus 5.5"). Their rows stay in the database untouched; they are simply not cohorts,
 # and the unclaimed-identity report leaves them alone.
 RETIRED_LABELS = {
@@ -204,22 +213,20 @@ RETIRED_LABELS = {
     "claudecode_anthropic/claude-opus-5-5-high",   # coding, complete at 101, graded
     "claudecode_anthropic/claude-opus-5-5-low",    # coding, complete at 101, graded
     "openpyxl_tensorblock/claude-opus-5-5-max",    # CLI, cancelled at 0 rows
-    "openpyxl_tensorblock/qwen3.8-max-xhigh",      # CLI Qwen, removed 2026-09-24 (1 row)
     "openpyxl_tensorblock/claude-opus-5-max",      # CLI Opus 5, removed 2026-09-24 (4 rows, stalled)
-    "openpyxl_tensorblock/glm-5.3-max",            # CLI GLM, removed 2026-09-24 (1 row)
 }
 
-# Stage 5, the coding prompt ablation (Patrick 2026-09-23): the same identity run
+# Stage 5, the coding prompt ablation (maintainer 2026-09-23): the same identity run
 # under alternate task prompts (v14 = rubric added back, v15 = no house standards),
 # so the arms are NOT comparable with the leaderboard and get their own pair of
 # files. Each cohort names its prompt version explicitly - the only place a cohort
 # overrides LATEST_PV. The Opus 5.5 arms that opened the table (v13/v14/v15 on
 # claudecode_anthropic/claude-opus-5-5-max, 86 rows) were removed with the rest of
-# Opus 5.5 on Pat's word the same evening.
+# Opus 5.5 on the maintainer's word the same evening.
 STAGE5_COHORTS = [
     # (pipeline, model, agent_model_type, agent_model_name, prompt_version)
     # Fable 5.1 max through Codex on Forge under the ablation prompts: v14 = rubric added
-    # back, v15 = no house standards (Patrick 2026-09-23/24). The v13 production-prompt
+    # back, v15 = no house standards (maintainer 2026-09-23/24). The v13 production-prompt
     # baseline for this identity is the leaderboard's coding/fable cohort (Claude Code route).
     ("coding", "fable_max_v14_codex", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 114),
     ("coding", "fable_max_v15_codex", "coding_cli", "codex_tensorblock/claude-fable-5-1-max", 115),
@@ -401,7 +408,7 @@ def main():
 
     write_pair(COHORTS, attempts, cohort_summary, gradings, grading_summary, args.out, args.gradings_out)
 
-    # Flat pointer list for the leaderboard (Pat, 2026-09-24): one entry per attempt
+    # Flat pointer list for the leaderboard (maintainer, 2026-09-24): one entry per attempt
     # with the table's cohort label, the attempt id and its grading id. grading_id is
     # the FIRST live Sol v12 row (the production pass); grading_ids lists every live
     # one, so the stage-2 repeat rows stay visible without being mistaken for it.

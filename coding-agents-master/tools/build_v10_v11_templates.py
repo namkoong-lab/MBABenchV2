@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the rubric-scrubbed task templates v10 and v11 from v9.
 
-Rubric-effect experiment (2026-09-08, Pat): the same Fable 5 max-effort
+Rubric-effect experiment (2026-09-08, maintainer): the same Fable 5 max-effort
 coding-agent cohort re-runs 30 tasks under two prompts that carry NO rubric
 material, so the effect of showing the agent the grading rubric can be
 measured against the existing v9 (prompt_version 109) rows.

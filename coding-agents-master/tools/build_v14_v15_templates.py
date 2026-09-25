@@ -5,7 +5,7 @@ Claude Code / Fable 5.1 max identity (HANDOFF_STAGE5_PROMPT_ABLATION_2026-09-23.
 
 v13 (pv 113) stays the master prompt: v10 + the HOUSE STANDARDS pointer, with
 house_standards_v1.md staged into the workspace as HOUSE_STANDARDS.md. The two
-arms are existing templates re-cut BYTE-IDENTICAL under new numbers (Patrick,
+arms are existing templates re-cut BYTE-IDENTICAL under new numbers (maintainer,
 2026-09-23):
 
   v14 (pv 114) = the v9 text: the current prompt with the 132-check rubric

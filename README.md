@@ -61,7 +61,7 @@ pyproject.toml             uv workspace root; exposes `config` as a module.
 setup.sh                   Environment setup: reads venv_path from the config,
                            then `uv sync` for the whole workspace.
 uv.lock                    The pinned resolution for every workspace member.
-config/                    The two-tiered config system (ThomsonYen/config).
+config/                    The two-tiered config system.
   config_default.yaml      Committed defaults (DB URLs, S3 bucket, API keys as
                            ${env:VAR} references, EC2 fleet names).
   config.yaml              Local overrides (gitignored, auto-created).
@@ -82,7 +82,7 @@ judge/                     Grades attempts against golden solutions.
 judge-annotator/           Human-annotation web app for judge output.
 ```
 
-[ThomsonYen/config](https://github.com/ThomsonYen/config) is the config system.
+The `config/` directory is the shared config system.
 
 ## Configuration
 

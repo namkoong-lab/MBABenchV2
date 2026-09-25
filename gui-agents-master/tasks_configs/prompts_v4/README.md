@@ -6,7 +6,7 @@ attached with the case files) INSTEAD of the grading rubric. Generated from
 the frozen `prompts_v3/` (202) sources by
 `tools/build_house_standards_prompts.py`, which removes every rubric passage
 and adds the house-standards directives — the same design as the coding
-pipeline's rubric-scrubbed v10/v11 templates (Patrick, 2026-09-10).
+pipeline's rubric-scrubbed v10/v11 templates (maintainer, 2026-09-10).
 
 | File | Step | Delta vs prompts_v3 |
 |---|---|---|

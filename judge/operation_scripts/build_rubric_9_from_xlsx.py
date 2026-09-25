@@ -1,14 +1,14 @@
 """Rebuild the rubric_9 pair and the live agent-prompt rubric blocks from the
 canonical checklist workbook (the 2026-08 in-place revision).
 
-Source of truth: Patrick's "v2 Financial Modeling Checklist to turn into
+Source of truth: the maintainer's "v2 Financial Modeling Checklist to turn into
 rubric.xlsx", sheet `Rubric Ass.` — 132 rows carrying No./Category/Name/
 In-Category Weighting/Description/Good/Bad (plus Conditional score flag,
 recorded for audit only). The sheet IS the annotation edition: names,
 categories, order and the 37-check conditional set match the S3 suitability
 annotations exactly.
 
-What it writes (all in place, versions unchanged — Patrick-approved):
+What it writes (all in place, versions unchanged — maintainer-approved):
     judge/prompts/rubrics/rubric_9.json          (3-check swap + text revisions)
     judge/prompts/rubrics/rubric_9_weights.json  (xlsx weight system adopted)
     gui-agents-master/tasks_configs/prompts_v3/step2_build.txt   (live, pv202)
@@ -63,8 +63,8 @@ RUBRIC_MARKER = "== FULL RUBRIC"
 WEIGHTS_SENTENCE_PREFIX = "Category weights (share of total score): "
 
 DEFAULT_XLSX = Path(
-    "/Users/patrick/Downloads/v2 Financial Modeling Checklist to turn into rubric.xlsx"
-)
+    "~/Downloads/v2 Financial Modeling Checklist to turn into rubric.xlsx"
+).expanduser()
 SHEET = "Rubric Ass."
 EXPECTED_CHECKS = 132
 EXPECTED_CONDITIONAL = 37
@@ -295,7 +295,7 @@ def main() -> int:
     if args.roundtrip:
         return roundtrip()
     if not args.xlsx.exists():
-        sys.exit(f"xlsx not found: {args.xlsx} (if moved, ask Patrick)")
+        sys.exit(f"xlsx not found: {args.xlsx} (if moved, ask the maintainer)")
     return apply(args.xlsx)
 
 

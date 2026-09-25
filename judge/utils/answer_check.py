@@ -718,7 +718,7 @@ def harness_verdicts(result: dict, hardcoded_counts: bool = True) -> dict:
     base[dc_key] = dc
 
     # --- Rounding / Rounded outputs: statistics only (harness verdict retired) --
-    # v6.4 (Pat 2026-09-02) decided this check from the Questions sheet's
+    # v6.4 (maintainer 2026-09-02) decided this check from the Questions sheet's
     # stored values. Retired 2026-09-14 after the toy-reliability
     # walkthrough: the check covers every final output a reader sees (answer
     # cells AND summary/output figures), rounding by number format now counts,

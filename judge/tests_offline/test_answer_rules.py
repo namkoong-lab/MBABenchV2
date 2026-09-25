@@ -96,7 +96,7 @@ check(r["verdict"] == "match" and r["tolerance_source"] == "global_fallback", "g
 r = R.compare(1234.5678, 1234.57, ctx("x"))
 check(r["verdict"] == "mismatch", "global fallback rejects a 0.002 difference with no directive")
 
-# --- scale awareness (Patrick 2026-09-02): small answers are not forgiven -----
+# --- scale awareness (maintainer 2026-09-02): small answers are not forgiven -----
 r = R.compare(0.5, 0.51, ctx("ratio", dp=2))
 check(r["verdict"] == "mismatch", "0.51 vs 0.50 at two decimals is a 2% error -> mismatch")
 r = R.compare(0.5, 0.505, ctx("ratio", dp=2))
@@ -188,7 +188,7 @@ r = R.compare(3361886.42, -3361886.42, ctx("What is the amount for/of Energy in 
 check(r["verdict"] == "match" and r["rule"] == "sign_outflow", "Fixings energy row: flipped sign accepted (v6.4)")
 r = R.compare(-8172.42, 8172.42, ctx("What is the amount for/of Changes in Net Working Capital in 2030?", dp=2))
 check(r["verdict"] == "mismatch" and "sign_flip_not_outflow" in r["flags"],
-      "NWC change keeps its sign (Patrick: a flipped change is WRONG)")
+      "NWC change keeps its sign (maintainer: a flipped change is WRONG)")
 
 # --- percent form (rule 3) ------------------------------------------------
 r = R.compare(0.4213, 42.13, ctx("gross margin", unit="[%]", dp=2, fmt="0.00%"))

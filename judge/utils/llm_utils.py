@@ -183,7 +183,7 @@ _MODEL_PRICING = {
     "google/gemini-3.1-pro-preview": (2.0, 12.0),
     "openai/gpt-5.5": (5.0, 30.0),   # judge-robustness study 2026-07-26 (OpenRouter)
     # Judge bake-off 2026-08 — PROVISIONAL list prices; ground truth comes
-    # from Patrick's isolated-window credits-dashboard deltas after the runs
+    # from the maintainer's isolated-window credits-dashboard deltas after the runs
     # ($/MTok = delta / token_tracking totals), then recalibrate here.
     "openai/gpt-5.6-sol": (5.0, 30.0),       # OpenAI list (matches cli models_config)
     # Forge does not return per-call cost and publishes no price in

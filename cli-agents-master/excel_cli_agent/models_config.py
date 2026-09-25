@@ -145,7 +145,7 @@ MODEL_DEFAULTS: Dict[str, Dict] = {
     },
 }
 
-# Per-call model timeout (seconds) by reasoning effort. 2026-09-19 (Pat): the
+# Per-call model timeout (seconds) by reasoning effort. 2026-09-19 (maintainer): the
 # two top tiers get the same 60 minutes - "xhigh" was 300 s, a hard bound on
 # the whole call, while "max" had 3600, so an OpenAI top-tier cohort could lose
 # a long thinking turn to the clock that an Anthropic one never faced.
@@ -164,11 +164,11 @@ TIMEOUT_BY_REASONING: Dict[Optional[str], int] = {
 # api_timeout_seconds; this only splits it into shorter tries.
 FORGE_STALL_TIMEOUT_SECONDS = 600
 
-# 2026-09-22 (Pat): gpt-6-astra through Forge sends NO byte - not even the
+# 2026-09-22 (maintainer): gpt-6-astra through Forge sends NO byte - not even the
 # response headers - until its thinking is done (probed 2026-09-22; Forge
 # serves it from Azure OpenAI), so a long think looks exactly like a hang. Its
 # longest genuine think on the direct OpenAI cohort (pv 1609) was ~14 min
-# (57k tokens); Pat set 15 min. Every other Forge model streams its thinking
+# (57k tokens); the maintainer set 15 min. Every other Forge model streams its thinking
 # from the first seconds and keeps the 10-minute limit.
 #
 # 2026-09-23: claude-opus-5 through Forge is silent the same way - probed at
