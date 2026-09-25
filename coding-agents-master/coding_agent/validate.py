@@ -32,6 +32,13 @@ INFRA_SIGNATURES = (
     "account balance and limits",
 )
 
+# Codex's last words when it gave up on a model call after exhausting its retries on a
+# provider/gateway error. The run ended because of the provider, not the agent, even if a
+# workbook was already saved - 2026-09-25: a GLM attempt cut off mid-run by TensorBlock 429s
+# (row 3981) was banked as success. Infra: no row, the runner retries the task.
+RETRY_EXHAUSTED_SIGNATURES = tuple(f"exceeded retry limit, last status: {code}"
+                                   for code in ("429", "500", "502", "503", "504"))
+
 
 @dataclass
 class Verdict:
@@ -67,6 +74,9 @@ def validate(attempt: Attempt, sandbox: SandboxResult, junk_seconds: int) -> Ver
         transcript_sample += sandbox.stderr_path.read_text(errors="replace")[-5000:].lower()
     except OSError:
         pass
+    for signature in RETRY_EXHAUSTED_SIGNATURES:
+        if signature in transcript_sample:
+            return Verdict("infra_failure", f"Agent cut off by the provider ({signature!r})", None)
     for signature in INFRA_SIGNATURES:
         if signature in transcript_sample and not solution.exists():
             return Verdict("infra_failure", f"Provider auth/quota error in transcript ({signature!r})", None)

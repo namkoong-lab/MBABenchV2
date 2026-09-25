@@ -106,6 +106,15 @@ def test_workspace_prompt_and_validation():
         # Timeout -> timeout, partial kept
         v = validate(attempt, sandbox_result(tmp, exit_code=None, timed_out=True), junk_seconds=180)
         assert v.status == "timeout" and v.solution_path is not None, v
+
+        # Codex gave up on a 429 mid-run: infra even though a workbook exists (2026-09-25, row 3981)
+        cut = sandbox_result(tmp, exit_code=1)
+        cut.transcript_path.write_text('{"type":"turn.failed","error":{"message":"exceeded retry limit, '
+                                       'last status: 429 Too Many Requests, request id: x"}}\n')
+        v = validate(attempt, cut, junk_seconds=180)
+        assert v.status == "infra_failure" and "429" in v.reason, v
+        cut.transcript_path.write_text('{"type":"turn.completed"}\n')
+        assert validate(attempt, cut, junk_seconds=180).status == "success"
     print("ok: workspace + prompt + validation verdicts")
 
 
