@@ -1,17 +1,59 @@
 # Colour and type style shared by the v2 figures (operation/v2/paper_scripts/*).
 # Scripts load this file and refer to slots by name, so a palette change happens here once.
 
-font: Gill Sans            # macOS system font; falls back to sans-serif when absent
+font: Avenir               # macOS Avenir Book; not Avenir Next, whose first .ttc face (all matplotlib loads) is Bold
+font_faces: [0, 1, 4, 8]   # font's .ttc faces to register (Book, Book Oblique, Heavy, Medium) so italic and bold render
+
+# Paper sizing: draw the canvas at the printed size so the point sizes below are what prints.
+# A large canvas shrunk by \includegraphics[width=\textwidth] turns 15 pt text into 5 pt.
+# Set figsize to the printed width (height as needed), keep every font at or above pt.min,
+# save with bbox_inches="tight", and include at width=\textwidth without scaling.
+# Cut the border: bbox_inches="tight" still pads 0.1 in on every side by default, so pass
+# pad_inches=save_pad_in, set the gridspec bottom/top margins to the content, and keep the
+# axis limits just past the outermost marks (e.g. 0.4 rows beyond the first/last bar centre).
+# plot_task_coverage.py is the reference implementation.
+print:
+  textwidth_in: 5.5        # ICLR \textwidth; a half-width figure is 2.7
+  save_pad_in: 0.01        # pad_inches for savefig(bbox_inches="tight"); the default 0.1 wastes 0.2 in of height
+  body_pt: 10              # paper body text, for reference
+  caption_pt: 9            # paper caption text; figure text reads best at or just below this
+  pt:
+    min: 7.5               # floor for any text in a figure
+    label: 8               # tick labels, row labels, value labels, legend entries
+    header: 8              # column headers and family/group labels
+  legend_weight: 500       # legend entries in Avenir Medium (face 8): a step above Book body text, short of bold
+
+# Squircle bar ends (plot_difficulty_and_types.py squircle_bar_ends): only the data end rounds, with superellipse
+# |x|^n + |y|^n = 1 corners. Once axis limits are final, build the outline in pixel space (round whatever the aspect),
+# radius in points so any dpi matches, map back to data and draw one Polygon so a hatch fills the whole bar.
+bar_end:
+  round_pt: 6              # corner radius in points, capped at half the bar thickness
+  squircle_n: 5            # superellipse exponent: 2 = circle, 4-5 = Apple's continuous corner
+  steps: 24                # outline points per corner
+  legend_round_pt: 3       # legend swatch corner radius (plain circular round; too small to tell apart)
 
 ink:
   primary: "#0b0b0b"       # titles, value labels, category labels
-  muted: "#7f8a9c"         # axis titles, tick numbers; cool grey between slate and slate_light
+  muted: "#7f8a9c"         # cool grey between slate and slate_light; not for axes (see `axis`)
   grid: "#e1e0d9"          # hairline gridlines
   baseline: "#c3c2b7"      # axis spines
   surface: "#ffffff"       # figure and axes background; also the gap between stacked segments
   unknown: "#c3c2b7"       # any category the palettes below do not name
-  slate: "#5b6b84"         # secondary text next to the blue ramp (counts, notes, "not covered")
+  slate: "#5b6b84"         # value-axis text, and secondary text next to the blue ramp (counts, notes, "not covered")
   slate_light: "#b9c3d2"   # empty markers and hairlines in the same slate family
+  slate_dark: "#3d4a5f"    # exact reference lines (expert pace), a step firmer than slate
+
+# Value axes on every figure (plot_difficulty_and_types.py quiet_axes, axis_title, tick_top): no value-axis spine,
+# only the category baseline; a hairline grid; the top rounds up to a tick so the grid closes the panel.
+# Category labels stay in ink.primary: the data speaks in black, the axis in slate.
+axis:
+  ink: slate               # ink slot for tick numbers and axis titles
+  tick_pt: 8               # tick numbers
+  title_pt: 9              # axis title, a step above the tick numbers (print.caption_pt)
+  title_weight: 500        # axis title in Avenir Medium; Book reads too light in slate
+  grid_lw: 0.5             # value-axis gridlines, points
+  tick_pad_pt: 3           # tick numbers to the axes edge
+  title_pad_pt: 4          # axis title to the tick numbers
 
 # tasks.human_difficulty_measure, easiest -> hardest: one blue ramp, light -> dark.
 # Ordinal ramp validated against the light surface (dataviz validate_palette.js --ordinal).
@@ -21,15 +63,60 @@ difficulty:
   Medium-Hard: "#1c5cab"
   Hard: "#0d366b"
 
-# Model vendors, brand hue where one exists (plot_leaderboard.py). Bars carry the agent name, so identity never rests on hue alone.
-# Validated with dataviz validate_palette.js --pairs all: xAI takes ink.slate because its brand is black; Anthropic/OpenAI sit at CVD dE 6.8.
+# Judge vs human labels (plot_judge_agreement.py): blue = judge right, orange = judge wrong; dark = annotator said pass.
+judge_agreement:
+  TN: "#1c5cab"            # difficulty Medium-Hard
+  TP: "#86b6ef"            # difficulty Easy
+  FP: "#a8420f"            # burnt orange, same depth as TN
+  FN: "#eb925d"            # light orange, same depth as TP
+  header_fill: "#d3dbe6"   # agent pill; light slate
+  chip_fill: "#e8edf3"     # task-id chip; paler slate
+  header_ink: "#3d4a5f"    # "Agent" / "Task ID" row names and task ids; ink.slate_dark, as slate read too muted
+  rule: "#b9c3d2"          # hairlines under the header rows and above the legend; ink.slate_light
+
+# Leaderboard name -> model vendor and the database agent_model_names pooled into it (plot_leaderboard.py plots only these).
+# Names are "<model>-<harness>": Cowork = Claude Cowork, Work = ChatGPT Work, Pro = ChatGPT Pro, Excel = the
+# vendor's Excel add-in, Code = Claude Code / Codex; no suffix = the in-house openpyxl agent over the raw API.
+# Astra = GPT-6 Astra, Sol = GPT-5.6 Sol.
+# db: every agent_model_name for the cohort, e.g. a re-run through another provider; the newest grading wins per task.
+agents:
+  Fable 5.1-Cowork: {vendor: Anthropic, db: [claude_fable_5_1_cowork_max]}
+  Fable 5-Cowork: {vendor: Anthropic, db: [claude_fable_5_cowork_max]}
+  Opus 5-Cowork: {vendor: Anthropic, db: [claude_opus_5_cowork_max]}
+  Astra-Work: {vendor: OpenAI, db: [chatgpt_gpt_6_astra_work_ultra]}
+  Sol-Work: {vendor: OpenAI, db: [chatgpt_gpt_5_6_sol_work_ultra]}
+  GPT-6-Pro: {vendor: OpenAI, db: [chatgpt_gpt_6_pro]}
+  Fable 5.1-Excel: {vendor: Anthropic, db: [claude_excel_fable_5_1]}
+  Fable 5-Excel: {vendor: Anthropic, db: [claude_excel_fable_5]}
+  Opus 5-Excel: {vendor: Anthropic, db: [claude_excel_opus_5]}
+  Sol-Excel: {vendor: OpenAI, db: [chatgpt_excel_gpt_5_6_sol_xhigh]}
+  Fable 5.1-Code: {vendor: Anthropic, db: [claudecode_anthropic/claude-fable-5-1-max]}
+  Fable 5-Code: {vendor: Anthropic, db: [claudecode_anthropic/claude-fable-5-max]}
+  Astra-Code: {vendor: OpenAI, db: [codex_openai/gpt-6-astra-xhigh]}
+  Sol-Code: {vendor: OpenAI, db: [codex_openai/gpt-5.6-sol-xhigh]}
+  Gemini 3.8-Code: {vendor: Google, db: [codex_tensorblock/gemini-3.8-flash-high]}
+  Grok 4.6-Code: {vendor: xAI, db: [codex_tensorblock/grok-4.6-xhigh]}
+  Kimi K3-Code: {vendor: Moonshot, db: [codex_tensorblock/kimi-k3-max]}
+  Fable 5.1: {vendor: Anthropic, db: [openpyxl_anthropic/claude-fable-5-1-max]}
+  Fable 5: {vendor: Anthropic, db: [openpyxl_anthropic/claude-fable-5-max]}
+  Astra: {vendor: OpenAI, db: [openpyxl_openai/gpt-6-astra-xhigh, openpyxl_tensorblock/gpt-6-astra-xhigh]}
+  Sol: {vendor: OpenAI, db: [openpyxl_openai/gpt-5.6-sol-xhigh]}
+  Gemini 3.8: {vendor: Google, db: [openpyxl_tensorblock/gemini-3.8-flash-high]}
+  Grok 4.6: {vendor: xAI, db: [openpyxl_tensorblock/grok-4.6-xhigh]}
+  Kimi K3: {vendor: Moonshot, db: [openpyxl_tensorblock/kimi-k3-max]}
+  Qwen 3.8: {vendor: Alibaba, db: [openpyxl_tensorblock/qwen3.8-max-xhigh]}
+
+# Model vendors on Okabe-Ito, the colour-blind-safe set scientific journals default to; its slots match the brand hue families
+# (plot_leaderboard.py). Bars carry the agent name, so identity never rests on hue alone. dataviz validate_palette.js --pairs all
+# over the four plotted vendors: normal dE 16.5, CVD dE 11.0, all >= 3:1 on white. xAI is charcoal by design (black brand) and
+# waived from the chroma floor. Moonshot and Alibaba are best-effort: six hues cannot clear the all-pairs floor, and neither is plotted yet.
 company:
-  Anthropic: "#d97757"    # terracotta
-  OpenAI: "#10a37f"       # green
-  Google: "#4285f4"       # blue
-  xAI: "#5b6b84"          # slate, same as ink.slate
-  Moonshot: "#c2418f"     # magenta
-  Alibaba: "#7c3aed"      # violet
+  Anthropic: "#d55e00"    # vermilion
+  OpenAI: "#009e73"       # bluish green
+  Google: "#0072b2"       # blue
+  xAI: "#505050"          # charcoal
+  Moonshot: "#cc79a7"     # reddish purple, Okabe-Ito's remaining slot
+  Alibaba: "#6f4ab0"      # violet
 
 # Harness on the leaderboard bars: share of the vendor hue mixed toward the surface (plot_leaderboard.py adds a hatch too).
 harness_tint:

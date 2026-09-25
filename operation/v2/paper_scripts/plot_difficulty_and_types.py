@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""Plot and describe the v2 task set: difficulty, task type, expected solve time.
+"""Deprecated: the paper figure is now plot_difficulty.py (difficulty only, half
+column). This file stays for its shared style helpers, which plot_difficulty.py
+and plot_task_coverage.py import.
+
+Plot and describe the v2 task set: difficulty, task type, expected solve time.
 
 Reads the live `tasks` table of the v2 Neon database (config database.v2_url)
 over the non-deprecated tasks and produces:
@@ -43,10 +47,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean, median
 
+import matplotlib
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import psycopg2
 import yaml
+from fontTools.ttLib import TTFont
+from matplotlib import font_manager
 from matplotlib.legend_handler import HandlerPatch
 
 # This file lives at <repo>/operation/v2/paper_scripts/plot_difficulty_and_types.py,
@@ -69,10 +76,16 @@ STYLE = yaml.safe_load(STYLE_PATH.read_text())
 DIFFICULTY_COLORS: dict[str, str] = STYLE["difficulty"]
 UNKNOWN_COLOR = STYLE["ink"]["unknown"]
 INK = STYLE["ink"]["primary"]
-MUTED = STYLE["ink"]["muted"]
 GRID = STYLE["ink"]["grid"]
 BASELINE = STYLE["ink"]["baseline"]
 SURFACE = STYLE["ink"]["surface"]
+
+# Value axes, shared by every paper figure: style_guide.yaml `axis`.
+AXIS = STYLE["axis"]
+AXIS_INK = STYLE["ink"][AXIS["ink"]]
+AXIS_TICK_FS = AXIS["tick_pt"]
+AXIS_TITLE_FS = AXIS["title_pt"]
+AXIS_TITLE_WEIGHT = AXIS["title_weight"]
 
 FIG_SIZE = (18, 8)
 WIDTH_RATIOS = [1, 1.7]  # [difficulty, model types]
@@ -86,15 +99,32 @@ VALUE_FS = 16
 LEGEND_FS = 16
 TYPE_LABEL_ROTATION = 25  # degrees; tilts the long model-type names
 
-# Bar ends are squircles (Apple's continuous corners): a superellipse
-# |x|^n + |y|^n = 1 with n = 4 to 5 instead of a circular arc. The radius is in
-# points so it looks the same at any save dpi; it is capped at half the bar's
-# thickness. Only the data end is rounded; the baseline end stays square.
-BAR_ROUND_PT = 6
-SQUIRCLE_N = 5
-SQUIRCLE_STEPS = 24  # points per corner
-LEGEND_HANDLE_ROUND_PT = 3
+# Bar ends are squircles; the trick and its numbers are in style_guide.yaml `bar_end`.
+BAR_ROUND_PT = STYLE["bar_end"]["round_pt"]
+SQUIRCLE_N = STYLE["bar_end"]["squircle_n"]
+SQUIRCLE_STEPS = STYLE["bar_end"]["steps"]  # points per corner
+LEGEND_HANDLE_ROUND_PT = STYLE["bar_end"]["legend_round_pt"]
 
+
+def register_font_faces(family: str, faces: list[int]) -> None:
+    """matplotlib reads only face 0 of a .ttc, so bold and italic fall back to it.
+    Split the listed faces into cached .ttf files and register them."""
+    path = Path(font_manager.findfont(family, fallback_to_default=False))
+    if path.suffix.lower() != ".ttc":
+        return
+    out_dir = Path(matplotlib.get_cachedir()) / "ttc_faces"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for index in faces:
+        face = out_dir / f"{path.stem}-{index}.ttf"
+        if not face.exists():
+            TTFont(path, fontNumber=index).save(face)
+        font_manager.fontManager.addfont(str(face))
+
+
+try:
+    register_font_faces(STYLE["font"], STYLE.get("font_faces", []))
+except ValueError:  # font not installed: fall back to sans-serif below
+    pass
 plt.rcParams["font.family"] = [STYLE["font"], "sans-serif"]
 plt.rcParams["axes.unicode_minus"] = False
 
@@ -307,13 +337,47 @@ def print_report(report: dict) -> None:
 # --- figure ------------------------------------------------------------------
 
 
+def quiet_axes(ax, value_axis: str = "y") -> None:
+    """Value-axis chrome for the paper figures (style_guide.yaml `axis`).
+
+    The bottom baseline only, a hairline grid on the value axis, its tick numbers in
+    the axis ink. value_axis is "y", or "both" for a scatter whose x is numeric too.
+    """
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(BASELINE)
+    ax.grid(axis=value_axis, color=GRID, linewidth=AXIS["grid_lw"], zorder=0)
+    ax.set_axisbelow(True)
+    numbers = dict(labelsize=AXIS_TICK_FS, labelcolor=AXIS_INK)
+    ax.tick_params(axis="y", length=0, pad=AXIS["tick_pad_pt"], **numbers)
+    ax.tick_params(axis="x", length=0, pad=AXIS["tick_pad_pt"], **(numbers if value_axis == "both" else {}))
+
+
+def axis_title(ax, text: str, axis: str = "y") -> None:
+    """A value-axis title: slate, a step above the tick numbers, Avenir Medium."""
+    set_label = ax.set_ylabel if axis == "y" else ax.set_xlabel
+    set_label(text, fontsize=AXIS_TITLE_FS, color=AXIS_INK, fontweight=AXIS_TITLE_WEIGHT,
+              labelpad=AXIS["title_pad_pt"])
+
+
+def tick_top(peak: float, step: int, max_ticks: int | None = None) -> tuple[int, int]:
+    """(top, step) of a value axis from 0: top is the first tick at or above peak, so the
+    grid closes the panel; the step doubles until there are at most max_ticks ticks."""
+    while True:
+        top = max(step, math.ceil(peak / step) * step)
+        if max_ticks is None or top // step + 1 <= max_ticks:
+            return top, step
+        step *= 2
+
+
 def style_axis(ax, horizontal: bool) -> None:
     """Recessive chrome: baseline only, hairline grid on the value axis."""
     for side in ("top", "right", "left" if horizontal else "top"):
         ax.spines[side].set_visible(False)
     for side in ("bottom", "left"):
         ax.spines[side].set_color(BASELINE)
-    ax.tick_params(colors=MUTED, labelsize=TICK_FS, length=0)
+    ax.tick_params(colors=AXIS_INK, labelsize=TICK_FS, length=0)
     ax.grid(axis="x" if horizontal else "y", color=GRID, linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
     ax.set_facecolor(SURFACE)
@@ -407,7 +471,7 @@ def plot_difficulty(ax, difficulty: dict) -> None:
     style_axis(ax, horizontal=False)
     ax.tick_params(axis="x", labelcolor=INK)  # category labels in ink, like the right panel
     ax.set_ylim(0, max(counts) * 1.15)
-    ax.set_ylabel("Tasks", fontsize=LABEL_FS, color=MUTED)
+    ax.set_ylabel("Tasks", fontsize=LABEL_FS, color=AXIS_INK, fontweight=AXIS_TITLE_WEIGHT)
     ax.set_title("Difficulty distribution", fontsize=TITLE_FS, color=INK, pad=14)
     squircle_bar_ends(ax, bars, horizontal=False)
 
@@ -442,7 +506,8 @@ def plot_task_types(ax, task_type: dict, difficulty_labels: list[str]) -> None:
         rotation=TYPE_LABEL_ROTATION, ha="right", va="center", rotation_mode="anchor",
     )
     ax.set_xlim(0, biggest * 1.12)
-    ax.set_xlabel("Tasks", fontsize=LABEL_FS, color=MUTED, labelpad=XLABEL_PAD)
+    ax.set_xlabel("Tasks", fontsize=LABEL_FS, color=AXIS_INK, fontweight=AXIS_TITLE_WEIGHT,
+                  labelpad=XLABEL_PAD)
     ax.set_title("Task type distribution", fontsize=TITLE_FS, color=INK, pad=14)
     ax.legend(
         handles=[h[0] for h in handles], labels=difficulty_labels, title="Difficulty",

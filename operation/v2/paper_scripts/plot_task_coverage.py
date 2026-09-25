@@ -18,9 +18,11 @@ taxonomy's type names verbatim. Prior-benchmark counts live in PRIOR; those
 named in PRIOR_PLACEHOLDER are still guesses, and the figure says so while any
 remain.
 
-Colours, typeface, and the bar/legend helpers are shared with
-plot_difficulty_and_types.py in this directory. Run with the shared plotting
-environment, ~/.uv/uv_venvs/base.
+The canvas is the printed size (5.5 in wide, one \\textwidth), so the font
+sizes in the FIGURE STYLE block are the sizes that print; include it with
+width=\\textwidth and do not scale it. Colours, typeface, and the bar/legend
+helpers are shared with plot_difficulty_and_types.py in this directory. Run
+with the shared plotting environment, ~/.uv/uv_venvs/base.
 
 Usage:
     python operation/v2/paper_scripts/plot_task_coverage.py
@@ -87,17 +89,17 @@ TAXONOMY = [
     ),
     ("Personal Finance", "Rent vs. Buy Analysis", "Rent vs. Buy"),
     ("Personal Finance", "Retirement / Savings Calculators", "Retirement / Savings"),
-    ("Business Analytics", "Non-Financial or Non-FP&A Model", "Non-financial model"),
+    ("Business Analytics", "Non-Financial or Non-FP&A Model", "Modeling (non-financial)"),
     ("Deal / Transaction", "LBO (Leveraged Buyout)", "LBO"),
     ("Deal / Transaction", "Merger Model", "Merger Model"),
     ("Deal / Transaction", "Accretion/Dilution Analysis", "Accretion / Dilution"),
-    ("Other", None, "Non-spreadsheet tasks"),  # prior benchmarks only
+    ("Other", None, "Non-modeling tasks"),  # prior benchmarks only
 ]
 
 # Tasks per type (short row label) per prior benchmark; 0 / absent = not covered.
-# BankerToolBench and GDPval are expert-labelled per task. Benchmarks listed in
-# PRIOR_PLACEHOLDER still carry guessed counts and are flagged on the figure.
-PRIOR_PLACEHOLDER = {"MBABench"}
+# All three are expert-labelled per task. Benchmarks listed in PRIOR_PLACEHOLDER
+# still carry guessed counts and are flagged on the figure.
+PRIOR_PLACEHOLDER: set[str] = set()
 PRIOR = {
     "BankerToolBench": {
         "DCF": 18,
@@ -105,28 +107,27 @@ PRIOR = {
         "Precedent Transactions": 1,
         "LBO": 15,
         "Merger Model": 6,
-        "Non-spreadsheet tasks": 50,
+        "Non-modeling tasks": 50,
     },
     "GDPval (finance)": {
         "3-Statement": 1,
         "Scenario / Sensitivity": 1,
         "Rent vs. Buy": 1,
         "Retirement / Savings": 1,
-        "Non-spreadsheet tasks": 16,
+        "Non-modeling tasks": 16,
     },
-    "MBABench": {
+    "MBABench": {  # 38 public tasks
         "DCF": 4,
-        "Trading Comps": 2,
-        "3-Statement": 6,
-        "Working Capital": 2,
-        "Ratio Analysis": 3,
-        "Forecasting": 5,
+        "NAV": 1,
+        "3-Statement": 5,
+        "Ratio Analysis": 1,
+        "Forecasting": 7,
         "Scenario / Sensitivity": 3,
-        "Budget vs. Actuals": 4,
-        "Loan Amortization": 3,
-        "Bond Pricing / Yield Curve": 2,
-        "Retirement / Savings": 2,
-        "Non-financial model": 2,
+        "Debt Schedule / Waterfall": 4,
+        "Rent vs. Buy": 1,
+        "Retirement / Savings": 1,
+        "Modeling (non-financial)": 9,
+        "LBO": 2,
     },
 }
 PRIOR_ORDER = ["BankerToolBench", "GDPval (finance)", "MBABench"]
@@ -139,26 +140,40 @@ PRIOR_SHORT = {
 # ============================================================================
 # FIGURE STYLE
 # ============================================================================
-FIG_SIZE = (16, 11)
-WIDTH_RATIOS = [3.2, 1.4]  # [stacked bars, dot matrix]
-WSPACE = 0.04
-LEFT_MARGIN = 0.30  # figure fraction reserved for family brackets + row labels
-SAVE_DPI = 200
-SUBTITLE_FS = 14
-TICK_FS = 15
-VALUE_FS = 15
-LEGEND_FS = 18
-FAMILY_FS = 17
+# The canvas is the printed size (style_guide.yaml print.textwidth_in, included
+# with width=\textwidth), so every font size below is the size that prints.
+PRINT = STYLE["print"]
+FIG_SIZE = (PRINT["textwidth_in"], 3.3)
+WIDTH_RATIOS = [1.0, 1.2]  # [stacked bars, dot matrix]
+WSPACE = 0.06
+LEFT_MARGIN = 0.44  # figure fraction reserved for family brackets + row labels
+TOP_MARGIN = 0.92  # room above the panels for the legend block and column headers
+BOTTOM_MARGIN = 0.0
+SAVE_DPI = 300
+SAVE_PAD_IN = PRINT["save_pad_in"]  # tight-bbox padding around the saved figure
+ROW_OVERHANG = 0.4  # rows beyond the first/last row centre kept inside the panels
+SUBTITLE_FS = PRINT["pt"]["label"]
+TICK_FS = PRINT["pt"]["label"]  # row labels
+VALUE_FS = PRINT["pt"]["label"]  # counts at bar tips
+NOTE_FS = PRINT["pt"]["min"]  # "not covered"
+LEGEND_FS = PRINT["pt"]["label"]
+LEGEND_WEIGHT = PRINT["legend_weight"]
+FAMILY_FS = PRINT["pt"]["header"]
+PRIOR_HEADER_FS = PRINT["pt"]["header"]  # benchmark column headers
+PRIOR_VALUE_FS = PRINT["pt"]["label"]  # counts beside the filled dots
 FAMILY_COLOR = DIFFICULTY_COLORS[
     "Hard"
 ]  # family labels and brackets: the ramp's navy, not grey
-FAMILY_BRACKET_LW = 4  # thick navy bar so each family block reads as a header
-FAMILY_LABEL_PAD = 0.018
+FAMILY_BRACKET_LW = 1.6  # navy bar so each family block reads as a header
+FAMILY_LABEL_PAD = 0.03  # axes fraction between bracket and family label
 BAR_HEIGHT = 0.66
-DOT_FILL = DIFFICULTY_COLORS["Medium-Hard"]
-DOT_SIZE_FILLED = 150
-DOT_SIZE_EMPTY = 110
-FAMILY_BRACKET_X = -0.32  # axes fraction; brackets sit left of the row labels
+DOT_FILL = SLATE  # presence marks; slate keeps them off the difficulty ramp
+DOT_SIZE_FILLED = 26
+DOT_SIZE_EMPTY = 20
+DOT_COUNT_OFFSET = 0.2  # data units from dot centre to its count
+FAMILY_BRACKET_GAP = 0.02  # axes fraction between the widest row label and the bracket
+VALUE_GAP = 0.045  # bar tip to its count, as a share of the longest bar
+LEGEND_HANDLE_LEN = 1.7  # legend swatch length, in font sizes
 
 plt.rcParams["axes.unicode_minus"] = False
 
@@ -204,7 +219,9 @@ def family_spans(y: list[float]) -> list[tuple[str, float, float, bool]]:
 
 
 def plot_ours(ax, counts: Counter, y: list[float]) -> None:
-    """Left panel: our task count per taxonomy row, stacked by difficulty."""
+    """Left panel: our task count per taxonomy row, stacked by difficulty.
+
+    Returns the bar containers (for the legend) and the family label texts."""
     left = [0] * len(TAXONOMY)
     outer = [None] * len(TAXONOMY)
     handles = []
@@ -233,11 +250,11 @@ def plot_ours(ax, counts: Counter, y: list[float]) -> None:
     for yi, total, (fam, _, _) in zip(y, left, TAXONOMY):
         if total > 0:
             ax.text(
-                total + biggest * 0.02,
+                total + biggest * VALUE_GAP,
                 yi,
                 str(total),
                 ha="left",
-                va="center",
+                va="center_baseline",  # same as the row labels
                 fontsize=VALUE_FS,
                 color=INK,
             )
@@ -247,8 +264,8 @@ def plot_ours(ax, counts: Counter, y: list[float]) -> None:
                 yi,
                 "not covered",
                 ha="left",
-                va="center",
-                fontsize=VALUE_FS - 1,
+                va="center_baseline",  # same as the row labels
+                fontsize=NOTE_FS,
                 color=SLATE,
                 style="italic",
             )
@@ -258,37 +275,33 @@ def plot_ours(ax, counts: Counter, y: list[float]) -> None:
                 yi,
                 "–",
                 ha="left",
-                va="center",
+                va="center_baseline",  # same as the row labels
                 fontsize=VALUE_FS,
                 color=SLATE,
             )
 
+    # No x-axis: the bars carry their own counts.
     for side in ("top", "right", "left", "bottom"):
         ax.spines[side].set_visible(False)
-    ax.tick_params(colors=SLATE, labelsize=TICK_FS, length=0)
-    ax.grid(axis="x", color=GRID, linewidth=0.8, zorder=0)
-    ax.set_axisbelow(True)
+    ax.set_xticks([])
+    ax.tick_params(axis="y", length=0, pad=3)
     ax.set_facecolor(SURFACE)
     ax.set_yticks(y, [short for _, _, short in TAXONOMY], fontsize=TICK_FS, color=INK)
-    ax.set_xlim(0, biggest * 1.15)
-    ax.set_ylim(y[-1] - 0.6, y[0] + 0.6)
-    ax.legend(
-        handles=[h[0] for h in reversed(handles)],
-        labels=list(DIFFICULTY_ORDER),
-        title="Difficulty",
-        loc="lower right",
-        fontsize=LEGEND_FS,
-        title_fontsize=LEGEND_FS,
-        frameon=False,
-        labelcolor=INK,
-        handler_map={mpatches.Rectangle: _RoundedHandler()},
+    ax.set_xlim(0, biggest + 0.8)  # end at the longest bar plus room for its count
+    ax.set_ylim(y[-1] - ROW_OVERHANG, y[0] + ROW_OVERHANG)
+    # Family brackets and labels sit a fixed gap left of the widest row label,
+    # measured after layout so the gap does not depend on the panel width.
+    ax.figure.canvas.draw()
+    to_axes = ax.transAxes.inverted()
+    label_left = min(
+        to_axes.transform(t.get_window_extent())[0][0] for t in ax.get_yticklabels()
     )
-
-    # Family brackets and labels, in axes-x / data-y coordinates left of the row labels.
+    bracket_x = label_left - FAMILY_BRACKET_GAP
     trans = ax.get_yaxis_transform()
+    family_texts = []
     for fam, top, bottom, has_next in family_spans(y):
         ax.plot(
-            [FAMILY_BRACKET_X, FAMILY_BRACKET_X],
+            [bracket_x, bracket_x],
             [bottom + 0.1, top - 0.1],
             color=FAMILY_COLOR,
             lw=FAMILY_BRACKET_LW,
@@ -296,22 +309,61 @@ def plot_ours(ax, counts: Counter, y: list[float]) -> None:
             transform=trans,
             clip_on=False,
         )
-        ax.text(
-            FAMILY_BRACKET_X - FAMILY_LABEL_PAD,
-            (top + bottom) / 2,
-            fam,
-            ha="right",
-            va="center",
-            fontsize=FAMILY_FS,
-            color=FAMILY_COLOR,
-            weight="bold",
-            transform=trans,
-            clip_on=False,
+        family_texts.append(
+            ax.text(
+                bracket_x - FAMILY_LABEL_PAD,
+                (top + bottom) / 2,
+                fam,
+                ha="right",
+                va="center",
+                fontsize=FAMILY_FS,
+                color=FAMILY_COLOR,
+                weight="bold",
+                transform=trans,
+                clip_on=False,
+            )
         )
         if has_next:
             ax.axhline(bottom, color=GRID, lw=0.8, zorder=0)
 
     squircle_bar_ends(ax, [r for r in outer if r is not None], horizontal=True)
+    return handles, family_texts
+
+
+def add_legend(ax, axd, handles, family_texts) -> None:
+    """Difficulty legend, one row centred in the empty strip at the top left:
+    from the widest family label to the first benchmark column header
+    horizontally, and level with those headers vertically."""
+    ax.figure.canvas.draw()
+    to_axes = ax.transAxes.inverted()
+    legend_left = min(
+        to_axes.transform(t.get_window_extent())[0][0] for t in family_texts
+    )
+    headers = [to_axes.transform(t.get_window_extent()) for t in axd.get_xticklabels()]
+    strip_right = min(h[0][0] for h in headers)
+    strip_top = max(h[1][1] for h in headers)
+    ax.legend(
+        handles=[h[0] for h in reversed(handles)],
+        labels=list(DIFFICULTY_ORDER),
+        loc="center",
+        bbox_to_anchor=(
+            legend_left,
+            1.0,
+            strip_right - legend_left,
+            strip_top - 1.0,
+        ),
+        ncol=len(DIFFICULTY_ORDER),
+        borderpad=0,
+        borderaxespad=0,
+        handlelength=LEGEND_HANDLE_LEN,
+        handletextpad=0.4,
+        columnspacing=1.0,
+        labelspacing=0.3,
+        prop={"size": LEGEND_FS, "weight": LEGEND_WEIGHT},
+        frameon=False,
+        labelcolor=INK,
+        handler_map={mpatches.Rectangle: _RoundedHandler()},
+    )
 
 
 def plot_prior(ax, y: list[float]) -> None:
@@ -327,16 +379,16 @@ def plot_prior(ax, y: list[float]) -> None:
                     s=DOT_SIZE_FILLED,
                     color=DOT_FILL,
                     edgecolor=SURFACE,
-                    linewidth=1.2,
+                    linewidth=0.6,
                     zorder=3,
                 )
                 ax.text(
-                    xi + 0.24,
+                    xi + DOT_COUNT_OFFSET,
                     yi,
                     str(cnt),
-                    va="center",
+                    va="center_baseline",  # same as the row labels
                     ha="left",
-                    fontsize=VALUE_FS - 2,
+                    fontsize=PRIOR_VALUE_FS,
                     color=SLATE,
                 )
             else:
@@ -346,15 +398,15 @@ def plot_prior(ax, y: list[float]) -> None:
                     s=DOT_SIZE_EMPTY,
                     facecolor=SURFACE,
                     edgecolor=SLATE_LIGHT,
-                    linewidth=1.0,
+                    linewidth=0.6,
                     zorder=3,
                 )
-    ax.set_xlim(-0.55, len(PRIOR_ORDER) - 0.2)
+    ax.set_xlim(-0.45, len(PRIOR_ORDER) - 0.25)
     ax.set_xticks(
-        xs, [PRIOR_SHORT[n] for n in PRIOR_ORDER], fontsize=TICK_FS, color=INK
+        xs, [PRIOR_SHORT[n] for n in PRIOR_ORDER], fontsize=PRIOR_HEADER_FS, color=INK
     )
     ax.xaxis.set_ticks_position("top")
-    ax.tick_params(axis="x", length=0, pad=6)
+    ax.tick_params(axis="x", length=0, pad=3)
     ax.tick_params(axis="y", length=0, labelleft=False)
     ax.grid(False)
     for side in ("top", "right", "bottom"):
@@ -377,14 +429,15 @@ def make_figure(counts: Counter) -> plt.Figure:
         width_ratios=WIDTH_RATIOS,
         wspace=WSPACE,
         left=LEFT_MARGIN,
-        right=0.98,
-        top=0.90,
-        bottom=0.07,
+        right=0.99,
+        top=TOP_MARGIN,
+        bottom=BOTTOM_MARGIN,
     )
     ax = fig.add_subplot(gs[0])
     axd = fig.add_subplot(gs[1], sharey=ax)
-    plot_ours(ax, counts, y)
+    handles, family_texts = plot_ours(ax, counts, y)
     plot_prior(axd, y)
+    add_legend(ax, axd, handles, family_texts)
 
     if PRIOR_PLACEHOLDER:
         fig.text(
@@ -403,7 +456,13 @@ def save_figure(fig: plt.Figure, plot_dir: Path) -> list[Path]:
     paths = []
     for ext in ("png", "pdf"):
         path = plot_dir / f"{PLOT_NAME}.{ext}"
-        fig.savefig(path, dpi=SAVE_DPI, bbox_inches="tight", facecolor=SURFACE)
+        fig.savefig(
+            path,
+            dpi=SAVE_DPI,
+            bbox_inches="tight",
+            pad_inches=SAVE_PAD_IN,
+            facecolor=SURFACE,
+        )
         paths.append(path)
     return paths
 

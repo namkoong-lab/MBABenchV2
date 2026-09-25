@@ -2,24 +2,28 @@
 """Judge agreement with human annotation, by rubric category and attempt.
 
 Reads public.judge_annotations (human TP/FP/TN/FN label per "Category::Check"),
-joined to gradings / task_attempts / tasks, and draws one figure under
-operation/results/v2/plots/judge_agreement/judge_agreement.{png,pdf}:
+joined to gradings / task_attempts / tasks, for the gradings in calc_judge_stat.py's
+GRADING_IDS (--all: every annotated grading), and draws one figure under
+operation/results/v2/plots/judge_agreement/judge_agreement_main.{png,pdf}
+(--all: judge_agreement.{png,pdf}):
 
   rows     the 12 rubric_9 categories, in rubric order, with their check count
   columns  annotated attempts, grouped by agent (rounded header pill) with the
            task id under it
-  cell     a stacked pill of that attempt's checks in the category, from the
-           judge's side: blue = judge agreed with the annotator, orange = judge
-           was wrong; dark = the judge said pass, pale = the judge said fail.
+  cell     a stacked pill of that attempt's checks in the category: blue = judge
+           agreed with the annotator, orange = judge was wrong; dark = the
+           annotator said pass, pale = the annotator said fail.
 
 Positive class is "check failed": TP both say fail, FN judge missed a fail,
-FP judge failed a passing check. Judge v2 gradings (earlier check set) are skipped.
+FP judge failed a passing check. Judge v2 gradings (earlier check set) are skipped
+under --all and are an error for the main-paper set.
 
-Colours, typeface and helpers come from style_guide.yaml and the sibling
+Colours (style_guide.yaml `judge_agreement`), agent names (`agents`), typeface and helpers come from style_guide.yaml and the sibling
 plot_difficulty_and_types.py. Run with ~/.uv/uv_venvs/base:
-    python operation/v2/paper_scripts/plot_judge_agreement.py
+    python operation/v2/paper_scripts/plot_judge_agreement.py [--all]
 """
 
+import argparse
 import importlib.util
 import json
 import sys
@@ -35,50 +39,56 @@ from matplotlib.patches import FancyBboxPatch, Patch, Rectangle
 
 # This file lives at <repo>/operation/v2/paper_scripts/, so the repo root is four levels up.
 REPO_ROOT = Path(__file__).resolve().parents[3]
-from plot_difficulty_and_types import INK, MUTED, SURFACE, _RoundedHandler  # noqa: E402
+from calc_judge_stat import GRADING_IDS  # noqa: E402
+from plot_difficulty_and_types import INK, STYLE, SURFACE, _RoundedHandler  # noqa: E402
 
 RUBRIC = json.loads((REPO_ROOT / "judge" / "prompts" / "rubrics" / "rubric_9.json").read_text())
 OUT_DIR = REPO_ROOT / "operation" / "results" / "v2" / "plots" / "judge_agreement"
-PLOT_NAME = "judge_agreement"
+PLOT_NAME = "judge_agreement_main"  # GRADING_IDS only
+PLOT_NAME_ALL = "judge_agreement"  # --all
 SAVE_DPI = 200
 MIN_JUDGE_VERSION = 3
+MIN_COLS_PER_AGENT = 3  # narrower runs leave the agent pill too little room for its name
 
-# Everything is from the judge's side: hue = judge right (blue) or wrong (orange),
-# intensity = the judge's verdict (dark = judge said pass, pale = judge said fail).
-COLORS = {
-    "TN": "#2a78d6",  # judge right, said pass
-    "TP": "#b9d3f3",  # judge right, said fail
-    "FP": "#f2a985",  # judge wrong, said fail
-    "FN": "#c2410c",  # judge wrong, said pass
-}
+# Hue = judge right (blue) or wrong (orange); intensity = the annotator's verdict
+# (dark = annotator said pass, pale = annotator said fail).
+PALETTE = STYLE["judge_agreement"]
+COLORS = {k: PALETTE[k] for k in ("TN", "TP", "FP", "FN")}
+SLATE = PALETTE["header_ink"]  # "Agent" / "Task ID" row names and the task ids
+RULE_COLOR = PALETTE["rule"]  # hairlines under the header rows and above the legend
 SEGMENT_ORDER = ("TN", "TP", "FP", "FN")  # agreed first, errors at the right end
-LEGEND_ORDER = ("TP", "FP", "TN", "FN")  # column-major fill of a 2x2 grid: TP TN / FP FN
+LEGEND_ORDER = ("TN", "TP", "FN", "FP")
 
 # Sized for a conference text width (~7 in): type is set at paper size, not scaled down.
 # Height follows from the row pitch and the measured height of the tilted task names.
 FIG_W = 7.2
-ROW_IN = 0.27  # inches per category row
+ROW_IN = 0.21  # inches per category row; sizes below in rows are set against this pitch
 LEFT_PAD_IN = 0.12  # gap between the widest category label and the first column
 MARGIN_IN = 0.06
 CAT_FS = 9
 CAT_ROTATION = 25  # degrees; tilted like the task-type labels in the other v2 figures
 TASK_FS = 8
-HEADER_FS = 7
-LEGEND_FS_PT = 11
-LEGEND_DROP = 0.04  # figure fraction the legend sits below the centre of its block
-BAR_H = 0.46  # row pitch is 1
+HEADER_FS = 9
+LEGEND_FS_PT = 10
+LEGEND_WEIGHT = 500
+LEGEND_GAP_IN = 0.09  # between the bottom rule and the legend
+RULE_PT = 0.6
+RULE_CLEAR = 0.46  # rows between the outer bars and each hairline rule, the same above and below
+BAR_H = 0.59  # row pitch is 1
 BAR_W = 0.84  # column pitch is 1
 SEGMENT_GAP_PT = 0.8  # surface hairline between segments
-CHIP_H = 0.6  # task-id chip height, rows
+CHIP_H = 0.77  # task-id chip height, rows
 CHIP_W = 0.56  # task-id chip width, columns
-CHIP_FILL = "#f1f0eb"
-TASK_Y = -0.5 - 0.18 - CHIP_H / 2  # task-id row centre (rows grow downward)
+CHIP_FILL = PALETTE["chip_fill"]
+CHIP_CLEAR = 0.27  # rows between the header rule and the id chips
+HEADER_RULE_Y = -BAR_H / 2 - RULE_CLEAR  # rows grow downward, so "above" is more negative
+TASK_Y = HEADER_RULE_Y - CHIP_CLEAR - CHIP_H / 2  # task-id row centre
 HEADER_GAP = 0.22  # rows between the id chips and the agent pill
-ROW_LABEL_FS = 8  # "Agent" / "Task ID" row names at the left
-HEADER_H_ONE = 0.62  # pill height, rows, when every agent name fits on one line
-HEADER_H_TWO = 1.05  # ... when some name had to wrap
-HEADER_FILL = "#edece6"
-SHORT_CAT = {"Model Outputs & Executive Summary": "Model Outputs & Exec. Summary"}
+ROW_LABEL_FS = 9.5  # "Agent" / "Task ID" row names at the left
+HEADER_H_ONE = 1.0  # pill height, rows, when every agent name fits on one line
+HEADER_H_TWO = 1.7  # ... when some name had to wrap
+HEADER_FILL = PALETTE["header_fill"]
+SHORT_CAT = {"Model Outputs & Executive Summary": "Model Outputs"}
 
 CATEGORY_ORDER = list(RUBRIC)
 CHECKS = [(cat, c["name"]) for cat in CATEGORY_ORDER for c in RUBRIC[cat]]
@@ -86,13 +96,16 @@ CHECK_INDEX = {f"{cat}::{name}": i for i, (cat, name) in enumerate(CHECKS)}
 CAT_SPANS: dict[str, list[int]] = {}
 for i, (cat, _) in enumerate(CHECKS):
     CAT_SPANS.setdefault(cat, [i, i])[1] = i
-SHORT_AGENT = {
-    "claude_fable_5_1_cowork_max": "Fable 5.1 Cowork",
-    "chatgpt_gpt_6_astra_work_ultra": "GPT-6 Astra Work",
-    "codex_openai/gpt-5.6-sol-xhigh": "Codex gpt-5.6-sol",
-    "openpyxl_anthropic/claude-fable-5-max": "openpyxl Fable 5",
-    "claude_opus_4_8": "Opus 4.8",
-}
+# Column order: native apps first, then the harnesses. Other agents (only under --all) go last,
+# alphabetically. Names are the leaderboard's (style_guide.yaml `agents`), raw when not listed there.
+AGENT_ORDER = (
+    "chatgpt_gpt_6_astra_work_ultra",
+    "claude_fable_5_1_cowork_max",
+    "codex_tensorblock/gemini-3.8-flash-high",
+    "openpyxl_anthropic/claude-fable-5-1-max",
+)
+AGENT_RANK = {name: i for i, name in enumerate(AGENT_ORDER)}
+SHORT_AGENT = {db: name for name, v in STYLE["agents"].items() for db in v["db"]}
 
 
 # --- data ----------------------------------------------------------------------
@@ -105,8 +118,12 @@ def db_url() -> str:
     return mod.Config.load(REPO_ROOT / "config").as_dict()["database"]["v2_url"]
 
 
-def fetch() -> list[dict]:
-    """One row per annotated grading (latest revision), sorted by agent then task."""
+def fetch(grading_ids: tuple[int, ...] | None) -> list[dict]:
+    """One row per annotated grading (latest revision), sorted by agent then task.
+
+    grading_ids=None takes every annotated grading and skips old judge versions;
+    otherwise every listed grading must be annotated by a current judge version.
+    """
     conn = psycopg2.connect(db_url())
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(
@@ -118,18 +135,28 @@ def fetch() -> list[dict]:
         join gradings g on g.id = a.grading_id
         join task_attempts ta on ta.id = a.attempt_id
         join tasks t on t.id = ta.task_id
+        where %(ids)s::int[] is null or a.grading_id = any(%(ids)s::int[])
         order by a.grading_id, a.revision desc, a.created_at desc
-        """
+        """,
+        {"ids": list(grading_ids) if grading_ids is not None else None},
     )
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
-    kept = [r for r in rows if r["judge_version"] >= MIN_JUDGE_VERSION]
-    for r in rows:
-        if r not in kept:
-            print(f"skipping grading {r['grading_id']} (judge v{r['judge_version']}, {len(r['labels'])} labels)")
+    old = [r for r in rows if r["judge_version"] < MIN_JUDGE_VERSION]
+    if grading_ids is not None:
+        missing = sorted(set(grading_ids) - {r["grading_id"] for r in rows})
+        if missing:
+            sys.exit(f"no annotation for grading(s): {', '.join(map(str, missing))}")
+        if old:
+            sys.exit(f"grading(s) below judge v{MIN_JUDGE_VERSION}: "
+                     + ", ".join(f"{r['grading_id']} (v{r['judge_version']})" for r in old))
+    for r in old:
+        print(f"skipping grading {r['grading_id']} (judge v{r['judge_version']}, {len(r['labels'])} labels)")
+    kept = [r for r in rows if r not in old]
     for r in kept:
         r["agent"] = SHORT_AGENT.get(r["agent_model_name"], r["agent_model_name"])
-    return sorted(kept, key=lambda r: (r["agent"], r["task_id"]))
+    return sorted(kept, key=lambda r: (AGENT_RANK.get(r["agent_model_name"], len(AGENT_RANK)),
+                                       r["agent"], r["task_id"]))
 
 
 def cell_counts(row: dict, cat: str) -> Counter:
@@ -196,7 +223,12 @@ def wrap_to_width(fig, ax, label: str, width_in: float) -> str:
     return label[:cut] + "\n" + label[cut + 1:]
 
 
-def make_figure(rows: list[dict]) -> plt.Figure:
+def make_figure(rows: list[dict], min_cols: int = 0) -> plt.Figure:
+    """min_cols: the fewest columns an agent may have; fewer is an error."""
+    narrow = {a: n for a, n in Counter(r["agent"] for r in rows).items() if n < min_cols}
+    if narrow:
+        sys.exit(f"agents with fewer than {min_cols} columns: "
+                 + ", ".join(f"{a} ({n})" for a, n in narrow.items()))
     n_att = len(rows)
     cats = CATEGORY_ORDER
     fig = plt.figure(figsize=(FIG_W, 4), facecolor=SURFACE)  # height is set once the header is measured
@@ -231,7 +263,7 @@ def make_figure(rows: list[dict]) -> plt.Figure:
     # (rows grow downward, so "above" is more negative)
     header_y = TASK_Y - CHIP_H / 2 - HEADER_GAP - header_h / 2
     y_top = header_y - header_h / 2 - 0.15
-    y_bottom = len(cats) - 0.5
+    y_bottom = len(cats) - 1 + BAR_H / 2 + RULE_CLEAR  # the bottom rule is the axes' bottom edge
     axes_h_in = (y_bottom - y_top) * ROW_IN
     fig.set_size_inches(FIG_W, axes_h_in + 2 * MARGIN_IN)
     ax.set_position([left_in / FIG_W, MARGIN_IN / fig.get_figheight(),
@@ -245,7 +277,7 @@ def make_figure(rows: list[dict]) -> plt.Figure:
     for xi, row in enumerate(rows):  # task id in a small chip
         ax.add_patch(pill(ax, xi - CHIP_W / 2, TASK_Y - CHIP_H / 2, CHIP_W, CHIP_H,
                           facecolor=CHIP_FILL, edgecolor="none", zorder=1, clip_on=False))
-        ax.text(xi, TASK_Y, str(row["task_id"]), ha="center", va="center", fontsize=TASK_FS, color=INK, zorder=2)
+        ax.text(xi, TASK_Y, str(row["task_id"]), ha="center", va="center", fontsize=TASK_FS, color=SLATE, zorder=2)
     for start, k, label in runs:  # agent pill over its run of columns
         x0, x1 = start - BAR_W / 2, start + k - 1 + BAR_W / 2
         ax.add_patch(pill(ax, x0, header_y - header_h / 2, x1 - x0, header_h,
@@ -255,17 +287,20 @@ def make_figure(rows: list[dict]) -> plt.Figure:
     # name the two header rows at the left, in line with the chips and pills
     for y, name in ((header_y, "Agent"), (TASK_Y, "Task ID")):
         ax.annotate(name, xy=(-0.5, y), xytext=(-6, 0), textcoords="offset points",
-                    ha="right", va="center", fontsize=ROW_LABEL_FS, color=MUTED, annotation_clip=False)
+                    ha="right", va="center", fontsize=ROW_LABEL_FS, color=SLATE, annotation_clip=False)
 
-    # bare 2x2 legend (TP TN / FP FN) centred in the empty block left of the axes and
-    # above the first category row (the tilted row-0 label rises about half a row)
-    block_bottom = ax.transData.transform((0, -1.0))[1] / (fig.get_figheight() * fig.dpi)
-    cx = left_in / 2 / FIG_W
-    cy = (1.0 + block_bottom) / 2 - LEGEND_DROP
-    handles = [Patch(facecolor=COLORS[c], edgecolor="none", label=c) for c in LEGEND_ORDER]
-    fig.legend(handles=handles, loc="center", bbox_to_anchor=(cx, cy), ncol=2, frameon=False,
-               fontsize=LEGEND_FS_PT, labelcolor=INK, handlelength=1.0, handleheight=0.75,
-               columnspacing=0.5, handletextpad=0.35, labelspacing=0.2, borderpad=0.1, borderaxespad=0.0,
+    # hairline rules spanning the columns: one sets the header rows apart from the data,
+    # one under the grid sets the legend apart
+    for y in (HEADER_RULE_Y, y_bottom):
+        ax.plot([-0.5, n_att - 0.5], [y, y], color=RULE_COLOR, linewidth=RULE_PT,
+                solid_capstyle="butt", clip_on=False, zorder=1)
+    # one flat legend row under the bottom rule; bbox_inches="tight" takes it in
+    fig.legend(handles=[Patch(facecolor=COLORS[c], edgecolor="none", label=c) for c in LEGEND_ORDER],
+               loc="upper center", ncol=len(LEGEND_ORDER), frameon=False,
+               bbox_to_anchor=((left_in + axes_w_in / 2) / FIG_W,
+                               (MARGIN_IN - LEGEND_GAP_IN) / fig.get_figheight()),
+               prop={"size": LEGEND_FS_PT, "weight": LEGEND_WEIGHT}, labelcolor=INK, handlelength=2.4, handleheight=0.75,
+               columnspacing=1.4, handletextpad=0.35, labelspacing=0.2, borderpad=0.1, borderaxespad=0.0,
                handler_map={Patch: _RoundedHandler()})
     return fig
 
@@ -287,14 +322,18 @@ def report(rows: list[dict]) -> None:
 
 
 def main():
-    rows = fetch()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--all", action="store_true",
+                        help="every annotated grading (appendix), not just calc_judge_stat.GRADING_IDS")
+    args = parser.parse_args()
+    rows = fetch(None if args.all else GRADING_IDS)
     if not rows:
         sys.exit("no annotations")
     report(rows)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    fig = make_figure(rows)
+    fig = make_figure(rows, min_cols=0 if args.all else MIN_COLS_PER_AGENT)
     for ext in ("png", "pdf"):
-        path = OUT_DIR / f"{PLOT_NAME}.{ext}"
+        path = OUT_DIR / f"{PLOT_NAME_ALL if args.all else PLOT_NAME}.{ext}"
         fig.savefig(path, dpi=SAVE_DPI, bbox_inches="tight", facecolor=SURFACE)
         print("wrote", path)
     plt.close(fig)
