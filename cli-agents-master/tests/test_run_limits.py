@@ -256,7 +256,25 @@ def test_a_forge_429_or_5xx_is_retried_in_the_open_and_nothing_else_is(monkeypat
     answer = json.dumps({"reasoning": "r", "actions": [], "is_complete": True})
     left = calls(forge, busy, bad_gateway, answer)
     parsed, _ = forge._reason_once(task)
-    assert parsed["is_complete"] is True and left == [] and waits == [15, 30]
+    # 2026-09-24: a 429 waits at least 60 s and does not use up a try, so the 502 after it is try 1
+    assert parsed["is_complete"] is True and left == [] and waits == [60, 15]
+
+    # 2026-09-24: eight 429s in a row (more than the six tries) still end in the answer - the key's
+    # rate limit is waited out, up to an hour, before the tries are counted
+    del waits[:]
+    left = calls(forge, *[busy] * 8, answer)
+    parsed, _ = forge._reason_once(task)
+    assert parsed["is_complete"] is True and left == [] and waits == [60] * 8
+
+    # once the hour is spent, 429s count as tries again and the call fails after six
+    del waits[:]
+    clock = [0.0]
+    monkeypatch.setattr(te.time, "time", lambda: clock[0])
+    monkeypatch.setattr(te.time, "sleep", lambda secs: (waits.append(secs), clock.__setitem__(0, clock[0] + 1000)))
+    left = calls(forge, *[busy] * 12, answer)
+    parsed, _ = forge._reason_once(task)
+    assert "rate limit" in parsed["error"] and left == [busy, busy, answer] and waits == [60] * 4 + [15, 30, 60, 120, 120]
+    monkeypatch.setattr(te.time, "sleep", waits.append)
 
     # six in a row: the call fails with the gateway's error - not rerun unstreamed ("upstream" contains "stream")
     del waits[:]

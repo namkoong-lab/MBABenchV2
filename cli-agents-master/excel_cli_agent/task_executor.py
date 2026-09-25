@@ -1071,6 +1071,8 @@ class ExcelTaskExecutor:
                 time.sleep(backoff)
         raise RuntimeError(f"Anthropic retries exhausted: {last_error}")  # unreachable
 
+    FORGE_RATE_LIMIT_WAIT_SECONDS = 3600   # Forge 429s: keep asking for up to an hour before the call fails
+
     ANTHROPIC_TRANSIENT_RETRIES = 4
     ANTHROPIC_TRANSIENT_BACKOFF_SECONDS = 30
 
@@ -1907,7 +1909,16 @@ EXECUTION HISTORY:
                     MAX_RETRIES = 6 if self.stall_timeout_seconds else 3
                     last_error = None
 
-                    for attempt in range(MAX_RETRIES):
+                    # Forge only (2026-09-24): a 429 is the key's rate limit, not this call's
+                    # fault - waiting is the only cure, and six short waits (~6 min) were not
+                    # enough when the key hit its cap on 2026-09-23 23:30: every running
+                    # task failed and the whole cohort followed. A 429 no longer uses up one
+                    # of the tries; the call waits Retry-After (60 s otherwise) and asks again
+                    # for up to FORGE_RATE_LIMIT_WAIT_SECONDS in total.
+                    rate_limited_since = None
+                    attempt = -1
+                    while attempt < MAX_RETRIES - 1:
+                        attempt += 1
                         try:
                             response_text, usage_info = self._call_api_with_hard_timeout(request_data)
                             # Log the streamed response
@@ -1955,6 +1966,17 @@ EXECUTION HISTORY:
                             if backoff_time is None:
                                 raise
                             last_error = status_err
+                            if status_err.status_code == 429:
+                                if rate_limited_since is None:
+                                    rate_limited_since = time.time()
+                                waited = time.time() - rate_limited_since
+                                if waited < self.FORGE_RATE_LIMIT_WAIT_SECONDS:
+                                    wait = min(max(backoff_time, 60), 300)
+                                    print(f"⚠️ Forge answered 429 (rate limit) - waited {waited/60:.0f} of "
+                                          f"{self.FORGE_RATE_LIMIT_WAIT_SECONDS//60} min; asking again in {wait}s")
+                                    time.sleep(wait)
+                                    attempt -= 1   # a rate-limit wait is not one of the tries
+                                    continue
                             print(f"⚠️ Forge answered {status_err.status_code} on attempt {attempt+1}/{MAX_RETRIES}: {status_err}")
                             if attempt < MAX_RETRIES - 1:
                                 print(f"⏳ Waiting {backoff_time}s before retry...")
