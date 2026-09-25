@@ -118,6 +118,35 @@ def test_workspace_prompt_and_validation():
     print("ok: workspace + prompt + validation verdicts")
 
 
+def test_provider_waits_extend_the_wall_clock_only_when_asked():
+    """2026-09-25: TensorBlock throttled GLM so hard that task 101 spent 128 of its 240
+    minutes waiting out 429s and timed out. With limits.exclude_provider_waits the relay's
+    logged retry delays move the deadline; off by default and recorded when on."""
+    from coding_agent.sandbox import ProviderWaits
+    from coding_agent.config import LimitsConfig
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "trajectory.jsonl"
+        w = ProviderWaits(path)
+        assert w.seconds() == 0.0                       # no file yet
+        path.write_text(json.dumps({"status": 200, "upstream_retries": [
+            {"status": 429, "delay_s": 5.0}, {"status": 429, "delay_s": 10.0}]}) + "\n"
+                        + json.dumps({"status": 200}) + "\n")
+        assert w.seconds() == 15.0
+        with open(path, "a") as f:                      # half-written line: not counted yet
+            f.write('{"status": 200, "upstream_retries": [{"delay_s": 60.0}]')
+        assert w.seconds() == 15.0
+        with open(path, "a") as f:
+            f.write("}\n")
+        assert w.seconds() == 75.0 and w.seconds() == 75.0   # incremental, no double count
+    assert LimitsConfig().exclude_provider_waits is False
+    cfg = load_config(ROOT / "run_configs" / "example_external.yaml")
+    assert "limits" not in cfg.extra_configs()
+    cfg.limits.exclude_provider_waits = True
+    assert cfg.extra_configs()["limits"] == {"wall_clock_seconds": cfg.limits.wall_clock_seconds,
+                                             "exclude_provider_waits": True}
+    print("ok: provider waits extend the wall clock only when asked")
+
+
 def test_scrubbed_templates_v10_v11():
     """Rubric-effect experiment: v10/v11 carry no rubric wording, v11 stages
     HOUSE_STANDARDS.md into the workspace root, both are md5-pinned and
@@ -264,6 +293,7 @@ def test_telemetry_parsers():
 if __name__ == "__main__":
     test_config_and_prompt_versions()
     test_workspace_prompt_and_validation()
+    test_provider_waits_extend_the_wall_clock_only_when_asked()
     test_scrubbed_templates_v10_v11()
     test_harness_long_turn_defaults()
     test_telemetry_parsers()

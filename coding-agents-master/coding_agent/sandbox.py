@@ -12,6 +12,7 @@ Docker mode, per attempt:
 The agent's stdout (its machine-readable transcript) streams to
 attempt_dir/transcript.jsonl; stderr to attempt_dir/agent_stderr.log.
 """
+import json
 import subprocess
 import time
 import uuid
@@ -30,6 +31,36 @@ class SandboxResult:
     transcript_path: Path
     stderr_path: Path
     infra_error: str | None = None  # set when the sandbox itself failed
+    provider_wait_seconds: float = 0.0  # relay 429/quota waits not charged to the wall clock
+
+
+class ProviderWaits:
+    """Running total of the relay's upstream_retries delays (seconds spent waiting out
+    provider 429 / quota refusals), read incrementally from its trajectory.jsonl.
+    Only complete lines are read, so a line still being written is picked up later."""
+
+    def __init__(self, path: Path):
+        self.path, self.pos, self.total = path, 0, 0.0
+
+    def seconds(self) -> float:
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(self.pos)
+                data = f.read()
+        except OSError:
+            return self.total
+        end = data.rfind(b"\n")
+        if end < 0:
+            return self.total
+        self.pos += end + 1
+        for line in data[:end + 1].splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            for retry in entry.get("upstream_retries") or []:
+                self.total += float(retry.get("delay_s") or 0)
+        return self.total
 
 
 def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
@@ -94,8 +125,22 @@ def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
                 cwd=None if cfg.sandbox.mode == "docker" else str(workspace),
                 start_new_session=(cfg.sandbox.mode == "host"),
             )
+            waits = (ProviderWaits(attempt_dir / "trajectory" / "trajectory.jsonl")
+                     if cfg.limits.exclude_provider_waits and cfg.record_trajectory
+                     and cfg.sandbox.mode == "docker" else None)
             try:
-                proc.wait(timeout=cfg.limits.wall_clock_seconds)
+                if waits is None:
+                    proc.wait(timeout=cfg.limits.wall_clock_seconds)
+                else:
+                    while True:  # the deadline moves out by every provider wait logged so far
+                        left = cfg.limits.wall_clock_seconds + waits.seconds() - (time.monotonic() - start)
+                        if left <= 0:
+                            raise subprocess.TimeoutExpired(cmd, cfg.limits.wall_clock_seconds)
+                        try:
+                            proc.wait(timeout=min(left, 30))
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
                 timed_out = False
             except subprocess.TimeoutExpired:
                 timed_out = True
@@ -129,4 +174,5 @@ def run_in_sandbox(cfg: RunConfig, agent_cmd: list, agent_env: dict,
             infra_error = f"Docker daemon unreachable (is Docker Desktop running?): {tail[:300]}"
 
     return SandboxResult(exit_code, duration, timed_out, transcript, stderr_log,
-                         infra_error=infra_error)
+                         infra_error=infra_error,
+                         provider_wait_seconds=waits.seconds() if waits is not None else 0.0)

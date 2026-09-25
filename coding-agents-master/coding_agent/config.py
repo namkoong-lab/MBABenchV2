@@ -124,6 +124,11 @@ class SandboxConfig:
 class LimitsConfig:
     wall_clock_seconds: int = 14400  # 4h
     junk_seconds: int = 180
+    # 2026-09-25: when true, time the relay spends waiting out provider 429 / quota
+    # refusals (its upstream_retries delays) does not count against the wall clock -
+    # the agent still gets wall_clock_seconds of working time. Off by default; rows
+    # record it in extra_configs.limits when on.
+    exclude_provider_waits: bool = False
 
 
 # Per-benchmark wiring. `benchmark` in the run config selects the experiment:
@@ -206,6 +211,9 @@ class RunConfig:
         if relay and RELAY_SOURCE.is_file():
             out["relay"] = {"source": "docker/traj_relay.py",
                             "sha256": hashlib.sha256(RELAY_SOURCE.read_bytes()).hexdigest()}
+        if self.limits.exclude_provider_waits:
+            out["limits"] = {"wall_clock_seconds": self.limits.wall_clock_seconds,
+                             "exclude_provider_waits": True}
         if uses_codex_catalog(self.agent) and CODEX_CATALOG_SOURCE.is_file():
             out["codex_model_catalog"] = {
                 "source": "docker/codex_model_catalog.json",

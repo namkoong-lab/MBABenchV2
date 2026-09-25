@@ -124,5 +124,6 @@ def write_verdict(attempt: Attempt, verdict: Verdict, sandbox: SandboxResult) ->
         "exit_code": sandbox.exit_code,
         "duration_seconds": round(sandbox.duration_seconds, 1),
         "timed_out": sandbox.timed_out,
+        "provider_wait_seconds": round(getattr(sandbox, "provider_wait_seconds", 0.0), 1),
     }, indent=2))
     return path
