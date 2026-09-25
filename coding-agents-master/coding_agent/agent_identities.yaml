@@ -350,3 +350,42 @@
     TRAJ_UPSTREAM_TIMEOUT: "600"
     TRAJ_WIRE: chat
     TRAJ_CHAT_MAX_TOKENS: "128000"
+
+# 2026-09-24 (Pat): full 101-task runs of Codex CLI driving Qwen 3.8 Max and GLM 5.3 through TensorBlock Forge,
+# billed to Forge credits, prompt v13 (pv 113), image v3 (Codex 0.155.1); the same harness as kimi-k3-max above
+# (chat wire, same tools, model catalog). Both are served by Fireworks (usage log: qwen3p8-2p4t-a95b, FW-GLM-5.3).
+# Probed through TensorBlock the same evening in the chat request shape (cents):
+#   - Tier: GLM 5.3 takes low/medium/high/xhigh/max (none, minimal and unknown values are refused 400); Z.AI
+#     documents low/high/max with max the default and the top. Qwen 3.8 takes none/low/medium/high/xhigh/max
+#     (minimal and unknown values refused); Fireworks documents low/medium/xhigh with xhigh the top (thinking
+#     budgets 4,096 / 16,384 / 262,144; low stopped at 4,109 reasoning tokens on a puzzle).
+#   - Memory: TensorBlock took 795,002 input tokens for GLM and refused ~894k (429, as for Kimi); Qwen took
+#     255,886 and refused ~268k (400) - far below its published 1M. Catalog windows 795,000 / 255,000; Codex
+#     compacts at 90% of them. A reply cap larger than what is left of the window is accepted (not counted
+#     against the input), as for Kimi.
+#   - Caching: automatic. Each call's history extends the previous call's prompt, and the next call read
+#     all of it back as cached (12 of 12 two-call trials per model, with or without a cache key).
+#   - Reply cap: each maker's published output limit (Qwen 131,072 per Alibaba; GLM 943,718 per Fireworks).
+- agent_model_name: codex_tensorblock/qwen3.8-max-xhigh
+  cli: codex
+  model: tensorblock/qwen3.8-max
+  effort: xhigh
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false",
+               "-c", 'model_catalog_json="/etc/codex/model_catalog.json"']
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    TRAJ_WIRE: chat
+    TRAJ_CHAT_MAX_TOKENS: "131072"
+
+- agent_model_name: codex_tensorblock/glm-5.3-max
+  cli: codex
+  model: tensorblock/glm-5.3
+  effort: max
+  extra_args: ["-c", 'web_search="disabled"', "-c", "features.multi_agent=false",
+               "-c", 'model_catalog_json="/etc/codex/model_catalog.json"']
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "600"
+    TRAJ_WIRE: chat
+    TRAJ_CHAT_MAX_TOKENS: "943718"
