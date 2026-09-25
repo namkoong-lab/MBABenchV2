@@ -377,6 +377,10 @@
     TRAJ_UPSTREAM_TIMEOUT: "600"
     TRAJ_WIRE: chat
     TRAJ_CHAT_MAX_TOKENS: "131072"
+    # 2026-09-25 (attempts started from 01:05 EDT on): TensorBlock answered GLM with bursts of 429 "provider rate limit" at
+    # ~8 GLM lanes; the relay's default 8 retries give up after ~5 min and Codex then ends the attempt on
+    # the 429. 60 retries (60 s apart after the first few) ride out an hour, as the cli pipeline does.
+    TRAJ_RETRY_429_MAX: "60"
 
 - agent_model_name: codex_tensorblock/glm-5.3-max
   cli: codex
@@ -389,3 +393,7 @@
     TRAJ_UPSTREAM_TIMEOUT: "600"
     TRAJ_WIRE: chat
     TRAJ_CHAT_MAX_TOKENS: "943718"
+    # 2026-09-25 (attempts started from 01:05 EDT on): TensorBlock answered GLM with bursts of 429 "provider rate limit" at
+    # ~8 GLM lanes; the relay's default 8 retries give up after ~5 min and Codex then ends the attempt on
+    # the 429. 60 retries (60 s apart after the first few) ride out an hour, as the cli pipeline does.
+    TRAJ_RETRY_429_MAX: "60"
