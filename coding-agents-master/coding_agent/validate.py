@@ -27,6 +27,9 @@ INFRA_SIGNATURES = (
     "invalid x-api-key", "authentication_error", "invalid api key",
     "incorrect api key", "credit balance is too low", "insufficient_quota",
     "billing", "401 unauthorized",
+    # TensorBlock Forge, 2026-09-24: HTTP 402 "Unable to complete the request. Please
+    # check your account balance and limits." when the credit balance cannot cover a call.
+    "account balance and limits",
 )
 
 
