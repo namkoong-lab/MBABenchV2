@@ -335,3 +335,25 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+#   glm-5.3    listed by Forge's /v1/models as tensorblock/glm-5.3; served by
+#              Fireworks (usage log: FW-GLM-5.3). Row 3634 (task 8, 2026-09-23)
+#              ran under this label from another machine's copy of the stanza;
+#              this entry repeats the settings that row recorded
+#              (extra_configs), so later rows match it. Z.AI docs: thinking
+#              always on, reasoning_effort low / high / max with max the default
+#              and the top - the counterpart of kimi-k3-max. Probed through
+#              Forge 2026-09-24 in this executor's request shape (cents): low /
+#              medium / high / xhigh / max accepted, none / minimal / unknown
+#              values refused 400; thinking streams as delta.reasoning_content,
+#              counted inside completion_tokens (reasoning_tokens reported);
+#              TensorBlock accepted a 795,002-token prompt and refused ~894k.
+- agent_model_name: openpyxl_tensorblock/glm-5.3-max
+  model: tensorblock/glm-5.3
+  reasoning_effort: max
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

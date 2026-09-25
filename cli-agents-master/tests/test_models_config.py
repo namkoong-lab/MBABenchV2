@@ -98,4 +98,16 @@ def test_forge_qwen_prices_and_sizes_with_and_without_the_live_feed(monkeypatch)
         monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, live=live, **k: live)
         assert mc.resolve_pricing("tensorblock/qwen3.8-max") == {"input": 2.00, "output": 6.00}
         assert mc.calculate_cost("tensorblock/qwen3.8-max", 1_000_000, 100_000) == 2.6
-        assert mc.resolve_context_window("tensorblock/qwen3.8-max") - 128_000 - 3_000 > 800_000
+        # 2026-09-24: the window is what TensorBlock accepts (took 255,886 tokens,
+        # refused ~268k), not the published 1M.
+        assert mc.resolve_context_window("tensorblock/qwen3.8-max") == 255_000
+
+
+def test_forge_glm_prices_and_sizes_with_and_without_the_live_feed(monkeypatch):
+    """2026-09-24: every billed GLM 5.3 call was $1.54 / $4.84 exactly; the bare
+    id never maps to OpenRouter's z-ai/glm-5.3. Window = what TensorBlock accepts
+    (795,002 tokens went through, ~894k was refused)."""
+    for live in ({"z-ai/glm-5.3": {"input": 1.4, "output": 4.4, "context": 1_310_720}}, None):
+        monkeypatch.setattr(mc, "_fetch_live_pricing", lambda *a, live=live, **k: live)
+        assert mc.resolve_pricing("tensorblock/glm-5.3") == {"input": 1.54, "output": 4.84}
+        assert mc.resolve_context_window("tensorblock/glm-5.3") == 795_000

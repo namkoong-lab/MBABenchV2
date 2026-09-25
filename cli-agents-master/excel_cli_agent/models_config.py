@@ -190,6 +190,19 @@ def resolve_stall_timeout(base_url: Optional[str], model: Optional[str] = None) 
     return None
 
 
+# 2026-09-24: Forge models whose prompt cache needs a routing key. This harness
+# rebuilds every step's prompt (the fixed system prompt, then a user message
+# that changes), so a step shares only its first ~10k tokens with the step
+# before. Probed on GLM 5.3 (served by Fireworks) with a real step 1 and step 2
+# of task 8, 20-30 s apart: without a key the second call read 0-13 cached
+# tokens (4 of 4 trials), with a prompt_cache_key 10,418-10,428 of ~23,600
+# (4 of 4) - Fireworks sends same-key calls to the replica that holds the
+# prefix. Billing only: the model sees the same text. Qwen 3.8 is not listed:
+# it only reuses a whole earlier prompt, so a key changed nothing (0 cached
+# either way).
+FORGE_PROMPT_CACHE_KEY_MODELS = {"tensorblock/glm-5.3"}
+
+
 # Iteration cap (one model call per iteration) when a run config names none.
 # 40 is what every v2 API cohort actually ran with; the old fallback of 30
 # would have silently shortened a cohort whose config omitted the key.
@@ -317,12 +330,17 @@ def _candidate_slugs(model: str) -> list:
 #   claude-opus-5  the 2026-09-23 probe calls = $5.00 in / $25.00 out exactly
 #                (Anthropic's list price, also OpenRouter's
 #                anthropic/claude-opus-5); no cached tokens reported.
+#   glm-5.3      (served by Fireworks, echoes "FW-GLM-5.3"): every billed call
+#                in the usage log to 2026-09-24 = $1.54 in / $4.84 out exactly,
+#                cached input $0.286 (OpenRouter's z-ai/glm-5.3: $1.40 / $4.40).
+#                The live feed never matches the bare id.
 DIRECT_API_PRICING = {
     "claude-fable-5": {"input": 25.00, "output": 50.00},
     "Kimi-K3": {"input": 3.30, "output": 16.50},
     "gemini-3.8-flash": {"input": 0.75, "output": 3.75},
     "qwen3.8-max": {"input": 2.00, "output": 6.00},
     "claude-opus-5": {"input": 5.00, "output": 25.00},
+    "glm-5.3": {"input": 1.54, "output": 4.84},
 }
 
 
@@ -386,16 +404,24 @@ MODEL_CONTEXT_WINDOWS = {
     # never matches this id; without the entry the 128k default would squeeze
     # the workbook context to 10k tokens.
     "gemini-3.8-flash": 1_048_576,
-    # 2026-09-21: OpenRouter's value for qwen/qwen3.8-max, reached as
-    # tensorblock/qwen3.8-max. The live feed never matches this id; without
-    # the entry the 128k default would squeeze the workbook context to 10k
-    # tokens.
-    "qwen3.8-max": 1_000_000,
+    # 2026-09-24: what TensorBlock accepts for tensorblock/qwen3.8-max, not the
+    # published 1M (OpenRouter's value, used here from 2026-09-21): it took a
+    # 255,886-token prompt and refused ~268k with its generic 400, which the
+    # overflow rescue only reads as "too long" above half this window. The
+    # two task-8 rows (2206, 3629) sent ~20-40k tokens, so this changes
+    # nothing they saw. The live feed never matches this id.
+    "qwen3.8-max": 255_000,
     # 2026-09-23: Anthropic's documented window for claude-opus-5, equal to the
     # live feed's value for anthropic/claude-opus-5 (reached as
     # tensorblock/claude-opus-5). Without the entry a failed fetch would squeeze
     # the workbook context to 10k tokens.
     "claude-opus-5": 1_000_000,
+    # 2026-09-24: what TensorBlock accepts for tensorblock/glm-5.3 (served by
+    # Fireworks): a 795,002-token prompt went through, ~894k was refused (429,
+    # as for Kimi); published 1,048,576. The live feed never matches the id;
+    # without the entry the 128k default would squeeze the workbook context
+    # to 10k tokens.
+    "glm-5.3": 795_000,
 }
 DEFAULT_CONTEXT_WINDOW = 128_000
 

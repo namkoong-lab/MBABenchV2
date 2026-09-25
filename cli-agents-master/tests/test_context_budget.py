@@ -244,3 +244,14 @@ def test_claude_through_forge_asks_for_the_thinking_summary(tmp_path):
     assert ex._forge_claude_extra_body() == {"thinking": {"type": "adaptive", "display": "summarized"}}
     assert make_executor(tmp_path, stall_timeout_seconds=600, model="tensorblock/grok-4.6")._forge_claude_extra_body() is None
     assert make_executor(tmp_path, stall_timeout_seconds=None, model="claude-fable-5-1")._forge_claude_extra_body() is None
+
+
+def test_glm_through_forge_sends_one_cache_key_per_attempt(tmp_path):
+    """2026-09-24: GLM 5.3 on Forge caches the shared start of consecutive steps
+    only when the calls carry a routing key. Only the listed models, only Forge."""
+    task = make_task()
+    ex = make_executor(tmp_path, stall_timeout_seconds=600, model="tensorblock/glm-5.3")
+    assert ex._forge_prompt_cache_key(task) == f"mbabench-{task.task_id}"
+    assert make_executor(tmp_path, stall_timeout_seconds=600, model="tensorblock/qwen3.8-max")._forge_prompt_cache_key(task) is None
+    assert make_executor(tmp_path, stall_timeout_seconds=600, model="tensorblock/Kimi-K3")._forge_prompt_cache_key(task) is None
+    assert make_executor(tmp_path, stall_timeout_seconds=None, model="tensorblock/glm-5.3")._forge_prompt_cache_key(task) is None

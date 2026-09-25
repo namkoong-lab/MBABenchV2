@@ -37,7 +37,7 @@ except ImportError:
 from .mcp_client import ExcelMCPClient
 from .models_config import (DEFAULT_MAX_ITERATIONS, MODEL_PRICING, calculate_cost, resolve_api_timeout,
                             resolve_stall_timeout,
-                            resolve_context_window)
+                            resolve_context_window, FORGE_PROMPT_CACHE_KEY_MODELS)
 from .repo_config import repo_value
 
 
@@ -328,6 +328,16 @@ class ExcelTaskExecutor:
         and billing are unchanged. Every other model is unchanged."""
         if self.stall_timeout_seconds and "claude" in str(self.model or "").lower():
             return {"thinking": {"type": "adaptive", "display": "summarized"}}
+        return None
+
+    def _forge_prompt_cache_key(self, task: TaskExecution) -> Optional[str]:
+        """Forge models in FORGE_PROMPT_CACHE_KEY_MODELS only (2026-09-24, GLM
+        5.3): one prompt_cache_key per attempt, so each step's call goes to the
+        replica that cached the previous step's shared prefix (the system
+        prompt and the start of the user message). Billing only - the model
+        sees the same text. Every other model is unchanged."""
+        if self.stall_timeout_seconds and str(self.model or "") in FORGE_PROMPT_CACHE_KEY_MODELS:
+            return f"mbabench-{task.task_id}"
         return None
 
     def _gemini_tool_declarations(self) -> List[Dict[str, Any]]:
@@ -1880,6 +1890,10 @@ EXECUTION HISTORY:
                         request_data.setdefault("extra_body", {})["usage"] = {
                             "include": True
                         }
+
+                    cache_key = self._forge_prompt_cache_key(task)
+                    if cache_key:
+                        request_data.setdefault("extra_body", {})["prompt_cache_key"] = cache_key
 
                     # Note: We rely on _extract_json() and _parse_jsonl_response() to handle
                     # any preamble text (e.g., "Wait: ...") that GPT-5 with reasoning may output.
