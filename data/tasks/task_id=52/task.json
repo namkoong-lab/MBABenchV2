@@ -1,0 +1,35 @@
+{
+  "id": 52,
+  "task_name": "SaaSScenario",
+  "task_starting_files": [
+    "data/tasks/task_id=52/starting_files/SaaSScenario.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=52/solution_files/SaaSScenario - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:48.518276+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Scenario / Sensitivity Analysis",
+    "time_range": "4-5h",
+    "difficulty_score": 3.6667,
+    "short_description": "Forecast for a SaaS company including industry specific metric - in three scenarios",
+    "time_assumption_h": 4.4667,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 85.0,
+  "ai_time_estimate_reasoning": "This task requires building a highly detailed, 20-year monthly SaaS model (240 periods) across three distinct scenario sheets, plus answering 35 specific metric-based questions. The modeler must correctly implement annual inflation adjustments occurring every January relative to a 2025 baseline, handle specific timing rules for customer billing (excluding new and churned customers in the current month's revenue), and compute complex SaaS metrics like LTV, LTV/CAC, CAC Payback, and Cash Runway. Replicating the logic across three cases, ensuring formulas are robust, and precisely linking or looking up the 35 multi-scenario, multi-period questions will take an expert modeler about 85 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/SaaSScenario/starting_files/SaaSScenario.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/SaaSScenario/solution_files/SaaSScenario - Solution.xlsx"
+    ]
+  }
+}

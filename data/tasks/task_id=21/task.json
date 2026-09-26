@@ -1,0 +1,35 @@
+{
+  "id": 21,
+  "task_name": "FinancialRelations",
+  "task_starting_files": [
+    "data/tasks/task_id=21/starting_files/FinancialRelations.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=21/solution_files/FinancialRelations - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:29.644935+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Ratio Analysis",
+    "time_range": "2-3h",
+    "difficulty_score": 2.5,
+    "short_description": "Regular Ratio Analysis with provided IS/ BS (some ambiguities regarding NCI)",
+    "time_assumption_h": 2.8,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 45.0,
+  "ai_time_estimate_reasoning": "This task requires calculating 20 different financial ratios across 20 quarters, which involves referencing two distinct financial statements, computing average balance sheet balances (incorporating a specific roll-back assumption for Q4 2019), and adjusting for actual days per quarter. Writing and auditing these formulas while ensuring correct definitions (such as quick assets, total debt vs. total liabilities, and gearing ratio) will take around 30 minutes, and another 15 minutes will be needed to carefully link and verify the answers to the 30 specific quarterly questions on the Questions tab.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FinancialRelations/starting_files/FinancialRelations.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FinancialRelations/solution_files/FinancialRelations - Solution.xlsx"
+    ]
+  }
+}

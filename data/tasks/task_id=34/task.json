@@ -1,0 +1,35 @@
+{
+  "id": 34,
+  "task_name": "LogisticsCategorization",
+  "task_starting_files": [
+    "data/tasks/task_id=34/starting_files/LogisticsCategorization.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=34/solution_files/LogisticsCategorization - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:36.980187+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Non-Financial or Non-FP&A Model",
+    "time_range": "12-16h",
+    "difficulty_score": 5.6667,
+    "short_description": "Extensive inventory valuation with three different methods and further SKU categorization in 3 dimensions (partially also inventory valuation dependent)",
+    "time_assumption_h": 13.4833,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 210.0,
+  "ai_time_estimate_reasoning": "This is an exceptionally complex algorithm-heavy model requiring the perpetual daily valuation of 40 SKUs across three distinct methods (FIFO, LIFO, and Moving Average) over a full year, combined with multi-layered running ABC/XYZ/αβγ categorizations. Rebuilding the FIFO and LIFO layer stacks daily using cumulative consumption, resolving same-day multi-purchases in transaction order, and applying path-dependent Moving Average calculations requires writing sophisticated, custom LAMBDA/LET dynamic array formulas or debugging a complex VBA engine. Managing the precise tie-breaking logic based on the Products sheet index and mapping the strict threshold bands to answer the 70 granular date-and-SKU-specific questions pushes the execution time for even an expert modeler to three and a half hours.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/LogisticsCategorization/starting_files/LogisticsCategorization.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/LogisticsCategorization/solution_files/LogisticsCategorization - Solution.xlsx"
+    ]
+  }
+}

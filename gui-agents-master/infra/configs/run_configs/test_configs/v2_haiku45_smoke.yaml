@@ -1,0 +1,68 @@
+# PIPELINE SMOKE TEST — benchmark v2, Claude Haiku 4.5, no extended reasoning.
+# DB identity resolves to: claude_haiku_4_5   (haiku has no effort axis)
+#
+# Purpose: exercise the full path end to end — monorepo config -> DB query ->
+# S3 download -> browser run -> S3 upload -> task_attempts insert. Haiku is
+# the cheapest/fastest model that is a real v2 identity.
+#
+# THIS PRODUCES THROWAWAY DATA, NOT BENCHMARK DATA. It runs prompt_version 0,
+# which asks for the workbook back unchanged plus one "TEST SHEET" — seconds
+# of agent time instead of a full model, and a solution file you can verify
+# by eye. Never grade the attempts it writes. For real benchmark data on this
+# identity, set prompt_version to 204 or 205 and move the config out of
+# test_configs/.
+
+benchmark: v2
+
+source:
+  kind: postgres_s3
+  schema: spreadsheetsmith                 # v2 = SpreadsheetSmith DB + s3://<bucket>/SpreadsheetSmith/
+  filters:
+    task_ids: [2]                    # BasicGrowth — small, and has no haiku attempt yet
+    task_sources: ["v2"]
+    skip_deprecated: true
+    # false so re-running the smoke test actually re-runs instead of exiting 3
+    # once the first attempt lands. Flip to true for real benchmark sweeps.
+    skip_already_attempted: false
+
+# SINK — swap these two lines to `kind: local` (and drop `schema`) for a
+# source-only smoke test that writes nothing to the DB or S3. Note that the
+# local sink exercises NEITHER the S3 upload nor the task_attempts insert,
+# which is most of what this test exists to cover.
+sink:
+  kind: postgres_s3
+  schema: spreadsheetsmith
+
+provider:
+  kind: "claude"
+
+# 0 = the pipeline smoke-test prompt (tasks_configs/prompts/v000_test.txt):
+# copy the workbook, add a "TEST SHEET" with a large "TEST", download it.
+# No modeling, so this exercises the plumbing without paying for a real run.
+prompt_version: 0
+
+claude_web:
+  mode: "chat"                       # v2 runs use the plain chat surface
+  model: "haiku_4_5"
+  # Haiku 4.5 has no Effort submenu in the claude.ai model dropdown — this is
+  # the "non-extended reasoning" configuration. null = leave the session's
+  # current state alone; the agent skips the effort selector entirely.
+  # (effort keys the v2 Claude identity, but haiku's label omits it — both
+  # null and the pinned default resolve to the one bare haiku cohort.)
+  effort: null
+
+  # Smoke-test budgets: 30 min/task and 2 attempts, so a wedged run fails in
+  # ~1.5h instead of the 6h the 2h/10-attempt defaults would allow.
+  # run.py's deadman = max_sec_per_task * retry.max_total_attempts + 1800.
+  max_sec_per_task: 1800
+  max_wait_per_prompt_seconds: 1800
+  retry:
+    max_agent_attempts: 2
+    max_total_attempts: 2
+    max_sec_per_task: 1800
+    max_sec_per_attempt: 1800
+
+  browser:
+    # Matches the Chrome launch command in the README quickstart.
+    cdp_port: 9223
+    profile_dir: "browser_profiles/chrome-claude"

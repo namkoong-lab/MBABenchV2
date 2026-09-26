@@ -1,0 +1,35 @@
+{
+  "id": 57,
+  "task_name": "TMobile",
+  "task_starting_files": [
+    "data/tasks/task_id=57/starting_files/TMobile.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=57/solution_files/TMobile - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:50.437367+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Easy",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Comparables (Trading Comps)",
+    "time_range": "1-2h",
+    "difficulty_score": 2.3333,
+    "short_description": "Comparables Valuation (classic)",
+    "time_assumption_h": 1.7,
+    "difficulty_category": "Easy"
+  },
+  "ai_time_estimate_min": 25.0,
+  "ai_time_estimate_reasoning": "This task requires performing a standard comparable company analysis (CCA) for T-Mobile US. An expert modeler will need to calculate five trading multiples (Price/Sales, EV/Sales, EV/EBITDA, P/E, and P/FCF) for 20 companies, filter out negative/invalid values, and compute statistical benchmarks (percentiles, average, median). Then, they must perform back-valuation calculations to determine the implied share prices for T-Mobile, which requires correctly identifying T-Mobile's net debt to bridge EV and Equity Value for the EV-based multiples. Setting up these formulas dynamically, ensuring proper treatment of negatives, and mapping the outputs to answer the structured questions will take approximately 25 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TMobile/starting_files/TMobile.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TMobile/solution_files/TMobile - Solution.xlsx"
+    ]
+  }
+}

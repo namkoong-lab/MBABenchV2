@@ -1,0 +1,35 @@
+{
+  "id": 18,
+  "task_name": "DoctorvsTrade",
+  "task_starting_files": [
+    "data/tasks/task_id=18/starting_files/DoctorvsTrade.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=18/solution_files/DoctorvsTrade - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:28.650726+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Retirement / Savings Calculators",
+    "time_range": "5-7h",
+    "difficulty_score": 3.3333,
+    "short_description": "Regular financial life plan model including debt, salary raises, tax and inflation in spending categories - comparison between two careers",
+    "time_assumption_h": 5.4333,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 180.0,
+  "ai_time_estimate_reasoning": "This wealth management task requires a multi-decade (83-year) dual-scenario projection with highly complex, cascading logic. Key modeling challenges that will consume significant time include: setting up dynamic income tax brackets that index upward annually at 1.95%; compounding 12 different expense categories with distinct inflation and lifestyle inflation factors (triggered only from the second year of work); establishing a debt waterfall that pays down three different loans in order of decreasing interest rate; accounting for a cost-of-living loan drawn at the start of the year; executing tax gross-ups on investment withdrawals during deficits; and scaling up credit card debt when investments are exhausted. Due to the high number of specific questions verifying exact values across both paths, an expert will spend a substantial portion of the time rigorously auditing the formulas to ensure there are no compounding errors.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/DoctorvsTrade/starting_files/DoctorvsTrade.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/DoctorvsTrade/solution_files/DoctorvsTrade - Solution.xlsx"
+    ]
+  }
+}

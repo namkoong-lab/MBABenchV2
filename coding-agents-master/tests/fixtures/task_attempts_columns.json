@@ -1,0 +1,21 @@
+[
+  "id",
+  "task_id",
+  "agent_model_name",
+  "agent_model_type",
+  "attempt_files",
+  "prompt_files",
+  "start_time",
+  "end_time",
+  "time_taken_min",
+  "cost",
+  "prompt_version",
+  "agent_failed",
+  "agent_failed_reason",
+  "deprecated",
+  "created_at",
+  "context_reduced",
+  "deprecated_reason",
+  "updated_at",
+  "extra_configs"
+]

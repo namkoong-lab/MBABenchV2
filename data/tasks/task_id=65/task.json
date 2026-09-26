@@ -1,0 +1,35 @@
+{
+  "id": 65,
+  "task_name": "ThreeCars",
+  "task_starting_files": [
+    "data/tasks/task_id=65/starting_files/ThreeCars.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=65/solution_files/ThreeCars - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:52.922430+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Sum-of-the-Parts Valuation",
+    "time_range": "3-4h",
+    "difficulty_score": 3.1667,
+    "short_description": "3*DCF for all parts",
+    "time_assumption_h": 3.6667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 70.0,
+  "ai_time_estimate_reasoning": "This is a complex Sum-of-the-Parts (SOTP) valuation involving three distinct business lines, which requires calculating free cash flows to the firm (FCFF) using balance sheet and income statement items, setting up an iterative circular WACC calculation, and modeling a two-stage terminal value for the EV segment alongside standard terminal values for the other two. Additionally, the modeler must calculate a consolidated tax rate across the segments, transition the discounted cash flows from the valuation basis date to the valuation date using a precise day-count compounding factor, and resolve the circular loop between the market value of equity and the WACC weights. A seasoned modeler would require around 70 minutes to carefully structure the sheets, implement the iterative formulas, verify convergence, and map the outputs to the questionnaire.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/ThreeCars/starting_files/ThreeCars.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/ThreeCars/solution_files/ThreeCars - Solution.xlsx"
+    ]
+  }
+}

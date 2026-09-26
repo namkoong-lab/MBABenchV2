@@ -1,0 +1,35 @@
+{
+  "id": 91,
+  "task_name": "MonthlyMonthly",
+  "task_starting_files": [
+    "data/tasks/task_id=91/starting_files/MonthlyMonthly.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=91/solution_files/MonthlyMonthly - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "3-Statement Model",
+    "time_range": "7-9h",
+    "difficulty_score": 3.0,
+    "short_description": "3-SM based on percentages + plug without extensive forecasting",
+    "time_assumption_h": 8.2,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/MonthlyMonthly/starting_files/MonthlyMonthly.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/MonthlyMonthly/solution_files/MonthlyMonthly - Solution.xlsx"
+    ]
+  }
+}

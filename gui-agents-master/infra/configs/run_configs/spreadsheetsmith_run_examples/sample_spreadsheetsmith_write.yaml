@@ -1,0 +1,69 @@
+# benchmark v2 — SpreadsheetSmith task set (SpreadsheetSmith DB)
+benchmark: v2
+
+# Sample run-config (overlay-shaped) that pulls tasks from the SpreadsheetSmith
+# Postgres DB AND writes attempts back to S3 + task_attempts.
+#
+# Run it with:
+#   python -m infra.run --run-config infra/configs/run_configs/spreadsheetsmith_run_examples/sample_spreadsheetsmith_write.yaml
+#
+# Same shape as sample_spreadsheetsmith.yaml (the read-only variant) — the only
+# difference is `sink.kind: postgres_s3`, which uploads the solution +
+# completion log to S3 and inserts one row into task_attempts per run.
+#
+# Prereqs in configs.yaml:
+#   database:
+#     url: "postgresql://.../SpreadsheetSmith?sslmode=require&channel_binding=require"
+#   claude_web:           # or chatgpt_web, per provider.kind below
+#     # project_id: "..." # optional, pins to a Claude project
+#
+# AWS credentials: set aws.access_key_id(_env) / secret_access_key(_env)
+# in configs.yaml. The boto3 default credential chain (~/.aws/credentials,
+# IAM role) is intentionally NOT consulted.
+#
+# Idempotency: source.filters.skip_already_attempted skips tasks that
+# already have a non-failed attempt at this (agent_model_name,
+# prompt_version), where agent_model_name is derived from the provider
+# block via infra/configs/agent_identity.py. Failed/timeout runs still
+# get a row with agent_failed=true.
+
+source:
+  kind: postgres_s3
+  schema: spreadsheetsmith       # picks SpreadsheetSmithPostgresS3TaskSource
+  filters:
+    task_ids: [1]
+    # task_sources: ["modeloff"]
+    skip_deprecated: false
+    skip_already_attempted: false
+
+sink:
+  kind: postgres_s3
+  schema: spreadsheetsmith       # picks SpreadsheetSmithPostgresS3AttemptSink
+  # S3 bucket + prefix come from aws.* in configs.default.yaml.
+  # agent_folder / agent_model_name / agent_model_type are derived from
+  # the provider block (see infra/configs/agent_identity.py).
+  # prompt_version is the top-level key below; run.py copies it into
+  # agent.prompt_version, which is what the sink writes.
+
+chatgpt_web:
+  model: "instant"
+  # model: "pro"
+
+provider:
+  kind: "chatgpt"
+
+# agent.prompt_version is derived — leave it unset and set prompt_version.
+# agent_model_name / agent_folder / agent_model_type are computed from the
+# chatgpt_web block — no yaml field for them.
+
+# Prompts come from `prompt_version` through
+# tasks_configs/prompts/registry.yaml. Unset, this inherits the repo default
+# 204 (the v2 3-step set + Questions-sheet answers + house standards).
+# ChatGPT works better with one combined turn than a sequence, so 205 (the
+# same 132-check rubric, Questions-sheet convention and house standards
+# folded into a single pass) is the usual choice here. 204/205 upload
+# House_Standards_v1.md after the task's files — declared by the version,
+# never here. This config WRITES to task_attempts, so the version set here
+# is the version those rows will carry — use 0 if you want the run marked
+# as throwaway smoke-test data.
+prompt_version: 205

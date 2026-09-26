@@ -1,0 +1,188 @@
+# Judge settings that do NOT depend on the benchmark. Tracked; no secrets.
+#
+# What is deliberately absent, and where it lives instead:
+#   database URL, AWS creds, API keys  -> <SpreadsheetSmith>/config/config.yaml
+#                                          (database.{v1,v2}_url, aws.*, keys.*)
+#   rubric pair, check_order, S3 root  -> utils/misc_utils.py BENCHMARKS,
+#                                          selected per run by --benchmark v1|v2
+#
+# Every key is exported as {project.name}_{SECTION}_{KEY} by
+# utils/misc_utils.load_project_configs().
+
+project:
+  name: "BizbenchJudge" # env-var prefix (BIZBENCHJUDGE_*)
+
+paths:
+  scratch_path: "scratch"   # relative to judge/
+  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation
+
+miscs:
+  logger_name: "bizbench_judge"
+  log_to_terminal: true
+
+judge:
+  # Increment on significant changes to prompt template, rubric, or grading logic.
+  version: 5
+
+  prompt_template: "prompts/judge_template_7_0.yaml"
+  prompt_version: "7.0"
+
+  rubric_max_mistakes: 1
+
+  # Uncached-formula pre-flight (utils/formula_cache.py). The judge reads
+  # cached formula results, so a workbook saved without calculation reaches it
+  # as formulas with no values and Accuracy cannot be graded from evidence.
+  # A workbook whose uncached fraction is >= this ratio refuses to grade;
+  # re-run with --run-calculation, or JUDGE_SKIP_FORMULA_CACHE_CHECK=1 to
+  # grade anyway (recorded in scored_results.formula_cache).
+  uncached_formula_max_ratio: 0.5
+
+  # Retired rubric_9 checks (judge v9, 2026-09-16): forced not_applicable on
+  # every task, never prompted or scored; the category rescales around them
+  # like suitability gating. The rubric keeps its 132-position numbering
+  # (toys, annotations and past gradings are keyed by position), so this is
+  # a rule, not a deletion. utils/rubric_suitability.RETIRED_CHECK_NAMES pins
+  # the name each number must carry; a mismatch refuses to grade.
+  # 37 = M&A / divestiture flexibility, 101 = Architecture suited to audience.
+  # 28 = No unused formatting (judge v11, 2026-09-19; meant to come back once
+  # it is redefined). Taking a number off this list un-retires it with no
+  # other change: the pin stays, and evidence served for that check alone
+  # (28: "styled empty cells in used range") is rendered again.
+  retired_checks: "28,37,101"
+
+  do_rounding: true
+  float_rounding: 6
+  percentage_rounding: 8
+  fast_cell_extract: true
+
+  # Per-call trajectory recording (utils/trajectory.py), uploaded with the grading.
+  record_trajectory: true
+
+  # Default grader label (override with --model); must be registered in
+  # judge_identities.yaml, which pins its endpoint, wire model id, and effort.
+  default_grader: "google/gemini-2.5-pro"
+
+  default_total_character_limit: 2_000_000
+  default_solution_context_char_limit: 1_000_000
+  default_attempt_context_char_limit: 1_000_000
+
+agentic_judge:
+  # 4 (2026-09): grading-guidance layer (rubric_9_guidance.yaml — scope
+  # rules for flip-prone checks), the starting workbook as a third readable
+  # source, read_file cap corrected to the 5000 the prompt always claimed,
+  # and pressure tiers moved 10/20/80 -> 65/80/90. Grades under version 4
+  # are not comparable to version 3 rows (which stay frozen — a "fixed" v3
+  # is version 4 by definition).
+  # 3 (2026-08): rubric_9 in-place revision + per-task suitability gating +
+  # xlsx weight system + score-neutral answer check + category-keyed context
+  # views. Grades under version 3 are not comparable to version 2 rows.
+  version: 4
+  prompt_template: "prompts/agentic_judge_template_6.yaml"
+  prompt_version: "6"
+  context_token_limit: 850000   # below GPT-5.6 Sol's 922k input cap so eviction fires before a 400
+  max_rounds: 50
+  read_file_max_cells: 5000     # matches the limit the prompt states; the old
+                                # 2500 caused 695 of sol's 740 refusals
+
+# Single-pass mode (judge v4 experiment): one conversation over every
+# applicable check instead of 12 per-category loops. Selected with
+# --single-pass on grade_from_db / grade_with_orchestration; rows record
+# these versions (agentic_mode stays true), so they never mix with
+# 12-category rows in the dedup key. max_rounds 500 is deliberately
+# effectively-unbound for the canaries — set the production value from
+# measured round usage, not by feel.
+#
+# 7 (2026-09-09): the cover sheet is served (drivers no longer default to
+# --ignore-sheets cover; 85% of attempts name that sheet exactly "Cover"
+# and rubric_9 grades its content). Same day, the evidence sweep: the
+# properties block gained cell hyperlinks, page breaks, grouping, CF
+# styles, hidden names, zip-based VBA and the delivered filename; the cell
+# extractor renders dates and accounting zeros like Excel, marks cells
+# blanked by their format, keeps the [ref] on empty-display formula cells
+# and tags what-if data tables (caches -> *_csv_cache_v4, properties
+# schema 2). 2026-09-10 (tier 2, caches -> *_csv_cache_v5, schema 3):
+# spill/array ranges tagged on anchor and children, [Red]/locale number
+# formats rendered, theme-palette colours resolved to hex with blue-family
+# names, styled-empty-cell counts, hidden add-in names folded into the
+# footnote, the true active cell per sheet, [TEXT] on numeric-looking
+# text constants. Same day pm (caches -> *_csv_cache_v6): light yellows at
+# the 60-degree boundary named light_yellow, not olive (check-47 canary).
+# Every further judge change lands under version 7 until it is
+# cut. Version 6 rows split on this: the orchestration
+# runs (2026-09-05/07 production Sol) passed --no-ignore-sheets and saw the
+# cover; grade_from_db launches without the flag (the 2026-09-08 rubric-effect
+# run, attempts 1175-1236) did not. Each grade log's parameter header records
+# which.
+# 6 / template_8 (2026-09-02, judge v6 pipeline update): harness-decided
+# answer accuracy (--accuracy-check, both engines always recorded), the
+# answer-equivalence rulebook rendered into the prompt, guidance hardened
+# into each check's standard, the workbook-properties block (true tab
+# order, hidden state, validation, widths, comments...) in the seed, the
+# strictness tie-break, native Anthropic path with prompt caching. Grades
+# under version 6 are not comparable to version 5 rows (all deprecated).
+# 5 / template_7: the first single-pass build (2026-09-01).
+# 8 / template_8 (2026-09-14, toy-reliability walkthrough): the harness
+# verdict for Rounding / Rounded outputs is retired (rulebook v6.6, the
+# judge decides it), the properties block tags full-width/full-height sheets
+# OVERSIZED RANGE (check 25), and the guidance file grows from 27 to 36
+# notes (checks 2, 11, 16, 25, 37, 49, 55, 64-67, 82, 104, 107). Prompt
+# version and template unchanged. Rows graded under version 8 are not
+# comparable with version 7 rows.
+single_pass:
+  # 9 (2026-09-16): evidence flags (PERIOD SERIES, content fit, WIDE
+  # OUTLIER, date literals in formulas), checks 37 and 101 retired by rule
+  # (judge.retired_checks), guidance 36 -> 42 notes. Prompt version and
+  # template unchanged. Rows graded under version 9 are not comparable with
+  # version 8 rows.
+  # 10 (2026-09-17): content-fit renders the NUMERIC ### class only (the
+  # text cut-off line was read as a defect: toy 69 Pass 0/3), guidance
+  # 42 -> 44 notes (69 new, 115 extended, 117 new: content past the End
+  # marker). Prompt version and template unchanged.
+  # 11 (2026-09-18): IMPLICIT INTERSECTION evidence line (properties schema
+  # 5, CSV caches *_csv_cache_v8): plain formulas that Excel evaluates to
+  # #VALUE! by implicit intersection while the served value looks fine
+  # (grading 1075, Sens_Engine!D448); data validation renders operator,
+  # both bounds and the error-alert state with a per-sheet tally (alert-off
+  # validations accept any entry; 8 of 12 jv9 GUI attempts, 7 passed);
+  # cell extractor tags zero-looking displays whose value is not zero with
+  # the underlying number ("0.00 [actual 3.6e-12]": check 66 failed 5 of 12
+  # gradings on floating-point leftovers under a correct dash format);
+  # rounding statements per sheet beside the count of formulas using a
+  # rounding function (check 105: a "rounded to" label over display-only
+  # precision misdescribes the model; House Standards v1 rounding line
+  # amended in place the same day, see house_standards/README.md);
+  # freeze position renders the rows/columns it locks and their size,
+  # tagged EXCESSIVE above 300 pt of rows or 200 characters of columns
+  # (check 122: four of the 12 jv9 GUI attempts lock 306-660 pt, never
+  # cited); guidance 44 -> 49 notes (22, 44, 88, 105, 122 new; 50 and 66
+  # extended: 50 now fails on the range check 52 cites, grading 1084; 88:
+  # the model's own inputs are never a benchmark, key outputs need outside
+  # comparisons, one isolated outside comparison does not pass).
+  # 2026-09-19, folded in (nothing graded under 11 yet): check 28 No unused
+  # formatting retired by rule (judge.retired_checks; 129 effective items)
+  # and its evidence line left out of the properties block while retired.
+  # Prompt version and template unchanged.
+  # 12 (2026-09-20, the reviewer's review of the jv11 GUI gradings 1087 /
+  # 1092 / 1097; 12 rows exist under 11, so every change from it lands
+  # here): the content-fit scan measures a number in its own font's glyph
+  # widths (properties schema 6, CSV caches *_csv_cache_v9; check 69 missed
+  # WACC!C31:C39 of grading 1092, ### in Excel, because Arial 10 was scaled
+  # as a small Calibri); the IMPLICIT INTERSECTION line lists the formulas
+  # that reference each flagged cell (check 32: the master flag stayed OK
+  # over an erroring check row); a print estimate per sheet (pages tall and
+  # wide from heights, widths, margins and fit settings) tagged MULTI-PAGE,
+  # NO MANUAL BREAKS (check 76 flipped on 5 of 12 attempts, all workbooks
+  # with breaks on some long sheets only); guidance 49 -> 53 notes (32, 63,
+  # 76 and 111 new; 64, 81, 99 and 108 extended; 88 reworded: a benchmark bound
+  # typed for the sense check is an outside comparison wherever it sits and
+  # judgment is basis enough, 88 went from 2 to 11 fails of 12 under the jv11
+  # note). Prompt version and template unchanged.
+  version: 12
+  prompt_template: "prompts/agentic_judge_template_8.yaml"
+  prompt_version: "8"
+  max_rounds: 500
+  max_forced_rounds: 50         # 12-category's 15 is sized for one category
+  # Whether a numeric answer typed as a constant (no live formula) counts as
+  # a mistake for the harness's Final-calculation-accuracy verdict. Recorded
+  # per grading in scored_results.accuracy_engine.
+  hardcoded_counts: true

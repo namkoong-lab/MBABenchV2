@@ -1,0 +1,35 @@
+{
+  "id": 86,
+  "task_name": "HouseorFlat",
+  "task_starting_files": [
+    "data/tasks/task_id=86/starting_files/HouseorFlat.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=86/solution_files/HouseorFlat - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Rent vs. Buy Analysis",
+    "time_range": "7-9h",
+    "difficulty_score": 3.3333,
+    "short_description": "Rent vs. Buy Analysis - extensive tax involvement + multiple comparison models",
+    "time_assumption_h": 7.2833,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/HouseorFlat/starting_files/HouseorFlat.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/HouseorFlat/solution_files/HouseorFlat - Solution.xlsx"
+    ]
+  }
+}

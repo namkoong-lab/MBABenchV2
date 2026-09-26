@@ -1,0 +1,35 @@
+{
+  "id": 53,
+  "task_name": "SingleForever",
+  "task_starting_files": [
+    "data/tasks/task_id=53/starting_files/SingleForever.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=53/solution_files/SingleForever - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:48.977902+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Retirement / Savings Calculators",
+    "time_range": "3-4h",
+    "difficulty_score": 3.0,
+    "short_description": "Easy version of Saving Calculation - single person, no debt, birth date given",
+    "time_assumption_h": 3.4333,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 60.0,
+  "ai_time_estimate_reasoning": "This wealth management task is highly complex, requiring a multi-decade monthly timeline (~880 periods) tracking personal finances through working life and retirement. Key challenges that will consume time for an expert include modeling the escalating tax brackets (which increase by 1.5% annually at year-end), building a robust bracket-based monthly tax calculation, handling the transition from salary to pension (based on the average of the last 3 years of gross salary), implementing the logic for Cash on Hand scaling and investment sweeps, and converting annual EAR interest and inflation rates to monthly compounded rates. Setting up the dynamic calculations, auditing the formulas, and retrieving the answers for the 30 specific date-based questions will take an expert modeler approximately 60 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/SingleForever/starting_files/SingleForever.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/SingleForever/solution_files/SingleForever - Solution.xlsx"
+    ]
+  }
+}

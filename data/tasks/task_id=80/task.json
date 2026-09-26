@@ -1,0 +1,35 @@
+{
+  "id": 80,
+  "task_name": "EURCorp",
+  "task_starting_files": [
+    "data/tasks/task_id=80/starting_files/EURCorp.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=80/solution_files/EURCorp - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Bond Pricing / Yield Curve Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.6667,
+    "short_description": "Classical Corp Bond Valuation with 30/360E compounding",
+    "time_assumption_h": 1.7,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/EURCorp/starting_files/EURCorp.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/EURCorp/solution_files/EURCorp - Solution.xlsx"
+    ]
+  }
+}

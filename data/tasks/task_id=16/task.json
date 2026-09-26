@@ -1,0 +1,35 @@
+{
+  "id": 16,
+  "task_name": "DetailedLoan",
+  "task_starting_files": [
+    "data/tasks/task_id=16/starting_files/DetailedLoan.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=16/solution_files/DetailedLoan - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:27.841369+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Retirement / Savings Calculators",
+    "time_range": "5-7h",
+    "difficulty_score": 4.8333,
+    "short_description": "Very-very complex financial life plan model including debt, salary raises, tax and inflation - model for a married couple buying a house (no kids)",
+    "time_assumption_h": 6.9333,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 195.0,
+  "ai_time_estimate_reasoning": "This is a highly complex wealth planning model covering an 84-year monthly timeline (over 1,000 rows) with several advanced features that require meticulous design. The salary and progressive tax engine requires modeling individual promotions (at non-standard intervals like 5.5 years) and tax brackets that inflate annually at 2%. Crucially, the home loan requires building a separate precise weekly amortization schedule with semi-monthly compounding and interest-only payments, which must then be mapped back to monthly periods. Finally, the monthly cash flow waterfall requires complex, sequential priority-based debt paydowns, dynamic emergency cash maintenance, and investment liquidation logic that can easily lead to circular references or formula errors if not carefully structured.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/DetailedLoan/starting_files/DetailedLoan.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/DetailedLoan/solution_files/DetailedLoan - Solution.xlsx"
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": 42,
+  "task_name": "PaydownPathways",
+  "task_starting_files": [
+    "data/tasks/task_id=42/starting_files/PaydownPathways.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=42/solution_files/PaydownPathways - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:44.673905+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Loan Amortization Schedules",
+    "time_range": "2-3h",
+    "difficulty_score": 3.5,
+    "short_description": "Loan Amortization Schedule for a Constant Principal Loan",
+    "time_assumption_h": 2.6833,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 25.0,
+  "ai_time_estimate_reasoning": "The task requires building a highly dynamic loan amortization schedule for a Constant Principal Loan with mismatched payment (Monthly) and compounding (Annual) frequencies. An expert modeler would need to map the frequency strings to numerical periods per year, calculate the correct periodic interest rate using compounding conversion formulas, set up the 180-period schedule, and then use precise lookups (like INDEX/MATCH and SUMIFS) to populate the 25 specific answers in the Questions sheet. Verifying the logic and ensuring all edge cases are covered will take approximately 25 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/PaydownPathways/starting_files/PaydownPathways.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/PaydownPathways/solution_files/PaydownPathways - Solution.xlsx"
+    ]
+  }
+}

@@ -1,0 +1,1068 @@
+{
+  "task_id": 23,
+  "task_name": "Fixings",
+  "created_at": "20260827T154147Z",
+  "rubric_version": "ffe2d7b6c063",
+  "rubric_count": 132,
+  "answered": 132,
+  "complete": true,
+  "rubrics": [
+    {
+      "no": 1,
+      "category": "Accuracy",
+      "name": "Final calculation accuracy",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 2,
+      "category": "Accuracy",
+      "name": "Starting values",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 3,
+      "category": "Accuracy",
+      "name": "Deliverable completeness",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 4,
+      "category": "Assumptions",
+      "name": "Centralized assumptions",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 5,
+      "category": "Assumptions",
+      "name": "Unique assumptions",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 6,
+      "category": "Assumptions",
+      "name": "Assumption labeling",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 7,
+      "category": "Assumptions",
+      "name": "Assumption units",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 8,
+      "category": "Assumptions",
+      "name": "Assumption sources",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 9,
+      "category": "Assumptions",
+      "name": "Named ranges for key assumptions",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 10,
+      "category": "Assumptions",
+      "name": "Single date driver",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 11,
+      "category": "Documentation",
+      "name": "Formula commentary for non-obvious formulas",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 12,
+      "category": "Documentation",
+      "name": "Glossary of conventions",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 13,
+      "category": "Documentation",
+      "name": "How to use guide",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 14,
+      "category": "Documentation",
+      "name": "Linked table of contents",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 15,
+      "category": "Documentation",
+      "name": "Clear tab names",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 16,
+      "category": "Documentation",
+      "name": "Purpose documentation",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 17,
+      "category": "Documentation",
+      "name": "Scope documentation",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 18,
+      "category": "Documentation",
+      "name": "Key design decisions documentation",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 19,
+      "category": "Documentation",
+      "name": "Version history / change log",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 20,
+      "category": "Documentation",
+      "name": "Methodology documentation",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 21,
+      "category": "Error Checks",
+      "name": "Subtotals tie to totals",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 22,
+      "category": "Error Checks",
+      "name": "No formula errors",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 23,
+      "category": "Error Checks",
+      "name": "No unresolved cell warnings",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 24,
+      "category": "Error Checks",
+      "name": "IFERROR/IFNA used only for expected errors",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 25,
+      "category": "Error Checks",
+      "name": "Reasonable file size",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 26,
+      "category": "Error Checks",
+      "name": "Reasonable recalculation time",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 27,
+      "category": "Error Checks",
+      "name": "Cross-sheet value agreement",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 28,
+      "category": "Error Checks",
+      "name": "No unused formatting",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 29,
+      "category": "Error Checks",
+      "name": "Clean Name Manager",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 30,
+      "category": "Error Checks",
+      "name": "Dedicated check rows",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 31,
+      "category": "Error Checks",
+      "name": "Error-check sheet",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 32,
+      "category": "Error Checks",
+      "name": "Master error flag",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 33,
+      "category": "Error Checks",
+      "name": "Consistent units",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 34,
+      "category": "Error Checks",
+      "name": "Units carried through correctly",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 35,
+      "category": "Error Checks",
+      "name": "Justified repeated calculations",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 36,
+      "category": "Flexibility",
+      "name": "Multi-unit coverage",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 37,
+      "category": "Flexibility",
+      "name": "M&A / divestiture flexibility",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 38,
+      "category": "Flexibility",
+      "name": "Capitalization switches",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 39,
+      "category": "Flexibility",
+      "name": "Reuse as planning tool",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 40,
+      "category": "Flexibility",
+      "name": "Time-period flexibility",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 41,
+      "category": "Flexibility",
+      "name": "Driver-based, formula-linked architecture",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 42,
+      "category": "Formatting",
+      "name": "Actuals vs. forecast demarcation",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 43,
+      "category": "Formatting",
+      "name": "Input cells marked",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 44,
+      "category": "Formatting",
+      "name": "Input cells data validation",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 45,
+      "category": "Formatting",
+      "name": "Reasonable number formats",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 46,
+      "category": "Formatting",
+      "name": "Consistent number formats",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 47,
+      "category": "Formatting",
+      "name": "No bright-yellow highlighting",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 48,
+      "category": "Formatting",
+      "name": "Blue font for hardcoded inputs",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 49,
+      "category": "Formatting",
+      "name": "Black font for calculations",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 50,
+      "category": "Formatting",
+      "name": "Green font for cross-sheet links",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 51,
+      "category": "Formatting",
+      "name": "Red font for external links",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 52,
+      "category": "Formatting",
+      "name": "Consistent color coding",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 53,
+      "category": "Formatting",
+      "name": "Consistent formatting",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 54,
+      "category": "Formatting",
+      "name": "Limited color palette",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 55,
+      "category": "Formatting",
+      "name": "No colors that mimic standard coding",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 56,
+      "category": "Formatting",
+      "name": "Minimal non-standard color usage",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 57,
+      "category": "Formatting",
+      "name": "Sparing conditional formatting",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 58,
+      "category": "Formatting",
+      "name": "Sparing border usage",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 59,
+      "category": "Formatting",
+      "name": "Header & title shading",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 60,
+      "category": "Formatting",
+      "name": "Totals visually distinguished",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 61,
+      "category": "Formatting",
+      "name": "Consistent zoom level",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 62,
+      "category": "Formatting",
+      "name": "Active cell reset to A1 on all sheets",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 63,
+      "category": "Formatting",
+      "name": "Text left-aligned",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 64,
+      "category": "Formatting",
+      "name": "Numbers right-aligned",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 65,
+      "category": "Formatting",
+      "name": "Negatives in parentheses",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 66,
+      "category": "Formatting",
+      "name": "Zeros as dashes",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 67,
+      "category": "Formatting",
+      "name": "Thousands separators",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 68,
+      "category": "Formatting",
+      "name": "Currency stated",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 69,
+      "category": "Formatting",
+      "name": "Sufficient column widths",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 70,
+      "category": "Formatting",
+      "name": "Reasonable column widths",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 71,
+      "category": "Formatting",
+      "name": "Consistent column widths",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 72,
+      "category": "Formatting",
+      "name": "Consistent row heights",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 73,
+      "category": "Formatting",
+      "name": "Reasonable row heights",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 74,
+      "category": "Formatting",
+      "name": "No merged cells",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 75,
+      "category": "Formatting",
+      "name": "Print areas set",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 76,
+      "category": "Formatting",
+      "name": "Page breaks set",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 77,
+      "category": "Formatting",
+      "name": "File extension (.xlsx)",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 78,
+      "category": "Formulas",
+      "name": "Use standard formula set",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 79,
+      "category": "Formulas",
+      "name": "Modern formula usage",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 80,
+      "category": "Formulas",
+      "name": "Avoid volatile functions",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 81,
+      "category": "Formulas",
+      "name": "No hardcoded numbers in formulas",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 82,
+      "category": "Formulas",
+      "name": "Simple, stepwise formulas",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 83,
+      "category": "Formulas",
+      "name": "Consistent formulas across blocks",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 84,
+      "category": "Formulas",
+      "name": "Inconsistent formulas flagged",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 85,
+      "category": "Formulas",
+      "name": "Correct reference anchoring",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 86,
+      "category": "Formulas",
+      "name": "Consistent reference anchoring",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 87,
+      "category": "Formulas",
+      "name": "Avoid whole-column references",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 88,
+      "category": "Model Outputs & Executive Summary",
+      "name": "Output reasonableness check",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 89,
+      "category": "Model Outputs & Executive Summary",
+      "name": "Key ratios & outputs section",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 90,
+      "category": "Model Outputs & Executive Summary",
+      "name": "Cross-scenario summary",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": "Target vs. It"
+    },
+    {
+      "no": 91,
+      "category": "Model Outputs & Executive Summary",
+      "name": "Automated summary",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 92,
+      "category": "Potential Dangers",
+      "name": "No hidden sheets",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 93,
+      "category": "Potential Dangers",
+      "name": "No hidden rows/columns",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 94,
+      "category": "Potential Dangers",
+      "name": "No white-on-white hiding",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 95,
+      "category": "Potential Dangers",
+      "name": "No external links",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 96,
+      "category": "Potential Dangers",
+      "name": "Macros/VBA disclosed",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 97,
+      "category": "Potential Dangers",
+      "name": "VBA vs. native alternatives",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 98,
+      "category": "Potential Dangers",
+      "name": "Consistent sign convention",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 99,
+      "category": "Potential Dangers",
+      "name": "No errors under extreme-but-plausible inputs",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 100,
+      "category": "Potential Dangers",
+      "name": "Automatic calculation mode",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 101,
+      "category": "Purpose & Scope",
+      "name": "Architecture suited to audience",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 102,
+      "category": "Purpose & Scope",
+      "name": "Structure fits purpose",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 103,
+      "category": "Rounding",
+      "name": "Full precision in intermediates",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 104,
+      "category": "Rounding",
+      "name": "Rounded outputs",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 105,
+      "category": "Rounding",
+      "name": "Rounding documented",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 106,
+      "category": "Structure",
+      "name": "Essential components present",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 107,
+      "category": "Structure",
+      "name": "Cover sheet first",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 108,
+      "category": "Structure",
+      "name": "Timeline orientation",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 109,
+      "category": "Structure",
+      "name": "Vertical alignment of same-type data",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 110,
+      "category": "Structure",
+      "name": "Label-to-value alignment",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 111,
+      "category": "Structure",
+      "name": "Best-fit structure for stated purpose",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 112,
+      "category": "Structure",
+      "name": "Deal vs. planning orientation",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 113,
+      "category": "Structure",
+      "name": "Real fiscal year handling",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 114,
+      "category": "Structure",
+      "name": "Stub period handling",
+      "verdict": "not_applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 115,
+      "category": "Structure",
+      "name": "Functional sheet separation",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 116,
+      "category": "Structure",
+      "name": "Logical tab order",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 117,
+      "category": "Structure",
+      "name": "Functional calculation sections",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 118,
+      "category": "Structure",
+      "name": "Buffer rows for totals",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 119,
+      "category": "Structure",
+      "name": "Buffer rows between sections",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 120,
+      "category": "Structure",
+      "name": "Clear section headers",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 121,
+      "category": "Structure",
+      "name": "Consistent tab structure",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 122,
+      "category": "Structure",
+      "name": "Freeze panes set",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 123,
+      "category": "Structure",
+      "name": "One timeline per sheet",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 124,
+      "category": "Structure",
+      "name": "Chronological left-to-right",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 125,
+      "category": "Structure",
+      "name": "Time period headers",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 126,
+      "category": "Structure",
+      "name": "Data-type designation (actuals vs. estimates)",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 127,
+      "category": "Structure",
+      "name": "Clear row labels",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 128,
+      "category": "Structure",
+      "name": "Clear column labels",
+      "verdict": "applicable",
+      "conditional": false,
+      "note": ""
+    },
+    {
+      "no": 129,
+      "category": "Structure",
+      "name": "Roll-forward (corkscrew) structure for balances",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 130,
+      "category": "Structure",
+      "name": "Circularity - valid justification",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 131,
+      "category": "Structure",
+      "name": "Circularity - documentation",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    },
+    {
+      "no": 132,
+      "category": "Structure",
+      "name": "Circularity breaker switch",
+      "verdict": "applicable",
+      "conditional": true,
+      "note": ""
+    }
+  ],
+  "overall_note": ""
+}

@@ -1,0 +1,35 @@
+{
+  "id": 67,
+  "task_name": "WinzigweichCorp",
+  "task_starting_files": [
+    "data/tasks/task_id=67/starting_files/WinzigweichCorp.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=67/solution_files/WinzigweichCorp - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:53.448173+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Scenario / Sensitivity Analysis",
+    "time_range": "3-4h",
+    "difficulty_score": 3.5,
+    "short_description": "Small DCF (no forecasting, estimates given) with two-stage TV and sensitivity analysis regarding three factors (combinatorial sensitivity analysis)",
+    "time_assumption_h": 3.6667,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 80.0,
+  "ai_time_estimate_reasoning": "The task requires constructing a comprehensive DCF model with several complex elements: reconstructing Free Cash Flows from high-level balance sheet and income statement items (computing NWC and Capex), setting up an iterative WACC loop that resolves circularity via Excel's iterative calculation, discounting cash flows to a non-standard valuation date using fractional periods, and modeling a two-stage terminal value. Furthermore, because the sensitivity analysis requires varying three distinct inputs (g1 rate, g1 end year, and g2 rate) across 35 unique scenarios, a standard Excel Data Table cannot be used directly. The modeler will need to write a VBA macro or build a complex multi-variable formula scenario manager to populate the answers efficiently, adding significant time for setup and verification.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/WinzigweichCorp/starting_files/WinzigweichCorp.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/WinzigweichCorp/solution_files/WinzigweichCorp - Solution.xlsx"
+    ]
+  }
+}

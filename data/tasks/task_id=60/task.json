@@ -1,0 +1,35 @@
+{
+  "id": 60,
+  "task_name": "TheInterestGame",
+  "task_starting_files": [
+    "data/tasks/task_id=60/starting_files/TheInterestGame.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=60/solution_files/TheInterestGame - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:51.323421+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Loan Amortization Schedules",
+    "time_range": "2-3h",
+    "difficulty_score": 3.5,
+    "short_description": "Loan Amortization Schedule for an Annuity Loan",
+    "time_assumption_h": 2.6833,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 40.0,
+  "ai_time_estimate_reasoning": "This task requires building a highly precise loan amortization schedule with mismatching payment and compounding frequencies (monthly payments vs. quarterly compounding) and an annuity due structure (payments at the beginning of the period). An expert modeler must first calculate the correct effective period interest rate, use the PMT function with the correct arguments, construct a 150-period dynamic amortization table, set up a yearly summary tab, and then link 25 specific date-based queries using INDEX/MATCH or SUMIFS. This requires careful logic verification and formula checking to ensure all interest and principal components reconcile perfectly.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TheInterestGame/starting_files/TheInterestGame.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TheInterestGame/solution_files/TheInterestGame - Solution.xlsx"
+    ]
+  }
+}

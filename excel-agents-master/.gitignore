@@ -1,0 +1,23 @@
+# Machine-specific config overrides (credentials, ports, base paths)
+infra/configs/configs.yaml
+
+# Run outputs and working state
+scratch/
+outputs/
+upload_dumps/
+onedrive_manifest.json
+
+# Browser profiles hold live Microsoft 365 sessions — never commit
+browser_profiles/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Manual-upload staging tree (drag into OneDrive web, then delete)
+onedrive_staging/
+
+# Per-attempt run logs and the dated lane / smoke configs (account, port and
+# DB pins) — operational files, never tracked.
+logs/
+infra/configs/run_configs/lanes_*/

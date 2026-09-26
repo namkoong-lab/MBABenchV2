@@ -1,0 +1,35 @@
+{
+  "id": 43,
+  "task_name": "PlasticParts",
+  "task_starting_files": [
+    "data/tasks/task_id=43/starting_files/PlasticParts.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=43/solution_files/PlasticParts - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:44.980452+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "3-Statement Model",
+    "time_range": "9-12h",
+    "difficulty_score": 4.8333,
+    "short_description": "3-SM for a company producing for the automotive industry",
+    "time_assumption_h": 11.6333,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 165.0,
+  "ai_time_estimate_reasoning": "This is a highly complex, multi-layered industrial 3-statement model requiring the tracking of 20 products, matching them to 4 machine types based on volume logic, and calculating capacity-constrained CAPEX additions for both forms and machines. In addition to complex production runtime, energy, and staffing calculations, the modeler must build detailed depreciation schedules for different asset classes (buildings, machines, forms with different useful lives and splits), project two separate amortizing historical loans, calculate a dynamic Cash Conversion Cycle (DSO/DIO/DPO), and set up circular cash interest logic. An expert modeler would need substantial time to build, link, and audit these operational schedules across 120 projection months.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/PlasticParts/starting_files/PlasticParts.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/PlasticParts/solution_files/PlasticParts - Solution.xlsx"
+    ]
+  }
+}

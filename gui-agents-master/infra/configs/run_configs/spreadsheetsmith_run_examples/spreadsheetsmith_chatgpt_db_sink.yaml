@@ -1,0 +1,32 @@
+# benchmark v2 — SpreadsheetSmith task set (SpreadsheetSmith DB)
+benchmark: v2
+
+# SpreadsheetSmith run config — postgres_s3 source, postgres_s3 sink, ChatGPT provider.
+#
+# Use this once the local-sink ChatGPT test passes.
+# Writes attempt files to S3 under SpreadsheetSmith/attempts/ and inserts a row into
+# task_attempts for each run.
+#
+# Run (single task first):
+#   cd gui-agents-master
+#   python -m infra.run --task-id 1 -y \
+#     --run-config infra/configs/run_configs/spreadsheetsmith_run_examples/spreadsheetsmith_chatgpt_db_sink.yaml
+#
+# Run all tasks (after single-task validation):
+#   python -m infra.run -y \
+#     --run-config infra/configs/run_configs/spreadsheetsmith_run_examples/spreadsheetsmith_chatgpt_db_sink.yaml
+
+source:
+  kind: postgres_s3
+  schema: spreadsheetsmith
+  filters:
+    task_sources: ["v2"]
+    skip_deprecated: true
+    skip_already_attempted: false   # disabled so --task-id reruns are safe
+
+sink:
+  kind: postgres_s3
+  schema: spreadsheetsmith
+
+provider:
+  kind: "chatgpt"

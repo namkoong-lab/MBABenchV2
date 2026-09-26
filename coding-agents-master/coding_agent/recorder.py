@@ -1,0 +1,257 @@
+"""Recorder: persist a validated attempt.
+
+Internal mode — same conventions as the CLI wave, root chosen by `benchmark`:
+  S3:  s3://<bucket>/<root>/attempts/<agent_model_name>/task_source=<src>/task_id=<id>/<ts>_<file>
+       s3://<bucket>/<root>/prompts/<agent_model_name>/<ts>_<promptfile>
+       (<root> = BizbenchV1 for v1, SpreadsheetSmith for v2; the template's
+       attachments — v12's House_Standards_v1.md — and v11/v13's workspace
+       extra (HOUSE_STANDARDS.md) upload with the prompt files, so prompt_files says everything the agent was told)
+  DB:  INSERT INTO task_attempts (...)  — solution.xlsx is listed FIRST in
+       attempt_files (the judge grades the first xlsx in the list). On
+       SpreadsheetSmith the row's extra_configs (JSONB) then records the settings
+       the attempt ran under (RunConfig.extra_configs(), including
+       house_standards {version, file, sha256} for templates that ship
+       them, prompt_extras for v11/v13's staged file); BizbenchV1 has no such column, so it is probed and skipped
+       there.
+  Verdicts infra_failure / needs_review write NO row (no trial burned; held
+  locally); success / timeout / agent_failure write a row.
+
+Local sink (cfg.sink) — the same artifacts and the same row, written under
+local.output_root instead: outputs/<agent_model_name>/task_id=<N>/<ts>/ plus a
+line appended to outputs/<agent_model_name>/task_attempts.jsonl. Same
+RECORDABLE gate, so an offline run holds infra_failure / needs_review locally
+exactly as the cloud one does. See local_sink.py and data/README.md.
+
+External mode — everything stays local in a results folder; no DB, no S3.
+"""
+import fcntl
+import json
+import shutil
+import time
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+
+from .config import RunConfig, template_attachments
+from .local_sink import write_attempt
+from .prompt_builder import prompt_extra_paths, prompt_extras_provenance, prompt_file_paths
+from .repo_config import s3_client
+from .sandbox import SandboxResult
+from .task_source import TaskSpec
+from .validate import Verdict
+from .workspace import Attempt
+
+RECORDABLE = {"success", "timeout", "agent_failure"}
+
+# Finished attempts upload to S3 slowly and ONE LANE AT A TIME, so the lanes
+# still running keep the uplink. 2026-09-20, 12 lanes on one Mac: every one of
+# 36 dropped API connections (relay: upstream_open SSLZeroReturnError, both
+# vendors) fell inside an S3 upload window; a 209 MB solution.xlsx (GPT-6
+# Astra, task 89) caused a 6-min storm of 21, and an 82 MB one the afternoon's
+# first hang. Measured: big uploads reach only 0.3-0.8 MB/s here, so the first
+# cap (1 MB/s) capped nothing, and up to five lanes uploaded at once. Claude
+# Code retries for ~6 min only and treats a drop in mid-stream as fatal
+# (task 35 lost that way), so the uploads have to stay out of the way.
+# The run needs ~125 KB/s on average (giants included); 250 KB/s, serialized.
+S3_UPLOAD_MAX_BYTES_PER_SEC = 250_000
+S3_UPLOAD_LOCK_WAIT_SECONDS = 45 * 60  # then upload anyway: a wedged lane must not block the rest
+
+
+@contextmanager
+def _upload_slot(workspaces_dir: Path):
+    """Hold the cross-lane upload lock (flock: released when the holder exits,
+    however it exits)."""
+    lock_file = open(workspaces_dir / ".s3_upload.lock", "w")
+    try:
+        deadline = time.monotonic() + S3_UPLOAD_LOCK_WAIT_SECONDS
+        while True:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(2)
+        yield
+    finally:
+        lock_file.close()
+
+
+def _extras_stamp(cfg: RunConfig) -> dict:
+    """{"prompt_extras": {...}} when the template stages extra files, else {}."""
+    extras = prompt_extras_provenance(cfg)
+    return {"prompt_extras": extras} if extras else {}
+
+
+def has_extra_configs_column(db_url: str) -> bool:
+    """True if task_attempts.extra_configs exists (SpreadsheetSmith only)."""
+    import psycopg2
+
+    conn = psycopg2.connect(db_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'task_attempts' AND column_name = 'extra_configs'"
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def record(cfg: RunConfig, spec: TaskSpec, attempt: Attempt, sandbox: SandboxResult,
+           verdict: Verdict, telemetry: dict, prompt_version: int,
+           results_dir: Path | None = None) -> dict:
+    summary = {
+        "agent_model_name": cfg.agent_model_name,
+        "task_id": spec.task_id,
+        "task_name": spec.task_name,
+        "status": verdict.status,
+        "reason": verdict.reason,
+        "duration_min": round(sandbox.duration_seconds / 60.0, 2),
+        "prompt_version": prompt_version,
+        "cost_usd": telemetry.get("cost_usd"),
+        "tokens": telemetry.get("totals"),
+        "extra_configs": {**cfg.extra_configs(), **_extras_stamp(cfg)},
+        "recorded": False,
+    }
+
+    if cfg.mode == "external":
+        dest = (results_dir or Path("results")) / attempt.attempt_dir.name
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "manifest.json",
+                     "trajectory.jsonl.gz", "run_config.yaml"):
+            src = attempt.attempt_dir / name
+            if src.exists():
+                shutil.copy2(src, dest / name)
+        if verdict.solution_path and verdict.solution_path.exists():
+            shutil.copy2(verdict.solution_path, dest / "solution.xlsx")
+        shutil.copy2(attempt.workspace / "PROMPT.md", dest / "PROMPT.md")
+        summary["recorded"] = True
+        summary["results_dir"] = str(dest)
+        (dest / "summary.json").write_text(json.dumps(summary, indent=2))
+        return summary
+
+    if verdict.status not in RECORDABLE:
+        summary["note"] = "not recorded to DB (infra_failure/needs_review are held locally)"
+        (attempt.attempt_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+        return summary
+
+    # The prompt snapshot, in the order both sinks record it: system prompt,
+    # the template actually used, its attachments, its workspace extras.
+    prompt_paths = [*prompt_file_paths(cfg, spec.task_source), *template_attachments(cfg),
+                    *[src for src, _ in prompt_extra_paths(cfg)]]
+    agent_failed = verdict.status != "success"
+
+    if cfg.offline_sink:
+        ended_at = datetime.now()
+        row, dest = write_attempt(
+            output_root=cfg.local_output_root,
+            agent_model_name=cfg.agent_model_name,
+            task_id=spec.task_id,
+            started_at=attempt.started_at,
+            ended_at=ended_at,
+            solution_path=verdict.solution_path,
+            workspace=attempt.workspace,
+            attempt_dir=attempt.attempt_dir,
+            prompt_paths=prompt_paths,
+            time_taken_min=round(sandbox.duration_seconds / 60.0, 2),
+            cost=telemetry.get("cost_usd"),
+            prompt_version=prompt_version,
+            agent_failed=agent_failed,
+            agent_failed_reason=None if not agent_failed else verdict.reason,
+            extra_configs={**cfg.extra_configs(), **_extras_stamp(cfg)},
+        )
+        summary["attempt_id"] = row["id"]
+        summary["recorded"] = True
+        summary["sink"] = "local"
+        summary["output_dir"] = str(dest)
+        summary["attempt_files"] = row["attempt_files"]
+        (attempt.attempt_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+        return summary
+
+    import psycopg2
+    from psycopg2.extras import Json
+
+    from boto3.s3.transfer import TransferConfig
+
+    s3 = s3_client()
+    # One stream, not the default ten: ten multipart threads sharing 250 KB/s left
+    # some connections idle past S3's 20 s limit -> "RequestTimeout ... UploadPart
+    # (reached max retries: 4)", and a finished 44 MB attempt went unrecorded
+    # (Fable 5.1, task 85, 2026-09-20 20:56).
+    throttle = TransferConfig(max_bandwidth=S3_UPLOAD_MAX_BYTES_PER_SEC, max_concurrency=1)
+    bucket, root = cfg.s3_bucket, cfg.s3_root
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    with _upload_slot(cfg.workspaces_dir):
+        # Prompt snapshot (system + the template actually used + its attachments).
+        prompt_uris = []
+        for path in prompt_paths:
+            key = f"{root}/prompts/{cfg.agent_model_name}/{ts}_{path.name}"
+            s3.upload_file(str(path), bucket, key, Config=throttle)
+            prompt_uris.append(f"s3://{bucket}/{key}")
+
+        # Attempt artifacts — solution first (the judge takes the first xlsx).
+        base = f"{root}/attempts/{cfg.agent_model_name}/task_source={spec.task_source}/task_id={spec.task_id}/{ts}"
+        uploads = []
+        if verdict.solution_path and verdict.solution_path.exists():
+            uploads.append((verdict.solution_path, f"{base}_solution.xlsx"))
+        uploads.append((attempt.workspace / "PROMPT.md", f"{base}_PROMPT.md"))
+        for name in ("transcript.jsonl", "telemetry.json", "verdict.json", "trajectory.jsonl.gz",
+                     "run_config.yaml"):
+            path = attempt.attempt_dir / name
+            if path.exists():
+                uploads.append((path, f"{base}_{name}"))
+
+        attempt_files = []
+        for local, key in uploads:
+            s3.upload_file(str(local), bucket, key, Config=throttle)
+            attempt_files.append(f"s3://{bucket}/{key}")
+
+    extra_supported = has_extra_configs_column(cfg.db_url)
+    conn = psycopg2.connect(cfg.db_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO task_attempts
+                  (task_id, prompt_files, start_time, end_time, agent_model_name,
+                   agent_model_type, attempt_files, time_taken_min, cost,
+                   agent_failed, agent_failed_reason, deprecated, prompt_version)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    spec.task_id,
+                    Json(prompt_uris),
+                    attempt.started_at,
+                    datetime.now(),
+                    cfg.agent_model_name,
+                    "coding_cli",
+                    Json(attempt_files),
+                    round(sandbox.duration_seconds / 60.0, 2),
+                    telemetry.get("cost_usd"),
+                    agent_failed,
+                    None if not agent_failed else verdict.reason,
+                    False,
+                    prompt_version,
+                ),
+            )
+            attempt_id = cur.fetchone()[0]
+            if extra_supported:
+                cur.execute(
+                    "UPDATE task_attempts SET extra_configs = %s WHERE id = %s",
+                    (Json({**cfg.extra_configs(), **_extras_stamp(cfg)}), attempt_id),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+    summary["attempt_id"] = attempt_id
+    summary["recorded"] = True
+    summary["sink"] = "cloud"
+    summary["extra_configs_recorded"] = extra_supported
+    summary["attempt_files"] = attempt_files
+    (attempt.attempt_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    return summary

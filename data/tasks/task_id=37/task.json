@@ -1,0 +1,35 @@
+{
+  "id": 37,
+  "task_name": "MonthlyLiquidity",
+  "task_starting_files": [
+    "data/tasks/task_id=37/starting_files/MonthlyLiquidity.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=37/solution_files/MonthlyLiquidity - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:42.795034+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Working Capital Modeling",
+    "time_range": "3-4h",
+    "difficulty_score": 3.3333,
+    "short_description": "Monthly Working Capital Model including Forecasting, NWC and the CCC",
+    "time_assumption_h": 3.9,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 55.0,
+  "ai_time_estimate_reasoning": "This FP&A task requires building a highly detailed 120-month (10-year) forecasting model. Key complexities include setting up a custom workday calendar (with Fridays counted as 0.5 days) to distribute monthly income statement items, implementing step-down logic for DSO, DIO, and DPO based on specific compounding schedules, and scaling multiple balance sheet accounts using historical drivers and account links. Given the exactness required to answer 49 specific monthly data point questions, an expert modeler would spend substantial time building robust formulas (e.g., compounding growth every January, applying step-downs at precise intervals) and double-checking the results.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/MonthlyLiquidity/starting_files/MonthlyLiquidity.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/MonthlyLiquidity/solution_files/MonthlyLiquidity - Solution.xlsx"
+    ]
+  }
+}

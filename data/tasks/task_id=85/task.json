@@ -1,0 +1,35 @@
+{
+  "id": 85,
+  "task_name": "FundRebalancing",
+  "task_starting_files": [
+    "data/tasks/task_id=85/starting_files/FundRebalancing.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=85/solution_files/FundRebalancing - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Scenario / Sensitivity Analysis",
+    "time_range": "5-7h",
+    "difficulty_score": 4.1667,
+    "short_description": "Scenario backtesting for a weighting capped fund (weighting inputs are the alternating factor)",
+    "time_assumption_h": 5.3833,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FundRebalancing/starting_files/FundRebalancing.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FundRebalancing/solution_files/FundRebalancing - Solution.xlsx"
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": 68,
+  "task_name": "FXArbitrage",
+  "task_starting_files": [
+    "data/tasks/task_id=68/starting_files/FXArbitrage.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=68/solution_files/FXArbitrage - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-07-03T15:55:08.315341+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Non-Financial or Non-FP&A Model",
+    "time_range": "16-20h",
+    "difficulty_score": 4.8333,
+    "short_description": "FX Arbitrage Model based on the Bellman-Ford Algorithm",
+    "time_assumption_h": 16.7333,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FXArbitrage/starting_files/FXArbitrage.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FXArbitrage/solution_files/FXArbitrage - Solution.xlsx"
+    ]
+  }
+}

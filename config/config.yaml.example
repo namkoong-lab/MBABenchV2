@@ -1,0 +1,30 @@
+# config.yaml.example — the offline shape of config/config.yaml.
+#
+# Copy to config/config.yaml (gitignored) and fill in the model-provider keys
+# for the cohorts you want to re-run. Nothing else is needed: with no database
+# url and no bucket, every pipeline reads the bundled benchmark under data/
+# and writes its attempts under outputs/, and the judge grades from those.
+# See REPRODUCE.md.
+
+database:
+  v1_url: null          # cloud profile only; the v1 benchmark is not bundled
+  v2_url: null          # cloud profile only; unset = offline
+
+aws:
+  s3_bucket: "<bucket>" # cloud profile only
+  access_key_id: null
+  secret_access_key: null
+
+local:
+  data_root: "data"     # the bundled tasks and experiment records
+  output_root: "outputs" # where offline runs and gradings are written
+
+keys:
+  anthropic_api_key: "sk-ant-..."     # CLI / coding pipelines on Claude models; the second judge
+  openai_api_key: "sk-..."            # CLI / coding pipelines on OpenAI models; the leaderboard judge
+  openrouter_api_key: null            # optional route
+  forge_api_key: null                 # gateway route used for the Grok / Kimi / Gemini / Qwen / GLM cohorts
+  gemini_api_key: null
+
+venv_path: null         # null = <repo>/.venv
+libreoffice_path: null  # null = auto-detect soffice (needed for formula recalculation)

@@ -1,0 +1,35 @@
+{
+  "id": 48,
+  "task_name": "RelativeDevelopment",
+  "task_starting_files": [
+    "data/tasks/task_id=48/starting_files/RelativeDevelopment.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=48/solution_files/RelativeDevelopment - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:46.755906+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "DCF (Discounted Cash Flow)",
+    "time_range": "5-7h",
+    "difficulty_score": 3.6667,
+    "short_description": "DCF (two methods) with given estimates, 3-SM based on percentages + plug without extensive forecasting",
+    "time_assumption_h": 5.6167,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 240.0,
+  "ai_time_estimate_reasoning": "This task is highly complex as it requires building a 120-month (10-year) integrated 3-statement model with day-weighted compounding rates based on the exact number of days in each month/year. Additionally, it features complex, non-standard rules such as periodic tax-deductible Goodwill impairment (halving every 3rd year), intricate Right-of-Use (RoU) asset splits and depreciation treatments, and two distinct DCF valuation runs (one with a circular iterative WACC and one with a target capital structure WACC). Fully constructing, balancing, and audit-checking this model to accurately answer the 100 precise monthly output questions will take an expert financial modeler about 4 hours.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/RelativeDevelopment/starting_files/RelativeDevelopment.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/RelativeDevelopment/solution_files/RelativeDevelopment - Solution.xlsx"
+    ]
+  }
+}

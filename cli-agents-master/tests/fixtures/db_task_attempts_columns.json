@@ -1,0 +1,24 @@
+{
+  "_source": "select column_name from information_schema.columns where table_name='task_attempts' order by ordinal_position (SpreadsheetSmith, 2026-09-25)",
+  "columns": [
+    "id",
+    "task_id",
+    "agent_model_name",
+    "agent_model_type",
+    "attempt_files",
+    "prompt_files",
+    "start_time",
+    "end_time",
+    "time_taken_min",
+    "cost",
+    "prompt_version",
+    "agent_failed",
+    "agent_failed_reason",
+    "deprecated",
+    "created_at",
+    "context_reduced",
+    "deprecated_reason",
+    "updated_at",
+    "extra_configs"
+  ]
+}

@@ -1,0 +1,38 @@
+.env
+# Local config overrides (auto-created from config/config_default.yaml).
+config/config.yaml
+# Editable-install build artifacts.
+*.egg-info/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+
+scratch/
+judge/scratch/
+judge/judge_results/
+
+operation/results/
+.claude/
+# DB-derived manifests written by scripts/export_good_attempts.py; never commit.
+scripts/good_attempts_v2.json
+scripts/good_gradings_v2.json
+# Grading run logs written beside the judge.
+judge/*.log
+
+# Model-request log written by a lane launched from the repo root.
+/agent_logs/
+scripts/good_attempts_stage5.json
+scripts/good_gradings_stage5.json
+scripts/leaderboard_ids.json
+
+# Offline runs and gradings (see data/README.md).
+/outputs/
+# Task workbooks (starting files + golden solutions) are downloaded separately
+# (README "Task files") and placed here by scripts/install_task_files.py; hashes tracked.
+/data/tasks/task_id=*/starting_files/
+/data/tasks/task_id=*/solution_files/
+# Local leftovers from earlier exports (recorded results are not distributed with the repository).
+/data/results/

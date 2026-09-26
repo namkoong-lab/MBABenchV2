@@ -1,0 +1,35 @@
+{
+  "id": 5,
+  "task_name": "CapitalinMotion",
+  "task_starting_files": [
+    "data/tasks/task_id=5/starting_files/CapitalinMotion.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=5/solution_files/CapitalinMotion - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:23.531700+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Working Capital Modeling",
+    "time_range": "4-5h",
+    "difficulty_score": 3.0,
+    "short_description": "Quarterly Working Capital Model including Forecasting, NWC and the CCC",
+    "time_assumption_h": 4.2333,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 75.0,
+  "ai_time_estimate_reasoning": "Completing this task requires forecasting a 15-year quarterly model (60 forecast periods) based on complex instructions for growth and balance sheet forecasting. The modeler must convert annual growth rates to quarterly compounded rates, calculate a rolling average of historical income statement items to initiate the forecast, project linked balance sheet items based on income statement growth, and calculate historical Cash Conversion Cycle (CCC) metrics (DSO, DIO, DPO). Additionally, the modeler must apply a 16-quarter rolling median to project future CCC metrics, back-calculate Accounts Receivable, Inventories, and Accounts Payable, calculate Net Working Capital and Operating Net Working Capital, and answer 30 precise financial questions. This multi-step process, especially back-calculating the balance sheet from CCC metrics and checking for formula errors, will take an expert approximately 75 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CapitalinMotion/starting_files/CapitalinMotion.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CapitalinMotion/solution_files/CapitalinMotion - Solution.xlsx"
+    ]
+  }
+}

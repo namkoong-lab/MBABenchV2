@@ -1,0 +1,35 @@
+{
+  "id": 11,
+  "task_name": "CorpBondII",
+  "task_starting_files": [
+    "data/tasks/task_id=11/starting_files/CorpBondII.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=11/solution_files/CorpBondII - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:25.285017+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Bond Pricing / Yield Curve Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.6667,
+    "short_description": "Classical Corporate Bond Valuation",
+    "time_assumption_h": 1.7,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 20.0,
+  "ai_time_estimate_reasoning": "This task requires building a detailed cash flow schedule for a bond with quarterly coupon payments over an 11.25-year period (46 payments in total), starting from a specific valuation date. The modeler must implement a precise 'Act/Act' day-count fraction where the denominator is the number of days in the payment's calendar year, requiring custom date formulas (e.g., checking for leap years). Additionally, they must build a dynamic annual summary table using SUMIFS to aggregate the cash flows and present values by calendar year to answer the questions. An expert can complete this, including verification, in about 20 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CorpBondII/starting_files/CorpBondII.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CorpBondII/solution_files/CorpBondII - Solution.xlsx"
+    ]
+  }
+}

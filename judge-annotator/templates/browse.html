@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+ <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+  <select name="pipeline"><option value="">All pipelines</option>
+   {% for p in pipelines %}<option value="{{p}}" {% if f.pipeline==p %}selected{% endif %}>{{p}}</option>{% endfor %}
+  </select>
+  <select name="model"><option value="">All models</option>
+   {% for m in models %}<option value="{{m}}" {% if f.model==m %}selected{% endif %}>{{m}}</option>{% endfor %}
+  </select>
+  <select name="judge"><option value="">All judges</option>
+   {% for j in judges %}<option value="{{j}}" {% if f.judge==j %}selected{% endif %}>{{j}}</option>{% endfor %}
+  </select>
+  <select name="status"><option value="">Any status</option>
+   <option value="unreviewed" {% if f.status=='unreviewed' %}selected{% endif %}>Unreviewed</option>
+   <option value="reviewed" {% if f.status=='reviewed' %}selected{% endif %}>Reviewed</option>
+  </select>
+  <input type="text" name="task" placeholder="Task name contains…" value="{{ f.task }}">
+  <button class="btn btn-sm" type="submit">Filter</button>
+  <a class="btn btn-sm" style="background:#5a6478" href="/?refresh=1">Refresh data</a>
+  <span class="muted">{{ n_total }} gradings{% if n_total > 500 %} (showing first 500){% endif %}</span>
+ </form>
+</div>
+<table>
+ <tr><th>Task</th><th>Model</th><th>Pipeline</th><th>Judge</th><th>Graded</th><th>Score</th><th>Reviewed by</th><th></th></tr>
+ {% for r in rows %}
+ <tr>
+  <td>{{ r.task_name }} <span class="muted">#{{ r.task_id }}</span></td>
+  <td>{{ r.agent }}</td>
+  <td>{{ r.pipeline }}</td>
+  <td>{{ r.judge }}</td>
+  <td>{{ r.graded_at }}</td>
+  <td>{{ r.total }}</td>
+  <td>{{ r.annotators|join(', ') if r.annotators else '—' }}</td>
+  <td><a class="btn btn-sm" href="/grade/{{ r.grading_id }}">Annotate</a></td>
+ </tr>
+ {% endfor %}
+</table>
+{% endblock %}

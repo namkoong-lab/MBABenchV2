@@ -1,0 +1,35 @@
+{
+  "id": 10,
+  "task_name": "CorpBond",
+  "task_starting_files": [
+    "data/tasks/task_id=10/starting_files/CorpBond.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=10/solution_files/CorpBond - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:24.997555+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Bond Pricing / Yield Curve Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.6667,
+    "short_description": "Classical Corporate Bond Valuation",
+    "time_assumption_h": 1.7,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 30.0,
+  "ai_time_estimate_reasoning": "An expert financial modeler will spend about 5 minutes parsing the bond terms, including the combination of default-free rate and default spread to find the total yield, and understanding the Act/365 compounding convention. Building the dynamic 40-period cash flow schedule (from t=0 to t=39 using EDATE to increment semi-annually) and calculating the correct discount factors using actual day differences will take around 12 minutes. Creating the annual calendar-year summary using SUMIFS and linking the results to the Questions tab will take another 8 minutes, followed by 5 minutes of quality control to ensure dates, compounding, and formulas are robust and error-free.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CorpBond/starting_files/CorpBond.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CorpBond/solution_files/CorpBond - Solution.xlsx"
+    ]
+  }
+}

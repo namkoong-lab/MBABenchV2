@@ -1,0 +1,62 @@
+{
+  "_bucket": "the object-store bucket name is written as <bucket>; the assertions compare keys below the bucket, so the real name is not needed to check parity",
+  "_note": "max starting files per task across all 101 rows is 1 \u2014 no task in this benchmark has more than one, so there is no multi-file case to pin.",
+  "_source": "SpreadsheetSmith tasks table, read-only SELECT, 2026-09-25",
+  "max_starting_files_across_all_tasks": 1,
+  "rows": [
+    {
+      "ai_time_estimate_min": 105.0,
+      "ai_time_estimate_reasoning": "This FP&A modeling task is highly complex due to the requirement for an iterative WACC calculation (circular reference loop based on market value of equity), a dynamic two-stage terminal value model that accommodates changing transition years (g1 until end year), and the precise fractional-year discounting required between the Valuation basis date (2025-09-30) and the Valuation date (2026-04-12). An expert modeler would need to reconstruct the Free Cash Flows (deducing Net CapEx and NWC changes from the balance sheet items), set up a robust multi-year projection model up to 2038 to capture all sensitivity ranges, establish the circular WACC formula using Excel's iterative calculation mode, set up a two-dimensional Data Table for the sensitivity combinations, and carefully extract the answers to the 35 specific questions.",
+      "case_classification": {
+        "difficulty_category": "Medium-Hard",
+        "difficulty_score": 3.5,
+        "model_type": "Scenario / Sensitivity Analysis",
+        "short_description": "Small DCF (no forecasting, estimates given) with two-stage TV and sensitivity analysis regarding two factors",
+        "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+        "time_assumption_h": 2.6333,
+        "time_range": "2-3h"
+      },
+      "created_at": "2026-06-11T20:14:43.144816+00:00",
+      "deprecated": false,
+      "deprecated_reason": null,
+      "human_difficulty_measure": "Medium-Hard",
+      "id": 1,
+      "task_name": "ApfelInc",
+      "task_solution_files": [
+        "s3://<bucket>/SpreadsheetSmith/tasks/ApfelInc/solution_files/ApfelInc - Solution.xlsx"
+      ],
+      "task_source": "v2",
+      "task_starting_files": [
+        "s3://<bucket>/SpreadsheetSmith/tasks/ApfelInc/starting_files/ApfelInc.xlsx"
+      ],
+      "updated_at": "2026-09-09T01:42:54.511087+00:00"
+    },
+    {
+      "ai_time_estimate_min": 45.0,
+      "ai_time_estimate_reasoning": "The task requires building a Sum of the Parts (SOTP) valuation model for Robert Bosch GmbH. The most complex part is implementing the two-stage statistical filtering for four metrics across four distinct business lines: first, removing negative or invalid multiples, and second, excluding any multiples that are strictly more than one standard deviation away from the preliminary average. Modern Excel dynamic array formulas (such as LET, FILTER, and STDEV.P) can streamline this outlier exclusion process significantly. Once the filtered multiples are computed, the expert will aggregate the implied enterprise or equity values for each part, apply the DEC '25 net debt adjustment of -\u20ac993m for EV-based metrics, and populate the final answers.",
+      "case_classification": {
+        "difficulty_category": "Medium",
+        "difficulty_score": 3.3333,
+        "model_type": "Sum-of-the-Parts Valuation",
+        "short_description": "Sum of the Parts Valuation using Comp multiples for a company with 4 business lines",
+        "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+        "time_assumption_h": 2.9333,
+        "time_range": "2-3h"
+      },
+      "created_at": "2026-06-11T20:17:22.868388+00:00",
+      "deprecated": false,
+      "deprecated_reason": null,
+      "human_difficulty_measure": "Medium",
+      "id": 3,
+      "task_name": "Bosch",
+      "task_solution_files": [
+        "s3://<bucket>/SpreadsheetSmith/tasks/Bosch/solution_files/Bosch - Solution.xlsx"
+      ],
+      "task_source": "v2",
+      "task_starting_files": [
+        "s3://<bucket>/SpreadsheetSmith/tasks/Bosch/starting_files/Bosch.xlsx"
+      ],
+      "updated_at": "2026-09-09T01:42:54.511087+00:00"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "id": 71,
+  "task_name": "BrazGov",
+  "task_starting_files": [
+    "data/tasks/task_id=71/starting_files/BrazGov.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=71/solution_files/BrazGov - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Bond Pricing / Yield Curve Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.8333,
+    "short_description": "Classical Corp Bond Valuation with ANBIMA Business/252 compounding",
+    "time_assumption_h": 1.95,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/BrazGov/starting_files/BrazGov.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/BrazGov/solution_files/BrazGov - Solution.xlsx"
+    ]
+  }
+}

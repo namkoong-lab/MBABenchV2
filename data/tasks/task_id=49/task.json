@@ -1,0 +1,35 @@
+{
+  "id": 49,
+  "task_name": "RevForecast",
+  "task_starting_files": [
+    "data/tasks/task_id=49/starting_files/RevForecast.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=49/solution_files/RevForecast - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:47.137348+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Scenario / Sensitivity Analysis",
+    "time_range": "4-5h",
+    "difficulty_score": 3.1667,
+    "short_description": "Revenue forecasting in three scenarios",
+    "time_assumption_h": 4.05,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 75.0,
+  "ai_time_estimate_reasoning": "This task requires calculating historical year-over-year volume growth rates for 1,000 SKUs over 10 years, taking their averages, and then computing the category-level medians. The modeler must then build three separate multi-year projection models (Base, Declining, and Growth cases) on individual sheets, forecasting both volumes and prices based on scenario-specific growth shares and inflation parameters. Finally, retrieving the answers to the 35 specific questions (covering totals, SKU-specific, and category-specific revenues across various years and cases) requires constructing clean lookup or SUMIFS structures to prevent manual copy-paste errors, bringing the total time to approximately 75 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/RevForecast/starting_files/RevForecast.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/RevForecast/solution_files/RevForecast - Solution.xlsx"
+    ]
+  }
+}

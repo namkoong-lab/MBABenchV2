@@ -1,0 +1,35 @@
+{
+  "id": 31,
+  "task_name": "Harrington",
+  "task_starting_files": [
+    "data/tasks/task_id=31/starting_files/Harrington.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=31/solution_files/Harrington - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:35.882893+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Easy",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Budget vs. Actuals Variance Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.0,
+    "short_description": "Regular Budget vs. Actuals Variance Analysis",
+    "time_assumption_h": 1.15,
+    "difficulty_category": "Easy"
+  },
+  "ai_time_estimate_min": 20.0,
+  "ai_time_estimate_reasoning": "The task requires mapping actual results from the Consolidated Income Statement to the P&L Budget lines (GL Detail) for FY 2024. While the line items are structured slightly differently (e.g., breakdown of revenue by geography vs. product/service types, and different sign conventions where expenses are negative in the budget but positive in the actuals), they map cleanly for major categories like Cost of Sales components, R&D, Sales & Marketing, G&A, Finance, and Taxes. An expert modeler would quickly set up a mapping/reconciliation table to align these lines, normalize the signs, compute the absolute and percentage variances (Actual minus Budget), and answer the 15 specific variance questions in approximately 20 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/Harrington/starting_files/Harrington.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/Harrington/solution_files/Harrington - Solution.xlsx"
+    ]
+  }
+}

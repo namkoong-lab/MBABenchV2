@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:360px;margin:80px auto">
+ <h3>Sign in</h3>
+ {% if error %}<p style="color:#b00">{{ error }}</p>{% endif %}
+ <form method="post" action="/login">
+  <p><input type="text" name="username" placeholder="Username" style="width:95%" autofocus></p>
+  <p><input type="password" name="password" placeholder="Password" style="width:95%"></p>
+  <button class="btn" type="submit">Sign in</button>
+ </form>
+</div>
+{% endblock %}

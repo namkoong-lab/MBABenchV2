@@ -1,0 +1,35 @@
+{
+  "id": 32,
+  "task_name": "LeaseorKeys",
+  "task_starting_files": [
+    "data/tasks/task_id=32/starting_files/LeaseorKeys.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=32/solution_files/LeaseorKeys - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:36.207976+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Rent vs. Buy Analysis",
+    "time_range": "3-4h",
+    "difficulty_score": 3.0,
+    "short_description": "Regular Rent vs. Buy Analysis",
+    "time_assumption_h": 3.85,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 100.0,
+  "ai_time_estimate_reasoning": "This task requires building a highly detailed 50-year monthly rent-vs-buy model involving a loan amortization schedule, complex asset appreciation, and dynamic investment schedules for both renting and buying scenarios. The modeler must track running costs and rental payments that inflate annually every January, handle tax-adjusted investment returns, and accurately calculate the opportunity cost and monthly savings differentials. Additionally, the modeler must map 35 precise lookup questions spanning various dates over the 50-year period, which requires setting up robust and flexible lookup formulas like INDEX/MATCH or SUMIFS across multiple sheets.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/LeaseorKeys/starting_files/LeaseorKeys.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/LeaseorKeys/solution_files/LeaseorKeys - Solution.xlsx"
+    ]
+  }
+}

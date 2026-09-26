@@ -1,0 +1,66 @@
+# Offline run config — cohort `chatgpt_excel_gpt_5_6_sol_xhigh` (ChatGPT
+# add-in, "Model and thinking effort" menu: model "GPT-5.6 Sol", thinking
+# effort "Extra High"). No database, no S3: the 101 bundled tasks are read
+# from <repo>/data/tasks/ and every attempt is written under
+# <repo>/outputs/chatgpt_excel_gpt_5_6_sol_xhigh/ (see <repo>/data/README.md).
+#
+#   uv run python -m infra.run --dry-run --run-config infra/configs/run_configs/offline/chatgpt_excel_gpt_5_6_sol_xhigh.yaml
+#   uv run python -m infra.run           --run-config infra/configs/run_configs/offline/chatgpt_excel_gpt_5_6_sol_xhigh.yaml
+#
+# Identity by reference: agent_model_name is the ONLY model-selecting key.
+# agent_identities.yaml pins the rest for this label — provider
+# chatgpt_excel_agent, ui_model_label "GPT-5.6 Sol", thinking_effort
+# "Extra High", agent_model_type excel. Setting any of them here refuses to
+# run.
+
+benchmark: v2
+agent_model_name: chatgpt_excel_gpt_5_6_sol_xhigh
+
+# The prompt the cohort ran with: House Standards single-pass + Questions-
+# sheet answers (tasks_configs/prompts/v2_3.txt) with
+# ../house_standards/House_Standards_v1.md attached to every turn-1 send.
+prompt_version: 205
+
+source:
+  kind: bundle                 # data/tasks/task_id=<N>/task.json + starting_files/
+  schema: null                 # the bundle has no schema slot
+  filters:
+    # The full leaderboard task range, 1-101.
+    task_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+               21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+               41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+               61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+               81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+               101]
+    task_sources: []           # every bundled source
+    skip_deprecated: true
+    # Resume: a task with a live, non-failed row for this label at this
+    # prompt_version in outputs/chatgpt_excel_gpt_5_6_sol_xhigh/task_attempts.jsonl
+    # is skipped (the same rule the database join applied).
+    skip_already_attempted: true
+
+sink:
+  kind: local                  # outputs/<agent_model_name>/task_id=<N>/<YYYYmmdd_HHMMSS>/ + task_attempts.jsonl
+  schema: null
+
+# Engine settings — the pipeline defaults the cohort ran with, pinned here so
+# the run is reproducible from this file alone.
+chatgpt_excel_agent:
+  apply_edits_automatically: true        # the add-in's "Apply edits automatically" switch, verified after setup
+  max_sec_per_task: 7200                 # 2h wall clock per task
+  max_wait_per_prompt_seconds: 7200
+  check_interval_seconds: 2
+  panel_boot_timeout_seconds: 30
+
+runner:
+  max_infra_tries: 3
+  sleep_between_retries: 20
+
+# ---- Machine-specific: NOT in this file ------------------------------------
+# Set these in the gitignored infra/configs/configs.yaml (configs.default.yaml
+# supplies working defaults, so the loader is satisfied without them here):
+#
+#   browser:
+#     cdp_port: 9222                                # the port scripts/setup_chrome.sh launched Chrome on
+#     profile_dir: "browser_profiles/chrome-excel"  # the Chrome profile holding your Microsoft 365 sign-in
+#   onedrive_base_path: ["My files", "<task folder>"]   # the tree scripts/provision_onedrive.py built
