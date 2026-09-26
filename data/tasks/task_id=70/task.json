@@ -1,0 +1,35 @@
+{
+  "id": 70,
+  "task_name": "BondFund",
+  "task_starting_files": [
+    "data/tasks/task_id=70/starting_files/BondFund.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=70/solution_files/BondFund - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "NAV (Net Asset Value) Modeling",
+    "time_range": "3-4h",
+    "difficulty_score": 3.8333,
+    "short_description": "NAV model for a fund consisting of bonds - combination of bond valuation and NAV modeling",
+    "time_assumption_h": 3.4333,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/BondFund/starting_files/BondFund.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/BondFund/solution_files/BondFund - Solution.xlsx"
+    ]
+  }
+}

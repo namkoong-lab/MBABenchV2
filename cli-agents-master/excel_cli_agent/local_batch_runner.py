@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""
+Local Batch Runner for Excel CLI Agent
+
+Runs tasks from local folders without DB or S3 dependencies.
+Creates fresh workspaces, executes the agent, saves results locally,
+and logs attempts to a JSONL file.
+"""
+
+import json
+import os
+import shutil
+import time
+import yaml
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+
+from .agent_identity import resolve_agent_identity
+from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchResult
+from .models_config import DEFAULT_MAX_ITERATIONS
+from .prompt_versions import (
+    PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, attachment_names_for, attachments_for, parse_prompt_version,
+    system_prompt_file,
+)
+from .models_config import uses_gemini_tool_calls
+from .repo_config import resolve_attachments
+
+
+class LocalBatchRunner(BatchRunner):
+    """Local batch runner — no DB, no S3. Reads from local folders, saves results locally."""
+
+    def __init__(self, config_path: str, server_path: str, api_key: str,
+                 custom_reasoning: bool = False, enable_langfuse: bool = False):
+        super().__init__(config_path, server_path, api_key, custom_reasoning, enable_langfuse)
+        self._system_prompt_path: Optional[Path] = None
+        self._task_template_path: Optional[Path] = None
+
+    def load_config(self) -> Dict[str, Any]:
+        """Load and validate YAML configuration for local mode."""
+        print(f"📋 Loading local batch configuration from {self.config_path}")
+
+        with open(self.config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        # Validate required fields
+        if 'batch_name' not in config:
+            raise ValueError("Missing required field: batch_name")
+        if 'workspaces' not in config:
+            raise ValueError("Missing required field: workspaces (list of {path: ...})")
+
+        # Same rule as auto mode: the config names its cohort with
+        # agent_model_name and the agent_identities.yaml entry supplies
+        # model, reasoning_effort, thinking_budget_tokens,
+        # max_completion_tokens, base_url, fresh_context_mode,
+        # enhanced_excel_context and recent_history_count. Setting any of
+        # them here refuses to run, so a local run and a DB run under the
+        # same label are guaranteed to use the same settings.
+        identity = resolve_agent_identity(config)
+        config.update(identity.settings())
+        self._identity = identity
+
+        # Set defaults
+        config.setdefault('verbose', False)
+        config.setdefault('max_iterations', DEFAULT_MAX_ITERATIONS)
+        config.setdefault('batch_size', 1)
+        config.setdefault('snapshot_iterations', False)
+        config.setdefault('workspace_base_dir', './workspaces')
+        config.setdefault('results_dir', './results')
+        config.setdefault('cleanup_workspace', False)
+        config.setdefault('task_type', 'fmwc')  # fmwc or wsp, for template selection
+
+        # Resolve prompt version
+        prompt_ver = config.get('prompt_version', DEFAULT_PROMPT_VERSION)
+        if prompt_ver not in PROMPT_VERSIONS:
+            raise ValueError(f"Unknown prompt_version '{prompt_ver}'. Available: {list(PROMPT_VERSIONS.keys())}")
+        ver_files = PROMPT_VERSIONS[prompt_ver]
+
+        task_type = config['task_type']
+        template_key = 'wsp' if task_type == 'wsp' else 'fmwc'
+
+        # The set's system prompt - or, for Gemini 3.8 Flash alone, its
+        # function-call variant (prompt_versions.MODEL_SYSTEM_PROMPT_VARIANTS).
+        self._system_prompt_path = PROMPTS_DIR / system_prompt_file(
+            prompt_ver, identity.model, require_variant=uses_gemini_tool_calls(identity.model))
+        self._task_template_path = PROMPTS_DIR / ver_files[template_key]
+        config['system_prompt_path'] = str(self._system_prompt_path)
+        # Same rule as auto mode: the prompt version names the files shipped
+        # with every workspace; a missing one fails here, before any run.
+        self._attachments = resolve_attachments(attachments_for(prompt_ver))
+        self._attachment_names = attachment_names_for(prompt_ver)
+
+        # Load task template
+        if 'task_template' not in config:
+            if self._task_template_path.exists():
+                config['task_template'] = self._task_template_path.read_text(encoding='utf-8')
+            else:
+                raise FileNotFoundError(f"Task template not found: {self._task_template_path}")
+
+        self.config = config
+
+        print(f"✅ Configuration loaded: {config['batch_name']}")
+        print(f"   Agent model name: {config['agent_model_name']} (agent_identities.yaml)")
+        print(f"   Model: {config['model']}")
+        print(f"   Prompt version: {prompt_ver}")
+        print(f"   Attachments: {[self._delivered_name(p) for p in self._attachments] or 'none'}")
+        print(f"   Max iterations: {config['max_iterations']}")
+        print(f"   Workspaces: {len(config['workspaces'])}")
+        print(f"   Results dir: {config['results_dir']}")
+
+        return config
+
+    def setup_workspace(self, source_path: str) -> str:
+        """Create a fresh workspace and copy source files into it."""
+        source = Path(source_path).expanduser().resolve()
+        if not source.exists():
+            raise ValueError(f"Source path does not exist: {source_path}")
+
+        task_name = source.name
+        base_dir = Path(self.config['workspace_base_dir']).expanduser()
+        run_id = f"{int(time.time())}_{os.getpid()}"
+        workspace = base_dir / f"{task_name}_{run_id}"
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        print(f"  📁 Workspace: {workspace}")
+
+        # Copy all files from source
+        for f in source.iterdir():
+            if f.is_file():
+                shutil.copy2(f, workspace / f.name)
+                print(f"  📄 Copied: {f.name}")
+
+        # Then the prompt version's attachments (house standards), as auto
+        # mode does after the S3 downloads.
+        self._copy_attachments(workspace)
+
+        return str(workspace)
+
+    def save_results(self, task_name: str, workspace_path: str, result: WorkspaceResult):
+        """Copy result files to results_dir and append to attempts.jsonl."""
+        results_dir = Path(self.config['results_dir']).expanduser()
+        task_results_dir = results_dir / task_name
+        task_results_dir.mkdir(parents=True, exist_ok=True)
+
+        workspace = Path(workspace_path)
+
+        # Copy result files
+        files_copied = []
+        # solution.xlsx
+        solution = workspace / "solution.xlsx"
+        if solution.exists():
+            shutil.copy2(solution, task_results_dir / "solution.xlsx")
+            files_copied.append("solution.xlsx")
+
+        # agent_logs contents
+        agent_logs = workspace / "agent_logs"
+        if agent_logs.exists():
+            csv_path = agent_logs / "openai_requests.csv"
+            if csv_path.exists():
+                shutil.copy2(csv_path, task_results_dir / "openai_requests.csv")
+                files_copied.append("openai_requests.csv")
+
+            for task_dir in sorted(agent_logs.iterdir()):
+                if task_dir.is_dir() and task_dir.name.startswith("task_"):
+                    for fname in ["task.json", "transcript.md"]:
+                        fpath = task_dir / fname
+                        if fpath.exists():
+                            shutil.copy2(fpath, task_results_dir / fname)
+                            files_copied.append(fname)
+
+        for f in files_copied:
+            print(f"  📤 Saved: {task_results_dir / f}")
+
+        # Compute prompt version
+        prompt_version = None
+        if self._system_prompt_path and self._task_template_path:
+            prompt_version = parse_prompt_version(self._system_prompt_path, self._task_template_path)
+
+        # Append to attempts.jsonl
+        attempt = {
+            "task_name": task_name,
+            "agent_model_name": self.config['agent_model_name'],
+            "model": self.config['model'],
+            # Same audit record auto mode writes to task_attempts.extra_configs.
+            "extra_configs": {
+                **self._identity.settings(),
+                **self._recalc_extra_configs(),
+                **self._attachment_extra_configs(),
+                **self._response_contract_extra_configs(),
+            },
+            "start_time": datetime.fromtimestamp(result.start_time).isoformat() if result.start_time else None,
+            "end_time": datetime.fromtimestamp(result.end_time).isoformat() if result.end_time else None,
+            "time_taken_min": result.duration_seconds / 60.0,
+            "cost": round(result.cost_usd, 6),
+            "status": result.status,
+            "error": result.error_message,
+            "prompt_version": prompt_version,
+            "iterations": result.iterations,
+            "result_dir": str(task_results_dir),
+        }
+
+        attempts_file = results_dir / "attempts.jsonl"
+        with open(attempts_file, "a") as f:
+            f.write(json.dumps(attempt) + "\n")
+
+        print(f"  📝 Logged attempt to {attempts_file}")
+
+    def cleanup_workspace(self, workspace_path: str):
+        """Delete workspace after results are saved."""
+        if not self.config.get('cleanup_workspace', False):
+            print(f"  📂 Workspace preserved: {workspace_path}")
+            return
+        try:
+            shutil.rmtree(workspace_path)
+            print(f"  🧹 Cleaned up workspace: {workspace_path}")
+        except Exception as e:
+            print(f"  ⚠️  Cleanup failed: {e}")
+
+    def run_batch(self) -> BatchResult:
+        """Execute local batch: copy files -> execute -> save results."""
+        batch_start_time = time.time()
+
+        config = self.load_config()
+
+        # Fail fast if the LibreOffice recalc engine can't start (unless the
+        # config sets allow_recalc_fallback), and record which engine this
+        # batch runs so every attempts.jsonl line carries the provenance.
+        self._verify_recalc_engine()
+
+        # Setup batch logging directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.batch_logs_dir = Path("batch_logs") / f"batch_{timestamp}"
+        self.batch_logs_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n📂 Batch logs directory: {self.batch_logs_dir}")
+
+        # Ensure results dir exists
+        results_dir = Path(config['results_dir']).expanduser()
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        workspace_results = []
+
+        for idx, ws_entry in enumerate(config['workspaces']):
+            source_path = os.path.expanduser(ws_entry['path'])
+            task_name = Path(source_path).name
+
+            print(f"\n{'='*80}")
+            print(f"📦 Task {idx + 1}/{len(config['workspaces'])}: {task_name}")
+            print(f"{'='*80}")
+
+            workspace_path = None
+            try:
+                # Setup fresh workspace
+                workspace_path = self.setup_workspace(source_path)
+
+                # Detect files and process
+                ws_config = self.detect_workspace_files(workspace_path)
+                result = self.process_workspace(ws_config)
+                workspace_results.append(result)
+
+                # Save results locally
+                print(f"\n  📤 Saving results...")
+                self.save_results(task_name, workspace_path, result)
+
+                # Cleanup
+                self.cleanup_workspace(workspace_path)
+
+            except Exception as e:
+                print(f"  💥 Error processing '{task_name}': {e}")
+                workspace_results.append(WorkspaceResult(
+                    workspace_path=workspace_path or source_path,
+                    status="error",
+                    pdf_files=[],
+                    excel_files=[],
+                    task_id=None,
+                    iterations=0,
+                    total_tokens=0,
+                    cost_usd=0.0,
+                    error_message=str(e),
+                    duration_seconds=0,
+                    final_result=None,
+                ))
+
+        # Aggregated metrics
+        total_duration = time.time() - batch_start_time
+        successful = sum(1 for r in workspace_results if r.status == "success")
+        failed = len(workspace_results) - successful
+        total_tokens = sum(r.total_tokens for r in workspace_results)
+        total_iterations = sum(r.iterations for r in workspace_results)
+        total_cost = sum(r.cost_usd for r in workspace_results)
+
+        batch_result = BatchResult(
+            batch_name=config['batch_name'],
+            total_workspaces=len(workspace_results),
+            successful=successful,
+            failed=failed,
+            workspace_results=workspace_results,
+            total_duration_seconds=total_duration,
+            aggregated_tokens=total_tokens,
+            aggregated_iterations=total_iterations,
+            aggregated_cost_usd=total_cost,
+        )
+
+        self.generate_reports(batch_result)
+
+        return batch_result
+
+
+def run_local_batch_from_config(config_path: str, server_path: str, api_key: str,
+                                 custom_reasoning: bool = False, enable_langfuse: bool = False) -> BatchResult:
+    """Entry point for local batch execution."""
+    runner = LocalBatchRunner(config_path, server_path, api_key, custom_reasoning, enable_langfuse)
+    return runner.run_batch()

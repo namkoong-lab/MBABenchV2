@@ -1,0 +1,53 @@
+# SMOKE TEST: the Fable cowork cohort config with prompt_version 0 — proves upload, chat turn,
+# download and the local sink in a couple of minutes without spending reasoning on the case.
+# Run:  uv run python -m infra.run --run-config infra/configs/run_configs/offline/smoke_task1_fable_cowork.yaml --task-id 1 -y
+# OFFLINE REPRODUCTION — GUI leaderboard cohort `claude_fable_5_1_cowork_max` (Claude Fable 5.1, cowork, Max effort).
+#
+# Same experiment as the production lanes of 2026-09-10: benchmark v2, prompt
+# version 205 (tasks_configs/prompts/v2_3.txt + the House_Standards_v1.md
+# attachment, selected by the version), the identity below (resolved by
+# infra/configs/agent_identity.py to `claude_fable_5_1_cowork_max` — the label is derived, never
+# written here), the default 5-hour per-task caps, and the full 101-task set.
+# The production run split the ids across several lanes/accounts; this file
+# lists them all — slice with --start/--end or --task-id to run a subset.
+#
+# What differs from the production lanes is only WHERE tasks are read and
+# results written: the bundle under <repo>/data/tasks/ instead of the
+# database + object store, and <repo>/outputs/claude_fable_5_1_cowork_max/ instead of the
+# database + object store (see <repo>/data/README.md). Nothing here is
+# machine-specific: Chrome port and profile come from configs.default.yaml
+# (browser.cdp_port 9222, browser.profile_dir browser_profiles/chrome-claude) —
+# override them in infra/configs/configs.yaml or a copy of this file.
+#
+# Run (from gui-agents-master/, Chrome launched on the CDP port + logged in):
+#   uv run python -m infra.run --dry-run \
+#     --run-config infra/configs/run_configs/offline/claude_fable_5_1_cowork_max.yaml
+#   uv run python -m infra.run -y \
+#     --run-config infra/configs/run_configs/offline/claude_fable_5_1_cowork_max.yaml
+# Re-running resumes: skip_already_attempted reads outputs/claude_fable_5_1_cowork_max/task_attempts.jsonl
+# and skips every task that already has a successful row.
+
+benchmark: v2
+
+source:
+  kind: bundle                       # <repo>/data/tasks/task_id=<N>/task.json
+  filters:
+    task_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101]
+    task_sources: ["v2"]             # the v2 task set
+    skip_deprecated: true
+    skip_already_attempted: true     # resume: successful local rows are skipped
+
+sink:
+  kind: local                        # outputs/<label>/task_id=<N>/<ts>/ + task_attempts.jsonl
+
+prompt_version: 0                    # SMOKE: the pipeline's own test prompt (return the workbook + a "TEST SHEET"); never grade rows recorded under it
+
+provider:
+  kind: "claude"
+
+claude_web:
+  mode: "cowork"                     # cowork surface, actions auto-approved
+  cowork_approval: "auto"
+  model: "fable_5_1"                 # claude.ai radio "Fable 5.1"
+  effort: "max"                      # Effort flyout: Max
+  project_id: null                   # no project scope (as in production)

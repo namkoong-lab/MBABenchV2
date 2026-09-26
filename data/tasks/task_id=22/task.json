@@ -1,0 +1,35 @@
+{
+  "id": 22,
+  "task_name": "FiveAutomotive",
+  "task_starting_files": [
+    "data/tasks/task_id=22/starting_files/FiveAutomotive.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=22/solution_files/FiveAutomotive - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:29.961656+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Sum-of-the-Parts Valuation",
+    "time_range": "20-25h",
+    "difficulty_score": 5.1667,
+    "short_description": "Sum of the Parts Valuation using Comp multiples, easy DCF, full fletch 3-SM DCF for 5 company parts in total",
+    "time_assumption_h": 21.15,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 390.0,
+  "ai_time_estimate_reasoning": "This is an exceptionally comprehensive and complex sum-of-the-parts valuation model involving five separate business lines. The most time-consuming parts are the monthly 3-statement models for 'Fixings' and 'Plastic Parts'. Fixings requires a detailed monthly operational model, including a complex 24-month vintage cohort PP&E schedule with dynamic CapEx solver formulas, shift-based labor calculations, a monthly annuity loan amortization, and lagged tax/distribution payout schedules. Plastic Parts requires establishing a monthly workday calendar (excluding weekends) over 10 years to dynamically calculate compounding exponents for P&L and BS growth, balanced with a cash plug. Additionally, the modeler must build two separate public comps databases, perform an annual mid-year convention DCF with a linearly weighted terminal value, solve iterative WACCs, and build robust lookup formulas to answer over 100 highly specific monthly financial questions.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FiveAutomotive/starting_files/FiveAutomotive.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FiveAutomotive/solution_files/FiveAutomotive - Solution.xlsx"
+    ]
+  }
+}

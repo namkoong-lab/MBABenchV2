@@ -1,0 +1,80 @@
+# openpyxl_anthropic/claude-fable-5-1-max — the CLI leaderboard cohort, offline.
+#
+# One of the seven configs in this folder: one per cohort on the openpyxl/MCP
+# CLI leaderboard, all 101 tasks, reading the bundled inputs and writing into
+# outputs/. They differ from each other in one line — agent_model_name — and
+# from the lane configs the recorded wave ran under only in that those split
+# the same 101 ids across parallel lanes and read/wrote the database and the
+# object store. Everything that reaches the model is identical.
+#
+# Run (from cli-agents-master/, with ANTHROPIC_API_KEY in .env or the environment):
+#
+#   excel-agent --batch-config examples/offline/openpyxl_anthropic__claude-fable-5-1-max.yaml
+#
+# No database URL and no object-store credentials are needed or used. It
+# takes a long time in one lane: 101 tasks at up to 40 model calls each. To
+# split it, copy this file, cut task_ids into ranges, and run the copies
+# side by side — they append to the same outputs/openpyxl_anthropic/claude-fable-5-1-max/task_attempts.jsonl
+# under a lock, and a relaunch skips tasks that already have a row.
+
+batch_name: "offline - openpyxl_anthropic/claude-fable-5-1-max - all 101 tasks (v16)"
+auto_mode: true
+
+# The cohort label is the ONLY model key. Its entry in
+# excel_cli_agent/agent_identities.yaml supplies model (claude-fable-5-1),
+# reasoning_effort (max), max_completion_tokens, base_url (Anthropic direct),
+# fresh_context_mode, enhanced_excel_context and recent_history_count;
+# setting any of them here refuses to run, so every row under this label ran
+# with the same settings. They are recorded on each attempt row under
+# extra_configs.
+agent_model_name: "openpyxl_anthropic/claude-fable-5-1-max"
+
+benchmark: "v2"
+
+# Read the tasks from data/, write the attempts to outputs/ (data/README.md
+# for both layouts). Stated explicitly rather than left to the fallback: a
+# machine that does have a database URL configured would otherwise run this
+# against the database, and the point of this folder is that it does not.
+source: local
+sink: local
+
+# Pins both prompt files and the attachment (excel_cli_agent/prompt_versions.py):
+#   v16 -> prompts/system_prompt_v16.txt
+#        + prompts/task_template_shared_v9.txt
+#        + house_standards/House_Standards_v1.md, delivered into the
+#          workspace as HOUSE_STANDARDS.md and embedded in the context
+# Recorded as prompt_version 1609 (system*100 + template) — the value every
+# row on the CLI leaderboard carries. Pinned so a future default cannot
+# silently move this cohort.
+prompt_version: "v16"
+
+# One attempt per task. With trials_since far in the past, every row already
+# in outputs/ counts, so a relaunched run resumes rather than re-running
+# what it finished.
+max_trials: 1
+trials_since: "2020-01-01"
+
+task_ids: [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+  31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+  41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+  51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
+  61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
+  71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+  81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+  91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
+  101
+]
+
+verbose: true
+
+# The two run limits the recorded wave used, recorded on every attempt row
+# under extra_configs. Hitting the iteration cap is NOT a failure: the row
+# lands with agent_failed=false and reason "Max iterations (40) reached",
+# and whatever solution.xlsx exists at that point is the graded workbook.
+max_iterations: 40
+api_timeout_seconds: 3600
+
+cleanup_workspace: true

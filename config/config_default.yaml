@@ -1,0 +1,74 @@
+# config_default.yaml — committed defaults for the SpreadsheetSmith scripts.
+#
+# This is the canonical, version-controlled config. On first run a local,
+# gitignored `config.yaml` is created next to this file from these defaults;
+# edit that file for machine-specific overrides.
+#
+# Secrets are NOT stored here. They are pulled from the environment at load
+# time via ${env:VAR} so they never get committed — set them in your shell or
+# in the gitignored config.yaml. A reviewer reproducing the experiments needs
+# only the model-provider keys (see config.yaml.example).
+
+# Postgres connections for the cloud profile (optional). Leave both unset to
+# run offline: every pipeline and the judge then read data/ and write outputs/.
+database:
+  v1_url: "${env:V1_DATABASE_URL}"
+  v2_url: "${env:V2_DATABASE_URL}"
+
+# Object storage for the cloud profile (optional). The offline profile — the
+# bundled inputs under data/ and run outputs under outputs/ — needs none of
+# this. Set the bucket name only if you run the cloud source/sink.
+aws:
+  s3_bucket: "<bucket>"
+  access_key_id: null
+  secret_access_key: null
+
+  # EC2 fleet for the gui-agents boxes, used by
+  # gui-agents-master/infra/dispatcher/{aws_bootstrap,spinup,teardown}.sh.
+  #
+  # Both are per-person and, once chosen, never change: the key pair is the
+  # only way to SSH into a box (AWS cannot re-issue a lost private key), and
+  # the security group is the firewall those boxes sit behind. They live here
+  # rather than as script defaults or CLI flags so that everyone sharing this
+  # repo keeps a stable, non-colliding fleet name.
+  #
+  # Recommended form — prefix with who owns the boxes, so `aws ec2
+  # describe-instances` in a shared account says whose fleet is whose:
+  #
+  #   gui_key_name: "<you>-gui-agents"
+  #   gui_sg_name:  "<you>-gui-agents-sg"
+  #
+  # Allowed characters: letters, digits, dot, underscore, hyphen.
+  #
+  # Leave null — aws_bootstrap.sh prompts on first run and writes your answer
+  # back into config.yaml, so it only ever asks once.
+  gui_key_name: null
+  gui_sg_name: null
+
+  # The machine image every gui-agents box boots from.
+  gui_ami: "ami-06e78a71af43ef21a"   # ubuntu-jammy-22.04-amd64-server-20260731
+
+# Offline layout (see data/README.md). Every pipeline and the judge read the
+# bundled benchmark inputs from data_root and write runs and gradings under
+# output_root when no database url is configured (or when a run config says
+# source/sink: local). Relative paths resolve against the repository root.
+# Env overrides: SPREADSHEETSMITH_DATA_ROOT / SPREADSHEETSMITH_OUTPUT_ROOT.
+local:
+  data_root: "data"
+  output_root: "outputs"
+
+keys:
+  gemini_api_key: "${env:GEMINI_API_KEY}"
+  anthropic_api_key: "${env:ANTHROPIC_API_KEY}"    # cli-agents: Anthropic-direct runs
+  openai_api_key: "${env:OPENAI_API_KEY}"          # cli-agents: OpenAI/vLLM runs + MCP analysis tools
+  openrouter_api_key: "${env:OPENROUTER_API_KEY}"  # cli-agents: OpenRouter runs
+  forge_api_key: "${env:FORGE_API_KEY}"            # TensorBlock Forge gateway (judge tensorblock/* graders); bills Forge credits only
+
+venv_path: null
+
+# cli-agents: the LibreOffice binary (soffice) used for formula recalculation.
+# null = auto-detect: `soffice` on PATH (Linux: apt-get install libreoffice-calc),
+# else the macOS app bundle (/Applications/LibreOffice.app/Contents/MacOS/soffice).
+# Set explicitly only for non-standard installs; LIBREOFFICE_PATH env overrides.
+libreoffice_path: null
+

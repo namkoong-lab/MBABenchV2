@@ -1,0 +1,35 @@
+{
+  "id": 97,
+  "task_name": "Pharma",
+  "task_starting_files": [
+    "data/tasks/task_id=97/starting_files/Pharma.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=97/solution_files/Pharma - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Easy",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Comparables (Trading Comps)",
+    "time_range": "2-3h",
+    "difficulty_score": 2.3333,
+    "short_description": "Comparables Valuation (classic)",
+    "time_assumption_h": 2.6333,
+    "difficulty_category": "Easy"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/Pharma/starting_files/Pharma.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/Pharma/solution_files/Pharma - Solution.xlsx"
+    ]
+  }
+}

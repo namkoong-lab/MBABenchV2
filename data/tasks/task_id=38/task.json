@@ -1,0 +1,35 @@
+{
+  "id": 38,
+  "task_name": "NestQuest",
+  "task_starting_files": [
+    "data/tasks/task_id=38/starting_files/NestQuest.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=38/solution_files/NestQuest - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:43.121772+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Rent vs. Buy Analysis",
+    "time_range": "5-7h",
+    "difficulty_score": 3.3333,
+    "short_description": "Regular Rent vs. Buy Analysis - little bit more extensive tax involvement",
+    "time_assumption_h": 5.35,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 110.0,
+  "ai_time_estimate_reasoning": "This is a highly complex wealth management model requiring a 60-year monthly timeline (720 periods) for both Renting and Owning scenarios. The modeler must set up a 17.5-year monthly annuity loan amortization schedule, apply varying annual inflation rates to rental costs, ownership costs, and tax brackets starting each January, and calculate monthly compounded investment returns. Crucially, the modeler must build a dynamic progressive income tax engine in Excel that accounts for doubled tax brackets (for married couples), annual bracket inflation, and the solidarity surcharge to calculate the net-of-tax home value at any given point. Correctly tracking the cash savings and investing them under both scenarios, along with answering 35 precise, date-specific questions, makes this task highly time-consuming even for an expert.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/NestQuest/starting_files/NestQuest.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/NestQuest/solution_files/NestQuest - Solution.xlsx"
+    ]
+  }
+}

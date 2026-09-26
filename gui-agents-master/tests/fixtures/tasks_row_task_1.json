@@ -1,0 +1,27 @@
+{
+  "id": 1,
+  "task_name": "ApfelInc",
+  "task_starting_files": [
+    "SpreadsheetSmith/tasks/ApfelInc/starting_files/ApfelInc.xlsx"
+  ],
+  "task_solution_files": [
+    "SpreadsheetSmith/tasks/ApfelInc/solution_files/ApfelInc - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:14:43.144816+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Scenario / Sensitivity Analysis",
+    "time_range": "2-3h",
+    "difficulty_score": 3.5,
+    "short_description": "Small DCF (no forecasting, estimates given) with two-stage TV and sensitivity analysis regarding two factors",
+    "time_assumption_h": 2.6333,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 105.0,
+  "ai_time_estimate_reasoning": "This FP&A modeling task is highly complex due to the requirement for an iterative WACC calculation (circular reference loop based on market value of equity), a dynamic two-stage terminal value model that accommodates changing transition years (g1 until end year), and the precise fractional-year discounting required between the Valuation basis date (2025-09-30) and the Valuation date (2026-04-12). An expert modeler would need to reconstruct the Free Cash Flows (deducing Net CapEx and NWC changes from the balance sheet items), set up a robust multi-year projection model up to 2038 to capture all sensitivity ranges, establish the circular WACC formula using Excel's iterative calculation mode, set up a two-dimensional Data Table for the sensitivity combinations, and carefully extract the answers to the 35 specific questions."
+}

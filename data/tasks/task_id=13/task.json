@@ -1,0 +1,35 @@
+{
+  "id": 13,
+  "task_name": "DailyCash",
+  "task_starting_files": [
+    "data/tasks/task_id=13/starting_files/DailyCash.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=13/solution_files/DailyCash - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:26.337704+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Debt Schedule / Waterfall Modeling",
+    "time_range": "12-16h",
+    "difficulty_score": 5.3333,
+    "short_description": "Very complex and extensive debt waterfall model (Father of all debt waterfall models) - daily model including interest conventions and additional annual overview",
+    "time_assumption_h": 13.2167,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 300.0,
+  "ai_time_estimate_reasoning": "This is an exceptionally complex daily financial modeling task spanning 10 years (3,652 days) with 8 senior debt tranches, subordinated debt, and 3 convertible debt tranches converting into equity. The modeler must set up dynamic date logic (to handle weekends, first/last weekdays, and the 15th of the month), implement interest calculations across three day-count conventions (Act/360, Act/365, 30/360 US) and two quoting conventions (EAR and Nominal), model a strict 25-step daily waterfall sequence, and track a dynamic cap table where new convertible-debt-driven Class B shares vest 2 years post-conversion (subject to a minimum vesting date). Building, debugging, and auditing this massive daily schedule and answering the extensive set of specific date-based queries would take an expert modeler approximately 5 hours.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/DailyCash/starting_files/DailyCash.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/DailyCash/solution_files/DailyCash - Solution.xlsx"
+    ]
+  }
+}

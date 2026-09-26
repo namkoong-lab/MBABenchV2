@@ -1,0 +1,35 @@
+{
+  "id": 12,
+  "task_name": "CustomerConcentration",
+  "task_starting_files": [
+    "data/tasks/task_id=12/starting_files/CustomerConcentration.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=12/solution_files/CustomerConcentration - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:25.587286+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Non-Financial or Non-FP&A Model",
+    "time_range": "3-4h",
+    "difficulty_score": 3.0,
+    "short_description": "Data analytics/ summarization & concentration measure calculation",
+    "time_assumption_h": 3.0833,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 90.0,
+  "ai_time_estimate_reasoning": "Building this model requires the classification of 1,000 customer records into distinct age and income buckets on the main dataset, followed by complex aggregations. The modeler must set up dynamic summary tables for six demographic attributes to calculate market shares, normalized HHI, and normalized Gini coefficients (which require sorting the aggregated groups to construct Lorenz curve metrics). Additionally, answering the 32 precise multi-criteria questions (averages, medians, and highly specific SUMIFS/COUNTIFS combinations) requires meticulous formula construction and thorough validation to ensure zero rounding or referencing errors.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CustomerConcentration/starting_files/CustomerConcentration.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CustomerConcentration/solution_files/CustomerConcentration - Solution.xlsx"
+    ]
+  }
+}

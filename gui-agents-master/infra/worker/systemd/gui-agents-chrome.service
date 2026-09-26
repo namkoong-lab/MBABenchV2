@@ -1,0 +1,22 @@
+[Unit]
+Description=gui-agents persistent Chrome (CDP browser for the worker)
+After=network.target xvfb.service
+Requires=xvfb.service
+Before=gui-agents-worker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/gui-agents-master
+Environment=PYTHONPATH=/opt/gui-agents-master
+Environment=DISPLAY=:99
+Environment=GUI_AGENTS_STATE_DIR=/var/lib/gui-agents
+ExecStart=/usr/bin/python3 -m infra.worker.chrome_launcher
+# SIGTERM gives Chrome a chance to flush the Cookies SQLite and any
+# in-flight refresh-token writes; default 90s SIGKILL timeout is plenty.
+KillSignal=SIGTERM
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,83 @@
+{
+  "CategoryWeights":[
+    {
+      "Accuracy": 0.50,
+      "Formula": 0.35,
+      "Formatting": 0.15
+    }
+  ],
+  "Accuracy": [
+    {
+      "name": "Final calculations",
+      "weight": 40
+    },
+    {
+      "name": "Starting values",
+      "weight": 25
+    },
+    {
+      "name": "Task completed",
+      "weight": 25
+    },
+    {
+      "name": "Number sign consistency",
+      "weight": 10
+    }
+  ],
+  "Formula": [
+    {
+      "name": "Logic readability & size",
+      "weight": 20
+    },
+    {
+      "name": "Handle edge cases",
+      "weight": 20
+    },
+    {
+      "name": "Avoid hardcoding",
+      "weight": 20
+    },
+    {
+      "name": "Range hygiene",
+      "weight": 20
+    },
+    {
+      "name": "Using absolute references",
+      "weight": 20
+    }
+  ],
+  "Formatting": [
+    {
+      "name": "Workbook & Sheet Structure",
+      "weight": 20
+    },
+    {
+      "name": "Readability",
+      "weight": 10
+    },
+    {
+      "name": "Use of Color Standards",
+      "weight": 10
+    },
+    {
+      "name": "Number Notation (finance standards)",
+      "weight": 20
+    },
+    {
+      "name": "Information Alignment",
+      "weight": 10
+    },
+    {
+      "name": "Consistency of Styles",
+      "weight": 10
+    },
+    {
+      "name": "Use of Borders & Shading",
+      "weight": 10
+    },
+    {
+      "name": "Presentation of Outputs / Summaries",
+      "weight": 10
+    }
+  ]
+}

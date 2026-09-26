@@ -1,0 +1,63 @@
+# v2 - task CorpBondII (id 11) on Claude Haiku 4.5, iteration-capped.
+#
+# The v2 counterpart of v1_task64_haiku45.yaml: the config to run when the
+# question is "does the v2 pipeline work end to end" (SpreadsheetSmith DB row +
+# S3 artifacts under SpreadsheetSmith/), not "how good is the model". CorpBondII
+# has the smallest AI time estimate of the 68 v2 tasks (20 min); all v2
+# tasks have task_source "v2".
+#
+# benchmark: v2 selects everything together: the SpreadsheetSmith DB
+# (database.v2_url in <SpreadsheetSmith>/config/config.yaml), the
+# s3://<bucket>/SpreadsheetSmith/ root, and the v15 prompt default. prompt_version
+# is pinned explicitly below anyway; only v12..v15 are v2 prompt sets, so
+# v1..v11 would refuse to start.
+#
+# Identity — agent_model_name is the ONLY model key. Its entry in
+# excel_cli_agent/agent_identities.yaml supplies model (claude-haiku-4-5),
+# thinking_budget_tokens (16000), max_completion_tokens (32000), base_url
+# (Anthropic direct), fresh_context_mode, enhanced_excel_context and
+# recent_history_count; setting any of those here refuses to run. The DB
+# row records them in task_attempts.extra_configs.
+#   S3 (v2 layout)      = SpreadsheetSmith/attempts/cli_agents/claude-haiku-4-5/task_id={id}/{ts}/
+#   Local record        = cli-agents-master/run_logs/attempt-claude-haiku-4-5-{ts}/
+#
+# Run (from cli-agents-master/, .env holding ANTHROPIC_API_KEY; the DB URL
+# and AWS creds come from <SpreadsheetSmith>/config/config.yaml):
+#   excel-agent --batch-config examples/v2/v2_task_corpbond_haiku45.yaml
+
+batch_name: "v2 - Haiku 4.5 - CorpBondII (capped)"
+agent_model_name: "openpyxl_anthropic/claude-haiku-4-5-think16k"
+auto_mode: true
+benchmark: "v2"                               # SpreadsheetSmith DB + s3://<bucket>/SpreadsheetSmith/
+
+# workspace_base_dir omitted: workspaces are created under the batch's own
+# logs directory, batch_logs/batch_{ts}/workspaces/{task}_{run_id}/
+
+# One key pins BOTH prompt files (see excel_cli_agent/prompt_versions.py):
+#   v15 -> prompts/system_prompt_v15.txt (system v15: the Questions-sheet
+#          answer convention + the house-standards directive, no rubric)
+#        + prompts/task_template_shared_v9.txt (template v9, shared fmwc/wsp)
+#        + attachment house_standards/House_Standards_v1.md, delivered into
+#          the workspace as HOUSE_STANDARDS.md and embedded in the context
+#          (declared on the version, recorded in extra_configs.house_standards
+#          and prompt_files)
+# Recorded in the DB as prompt_version 1509 (system*100 + template). Same
+# value the benchmark would default to; pinned so a future default change
+# can't silently move this cohort.
+prompt_version: "v15"
+
+max_trials: 7
+trials_since: "2020-01-01"
+
+tasks:
+  - "CorpBondII"
+
+verbose: true
+
+# Execution cap. Hitting it is NOT recorded as a failure: the row lands with
+# agent_failed=false and reason "Max iterations (12) reached", and whatever
+# solution.xlsx exists at that point is still uploaded and gradeable. Raise
+# it for a quality run; keep it low for a cheap pipeline check.
+max_iterations: 1
+
+cleanup_workspace: true

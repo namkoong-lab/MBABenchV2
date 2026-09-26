@@ -1,0 +1,35 @@
+{
+  "id": 79,
+  "task_name": "DayMonthYear",
+  "task_starting_files": [
+    "data/tasks/task_id=79/starting_files/DayMonthYear.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=79/solution_files/DayMonthYear - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "DCF (Discounted Cash Flow)",
+    "time_range": "9-12h",
+    "difficulty_score": 4.3333,
+    "short_description": "Very Extensive DCF with several submodels and two calculation ways",
+    "time_assumption_h": 9.1667,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/DayMonthYear/starting_files/DayMonthYear.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/DayMonthYear/solution_files/DayMonthYear - Solution.xlsx"
+    ]
+  }
+}

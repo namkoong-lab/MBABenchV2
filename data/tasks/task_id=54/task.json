@@ -1,0 +1,35 @@
+{
+  "id": 54,
+  "task_name": "SpendingPlan",
+  "task_starting_files": [
+    "data/tasks/task_id=54/starting_files/SpendingPlan.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=54/solution_files/SpendingPlan - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:49.424067+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Retirement / Savings Calculators",
+    "time_range": "4-5h",
+    "difficulty_score": 3.3333,
+    "short_description": "Regular financial life plan model including debt, salary raises, tax and inflation in spending categories - the model includes a part two that is a full fletched Combinatorial Scenario Model",
+    "time_assumption_h": 4.7667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 150.0,
+  "ai_time_estimate_reasoning": "This wealth management model is highly complex due to the annual tax bracket indexation (brackets inflating by 2% each year), individual lifestyle and price inflation tracking across 11 expense categories, and a tight cash-flow waterfall that coordinates a dynamic cash liquidity target with prioritized debt repayment (credit card vs. student loan) and investment overflows. Additionally, Task 2 requires generating 7,500 multi-dimensional scenarios. An expert modeler will need to write a VBA macro to loop through these 7,500 combinations, run them through the core model, extract the age-100 net worth results, and bin them using COUNTIFs to answer the scenario questions.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/SpendingPlan/starting_files/SpendingPlan.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/SpendingPlan/solution_files/SpendingPlan - Solution.xlsx"
+    ]
+  }
+}

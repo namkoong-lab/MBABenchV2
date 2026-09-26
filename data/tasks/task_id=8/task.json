@@ -1,0 +1,35 @@
+{
+  "id": 8,
+  "task_name": "CoastalAggregates",
+  "task_starting_files": [
+    "data/tasks/task_id=8/starting_files/CoastalAggregates.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=8/solution_files/CoastalAggregates - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:24.384688+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Easy",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Budget vs. Actuals Variance Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.0,
+    "short_description": "Regular Budget vs. Actuals Variance Analysis",
+    "time_assumption_h": 1.0667,
+    "difficulty_category": "Easy"
+  },
+  "ai_time_estimate_min": 30.0,
+  "ai_time_estimate_reasoning": "This task requires setting up a structured Budget vs. Actuals Variance Analysis. The modeler must map the actual income statement items (some of which do not perfectly align, such as 'Other operating expenses' mapping to 'Other costs' and 'Revenue from contracts' or 'Total Revenue' mapping to 'Revenue') to the budgeted items across four segments. Setting up the sheet with proper formulas for absolute and percentage variances, ensuring robust error handling for zero-budget divisions, and linking the 15 specific questions to the variance results will realistically take an experienced modeler 30 minutes from start to finish.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CoastalAggregates/starting_files/CoastalAggregates.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CoastalAggregates/solution_files/CoastalAggregates - Solution.xlsx"
+    ]
+  }
+}

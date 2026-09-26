@@ -1,0 +1,35 @@
+{
+  "id": 41,
+  "task_name": "PastaInc_3-Statement-Model",
+  "task_starting_files": [
+    "data/tasks/task_id=41/starting_files/PastaInc - 3-Statement Model.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=41/solution_files/PastaInc - 3-Statement Model - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:44.112616+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "3-Statement Model",
+    "time_range": "12-16h",
+    "difficulty_score": 4.8333,
+    "short_description": "3-SM for a company producing noodles - including deferred taxes",
+    "time_assumption_h": 15.9333,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 360.0,
+  "ai_time_estimate_reasoning": "This is an exceptionally complex monthly 3-statement operational and valuation model spanning 12 years. The task requires building detailed operational schedules for 8 product types with cyclical sales, computing machine capacity limits (triggering discrete CAPEX and staffing additions), implementing complex raw material pricing structures, and setting up an annuity loan with a 5-year compounding grace period. Additionally, the modeler must account for book-vs-tax depreciation differences to model deferred taxes (DTA/DTL), calculate monthly CCC adjustments (DIO/WIP/DPO) using a non-standard forward-looking methodology, and resolve circular references from cash interest. An expert would need approximately 6 hours of highly focused work to build, audit, and balance this comprehensive model.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/PastaInc_3-Statement-Model/starting_files/PastaInc - 3-Statement Model.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/PastaInc_3-Statement-Model/solution_files/PastaInc - 3-Statement Model - Solution.xlsx"
+    ]
+  }
+}

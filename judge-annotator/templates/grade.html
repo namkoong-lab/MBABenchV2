@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+ <h3 style="margin:0 0 4px">{{ g.task_name }} <span class="muted">task #{{ g.task_id }} · attempt #{{ g.attempt_id }} · grading #{{ g.grading_id }}</span></h3>
+ <p class="muted" style="margin:4px 0">Model: <b>{{ g.agent }}</b> · Judge: <b>{{ g.grader_model }}</b> · Graded {{ g.created_at.strftime('%Y-%m-%d') }}
+ {% if prior %}· Already reviewed by: {% for p in prior %}<b>{{ p.annotator }}</b>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
+ <p>
+  {% for name, url in files.attempt %}<a class="btn btn-sm" href="{{ url }}">⬇ Attempt: {{ name }}</a> {% endfor %}
+  {% for name, url in files.solution %}<a class="btn btn-sm" style="background:#186a35" href="{{ url }}">⬇ Solution: {{ name }}</a> {% endfor %}
+  {% for name, url in files.task %}<a class="btn btn-sm" style="background:#5a6478" href="{{ url }}">⬇ Task: {{ name }}</a> {% endfor %}
+ </p>
+ <p class="muted">Download the attempt and golden solution, compare in Excel, then for each check below mark whether you agree with the judge's call. Links expire after 1 hour — reload the page for fresh ones.</p>
+</div>
+<form method="post">
+{% for dim in dims %}
+<div class="card">
+ <h3 style="margin:0">{{ dim.name }}</h3>
+ {% for chk in dim.checks %}
+ {% set key = dim.name ~ '::' ~ (chk.name or chk.check) %}
+ <div class="checkrow">
+  <b>{{ chk.name or chk.check }}</b>
+  <span class="pill {{ 'fail' if chk.decision=='fail' else 'pass' }}">judge: {{ chk.decision }}</span>
+  <p style="margin:5px 0">{{ chk.summary }}</p>
+  {% for m in chk.mistakes %}
+   <div class="mistake"><b>{{ m.location }}</b> ({{ m.severity }}): {{ m.description }}</div>
+  {% endfor %}
+  <div style="margin-top:6px">
+   <label class="opt"><input type="radio" name="{{ key }}" value="agree" required> Agree with judge</label>
+   <label class="opt"><input type="radio" name="{{ key }}" value="disagree"> Disagree</label>
+   <input class="note-in" type="text" name="{{ key }}::note" placeholder="Optional note (e.g. judge missed an error in C12)" style="margin-top:6px">
+  </div>
+ </div>
+ {% endfor %}
+</div>
+{% endfor %}
+<div class="card">
+ <input class="note-in" type="text" name="overall_note" placeholder="Optional overall note about this grading">
+ <p><button class="btn" type="submit">Submit annotation</button></p>
+</div>
+</form>
+{% endblock %}

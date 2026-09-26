@@ -1,0 +1,35 @@
+{
+  "id": 50,
+  "task_name": "RoadtoZero",
+  "task_starting_files": [
+    "data/tasks/task_id=50/starting_files/RoadtoZero.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=50/solution_files/RoadtoZero - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:47.891982+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Loan Amortization Schedules",
+    "time_range": "2-3h",
+    "difficulty_score": 3.5,
+    "short_description": "Loan Amortization Schedule for a Constant Principal Loan",
+    "time_assumption_h": 2.6833,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 50.0,
+  "ai_time_estimate_reasoning": "This task requires building a 10-year monthly loan amortization schedule with non-standard compounding (bi-weekly compounding for monthly payments) and beginning-of-period payments under a Constant Principal structure. An expert modeler will need to carefully calculate the effective period rate, set up the 120-month schedule with correct timing for interest accrual and principal payments, and build a summary to answer 25 detailed date-specific and year-specific questions. Setting up the formulas, validating that the balance reaches zero at maturity, and mapping the answers will take approximately 50 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/RoadtoZero/starting_files/RoadtoZero.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/RoadtoZero/solution_files/RoadtoZero - Solution.xlsx"
+    ]
+  }
+}

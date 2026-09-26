@@ -1,0 +1,35 @@
+{
+  "id": 19,
+  "task_name": "DoorstepDecisions",
+  "task_starting_files": [
+    "data/tasks/task_id=19/starting_files/DoorstepDecisions.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=19/solution_files/DoorstepDecisions - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:28.973082+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Rent vs. Buy Analysis",
+    "time_range": "3-4h",
+    "difficulty_score": 3.0,
+    "short_description": "Regular Rent vs. Buy Analysis",
+    "time_assumption_h": 3.8,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 60.0,
+  "ai_time_estimate_reasoning": "This task involves building a comprehensive, 720-month (60 years) Rent vs. Buy analysis. The modeler must convert EARs to monthly rates, handle annual inflation adjustments occurring every January, and accurately model a constant principal loan. Crucially, the modeler must maintain cash flow parity: the renter begins with the owner's upfront equity/closing costs as an initial investment, and monthly cash flow differences (whether positive or negative) must adjust the respective investment portfolios. To ensure accuracy and quickly answer the 35 detailed monthly and yearly questions across multiple dates, the modeler must write robust lookup formulas, which requires meticulous structuring and about an hour of highly focused modeling.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/DoorstepDecisions/starting_files/DoorstepDecisions.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/DoorstepDecisions/solution_files/DoorstepDecisions - Solution.xlsx"
+    ]
+  }
+}

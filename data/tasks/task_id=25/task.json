@@ -1,0 +1,35 @@
+{
+  "id": 25,
+  "task_name": "FourShops",
+  "task_starting_files": [
+    "data/tasks/task_id=25/starting_files/Four Shops.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=25/solution_files/Four Shops - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:31.043446+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Sum-of-the-Parts Valuation",
+    "time_range": "3-4h",
+    "difficulty_score": 3.1667,
+    "short_description": "4*DCF for all parts",
+    "time_assumption_h": 3.4667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 105.0,
+  "ai_time_estimate_reasoning": "This task requires building a highly sophisticated Sum-of-the-Parts (SOTP) DCF model for four business segments with distinct terminal value structures (two regular and two multi-stage). It involves complex calculations: deriving Net Working Capital and Net Capex from historical and forecast balance sheets, calculating segment-specific historical and forecast FCFFs, computing a consolidated tax rate, and implementing an iterative WACC loop that links the resulting Equity Value back into the capital structure weights. Finally, the modeler must perform a precise fractional-year roll-forward from the valuation basis date to the valuation date. An experienced modeler will require about 105 minutes to carefully set up the formulas, handle the circular references, build the custom TV projection stages, and verify all output questions.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FourShops/starting_files/Four Shops.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FourShops/solution_files/Four Shops - Solution.xlsx"
+    ]
+  }
+}

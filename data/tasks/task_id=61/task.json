@@ -1,0 +1,35 @@
+{
+  "id": 61,
+  "task_name": "TheLiquidityEngine",
+  "task_starting_files": [
+    "data/tasks/task_id=61/starting_files/TheLiquidityEngine.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=61/solution_files/TheLiquidityEngine - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:51.700839+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Working Capital Modeling",
+    "time_range": "3-4h",
+    "difficulty_score": 3.0,
+    "short_description": "Typical (Annual) Working Capital Model including Forecasting, NWC and the CCC",
+    "time_assumption_h": 3.2833,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 55.0,
+  "ai_time_estimate_reasoning": "The task requires setting up a 10-year forecast for working capital based on historical financial statements and specific growth and linking assumptions. The modeler must calculate historical ratios (DSO, DIO, DPO, and various asset/liability accounts as % of sales or COGS), apply a 5-year moving average to project these ratios forward, and then reconstruct the balance sheet items for the forecast period. Additional calculations for Net Working Capital (NWC), Operating NWC, and the Cash Conversion Cycle (CCC) across the entire 20-year period are required to answer the extensive list of questions. An expert modeler will spend about 15 minutes setting up historical analysis, 25 minutes building the dynamic forecast engine, and 15 minutes verifying the outputs and linking them to the questions tab.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TheLiquidityEngine/starting_files/TheLiquidityEngine.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TheLiquidityEngine/solution_files/TheLiquidityEngine - Solution.xlsx"
+    ]
+  }
+}

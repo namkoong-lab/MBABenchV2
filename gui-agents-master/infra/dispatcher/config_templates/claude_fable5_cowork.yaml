@@ -1,0 +1,64 @@
+# Spin-up config template: Claude provider, Fable 5 in cowork mode at max effort.
+#
+# Pass to spinup.sh via:
+#   dispatch spinup \
+#       --alias claude-fable5-cowork-1 \
+#       --config-template infra/dispatcher/config_templates/claude_fable5_cowork.yaml
+#
+# Deep-merges on top of infra/configs/configs.default.yaml; every key here is an
+# override. DB URL and AWS creds intentionally absent - spinup.sh synthesizes
+# /etc/gui-agents/secrets.env from the operator's env, read by the worker via
+# the EnvironmentFile in gui-agents-worker.service.
+#
+# Identity resolves to claude_fable_5_cowork_max (see infra/configs/agent_identity.py).
+# Same axes as claude_fable5_chat.yaml except mode, so the two cohorts differ
+# only by the claude.ai surface they run on.
+
+benchmark: v2
+
+provider:
+  kind: "claude"
+
+# 205 = the single-pass v2 prompt + Questions-sheet answers + house standards
+# (tasks_configs/prompts/v2_3.txt); the version also attaches
+# House_Standards_v1.md after the task's starting files.
+prompt_version: 205
+
+# Every axis a box's output depends on is pinned here rather than inherited.
+# The v2 Claude identity keys on (mode, model, effort); the two capability
+# toggles below change what these boxes send without changing the DB label —
+# a moved default would silently redefine the claude_fable_5_cowork_max
+# cohort.
+claude_web:
+  mode: "cowork"
+  # Auto-approve cowork's actions: "manual" stalls an unattended run at the
+  # first approval prompt.
+  cowork_approval: "auto"
+  model: "fable_5"
+  # Highest tier (low < medium < high < xhigh < max). Fable's Effort submenu
+  # has no nested Thinking toggle, so effort is the whole reasoning axis here.
+  effort: "max"
+  # A successful no-op on Fable 5, which exposes no thinking switch. Stated
+  # so this template reads the same as claude_opus5_work.yaml, where it bites.
+  enable_extended_thinking: true
+  # Off: the tasks are self-contained, and a search changes what the model
+  # sees between attempts.
+  enable_web_search: false
+  # project_id must exist in the claude.ai account this box logs into (VNC step).
+  # Paste from https://claude.ai/project/{project_id}. null = default chat.
+  project_id: null
+  browser:
+    # Matches the path the README's VNC-login step writes the Chrome profile to.
+    profile_dir: "/var/lib/gui-agents/chrome-claude"
+
+# Production boxes pull from the SpreadsheetSmith Postgres DB and write attempts to S3.
+source:
+  kind: "postgres_s3"
+  schema: "spreadsheetsmith"
+  filters:
+    skip_deprecated: true
+    skip_already_attempted: true
+
+sink:
+  kind: "postgres_s3"
+  schema: "spreadsheetsmith"

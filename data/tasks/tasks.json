@@ -1,0 +1,3537 @@
+[
+  {
+    "id": 1,
+    "task_name": "ApfelInc",
+    "task_starting_files": [
+      "data/tasks/task_id=1/starting_files/ApfelInc.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=1/solution_files/ApfelInc - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:14:43.144816+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Small DCF (no forecasting, estimates given) with two-stage TV and sensitivity analysis regarding two factors",
+      "time_assumption_h": 2.6333,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 105.0,
+    "ai_time_estimate_reasoning": "This FP&A modeling task is highly complex due to the requirement for an iterative WACC calculation (circular reference loop based on market value of equity), a dynamic two-stage terminal value model that accommodates changing transition years (g1 until end year), and the precise fractional-year discounting required between the Valuation basis date (2025-09-30) and the Valuation date (2026-04-12). An expert modeler would need to reconstruct the Free Cash Flows (deducing Net CapEx and NWC changes from the balance sheet items), set up a robust multi-year projection model up to 2038 to capture all sensitivity ranges, establish the circular WACC formula using Excel's iterative calculation mode, set up a two-dimensional Data Table for the sensitivity combinations, and carefully extract the answers to the 35 specific questions.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/ApfelInc/starting_files/ApfelInc.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/ApfelInc/solution_files/ApfelInc - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "task_name": "BasicGrowth",
+    "task_starting_files": [
+      "data/tasks/task_id=2/starting_files/BasicGrowth.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=2/solution_files/BasicGrowth - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:22.487767+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "3-4h",
+      "difficulty_score": 3.5,
+      "short_description": "3-SM based on percentages + plug without extensive forecasting",
+      "time_assumption_h": 3.9,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 50.0,
+    "ai_time_estimate_reasoning": "Building a 120-month monthly 3-statement model with workday-weighted compounding requires precise setup. The modeler must first calculate monthly workdays (using NETWORKDAYS) and annual totals, then implement exponent-based compounding formulas for both P&L and Balance Sheet line items. Additional complexity arises from linking P&L D&A to Balance Sheet accumulated depreciation changes, modeling the cash plug and monthly profit distributions, and constructing a fully reconciled Cash Flow Statement to accurately answer questions regarding operating, investing, and financing cash flows.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/BasicGrowth/starting_files/BasicGrowth.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/BasicGrowth/solution_files/BasicGrowth - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "task_name": "Bosch",
+    "task_starting_files": [
+      "data/tasks/task_id=3/starting_files/Bosch.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=3/solution_files/Bosch - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:22.868388+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Sum-of-the-Parts Valuation",
+      "time_range": "2-3h",
+      "difficulty_score": 3.3333,
+      "short_description": "Sum of the Parts Valuation using Comp multiples for a company with 4 business lines",
+      "time_assumption_h": 2.9333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 45.0,
+    "ai_time_estimate_reasoning": "The task requires building a Sum of the Parts (SOTP) valuation model for Robert Bosch GmbH. The most complex part is implementing the two-stage statistical filtering for four metrics across four distinct business lines: first, removing negative or invalid multiples, and second, excluding any multiples that are strictly more than one standard deviation away from the preliminary average. Modern Excel dynamic array formulas (such as LET, FILTER, and STDEV.P) can streamline this outlier exclusion process significantly. Once the filtered multiples are computed, the expert will aggregate the implied enterprise or equity values for each part, apply the DEC '25 net debt adjustment of -€993m for EV-based metrics, and populate the final answers.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Bosch/starting_files/Bosch.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Bosch/solution_files/Bosch - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "task_name": "BreakingDowntheBalance",
+    "task_starting_files": [
+      "data/tasks/task_id=4/starting_files/BreakingDowntheBalance.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=4/solution_files/BreakingDowntheBalance - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:23.210004+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for an Annuity Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "This task requires building a highly detailed weekly loan amortization schedule with 1,040 periods (20 years x 52 weeks) starting from a specific date. An expert modeler will need to set up the date increments, calculate the periodic interest rate, apply standard annuity formulas (using PMT, PPMT, and IPMT or standard schedule calculations), and then build lookup formulas (such as VLOOKUP, INDEX-MATCH, or SUMIFS) to extract exact values for specific dates and years to answer the list of questions. The setup, error checking of date alignments, and verification of lookups will take approximately 25 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/BreakingDowntheBalance/starting_files/BreakingDowntheBalance.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/BreakingDowntheBalance/solution_files/BreakingDowntheBalance - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "task_name": "CapitalinMotion",
+    "task_starting_files": [
+      "data/tasks/task_id=5/starting_files/CapitalinMotion.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=5/solution_files/CapitalinMotion - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:23.531700+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Working Capital Modeling",
+      "time_range": "4-5h",
+      "difficulty_score": 3.0,
+      "short_description": "Quarterly Working Capital Model including Forecasting, NWC and the CCC",
+      "time_assumption_h": 4.2333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 75.0,
+    "ai_time_estimate_reasoning": "Completing this task requires forecasting a 15-year quarterly model (60 forecast periods) based on complex instructions for growth and balance sheet forecasting. The modeler must convert annual growth rates to quarterly compounded rates, calculate a rolling average of historical income statement items to initiate the forecast, project linked balance sheet items based on income statement growth, and calculate historical Cash Conversion Cycle (CCC) metrics (DSO, DIO, DPO). Additionally, the modeler must apply a 16-quarter rolling median to project future CCC metrics, back-calculate Accounts Receivable, Inventories, and Accounts Payable, calculate Net Working Capital and Operating Net Working Capital, and answer 30 precise financial questions. This multi-step process, especially back-calculating the balance sheet from CCC metrics and checking for formula errors, will take an expert approximately 75 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CapitalinMotion/starting_files/CapitalinMotion.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CapitalinMotion/solution_files/CapitalinMotion - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "task_name": "CashConversionLab",
+    "task_starting_files": [
+      "data/tasks/task_id=6/starting_files/CashConversionLab.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=6/solution_files/CashConversionLab - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:23.809461+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Working Capital Modeling",
+      "time_range": "3-4h",
+      "difficulty_score": 3.6667,
+      "short_description": "Mixed period Working Capital Model including Forecasting, NWC and the CCC based on extensive initial IS/BS",
+      "time_assumption_h": 3.8667,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 110.0,
+    "ai_time_estimate_reasoning": "This FP&A task requires building a highly detailed, integrated 20-year quarterly financial model (5 years history, 15 years quarterly forecast) with complex forecasting rules. The modeler must compound annual price and volume growth rates for multiple revenue segments, allocate costs proportionally, and link 13 balance sheet accounts to income statement drivers. Additionally, projecting Accounts Receivable, Inventories, and Accounts Payable requires calculating historical DSO, DIO, and DPO metrics and dynamically applying a rolling 3-year running average to determine quarterly balances. Setting up this custom quarterly timeline, managing the logic for the rolling CCC average, and carefully referencing the results to answer 35 specific quarterly questions will take an experienced modeler approximately 110 minutes to execute and thoroughly verify.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CashConversionLab/starting_files/CashConversionLab.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CashConversionLab/solution_files/CashConversionLab - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 7,
+    "task_name": "CashNiagara",
+    "task_starting_files": [
+      "data/tasks/task_id=7/starting_files/CashNiagara.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=7/solution_files/CashNiagara - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:24.120305+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "7-9h",
+      "difficulty_score": 5.3333,
+      "short_description": "Very complex debt waterfall model (Mother of all debt waterfall models) - quarterly model including interest conventions and additional annual overview",
+      "time_assumption_h": 8.25,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 240.0,
+    "ai_time_estimate_reasoning": "This is an exceptionally complex debt waterfall modeling task that requires building a quarterly model spanning 20 years (80 quarters) with 14 distinct waterfall steps. An expert modeler must handle multiple day-count (Act/360, 30/360, Act/Act) and interest quoting conventions (Nominal vs. EAR), track rolling/carried-forward unpaid scheduled repayments for six tranches of senior debt, manage subordinated debt capitalization, model interest-to-equity conversions for convertible debt, and implement intricate equity distribution rules. The equity rules require calculating dividend payouts across five share classes while dynamically tracking vesting periods and multi-year holding periods for converted shares. Building, auditing, and checking this highly detailed model against the 40 specific validation questions on the Questions tab will easily require 4 hours of focused, expert-level modeling.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CashNiagara/starting_files/CashNiagara.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CashNiagara/solution_files/CashNiagara - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 8,
+    "task_name": "CoastalAggregates",
+    "task_starting_files": [
+      "data/tasks/task_id=8/starting_files/CoastalAggregates.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=8/solution_files/CoastalAggregates - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:24.384688+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Budget vs. Actuals Variance Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.0,
+      "short_description": "Regular Budget vs. Actuals Variance Analysis",
+      "time_assumption_h": 1.0667,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 30.0,
+    "ai_time_estimate_reasoning": "This task requires setting up a structured Budget vs. Actuals Variance Analysis. The modeler must map the actual income statement items (some of which do not perfectly align, such as 'Other operating expenses' mapping to 'Other costs' and 'Revenue from contracts' or 'Total Revenue' mapping to 'Revenue') to the budgeted items across four segments. Setting up the sheet with proper formulas for absolute and percentage variances, ensuring robust error handling for zero-budget divisions, and linking the 15 specific questions to the variance results will realistically take an experienced modeler 30 minutes from start to finish.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CoastalAggregates/starting_files/CoastalAggregates.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CoastalAggregates/solution_files/CoastalAggregates - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 9,
+    "task_name": "ConstantFlow",
+    "task_starting_files": [
+      "data/tasks/task_id=9/starting_files/ConstantFlow.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=9/solution_files/ConstantFlow - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:24.648572+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "7-9h",
+      "difficulty_score": 5.3333,
+      "short_description": "More complicated debt waterfall model - monthly model including interest conventions",
+      "time_assumption_h": 7.95,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 300.0,
+    "ai_time_estimate_reasoning": "This is an extremely complex debt waterfall modeling task that requires tracking 300 monthly periods over 25 years. It involves multiple advanced elements, including day-count (Act/360, 30/360, Act/Act) and quoting (Nominal vs. EAR) interest rate conversions, five tranches of senior debt with customized arrears tracking and pro-rata payment allocation, convertible debt interest-to-equity conversions, revolver cash-float logic, and intricate equity dividend distribution rules. Specifically, the dividend distribution requires vintage-tracking of newly converted Class C shares to enforce their 4-year holding period alongside different share weightings and vesting schedules. Even for an expert modeler, setting up the recursive logic, tracking the share buckets, debugging the circular dependencies, and extracting the 35 specific data points for the Questions sheet will take approximately 5 hours of intensive building and auditing.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/ConstantFlow/starting_files/ConstantFlow.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/ConstantFlow/solution_files/ConstantFlow - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 10,
+    "task_name": "CorpBond",
+    "task_starting_files": [
+      "data/tasks/task_id=10/starting_files/CorpBond.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=10/solution_files/CorpBond - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:24.997555+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Corporate Bond Valuation",
+      "time_assumption_h": 1.7,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 30.0,
+    "ai_time_estimate_reasoning": "An expert financial modeler will spend about 5 minutes parsing the bond terms, including the combination of default-free rate and default spread to find the total yield, and understanding the Act/365 compounding convention. Building the dynamic 40-period cash flow schedule (from t=0 to t=39 using EDATE to increment semi-annually) and calculating the correct discount factors using actual day differences will take around 12 minutes. Creating the annual calendar-year summary using SUMIFS and linking the results to the Questions tab will take another 8 minutes, followed by 5 minutes of quality control to ensure dates, compounding, and formulas are robust and error-free.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CorpBond/starting_files/CorpBond.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CorpBond/solution_files/CorpBond - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 11,
+    "task_name": "CorpBondII",
+    "task_starting_files": [
+      "data/tasks/task_id=11/starting_files/CorpBondII.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=11/solution_files/CorpBondII - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:25.285017+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Corporate Bond Valuation",
+      "time_assumption_h": 1.7,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 20.0,
+    "ai_time_estimate_reasoning": "This task requires building a detailed cash flow schedule for a bond with quarterly coupon payments over an 11.25-year period (46 payments in total), starting from a specific valuation date. The modeler must implement a precise 'Act/Act' day-count fraction where the denominator is the number of days in the payment's calendar year, requiring custom date formulas (e.g., checking for leap years). Additionally, they must build a dynamic annual summary table using SUMIFS to aggregate the cash flows and present values by calendar year to answer the questions. An expert can complete this, including verification, in about 20 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CorpBondII/starting_files/CorpBondII.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CorpBondII/solution_files/CorpBondII - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 12,
+    "task_name": "CustomerConcentration",
+    "task_starting_files": [
+      "data/tasks/task_id=12/starting_files/CustomerConcentration.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=12/solution_files/CustomerConcentration - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:25.587286+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Non-Financial or Non-FP&A Model",
+      "time_range": "3-4h",
+      "difficulty_score": 3.0,
+      "short_description": "Data analytics/ summarization & concentration measure calculation",
+      "time_assumption_h": 3.0833,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 90.0,
+    "ai_time_estimate_reasoning": "Building this model requires the classification of 1,000 customer records into distinct age and income buckets on the main dataset, followed by complex aggregations. The modeler must set up dynamic summary tables for six demographic attributes to calculate market shares, normalized HHI, and normalized Gini coefficients (which require sorting the aggregated groups to construct Lorenz curve metrics). Additionally, answering the 32 precise multi-criteria questions (averages, medians, and highly specific SUMIFS/COUNTIFS combinations) requires meticulous formula construction and thorough validation to ensure zero rounding or referencing errors.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CustomerConcentration/starting_files/CustomerConcentration.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CustomerConcentration/solution_files/CustomerConcentration - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 13,
+    "task_name": "DailyCash",
+    "task_starting_files": [
+      "data/tasks/task_id=13/starting_files/DailyCash.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=13/solution_files/DailyCash - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:26.337704+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "12-16h",
+      "difficulty_score": 5.3333,
+      "short_description": "Very complex and extensive debt waterfall model (Father of all debt waterfall models) - daily model including interest conventions and additional annual overview",
+      "time_assumption_h": 13.2167,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 300.0,
+    "ai_time_estimate_reasoning": "This is an exceptionally complex daily financial modeling task spanning 10 years (3,652 days) with 8 senior debt tranches, subordinated debt, and 3 convertible debt tranches converting into equity. The modeler must set up dynamic date logic (to handle weekends, first/last weekdays, and the 15th of the month), implement interest calculations across three day-count conventions (Act/360, Act/365, 30/360 US) and two quoting conventions (EAR and Nominal), model a strict 25-step daily waterfall sequence, and track a dynamic cap table where new convertible-debt-driven Class B shares vest 2 years post-conversion (subject to a minimum vesting date). Building, debugging, and auditing this massive daily schedule and answering the extensive set of specific date-based queries would take an expert modeler approximately 5 hours.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DailyCash/starting_files/DailyCash.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DailyCash/solution_files/DailyCash - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 14,
+    "task_name": "DebtDeclineDynamics",
+    "task_starting_files": [
+      "data/tasks/task_id=14/starting_files/DebtDeclineDynamics.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=14/solution_files/DebtDeclineDynamics - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:27.252483+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for an Annuity Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "The task requires setting up a loan amortization schedule with custom compounding (semi-monthly compounding with semi-annual payments). An expert modeler will need to first correctly calculate the effective periodic interest rate using compounding conversion formulas and verify that the final balance at period 60 matches the target $255,000 balloon payment. They must then build the 60-period amortization table, generate correct dates using EDATE, and create a lookup system (or SUMIFS for the yearly questions) to automatically populate the 25 questions, ensuring high precision and no hardcoded values.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DebtDeclineDynamics/starting_files/DebtDeclineDynamics.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DebtDeclineDynamics/solution_files/DebtDeclineDynamics - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 15,
+    "task_name": "DebtFlow",
+    "task_starting_files": [
+      "data/tasks/task_id=15/starting_files/DebtFlow.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=15/solution_files/DebtFlow - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:27.597970+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "4-5h",
+      "difficulty_score": 3.8333,
+      "short_description": "Regular yearly debt waterfall modeling",
+      "time_assumption_h": 4.0167,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 150.0,
+    "ai_time_estimate_reasoning": "This is a highly complex debt waterfall and equity modeling task that requires tracking multiple senior debt tranches with roll-forward/catch-up features, pro-rata allocations, and two tranches of convertible debt. The convertible debt features a conversion of unpaid interest into Class C and E shares, which must then be tracked by 'vintage' (year of conversion) to apply custom holding/vesting periods (4 years for Class C and 2 years for Class E) before they become eligible for dividend distributions. Building, auditing, and debugging the vintage-based share tracking, the sequential priority payment waterfall, and the weighted equity distribution logic will take even an expert modeler about 2.5 hours to execute flawlessly.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DebtFlow/starting_files/DebtFlow.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DebtFlow/solution_files/DebtFlow - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 16,
+    "task_name": "DetailedLoan",
+    "task_starting_files": [
+      "data/tasks/task_id=16/starting_files/DetailedLoan.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=16/solution_files/DetailedLoan - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:27.841369+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Retirement / Savings Calculators",
+      "time_range": "5-7h",
+      "difficulty_score": 4.8333,
+      "short_description": "Very-very complex financial life plan model including debt, salary raises, tax and inflation - model for a married couple buying a house (no kids)",
+      "time_assumption_h": 6.9333,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 195.0,
+    "ai_time_estimate_reasoning": "This is a highly complex wealth planning model covering an 84-year monthly timeline (over 1,000 rows) with several advanced features that require meticulous design. The salary and progressive tax engine requires modeling individual promotions (at non-standard intervals like 5.5 years) and tax brackets that inflate annually at 2%. Crucially, the home loan requires building a separate precise weekly amortization schedule with semi-monthly compounding and interest-only payments, which must then be mapped back to monthly periods. Finally, the monthly cash flow waterfall requires complex, sequential priority-based debt paydowns, dynamic emergency cash maintenance, and investment liquidation logic that can easily lead to circular references or formula errors if not carefully structured.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DetailedLoan/starting_files/DetailedLoan.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DetailedLoan/solution_files/DetailedLoan - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 17,
+    "task_name": "DivinaProportione",
+    "task_starting_files": [
+      "data/tasks/task_id=17/starting_files/DivinaProportione.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=17/solution_files/DivinaProportione - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:28.360222+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Ratio Analysis",
+      "time_range": "2-3h",
+      "difficulty_score": 2.5,
+      "short_description": "Regular Ratio Analysis with provided IS/ BS",
+      "time_assumption_h": 2.1167,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 45.0,
+    "ai_time_estimate_reasoning": "Completing this ratio analysis task requires building a calculation table for 19 different financial metrics across a 5-year period (2021-2025). The expert modeler must carefully link inputs from the detailed Income Statement and Balance Sheet, construct averages (accounting for the 2020 base-year simplification where 2020 values equal 2021 values), and perform multi-step computations for turnover days, growth rates, and margins. Finally, the modeler must link the outputs to answer the 25 specific questions in the Questions worksheet, necessitating rigorous formula mapping and validation to ensure rounding and definitions are perfectly aligned.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DivinaProportione/starting_files/DivinaProportione.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DivinaProportione/solution_files/DivinaProportione - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 18,
+    "task_name": "DoctorvsTrade",
+    "task_starting_files": [
+      "data/tasks/task_id=18/starting_files/DoctorvsTrade.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=18/solution_files/DoctorvsTrade - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:28.650726+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Retirement / Savings Calculators",
+      "time_range": "5-7h",
+      "difficulty_score": 3.3333,
+      "short_description": "Regular financial life plan model including debt, salary raises, tax and inflation in spending categories - comparison between two careers",
+      "time_assumption_h": 5.4333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 180.0,
+    "ai_time_estimate_reasoning": "This wealth management task requires a multi-decade (83-year) dual-scenario projection with highly complex, cascading logic. Key modeling challenges that will consume significant time include: setting up dynamic income tax brackets that index upward annually at 1.95%; compounding 12 different expense categories with distinct inflation and lifestyle inflation factors (triggered only from the second year of work); establishing a debt waterfall that pays down three different loans in order of decreasing interest rate; accounting for a cost-of-living loan drawn at the start of the year; executing tax gross-ups on investment withdrawals during deficits; and scaling up credit card debt when investments are exhausted. Due to the high number of specific questions verifying exact values across both paths, an expert will spend a substantial portion of the time rigorously auditing the formulas to ensure there are no compounding errors.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DoctorvsTrade/starting_files/DoctorvsTrade.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DoctorvsTrade/solution_files/DoctorvsTrade - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 19,
+    "task_name": "DoorstepDecisions",
+    "task_starting_files": [
+      "data/tasks/task_id=19/starting_files/DoorstepDecisions.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=19/solution_files/DoorstepDecisions - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:28.973082+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Rent vs. Buy Analysis",
+      "time_range": "3-4h",
+      "difficulty_score": 3.0,
+      "short_description": "Regular Rent vs. Buy Analysis",
+      "time_assumption_h": 3.8,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 60.0,
+    "ai_time_estimate_reasoning": "This task involves building a comprehensive, 720-month (60 years) Rent vs. Buy analysis. The modeler must convert EARs to monthly rates, handle annual inflation adjustments occurring every January, and accurately model a constant principal loan. Crucially, the modeler must maintain cash flow parity: the renter begins with the owner's upfront equity/closing costs as an initial investment, and monthly cash flow differences (whether positive or negative) must adjust the respective investment portfolios. To ensure accuracy and quickly answer the 35 detailed monthly and yearly questions across multiple dates, the modeler must write robust lookup formulas, which requires meticulous structuring and about an hour of highly focused modeling.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DoorstepDecisions/starting_files/DoorstepDecisions.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DoorstepDecisions/solution_files/DoorstepDecisions - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 20,
+    "task_name": "EasyDCF",
+    "task_starting_files": [
+      "data/tasks/task_id=20/starting_files/EasyDCF.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=20/solution_files/EasyDCF - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:29.352918+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "1-2h",
+      "difficulty_score": 3.0,
+      "short_description": "Small DCF (no forecasting, estimates given)",
+      "time_assumption_h": 1.9,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 45.0,
+    "ai_time_estimate_reasoning": "This task requires building a 10-year DCF model with several advanced features: calculating NWC and Capex from balance sheet data, finding a constant tax rate using a historical/forecast average, implementing a time-weighted average for the normalized terminal FCFF, applying the mid-year convention (including for the terminal value), and rolling forward the enterprise value to the valuation date using day counts. Crucially, the model requires an iterative WACC loop because the market value of equity (used in WACC weights) depends on the resulting valuation, needing either Excel's iterative calculation option or an algebraic shortcut. A competent expert would take about 45 minutes to build, check, and refine this model.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/EasyDCF/starting_files/EasyDCF.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/EasyDCF/solution_files/EasyDCF - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 21,
+    "task_name": "FinancialRelations",
+    "task_starting_files": [
+      "data/tasks/task_id=21/starting_files/FinancialRelations.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=21/solution_files/FinancialRelations - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:29.644935+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Ratio Analysis",
+      "time_range": "2-3h",
+      "difficulty_score": 2.5,
+      "short_description": "Regular Ratio Analysis with provided IS/ BS (some ambiguities regarding NCI)",
+      "time_assumption_h": 2.8,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 45.0,
+    "ai_time_estimate_reasoning": "This task requires calculating 20 different financial ratios across 20 quarters, which involves referencing two distinct financial statements, computing average balance sheet balances (incorporating a specific roll-back assumption for Q4 2019), and adjusting for actual days per quarter. Writing and auditing these formulas while ensuring correct definitions (such as quick assets, total debt vs. total liabilities, and gearing ratio) will take around 30 minutes, and another 15 minutes will be needed to carefully link and verify the answers to the 30 specific quarterly questions on the Questions tab.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FinancialRelations/starting_files/FinancialRelations.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FinancialRelations/solution_files/FinancialRelations - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 22,
+    "task_name": "FiveAutomotive",
+    "task_starting_files": [
+      "data/tasks/task_id=22/starting_files/FiveAutomotive.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=22/solution_files/FiveAutomotive - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:29.961656+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Sum-of-the-Parts Valuation",
+      "time_range": "20-25h",
+      "difficulty_score": 5.1667,
+      "short_description": "Sum of the Parts Valuation using Comp multiples, easy DCF, full fletch 3-SM DCF for 5 company parts in total",
+      "time_assumption_h": 21.15,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 390.0,
+    "ai_time_estimate_reasoning": "This is an exceptionally comprehensive and complex sum-of-the-parts valuation model involving five separate business lines. The most time-consuming parts are the monthly 3-statement models for 'Fixings' and 'Plastic Parts'. Fixings requires a detailed monthly operational model, including a complex 24-month vintage cohort PP&E schedule with dynamic CapEx solver formulas, shift-based labor calculations, a monthly annuity loan amortization, and lagged tax/distribution payout schedules. Plastic Parts requires establishing a monthly workday calendar (excluding weekends) over 10 years to dynamically calculate compounding exponents for P&L and BS growth, balanced with a cash plug. Additionally, the modeler must build two separate public comps databases, perform an annual mid-year convention DCF with a linearly weighted terminal value, solve iterative WACCs, and build robust lookup formulas to answer over 100 highly specific monthly financial questions.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FiveAutomotive/starting_files/FiveAutomotive.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FiveAutomotive/solution_files/FiveAutomotive - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 23,
+    "task_name": "Fixings",
+    "task_starting_files": [
+      "data/tasks/task_id=23/starting_files/Fixings.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=23/solution_files/Fixings - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:30.461803+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "5-7h",
+      "difficulty_score": 3.5,
+      "short_description": "DCF (two methods) with given estimates, 3-SM based on extensive forecasting/modeling",
+      "time_assumption_h": 6.9167,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 300.0,
+    "ai_time_estimate_reasoning": "This is a highly complex and comprehensive three-statement and DCF valuation modeling task. It requires building multiple intricate sub-schedules, including a step-function machine capacity and employee staffing schedule, a custom vintage/batch schedule for Other PP&E, an annuity loan amortization with current/long-term splits, and precise working capital logic (with specific rules for energy, tax, and distribution payables). Furthermore, the DCF section involves complex elements like a time-weighted average terminal value, 30/360 balance sheet interpolation for the mid-year equity bridge, and an iterative WACC loop alongside a target capital structure WACC. Ensuring the balance sheet balances and resolving the circular WACC reference will take an expert modeler considerable time to implement and audit.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Fixings/starting_files/Fixings.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Fixings/solution_files/Fixings - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 24,
+    "task_name": "FlightPlan",
+    "task_starting_files": [
+      "data/tasks/task_id=24/starting_files/FlightPlan.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=24/solution_files/FlightPlan - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:30.740027+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Non-Financial or Non-FP&A Model",
+      "time_range": "30-35h",
+      "difficulty_score": 5.1667,
+      "short_description": "Algorithmic route planning for an Airline - different planning categories",
+      "time_assumption_h": 33.15,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 135.0,
+    "ai_time_estimate_reasoning": "This task requires solving a complex network routing/shortest path problem on a graph of 144 airports and over 300 bidirectional connections. To calculate the shortest paths by time, distance, cost, and stopovers while strictly adhering to the specified tie-breaking rule (based on the original row order in the Connections sheet), an expert modeler must implement a custom Dijkstra or BFS algorithm (most likely in VBA or Python). Setting up the Haversine distance formula, mapping out starting/landing fees, implementing the graph search with custom tie-breaking, post-processing the paths to concatenate unique countries/continents alphabetically, and mapping the results to the 80 specific questions will take a highly skilled modeler over two hours to build and verify.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FlightPlan/starting_files/FlightPlan.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FlightPlan/solution_files/FlightPlan - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 25,
+    "task_name": "FourShops",
+    "task_starting_files": [
+      "data/tasks/task_id=25/starting_files/Four Shops.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=25/solution_files/Four Shops - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:31.043446+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Sum-of-the-Parts Valuation",
+      "time_range": "3-4h",
+      "difficulty_score": 3.1667,
+      "short_description": "4*DCF for all parts",
+      "time_assumption_h": 3.4667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 105.0,
+    "ai_time_estimate_reasoning": "This task requires building a highly sophisticated Sum-of-the-Parts (SOTP) DCF model for four business segments with distinct terminal value structures (two regular and two multi-stage). It involves complex calculations: deriving Net Working Capital and Net Capex from historical and forecast balance sheets, calculating segment-specific historical and forecast FCFFs, computing a consolidated tax rate, and implementing an iterative WACC loop that links the resulting Equity Value back into the capital structure weights. Finally, the modeler must perform a precise fractional-year roll-forward from the valuation basis date to the valuation date. An experienced modeler will require about 105 minutes to carefully set up the formulas, handle the circular references, build the custom TV projection stages, and verify all output questions.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FourShops/starting_files/Four Shops.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FourShops/solution_files/Four Shops - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 26,
+    "task_name": "FromBorrowedtoCleared",
+    "task_starting_files": [
+      "data/tasks/task_id=26/starting_files/FromBorrowedtoCleared.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=26/solution_files/FromBorrowedtoCleared - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:31.317162+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for an Annuity Loan - trap leap year day (02/29) is the starting date for the model",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 30.0,
+    "ai_time_estimate_reasoning": "This task requires building a dynamic loan amortization schedule with mismatching payment and compounding frequencies (monthly payments vs. quarterly compounding). An expert modeler will need to calculate the correct periodic interest rate using the formula (1 + nominal_rate / compounding_frequency)^(compounding_frequency / payment_frequency) - 1, build out the 180-month schedule with accurate date-shifting logic (e.g., EDATE), and then use lookup and aggregation formulas (like VLOOKUP/INDEX-MATCH and SUMIFS) to dynamically populate the 25 specific questions on the Questions tab.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FromBorrowedtoCleared/starting_files/FromBorrowedtoCleared.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FromBorrowedtoCleared/solution_files/FromBorrowedtoCleared - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 27,
+    "task_name": "FromSheet",
+    "task_starting_files": [
+      "data/tasks/task_id=27/starting_files/FromSheet.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=27/solution_files/FromSheet - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:31.665578+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "2-3h",
+      "difficulty_score": 3.0,
+      "short_description": "Small DCF (no forecasting, estimates given) - deriving the assumptions from a large sheet",
+      "time_assumption_h": 2.8333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 80.0,
+    "ai_time_estimate_reasoning": "This task contains several complex, non-standard DCF requirements that require careful implementation and verification. Specifically, the modeler must program a statistical filter for the tax rate (excluding negative rates and those outside two population standard deviations), derive CapEx indirectly from reconstructive balance sheet math, calculate a custom time-weighted average FCFF for the terminal value, implement mid-year discounting, perform a day-count valuation date transition, and build both a target WACC and a circular, iteratively-solved WACC model. Even for an expert, setting up these custom formulas, handling the iterative reference loop, and validating the 26 final answers across two WACC scenarios will take around 80 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FromSheet/starting_files/FromSheet.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FromSheet/solution_files/FromSheet - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 28,
+    "task_name": "FruitJuice_3-Statement-Model - v2",
+    "task_starting_files": [
+      "data/tasks/task_id=28/starting_files/FruitJuice- 3-Statement Model.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=28/solution_files/FruitJuice- 3-Statement Model - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:32.023265+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "16-20h",
+      "difficulty_score": 4.8333,
+      "short_description": "3-SM for a company producing fruit juices and beverages",
+      "time_assumption_h": 17.5,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 360.0,
+    "ai_time_estimate_reasoning": "This is an exceptionally complex FP&A and 3-statement modeling task that spans 69 SKUs and 24 raw materials across a 120-month forecast horizon. It requires building complex nested logic for dynamic machinery capex additions (triggered by an 80% capacity utilization cap), intricate energy consumption calculations based on machine runtimes, seasonal ingredient pricing mapping, a dynamic labor staffing model, and exact-date working capital (CCC) cycles. Additionally, integrating the 3-statements with seasonal tax payouts, 95% dividend distribution logic in specific months, and circular cash interest calculations makes this a heavyweight modeling test that would take an expert modeler approximately 6 hours of highly focused building and auditing to complete without errors.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FruitJuice_3-Statement-Model - v2/starting_files/FruitJuice- 3-Statement Model.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FruitJuice_3-Statement-Model - v2/solution_files/FruitJuice- 3-Statement Model - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 29,
+    "task_name": "FundFun",
+    "task_starting_files": [
+      "data/tasks/task_id=29/starting_files/FundFun.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=29/solution_files/FundFun - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:32.466691+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "NAV (Net Asset Value) Modeling",
+      "time_range": "5-7h",
+      "difficulty_score": 3.5,
+      "short_description": "NAV model for a equally weighted funds with 2 feees",
+      "time_assumption_h": 4.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FundFun/starting_files/FundFun.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FundFun/solution_files/FundFun - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 30,
+    "task_name": "GermanLife",
+    "task_starting_files": [
+      "data/tasks/task_id=30/starting_files/GermanLife.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=30/solution_files/GermanLife - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:35.400489+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Retirement / Savings Calculators",
+      "time_range": "5-7h",
+      "difficulty_score": 4.1667,
+      "short_description": "Very complex financial life plan model including debt, salary raises, tax (extensive) and inflation - the model is including life decisions such as getting married and having kids and the resulting financial consequences",
+      "time_assumption_h": 6.4167,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 210.0,
+    "ai_time_estimate_reasoning": "This task is a highly complex personal finance and wealth management model spanning 75 years. It contains numerous intricate mechanics: dynamic salary promotions, multi-tier income tax indexing with 18 brackets, joint filing, a 'progression clause' tax adjustment for parental leave benefits, child-expense brackets that shift as the kids age (plus inflation), a mortgage amortization schedule, and a multi-phase investment portfolio with varying interest rates, overdraft penalties, and deferred capital gains taxes. Setting up the dynamic tax engine and tracking the age-dependent expenses alone will take significant time. An expert modeler would need approximately 3.5 hours to carefully build, audit, and verify all the interconnected parts.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/GermanLife/starting_files/GermanLife.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/GermanLife/solution_files/GermanLife - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 31,
+    "task_name": "Harrington",
+    "task_starting_files": [
+      "data/tasks/task_id=31/starting_files/Harrington.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=31/solution_files/Harrington - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:35.882893+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Budget vs. Actuals Variance Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.0,
+      "short_description": "Regular Budget vs. Actuals Variance Analysis",
+      "time_assumption_h": 1.15,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 20.0,
+    "ai_time_estimate_reasoning": "The task requires mapping actual results from the Consolidated Income Statement to the P&L Budget lines (GL Detail) for FY 2024. While the line items are structured slightly differently (e.g., breakdown of revenue by geography vs. product/service types, and different sign conventions where expenses are negative in the budget but positive in the actuals), they map cleanly for major categories like Cost of Sales components, R&D, Sales & Marketing, G&A, Finance, and Taxes. An expert modeler would quickly set up a mapping/reconciliation table to align these lines, normalize the signs, compute the absolute and percentage variances (Actual minus Budget), and answer the 15 specific variance questions in approximately 20 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Harrington/starting_files/Harrington.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Harrington/solution_files/Harrington - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 32,
+    "task_name": "LeaseorKeys",
+    "task_starting_files": [
+      "data/tasks/task_id=32/starting_files/LeaseorKeys.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=32/solution_files/LeaseorKeys - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:36.207976+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Rent vs. Buy Analysis",
+      "time_range": "3-4h",
+      "difficulty_score": 3.0,
+      "short_description": "Regular Rent vs. Buy Analysis",
+      "time_assumption_h": 3.85,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 100.0,
+    "ai_time_estimate_reasoning": "This task requires building a highly detailed 50-year monthly rent-vs-buy model involving a loan amortization schedule, complex asset appreciation, and dynamic investment schedules for both renting and buying scenarios. The modeler must track running costs and rental payments that inflate annually every January, handle tax-adjusted investment returns, and accurately calculate the opportunity cost and monthly savings differentials. Additionally, the modeler must map 35 precise lookup questions spanning various dates over the 50-year period, which requires setting up robust and flexible lookup formulas like INDEX/MATCH or SUMIFS across multiple sheets.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/LeaseorKeys/starting_files/LeaseorKeys.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/LeaseorKeys/solution_files/LeaseorKeys - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 33,
+    "task_name": "LiquiditySplatter",
+    "task_starting_files": [
+      "data/tasks/task_id=33/starting_files/LiquiditySplatter.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=33/solution_files/LiquiditySplatter - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:36.582241+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "4-5h",
+      "difficulty_score": 3.8333,
+      "short_description": "Easy and regular yearly debt waterfall modeling",
+      "time_assumption_h": 4.5,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 135.0,
+    "ai_time_estimate_reasoning": "This is a highly complex debt waterfall and equity modeling task. It requires modeling pro-rata repayment allocations with roll-forwards for multiple senior debt tranches, convertible debt with interest-to-equity conversion features, and a detailed vintage-based vesting tracker for new share classes to calculate dividend eligibility over a 20-year period. Since interest is calculated on opening balances, circular references are avoided, but the vintage tracking for conversion shares (requiring the later of standard vesting or conversion date plus 3/4 years) and the sequential distribution waterfall still require meticulous structuring and validation to answer the 30 specific output questions accurately.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/LiquiditySplatter/starting_files/LiquiditySplatter.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/LiquiditySplatter/solution_files/LiquiditySplatter - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 34,
+    "task_name": "LogisticsCategorization",
+    "task_starting_files": [
+      "data/tasks/task_id=34/starting_files/LogisticsCategorization.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=34/solution_files/LogisticsCategorization - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:36.980187+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Non-Financial or Non-FP&A Model",
+      "time_range": "12-16h",
+      "difficulty_score": 5.6667,
+      "short_description": "Extensive inventory valuation with three different methods and further SKU categorization in 3 dimensions (partially also inventory valuation dependent)",
+      "time_assumption_h": 13.4833,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 210.0,
+    "ai_time_estimate_reasoning": "This is an exceptionally complex algorithm-heavy model requiring the perpetual daily valuation of 40 SKUs across three distinct methods (FIFO, LIFO, and Moving Average) over a full year, combined with multi-layered running ABC/XYZ/αβγ categorizations. Rebuilding the FIFO and LIFO layer stacks daily using cumulative consumption, resolving same-day multi-purchases in transaction order, and applying path-dependent Moving Average calculations requires writing sophisticated, custom LAMBDA/LET dynamic array formulas or debugging a complex VBA engine. Managing the precise tie-breaking logic based on the Products sheet index and mapping the strict threshold bands to answer the 70 granular date-and-SKU-specific questions pushes the execution time for even an expert modeler to three and a half hours.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/LogisticsCategorization/starting_files/LogisticsCategorization.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/LogisticsCategorization/solution_files/LogisticsCategorization - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 35,
+    "task_name": "MarketBalanced",
+    "task_starting_files": [
+      "data/tasks/task_id=35/starting_files/MarketBalanced.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=35/solution_files/MarketBalanced - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:39.254578+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "NAV (Net Asset Value) Modeling",
+      "time_range": "5-7h",
+      "difficulty_score": 3.8333,
+      "short_description": "NAV model for capped market cap weighted funds with 2 feees (different extensions/combinations including interest rate conventions)",
+      "time_assumption_h": 6.5,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/MarketBalanced/starting_files/MarketBalanced.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/MarketBalanced/solution_files/MarketBalanced - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 36,
+    "task_name": "Meridian",
+    "task_starting_files": [
+      "data/tasks/task_id=36/starting_files/Meridian.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=36/solution_files/Meridian - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:42.460436+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Budget vs. Actuals Variance Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.0,
+      "short_description": "Regular Budget vs. Actuals Variance Analysis",
+      "time_assumption_h": 1.2833,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "The task requires setting up a Budget vs. Actuals variance analysis for FY 2023 by mapping the consolidated Income Statement (Actuals) with the detailed General Ledger Budget. An expert modeler needs to carefully align the different sign conventions used in the two sheets (e.g., expenses are positive in the actuals' details but negative in the budget), calculate the absolute and relative variances using robust formulas, link the results to the 15 specific questions, and format them to four decimal places.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Meridian/starting_files/Meridian.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Meridian/solution_files/Meridian - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 37,
+    "task_name": "MonthlyLiquidity",
+    "task_starting_files": [
+      "data/tasks/task_id=37/starting_files/MonthlyLiquidity.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=37/solution_files/MonthlyLiquidity - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:42.795034+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Working Capital Modeling",
+      "time_range": "3-4h",
+      "difficulty_score": 3.3333,
+      "short_description": "Monthly Working Capital Model including Forecasting, NWC and the CCC",
+      "time_assumption_h": 3.9,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 55.0,
+    "ai_time_estimate_reasoning": "This FP&A task requires building a highly detailed 120-month (10-year) forecasting model. Key complexities include setting up a custom workday calendar (with Fridays counted as 0.5 days) to distribute monthly income statement items, implementing step-down logic for DSO, DIO, and DPO based on specific compounding schedules, and scaling multiple balance sheet accounts using historical drivers and account links. Given the exactness required to answer 49 specific monthly data point questions, an expert modeler would spend substantial time building robust formulas (e.g., compounding growth every January, applying step-downs at precise intervals) and double-checking the results.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/MonthlyLiquidity/starting_files/MonthlyLiquidity.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/MonthlyLiquidity/solution_files/MonthlyLiquidity - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 38,
+    "task_name": "NestQuest",
+    "task_starting_files": [
+      "data/tasks/task_id=38/starting_files/NestQuest.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=38/solution_files/NestQuest - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:43.121772+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Rent vs. Buy Analysis",
+      "time_range": "5-7h",
+      "difficulty_score": 3.3333,
+      "short_description": "Regular Rent vs. Buy Analysis - little bit more extensive tax involvement",
+      "time_assumption_h": 5.35,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 110.0,
+    "ai_time_estimate_reasoning": "This is a highly complex wealth management model requiring a 60-year monthly timeline (720 periods) for both Renting and Owning scenarios. The modeler must set up a 17.5-year monthly annuity loan amortization schedule, apply varying annual inflation rates to rental costs, ownership costs, and tax brackets starting each January, and calculate monthly compounded investment returns. Crucially, the modeler must build a dynamic progressive income tax engine in Excel that accounts for doubled tax brackets (for married couples), annual bracket inflation, and the solidarity surcharge to calculate the net-of-tax home value at any given point. Correctly tracking the cash savings and investing them under both scenarios, along with answering 35 precise, date-specific questions, makes this task highly time-consuming even for an expert.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/NestQuest/starting_files/NestQuest.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/NestQuest/solution_files/NestQuest - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 39,
+    "task_name": "NextEraEnergy",
+    "task_starting_files": [
+      "data/tasks/task_id=39/starting_files/NextEraEnergy.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=39/solution_files/NextEraEnergy - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:43.546422+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Comparables (Trading Comps)",
+      "time_range": "2-3h",
+      "difficulty_score": 2.5,
+      "short_description": "Comparables Valuation (classic)",
+      "time_assumption_h": 2.35,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 35.0,
+    "ai_time_estimate_reasoning": "This task requires performing a comparable company valuation with several complex steps: mapping and applying currency conversions using the provided FX rates, calculating four financial multiples, and applying a multi-stage statistical filter to exclude negative values and any outliers beyond one population standard deviation from the mean. The modeler must then calculate the key statistics (25th, Median, Average, 75th percentiles) on the filtered peer group, calculate NextEra's net debt to bridge Enterprise Value to Equity Value for the EV-based multiples, and derive the 16 implied share prices. Building the two-stage statistical filters cleanly (ideally using helper columns to isolate the in-scope multiples) and double-checking the currency and net debt bridges will take a seasoned modeler about 35 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/NextEraEnergy/starting_files/NextEraEnergy.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/NextEraEnergy/solution_files/NextEraEnergy - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 40,
+    "task_name": "Office",
+    "task_starting_files": [
+      "data/tasks/task_id=40/starting_files/Office.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=40/solution_files/Office - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:43.849858+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "NAV (Net Asset Value) Modeling",
+      "time_range": "1-2h",
+      "difficulty_score": 2.5,
+      "short_description": "REIT NAV Model - Office",
+      "time_assumption_h": 1.9167,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 40.0,
+    "ai_time_estimate_reasoning": "This modeling task requires building an income statement, FFO and AFFO reconciliations, and a Net Asset Value (NAV) bridge for a REIT. An expert modeler will need to carefully apply the specific guidelines for the cash-basis NOI (deducting property operating expenses and management fees but excluding corporate overhead and straight-line rent) and the asset-level NAV adjustments (omitting intangible lease assets/liabilities and deferred financing costs while retaining working capital and debt). Building out these formulas across the 6-year horizon, linking them to the balance sheet, and calculating the per-share metrics will realistically take about 40 minutes, including validation.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Office/starting_files/Office.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Office/solution_files/Office - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 41,
+    "task_name": "PastaInc_3-Statement-Model",
+    "task_starting_files": [
+      "data/tasks/task_id=41/starting_files/PastaInc - 3-Statement Model.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=41/solution_files/PastaInc - 3-Statement Model - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:44.112616+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "12-16h",
+      "difficulty_score": 4.8333,
+      "short_description": "3-SM for a company producing noodles - including deferred taxes",
+      "time_assumption_h": 15.9333,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 360.0,
+    "ai_time_estimate_reasoning": "This is an exceptionally complex monthly 3-statement operational and valuation model spanning 12 years. The task requires building detailed operational schedules for 8 product types with cyclical sales, computing machine capacity limits (triggering discrete CAPEX and staffing additions), implementing complex raw material pricing structures, and setting up an annuity loan with a 5-year compounding grace period. Additionally, the modeler must account for book-vs-tax depreciation differences to model deferred taxes (DTA/DTL), calculate monthly CCC adjustments (DIO/WIP/DPO) using a non-standard forward-looking methodology, and resolve circular references from cash interest. An expert would need approximately 6 hours of highly focused work to build, audit, and balance this comprehensive model.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/PastaInc_3-Statement-Model/starting_files/PastaInc - 3-Statement Model.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/PastaInc_3-Statement-Model/solution_files/PastaInc - 3-Statement Model - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 42,
+    "task_name": "PaydownPathways",
+    "task_starting_files": [
+      "data/tasks/task_id=42/starting_files/PaydownPathways.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=42/solution_files/PaydownPathways - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:44.673905+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for a Constant Principal Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "The task requires building a highly dynamic loan amortization schedule for a Constant Principal Loan with mismatched payment (Monthly) and compounding (Annual) frequencies. An expert modeler would need to map the frequency strings to numerical periods per year, calculate the correct periodic interest rate using compounding conversion formulas, set up the 180-period schedule, and then use precise lookups (like INDEX/MATCH and SUMIFS) to populate the 25 specific answers in the Questions sheet. Verifying the logic and ensuring all edge cases are covered will take approximately 25 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/PaydownPathways/starting_files/PaydownPathways.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/PaydownPathways/solution_files/PaydownPathways - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 43,
+    "task_name": "PlasticParts",
+    "task_starting_files": [
+      "data/tasks/task_id=43/starting_files/PlasticParts.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=43/solution_files/PlasticParts - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:44.980452+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "9-12h",
+      "difficulty_score": 4.8333,
+      "short_description": "3-SM for a company producing for the automotive industry",
+      "time_assumption_h": 11.6333,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": 165.0,
+    "ai_time_estimate_reasoning": "This is a highly complex, multi-layered industrial 3-statement model requiring the tracking of 20 products, matching them to 4 machine types based on volume logic, and calculating capacity-constrained CAPEX additions for both forms and machines. In addition to complex production runtime, energy, and staffing calculations, the modeler must build detailed depreciation schedules for different asset classes (buildings, machines, forms with different useful lives and splits), project two separate amortizing historical loans, calculate a dynamic Cash Conversion Cycle (DSO/DIO/DPO), and set up circular cash interest logic. An expert modeler would need substantial time to build, link, and audit these operational schedules across 120 projection months.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/PlasticParts/starting_files/PlasticParts.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/PlasticParts/solution_files/PlasticParts - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 44,
+    "task_name": "ProductionPlanning",
+    "task_starting_files": [
+      "data/tasks/task_id=44/starting_files/ProductionPlanning.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=44/solution_files/ProductionPlanning - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:45.372473+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Non-Financial or Non-FP&A Model",
+      "time_range": "3-4h",
+      "difficulty_score": 3.3333,
+      "short_description": "More or less simple production planning model - only production planning without financial implications planning",
+      "time_assumption_h": 3.8667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 70.0,
+    "ai_time_estimate_reasoning": "The model requires establishing a 10-year monthly timeline (120 months) and calculating the exact number of production days (excluding Sundays) for each month using NETWORKDAYS.INTL. The modeler must then compute material consumption (SUMPRODUCT of production volumes and product weights) and machine hour requirements. Calculating the minimum machines needed is tricky due to the monotonically non-decreasing constraint, which requires a running cumulative maximum of the monthly capacity-driven requirements. Additionally, the employee headcount sizing depends on total machine operating hours (productive hours divided by 85%) and monthly employee capacity (32 machine-hours multiplied by production days), rounded up to the nearest integer. Finally, tracking employee hires, fires, and machine purchases across multiple sheets requires careful formulation and QA, taking an experienced modeler about 70 minutes to complete error-free.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/ProductionPlanning/starting_files/ProductionPlanning.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/ProductionPlanning/solution_files/ProductionPlanning - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 45,
+    "task_name": "PropertyPathways",
+    "task_starting_files": [
+      "data/tasks/task_id=45/starting_files/PropertyPathways.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=45/solution_files/PropertyPathways - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:45.645459+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Rent vs. Buy Analysis",
+      "time_range": "5-7h",
+      "difficulty_score": 3.3333,
+      "short_description": "Regular Rent vs. Buy Analysis - little bit more extensive tax involvement + time lag",
+      "time_assumption_h": 6.1667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 135.0,
+    "ai_time_estimate_reasoning": "This is a highly detailed personal finance and wealth management model spanning 80 years on a monthly basis. The complexity lies in modeling the dynamic renting-vs-owning cash flow differentials that drive the investment schedules, the separate inflation rates starting at specific dates, and the complex progressive tax system which requires doubling the brackets for married couples, inflating both the brackets and solidarity surcharge thresholds by 2% annually, and calculating hypothetical taxes on home appreciation and investment yields. An expert modeler will need substantial time to carefully structure the tax formulas and verify the exact outputs for the 35 specific questions.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/PropertyPathways/starting_files/PropertyPathways.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/PropertyPathways/solution_files/PropertyPathways - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 46,
+    "task_name": "Proportionality",
+    "task_starting_files": [
+      "data/tasks/task_id=46/starting_files/Proportionality.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=46/solution_files/Proportionality - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:46.115166+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Ratio Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.5,
+      "short_description": "Regular Ratio Analysis with provided IS/ BS (new ratios introduced)",
+      "time_assumption_h": 1.95,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 45.0,
+    "ai_time_estimate_reasoning": "An expert modeler would need to build a comprehensive ratio calculation sheet for 20 different financial metrics over a 10-year period. The primary challenge is the reverse-chronological order of the data (from FY '24 down to FY '15), which requires careful formula writing for year-over-year growth rates and multi-period averages (especially for FY '15 where the 2014 balance sheet is assumed equal to 2015). Mapping the 30 specific questions to the calculated outputs and ensuring perfect alignment with standard financial definitions will take some time, leading to an estimated completion time of 45 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Proportionality/starting_files/Proportionality.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Proportionality/solution_files/Proportionality - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 47,
+    "task_name": "QuarterlyRatios",
+    "task_starting_files": [
+      "data/tasks/task_id=47/starting_files/QuarterlyRatios.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=47/solution_files/QuarterlyRatios - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:46.421548+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Ratio Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.5,
+      "short_description": "Regular Ratio Analysis with provided IS/ BS (trip in the structure of those)",
+      "time_assumption_h": 1.9667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 40.0,
+    "ai_time_estimate_reasoning": "An expert modeler would need about 40 minutes to complete this task. The modeler must first set up a structured calculation sheet for the 12 quarters (Q1'22 to Q4'24) and pull in the required items from the detailed Income Statement and Balance Sheet. Calculating 19 different quarterly ratios (many of which require setting up average balance sheet values, handling the Q4'21 prior period assumption, and applying specific day counts like 91.25 days/quarter) creates a significant formula footprint. Finally, linking and formatting the 30 specific quarterly questions on the 'Questions' sheet and auditing the results for rounding accuracy will take another 10 to 15 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/QuarterlyRatios/starting_files/QuarterlyRatios.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/QuarterlyRatios/solution_files/QuarterlyRatios - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 48,
+    "task_name": "RelativeDevelopment",
+    "task_starting_files": [
+      "data/tasks/task_id=48/starting_files/RelativeDevelopment.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=48/solution_files/RelativeDevelopment - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:46.755906+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "5-7h",
+      "difficulty_score": 3.6667,
+      "short_description": "DCF (two methods) with given estimates, 3-SM based on percentages + plug without extensive forecasting",
+      "time_assumption_h": 5.6167,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 240.0,
+    "ai_time_estimate_reasoning": "This task is highly complex as it requires building a 120-month (10-year) integrated 3-statement model with day-weighted compounding rates based on the exact number of days in each month/year. Additionally, it features complex, non-standard rules such as periodic tax-deductible Goodwill impairment (halving every 3rd year), intricate Right-of-Use (RoU) asset splits and depreciation treatments, and two distinct DCF valuation runs (one with a circular iterative WACC and one with a target capital structure WACC). Fully constructing, balancing, and audit-checking this model to accurately answer the 100 precise monthly output questions will take an expert financial modeler about 4 hours.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/RelativeDevelopment/starting_files/RelativeDevelopment.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/RelativeDevelopment/solution_files/RelativeDevelopment - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 49,
+    "task_name": "RevForecast",
+    "task_starting_files": [
+      "data/tasks/task_id=49/starting_files/RevForecast.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=49/solution_files/RevForecast - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:47.137348+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "4-5h",
+      "difficulty_score": 3.1667,
+      "short_description": "Revenue forecasting in three scenarios",
+      "time_assumption_h": 4.05,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 75.0,
+    "ai_time_estimate_reasoning": "This task requires calculating historical year-over-year volume growth rates for 1,000 SKUs over 10 years, taking their averages, and then computing the category-level medians. The modeler must then build three separate multi-year projection models (Base, Declining, and Growth cases) on individual sheets, forecasting both volumes and prices based on scenario-specific growth shares and inflation parameters. Finally, retrieving the answers to the 35 specific questions (covering totals, SKU-specific, and category-specific revenues across various years and cases) requires constructing clean lookup or SUMIFS structures to prevent manual copy-paste errors, bringing the total time to approximately 75 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/RevForecast/starting_files/RevForecast.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/RevForecast/solution_files/RevForecast - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 50,
+    "task_name": "RoadtoZero",
+    "task_starting_files": [
+      "data/tasks/task_id=50/starting_files/RoadtoZero.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=50/solution_files/RoadtoZero - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:47.891982+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for a Constant Principal Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 50.0,
+    "ai_time_estimate_reasoning": "This task requires building a 10-year monthly loan amortization schedule with non-standard compounding (bi-weekly compounding for monthly payments) and beginning-of-period payments under a Constant Principal structure. An expert modeler will need to carefully calculate the effective period rate, set up the 120-month schedule with correct timing for interest accrual and principal payments, and build a summary to answer 25 detailed date-specific and year-specific questions. Setting up the formulas, validating that the balance reaches zero at maturity, and mapping the answers will take approximately 50 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/RoadtoZero/starting_files/RoadtoZero.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/RoadtoZero/solution_files/RoadtoZero - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 51,
+    "task_name": "SAP",
+    "task_starting_files": [
+      "data/tasks/task_id=51/starting_files/SAP.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=51/solution_files/SAP - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:48.280765+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Comparables (Trading Comps)",
+      "time_range": "1-2h",
+      "difficulty_score": 2.3333,
+      "short_description": "Comparables Valuation (classic)",
+      "time_assumption_h": 1.5167,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 35.0,
+    "ai_time_estimate_reasoning": "This valuation task requires setting up a comparable company analysis (CCA) table, calculating five different multiples for ten companies, and handling the exclusion of negative multiples (such as Oracle's P/FCF due to negative FCF) using conditional formulas. Additionally, the modeler must build a valuation bridge for SAP to transition from Enterprise Value to Implied Equity Value (and ultimately Implied Share Price) for the EV-based multiples, while directly calculating Implied Share Price for the equity-based multiples. Setting up these statistical summaries (using PERCENTILE, AVERAGEIF, etc.) and linking them to the Questions sheet will take an experienced modeler approximately 35 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/SAP/starting_files/SAP.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/SAP/solution_files/SAP - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 52,
+    "task_name": "SaaSScenario",
+    "task_starting_files": [
+      "data/tasks/task_id=52/starting_files/SaaSScenario.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=52/solution_files/SaaSScenario - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:48.518276+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "4-5h",
+      "difficulty_score": 3.6667,
+      "short_description": "Forecast for a SaaS company including industry specific metric - in three scenarios",
+      "time_assumption_h": 4.4667,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 85.0,
+    "ai_time_estimate_reasoning": "This task requires building a highly detailed, 20-year monthly SaaS model (240 periods) across three distinct scenario sheets, plus answering 35 specific metric-based questions. The modeler must correctly implement annual inflation adjustments occurring every January relative to a 2025 baseline, handle specific timing rules for customer billing (excluding new and churned customers in the current month's revenue), and compute complex SaaS metrics like LTV, LTV/CAC, CAC Payback, and Cash Runway. Replicating the logic across three cases, ensuring formulas are robust, and precisely linking or looking up the 35 multi-scenario, multi-period questions will take an expert modeler about 85 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/SaaSScenario/starting_files/SaaSScenario.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/SaaSScenario/solution_files/SaaSScenario - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 53,
+    "task_name": "SingleForever",
+    "task_starting_files": [
+      "data/tasks/task_id=53/starting_files/SingleForever.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=53/solution_files/SingleForever - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:48.977902+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Retirement / Savings Calculators",
+      "time_range": "3-4h",
+      "difficulty_score": 3.0,
+      "short_description": "Easy version of Saving Calculation - single person, no debt, birth date given",
+      "time_assumption_h": 3.4333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 60.0,
+    "ai_time_estimate_reasoning": "This wealth management task is highly complex, requiring a multi-decade monthly timeline (~880 periods) tracking personal finances through working life and retirement. Key challenges that will consume time for an expert include modeling the escalating tax brackets (which increase by 1.5% annually at year-end), building a robust bracket-based monthly tax calculation, handling the transition from salary to pension (based on the average of the last 3 years of gross salary), implementing the logic for Cash on Hand scaling and investment sweeps, and converting annual EAR interest and inflation rates to monthly compounded rates. Setting up the dynamic calculations, auditing the formulas, and retrieving the answers for the 30 specific date-based questions will take an expert modeler approximately 60 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/SingleForever/starting_files/SingleForever.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/SingleForever/solution_files/SingleForever - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 54,
+    "task_name": "SpendingPlan",
+    "task_starting_files": [
+      "data/tasks/task_id=54/starting_files/SpendingPlan.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=54/solution_files/SpendingPlan - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:49.424067+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Retirement / Savings Calculators",
+      "time_range": "4-5h",
+      "difficulty_score": 3.3333,
+      "short_description": "Regular financial life plan model including debt, salary raises, tax and inflation in spending categories - the model includes a part two that is a full fletched Combinatorial Scenario Model",
+      "time_assumption_h": 4.7667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 150.0,
+    "ai_time_estimate_reasoning": "This wealth management model is highly complex due to the annual tax bracket indexation (brackets inflating by 2% each year), individual lifestyle and price inflation tracking across 11 expense categories, and a tight cash-flow waterfall that coordinates a dynamic cash liquidity target with prioritized debt repayment (credit card vs. student loan) and investment overflows. Additionally, Task 2 requires generating 7,500 multi-dimensional scenarios. An expert modeler will need to write a VBA macro to loop through these 7,500 combinations, run them through the core model, extract the age-100 net worth results, and bin them using COUNTIFs to answer the scenario questions.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/SpendingPlan/starting_files/SpendingPlan.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/SpendingPlan/solution_files/SpendingPlan - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 55,
+    "task_name": "TBond",
+    "task_starting_files": [
+      "data/tasks/task_id=55/starting_files/TBond.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=55/solution_files/TBond - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:49.807644+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Treasury Bond Valuation",
+      "time_assumption_h": 1.95,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "The task requires constructing a detailed 144-period monthly cash flow schedule for a 12-year bond. It involves calculating exact payment dates using EDATE, applying a specific Act/Act day count convention formula to find the time fraction, and discounting cash flows using annual compounding. Finally, the modeler must build an annual summary table to aggregate the present values by year (from 2028 to 2040) using SUMIFS and link the results to the Questions sheet. An expert modeler would take about 25 minutes to build this dynamically, verify the date math, and ensure the rounding matches the required format.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TBond/starting_files/TBond.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TBond/solution_files/TBond - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 56,
+    "task_name": "TBondII",
+    "task_starting_files": [
+      "data/tasks/task_id=56/starting_files/TBondII.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=56/solution_files/TBondII - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:50.091067+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Treasury Bond Valuation - trap leap year day (02/29)",
+      "time_assumption_h": 1.95,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "The task requires setting up a 200-period quarterly cashflow schedule (50 years) with dynamic dates, coupon calculations, and periodic discounting. Additionally, the modeler must construct an annual summary sheet aggregating the present value of cashflows by calendar year from 2028 to 2078 using SUMIFS formulas, and link these outputs to the 52 questions. An experienced modeler can efficiently set this up using EDATE, YEAR, and SUMIFS functions, with time built in to cross-verify the bond price against Excel's native PV functions.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TBondII/starting_files/TBondII.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TBondII/solution_files/TBondII - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 57,
+    "task_name": "TMobile",
+    "task_starting_files": [
+      "data/tasks/task_id=57/starting_files/TMobile.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=57/solution_files/TMobile - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:50.437367+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Comparables (Trading Comps)",
+      "time_range": "1-2h",
+      "difficulty_score": 2.3333,
+      "short_description": "Comparables Valuation (classic)",
+      "time_assumption_h": 1.7,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 25.0,
+    "ai_time_estimate_reasoning": "This task requires performing a standard comparable company analysis (CCA) for T-Mobile US. An expert modeler will need to calculate five trading multiples (Price/Sales, EV/Sales, EV/EBITDA, P/E, and P/FCF) for 20 companies, filter out negative/invalid values, and compute statistical benchmarks (percentiles, average, median). Then, they must perform back-valuation calculations to determine the implied share prices for T-Mobile, which requires correctly identifying T-Mobile's net debt to bridge EV and Equity Value for the EV-based multiples. Setting up these formulas dynamically, ensuring proper treatment of negatives, and mapping the outputs to answer the structured questions will take approximately 25 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TMobile/starting_files/TMobile.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TMobile/solution_files/TMobile - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 58,
+    "task_name": "TechVentures",
+    "task_starting_files": [
+      "data/tasks/task_id=58/starting_files/TechVentures.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=58/solution_files/TechVentures - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:50.685251+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Budget vs. Actuals Variance Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.0,
+      "short_description": "Regular Budget vs. Actuals Variance Analysis",
+      "time_assumption_h": 1.05,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 20.0,
+    "ai_time_estimate_reasoning": "The task requires setting up a Budget vs. Actuals Variance Analysis sheet. The modeler must map fifteen line items between the FY2024 Budget and the Statement of PL because the naming conventions differ slightly (e.g., 'Subscription – Enterprise' vs 'Subscription revenue – Enterprise'). Once mapped, the modeler will calculate absolute variances (Actual - Budget) and relative variances using the standard formulas (ensuring proper handling of negative cost values). Finally, the modeler will link the calculated outputs to the fifteen specific questions on the Questions sheet and perform a quick quality check on the signs and percentages.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TechVentures/starting_files/TechVentures.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TechVentures/solution_files/TechVentures - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 59,
+    "task_name": "Telecom",
+    "task_starting_files": [
+      "data/tasks/task_id=59/starting_files/Telecom.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=59/solution_files/Telecom - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:50.924187+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "NAV (Net Asset Value) Modeling",
+      "time_range": "1-2h",
+      "difficulty_score": 2.5,
+      "short_description": "REIT NAV Model - Telecom Towers",
+      "time_assumption_h": 1.95,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 30.0,
+    "ai_time_estimate_reasoning": "This task requires building a structured income statement, FFO/AFFO schedules, and a Net Asset Value (NAV) model for a Telecom REIT. An expert modeler will need to carefully interpret the instructions regarding NOI capitalization (incorporating the straight-line rent adjustment and SG&A allocation), pull the correct current asset and liability items from the Balance Sheet tab, and compute the final NAV, FFO, and AFFO per share metrics. While the calculations are straightforward, mapping the inputs correctly across multiple tabs and ensuring all formula links are robust will take approximately 30 minutes.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Telecom/starting_files/Telecom.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Telecom/solution_files/Telecom - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 60,
+    "task_name": "TheInterestGame",
+    "task_starting_files": [
+      "data/tasks/task_id=60/starting_files/TheInterestGame.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=60/solution_files/TheInterestGame - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:51.323421+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for an Annuity Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 40.0,
+    "ai_time_estimate_reasoning": "This task requires building a highly precise loan amortization schedule with mismatching payment and compounding frequencies (monthly payments vs. quarterly compounding) and an annuity due structure (payments at the beginning of the period). An expert modeler must first calculate the correct effective period interest rate, use the PMT function with the correct arguments, construct a 150-period dynamic amortization table, set up a yearly summary tab, and then link 25 specific date-based queries using INDEX/MATCH or SUMIFS. This requires careful logic verification and formula checking to ensure all interest and principal components reconcile perfectly.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TheInterestGame/starting_files/TheInterestGame.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TheInterestGame/solution_files/TheInterestGame - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 61,
+    "task_name": "TheLiquidityEngine",
+    "task_starting_files": [
+      "data/tasks/task_id=61/starting_files/TheLiquidityEngine.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=61/solution_files/TheLiquidityEngine - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:51.700839+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Working Capital Modeling",
+      "time_range": "3-4h",
+      "difficulty_score": 3.0,
+      "short_description": "Typical (Annual) Working Capital Model including Forecasting, NWC and the CCC",
+      "time_assumption_h": 3.2833,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 55.0,
+    "ai_time_estimate_reasoning": "The task requires setting up a 10-year forecast for working capital based on historical financial statements and specific growth and linking assumptions. The modeler must calculate historical ratios (DSO, DIO, DPO, and various asset/liability accounts as % of sales or COGS), apply a 5-year moving average to project these ratios forward, and then reconstruct the balance sheet items for the forecast period. Additional calculations for Net Working Capital (NWC), Operating NWC, and the Cash Conversion Cycle (CCC) across the entire 20-year period are required to answer the extensive list of questions. An expert modeler will spend about 15 minutes setting up historical analysis, 25 minutes building the dynamic forecast engine, and 15 minutes verifying the outputs and linking them to the questions tab.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TheLiquidityEngine/starting_files/TheLiquidityEngine.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TheLiquidityEngine/solution_files/TheLiquidityEngine - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 62,
+    "task_name": "TheLiquidityLoop",
+    "task_starting_files": [
+      "data/tasks/task_id=62/starting_files/TheLiquidityLoop.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=62/solution_files/TheLiquidityLoop - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:51.946417+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Working Capital Modeling",
+      "time_range": "4-5h",
+      "difficulty_score": 3.3333,
+      "short_description": "Quarterly Working Capital Model including Forecasting (easy), NWC and the CCC including an annual summary",
+      "time_assumption_h": 4.1667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 110.0,
+    "ai_time_estimate_reasoning": "An expert modeler will need about 110 minutes to complete this task. The model requires setting up a 15-year quarterly timeline (12 historical and 48 forecast quarters) and forecasting multiple balance sheet accounts. Key complexities include converting annual growth rates into quarterly equivalents, implementing a custom weighted-average basis (weights 1, 2, 3, 4) from the historical data, and mapping specific operating and non-operating line items for Net Working Capital (NWC), Operating Net Working Capital (ONWC), and Cash Conversion Cycle (CCC) calculations. Furthermore, translating these quarterly metrics into annualized KPIs and answering the 36 precise questions in the 'Questions' sheet requires meticulous referencing and verification.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TheLiquidityLoop/starting_files/TheLiquidityLoop.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TheLiquidityLoop/solution_files/TheLiquidityLoop - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 63,
+    "task_name": "TheLoanJourney",
+    "task_starting_files": [
+      "data/tasks/task_id=63/starting_files/TheLoanJourney.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=63/solution_files/TheLoanJourney - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:52.322409+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for a Constant Principal Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 40.0,
+    "ai_time_estimate_reasoning": "Building this model requires setting up a 25-year weekly amortization schedule (1,300 periods) with dynamic weekly date generation starting from October 1, 2027. The modeler must correctly calculate the weekly interest rate under annual compounding—typically $(1 + 5\\%)^{1/52} - 1$—and structure a Constant Principal Loan where the principal reduction is flat across all periods down to a $100,000 residual balance. Answering the questions will then require implementing robust lookup formulas (like XLOOKUP or INDEX/MATCH) to query exact weekly dates and SUMIFS to aggregate annual figures, followed by a thorough check of the date alignments and interest compounding logic.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TheLoanJourney/starting_files/TheLoanJourney.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TheLoanJourney/solution_files/TheLoanJourney - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 64,
+    "task_name": "ThePayoffPlan",
+    "task_starting_files": [
+      "data/tasks/task_id=64/starting_files/ThePayoffPlan.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=64/solution_files/ThePayoffPlan - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:52.635300+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Loan Amortization Schedules",
+      "time_range": "2-3h",
+      "difficulty_score": 3.5,
+      "short_description": "Loan Amortization Schedule for an Annuity Loan",
+      "time_assumption_h": 2.6833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 40.0,
+    "ai_time_estimate_reasoning": "This task requires building a highly precise, dynamic amortization schedule with semi-monthly payments, monthly compounding, and payments at the beginning of each period (annuity due). An expert modeler needs to calculate the correct semi-monthly equivalent interest rate, handle semi-monthly date logic (switching between the 1st and 15th of each month), implement the correct annuity due payment formula with a non-zero salvage/remaining balance, and set up lookups and SUMIFS to answer the 25 specific questions across various dates and years.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/ThePayoffPlan/starting_files/ThePayoffPlan.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/ThePayoffPlan/solution_files/ThePayoffPlan - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 65,
+    "task_name": "ThreeCars",
+    "task_starting_files": [
+      "data/tasks/task_id=65/starting_files/ThreeCars.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=65/solution_files/ThreeCars - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:52.922430+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Sum-of-the-Parts Valuation",
+      "time_range": "3-4h",
+      "difficulty_score": 3.1667,
+      "short_description": "3*DCF for all parts",
+      "time_assumption_h": 3.6667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": 70.0,
+    "ai_time_estimate_reasoning": "This is a complex Sum-of-the-Parts (SOTP) valuation involving three distinct business lines, which requires calculating free cash flows to the firm (FCFF) using balance sheet and income statement items, setting up an iterative circular WACC calculation, and modeling a two-stage terminal value for the EV segment alongside standard terminal values for the other two. Additionally, the modeler must calculate a consolidated tax rate across the segments, transition the discounted cash flows from the valuation basis date to the valuation date using a precise day-count compounding factor, and resolve the circular loop between the market value of equity and the WACC weights. A seasoned modeler would require around 70 minutes to carefully structure the sheets, implement the iterative formulas, verify convergence, and map the outputs to the questionnaire.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/ThreeCars/starting_files/ThreeCars.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/ThreeCars/solution_files/ThreeCars - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 66,
+    "task_name": "Volkswagen",
+    "task_starting_files": [
+      "data/tasks/task_id=66/starting_files/Volkswagen.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=66/solution_files/Volkswagen - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:53.173768+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Comparables (Trading Comps)",
+      "time_range": "2-3h",
+      "difficulty_score": 2.3333,
+      "short_description": "Comparables Valuation (classic)",
+      "time_assumption_h": 2.2167,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": 35.0,
+    "ai_time_estimate_reasoning": "This task requires implementing a two-stage filtering process for four valuation multiples across 21 peer companies: first, removing negative/undefined values, and second, removing outliers strictly beyond one population standard deviation from the clean average. An expert modeler will need to build structured helper columns to handle these calculations cleanly. Additionally, the modeler must calculate Volkswagen's net debt to correctly translate implied Enterprise Values into implied share prices before mapping the 16 resulting combinations to the final Questions sheet. The complexity lies in formula precision and avoiding errors in the statistical filtering.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Volkswagen/starting_files/Volkswagen.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Volkswagen/solution_files/Volkswagen - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 67,
+    "task_name": "WinzigweichCorp",
+    "task_starting_files": [
+      "data/tasks/task_id=67/starting_files/WinzigweichCorp.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=67/solution_files/WinzigweichCorp - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-06-11T20:17:53.448173+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "3-4h",
+      "difficulty_score": 3.5,
+      "short_description": "Small DCF (no forecasting, estimates given) with two-stage TV and sensitivity analysis regarding three factors (combinatorial sensitivity analysis)",
+      "time_assumption_h": 3.6667,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": 80.0,
+    "ai_time_estimate_reasoning": "The task requires constructing a comprehensive DCF model with several complex elements: reconstructing Free Cash Flows from high-level balance sheet and income statement items (computing NWC and Capex), setting up an iterative WACC loop that resolves circularity via Excel's iterative calculation, discounting cash flows to a non-standard valuation date using fractional periods, and modeling a two-stage terminal value. Furthermore, because the sensitivity analysis requires varying three distinct inputs (g1 rate, g1 end year, and g2 rate) across 35 unique scenarios, a standard Excel Data Table cannot be used directly. The modeler will need to write a VBA macro or build a complex multi-variable formula scenario manager to populate the answers efficiently, adding significant time for setup and verification.",
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/WinzigweichCorp/starting_files/WinzigweichCorp.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/WinzigweichCorp/solution_files/WinzigweichCorp - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 68,
+    "task_name": "FXArbitrage",
+    "task_starting_files": [
+      "data/tasks/task_id=68/starting_files/FXArbitrage.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=68/solution_files/FXArbitrage - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-07-03T15:55:08.315341+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Non-Financial or Non-FP&A Model",
+      "time_range": "16-20h",
+      "difficulty_score": 4.8333,
+      "short_description": "FX Arbitrage Model based on the Bellman-Ford Algorithm",
+      "time_assumption_h": 16.7333,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FXArbitrage/starting_files/FXArbitrage.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FXArbitrage/solution_files/FXArbitrage - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 69,
+    "task_name": "8Options",
+    "task_starting_files": [
+      "data/tasks/task_id=69/starting_files/8Options.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=69/solution_files/8Options - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Retirement / Savings Calculators",
+      "time_range": "16-20h",
+      "difficulty_score": 5.3333,
+      "short_description": "Very Extensive Retirement Forecast Model in 8 Cases including complex tax and investment treatment",
+      "time_assumption_h": 19.5167,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/8Options/starting_files/8Options.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/8Options/solution_files/8Options - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 70,
+    "task_name": "BondFund",
+    "task_starting_files": [
+      "data/tasks/task_id=70/starting_files/BondFund.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=70/solution_files/BondFund - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "NAV (Net Asset Value) Modeling",
+      "time_range": "3-4h",
+      "difficulty_score": 3.8333,
+      "short_description": "NAV model for a fund consisting of bonds - combination of bond valuation and NAV modeling",
+      "time_assumption_h": 3.4333,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/BondFund/starting_files/BondFund.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/BondFund/solution_files/BondFund - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 71,
+    "task_name": "BrazGov",
+    "task_starting_files": [
+      "data/tasks/task_id=71/starting_files/BrazGov.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=71/solution_files/BrazGov - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.8333,
+      "short_description": "Classical Corp Bond Valuation with ANBIMA Business/252 compounding",
+      "time_assumption_h": 1.95,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/BrazGov/starting_files/BrazGov.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/BrazGov/solution_files/BrazGov - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 72,
+    "task_name": "BrightwaveTechnologies",
+    "task_starting_files": [
+      "data/tasks/task_id=72/starting_files/BrightwaveTechnologies.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=72/solution_files/BrightwaveTechnologies - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Ratio Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.5,
+      "short_description": "Regular Ratio Analysis with provided IS/ BS",
+      "time_assumption_h": 1.9667,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/BrightwaveTechnologies/starting_files/BrightwaveTechnologies.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/BrightwaveTechnologies/solution_files/BrightwaveTechnologies - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 73,
+    "task_name": "CFForecast",
+    "task_starting_files": [
+      "data/tasks/task_id=73/starting_files/CFForecast.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=73/solution_files/CFForecast - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Forecasting Model",
+      "time_range": "12-16h",
+      "difficulty_score": 5.1667,
+      "short_description": "Very complex forecasting model based on operations and interest conventions - including annual overview",
+      "time_assumption_h": 12.5167,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CFForecast/starting_files/CFForecast.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CFForecast/solution_files/CFForecast - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 74,
+    "task_name": "CFQuarterly",
+    "task_starting_files": [
+      "data/tasks/task_id=74/starting_files/CFQuarterly.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=74/solution_files/CFQuarterly - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Forecasting Model",
+      "time_range": "9-12h",
+      "difficulty_score": 4.8333,
+      "short_description": "(Very) Complex forecasting model based on operations and interest conventions - including annual overview",
+      "time_assumption_h": 9.8667,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CFQuarterly/starting_files/CFQuarterly.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CFQuarterly/solution_files/CFQuarterly - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 75,
+    "task_name": "CanCorp",
+    "task_starting_files": [
+      "data/tasks/task_id=75/starting_files/CanCorp.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=75/solution_files/CanCorp - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.8333,
+      "short_description": "Classical Corp Bond Valuation with Canadian Compounding Method",
+      "time_assumption_h": 1.9833,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CanCorp/starting_files/CanCorp.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CanCorp/solution_files/CanCorp - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 76,
+    "task_name": "CorpBondIII",
+    "task_starting_files": [
+      "data/tasks/task_id=76/starting_files/CorpBondIII.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=76/solution_files/CorpBondIII - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Corporate Bond Valuation",
+      "time_assumption_h": 1.7,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/CorpBondIII/starting_files/CorpBondIII.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/CorpBondIII/solution_files/CorpBondIII - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 77,
+    "task_name": "DailyDetail",
+    "task_starting_files": [
+      "data/tasks/task_id=77/starting_files/DailyDetail.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=77/solution_files/DailyDetail - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "12-16h",
+      "difficulty_score": 5.3333,
+      "short_description": "Very complex and extensive debt waterfall model - daily model including interest conventions and additional annual overview; model includes FCF forecasting and specific payout rules (Treasury elements)",
+      "time_assumption_h": 13.1,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DailyDetail/starting_files/DailyDetail.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DailyDetail/solution_files/DailyDetail - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 78,
+    "task_name": "DailyExtreme",
+    "task_starting_files": [
+      "data/tasks/task_id=78/starting_files/DailyExtreme.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=78/solution_files/DailyExtreme - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "20-25h",
+      "difficulty_score": 5.3333,
+      "short_description": "VERY Large 3-Statement Model with extensive CF Forecasting",
+      "time_assumption_h": 20.25,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DailyExtreme/starting_files/DailyExtreme.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DailyExtreme/solution_files/DailyExtreme - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 79,
+    "task_name": "DayMonthYear",
+    "task_starting_files": [
+      "data/tasks/task_id=79/starting_files/DayMonthYear.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=79/solution_files/DayMonthYear - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "9-12h",
+      "difficulty_score": 4.3333,
+      "short_description": "Very Extensive DCF with several submodels and two calculation ways",
+      "time_assumption_h": 9.1667,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/DayMonthYear/starting_files/DayMonthYear.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/DayMonthYear/solution_files/DayMonthYear - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 80,
+    "task_name": "EURCorp",
+    "task_starting_files": [
+      "data/tasks/task_id=80/starting_files/EURCorp.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=80/solution_files/EURCorp - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Corp Bond Valuation with 30/360E compounding",
+      "time_assumption_h": 1.7,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/EURCorp/starting_files/EURCorp.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/EURCorp/solution_files/EURCorp - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 81,
+    "task_name": "EasyRev",
+    "task_starting_files": [
+      "data/tasks/task_id=81/starting_files/EasyRev.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=81/solution_files/EasyRev - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Forecasting Model",
+      "time_range": "30min-1h",
+      "difficulty_score": 2.0,
+      "short_description": "Small Forecasting Backtest using MAE/MAPE",
+      "time_assumption_h": 0.7667,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/EasyRev/starting_files/EasyRev.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/EasyRev/solution_files/EasyRev - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 82,
+    "task_name": "EasyTarget",
+    "task_starting_files": [
+      "data/tasks/task_id=82/starting_files/EasyTarget.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=82/solution_files/EasyTarget - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "1-2h",
+      "difficulty_score": 3.0,
+      "short_description": "Small DCF (no forecasting, estimates given, target capital structure)",
+      "time_assumption_h": 1.9333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/EasyTarget/starting_files/EasyTarget.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/EasyTarget/solution_files/EasyTarget - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 83,
+    "task_name": "Equal",
+    "task_starting_files": [
+      "data/tasks/task_id=83/starting_files/Equal.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=83/solution_files/Equal - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "3-4h",
+      "difficulty_score": 3.6667,
+      "short_description": "Scenario backtesting for a equal weighted fund",
+      "time_assumption_h": 3.6333,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Equal/starting_files/Equal.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Equal/solution_files/Equal - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 84,
+    "task_name": "FixedDetailed",
+    "task_starting_files": [
+      "data/tasks/task_id=84/starting_files/FixedDetailed.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=84/solution_files/FixedDetailed - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "NAV (Net Asset Value) Modeling",
+      "time_range": "7-9h",
+      "difficulty_score": 4.6667,
+      "short_description": "NAV model for a fund consisting of bonds - combination of bond valuation and NAV modeling including extensive CF model",
+      "time_assumption_h": 7.4167,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FixedDetailed/starting_files/FixedDetailed.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FixedDetailed/solution_files/FixedDetailed - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 85,
+    "task_name": "FundRebalancing",
+    "task_starting_files": [
+      "data/tasks/task_id=85/starting_files/FundRebalancing.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=85/solution_files/FundRebalancing - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "5-7h",
+      "difficulty_score": 4.1667,
+      "short_description": "Scenario backtesting for a weighting capped fund (weighting inputs are the alternating factor)",
+      "time_assumption_h": 5.3833,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/FundRebalancing/starting_files/FundRebalancing.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/FundRebalancing/solution_files/FundRebalancing - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 86,
+    "task_name": "HouseorFlat",
+    "task_starting_files": [
+      "data/tasks/task_id=86/starting_files/HouseorFlat.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=86/solution_files/HouseorFlat - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Rent vs. Buy Analysis",
+      "time_range": "7-9h",
+      "difficulty_score": 3.3333,
+      "short_description": "Rent vs. Buy Analysis - extensive tax involvement + multiple comparison models",
+      "time_assumption_h": 7.2833,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/HouseorFlat/starting_files/HouseorFlat.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/HouseorFlat/solution_files/HouseorFlat - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 87,
+    "task_name": "LargeBalance",
+    "task_starting_files": [
+      "data/tasks/task_id=87/starting_files/LargeBalance.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=87/solution_files/LargeBalance - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "7-9h",
+      "difficulty_score": 4.3333,
+      "short_description": "Extensive relative 3-Statement Model",
+      "time_assumption_h": 8.6333,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/LargeBalance/starting_files/LargeBalance.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/LargeBalance/solution_files/LargeBalance - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 88,
+    "task_name": "MeridianOutdoor",
+    "task_starting_files": [
+      "data/tasks/task_id=88/starting_files/MeridianOutdoor.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=88/solution_files/MeridianOutdoor - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Budget vs. Actuals Variance Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.0,
+      "short_description": "Regular Budget vs. Actuals Variance Analysis",
+      "time_assumption_h": 1.05,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/MeridianOutdoor/starting_files/MeridianOutdoor.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/MeridianOutdoor/solution_files/MeridianOutdoor - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 89,
+    "task_name": "Momentum",
+    "task_starting_files": [
+      "data/tasks/task_id=89/starting_files/Momentum.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=89/solution_files/Momentum - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Scenario / Sensitivity Analysis",
+      "time_range": "9-12h",
+      "difficulty_score": 4.8333,
+      "short_description": "Scenario backtesting for a momentum fund; oriented at MSCI Momentum Indizes methodology",
+      "time_assumption_h": 10.0333,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Momentum/starting_files/Momentum.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Momentum/solution_files/Momentum - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 90,
+    "task_name": "MonthlyDCF",
+    "task_starting_files": [
+      "data/tasks/task_id=90/starting_files/MonthlyDCF.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=90/solution_files/MonthlyDCF - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "7-9h",
+      "difficulty_score": 4.3333,
+      "short_description": "Extensive DCF based on % dev with two submodels and two calculation ways",
+      "time_assumption_h": 8.1667,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/MonthlyDCF/starting_files/MonthlyDCF.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/MonthlyDCF/solution_files/MonthlyDCF - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 91,
+    "task_name": "MonthlyMonthly",
+    "task_starting_files": [
+      "data/tasks/task_id=91/starting_files/MonthlyMonthly.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=91/solution_files/MonthlyMonthly - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "7-9h",
+      "difficulty_score": 3.0,
+      "short_description": "3-SM based on percentages + plug without extensive forecasting",
+      "time_assumption_h": 8.2,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/MonthlyMonthly/starting_files/MonthlyMonthly.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/MonthlyMonthly/solution_files/MonthlyMonthly - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 92,
+    "task_name": "MultipleStages",
+    "task_starting_files": [
+      "data/tasks/task_id=92/starting_files/MultipleStages.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=92/solution_files/MultipleStages - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "DCF (Discounted Cash Flow)",
+      "time_range": "2-3h",
+      "difficulty_score": 3.1667,
+      "short_description": "Small DCF (no forecasting, estimates given, target capital structure) - deriving the assumptions from a large sheet + 2-stage TV",
+      "time_assumption_h": 2.7333,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/MultipleStages/starting_files/MultipleStages.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/MultipleStages/solution_files/MultipleStages - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 93,
+    "task_name": "Nike",
+    "task_starting_files": [
+      "data/tasks/task_id=93/starting_files/Nike.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=93/solution_files/Nike - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Comparables (Trading Comps)",
+      "time_range": "2-3h",
+      "difficulty_score": 2.3333,
+      "short_description": "Comparables Valuation (classic)",
+      "time_assumption_h": 2.6667,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Nike/starting_files/Nike.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Nike/solution_files/Nike - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 94,
+    "task_name": "OnlyOperational",
+    "task_starting_files": [
+      "data/tasks/task_id=94/starting_files/OnlyOperational.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=94/solution_files/OnlyOperational - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Forecasting Model",
+      "time_range": "5-7h",
+      "difficulty_score": 3.5,
+      "short_description": "Fairly simple forcasting model",
+      "time_assumption_h": 5.6333,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/OnlyOperational/starting_files/OnlyOperational.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/OnlyOperational/solution_files/OnlyOperational - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 95,
+    "task_name": "OperationsWeekly",
+    "task_starting_files": [
+      "data/tasks/task_id=95/starting_files/OperationsWeekly.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=95/solution_files/OperationsWeekly - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Forecasting Model",
+      "time_range": "7-9h",
+      "difficulty_score": 3.5,
+      "short_description": "Fairly simple forcasting model",
+      "time_assumption_h": 7.1,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/OperationsWeekly/starting_files/OperationsWeekly.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/OperationsWeekly/solution_files/OperationsWeekly - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 96,
+    "task_name": "PercentageDevelopment",
+    "task_starting_files": [
+      "data/tasks/task_id=96/starting_files/PercentageDevelopment.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=96/solution_files/PercentageDevelopment - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "3-Statement Model",
+      "time_range": "5-7h",
+      "difficulty_score": 3.5,
+      "short_description": "3-SM based on percentages + plug without extensive forecasting",
+      "time_assumption_h": 5.45,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/PercentageDevelopment/starting_files/PercentageDevelopment.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/PercentageDevelopment/solution_files/PercentageDevelopment - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 97,
+    "task_name": "Pharma",
+    "task_starting_files": [
+      "data/tasks/task_id=97/starting_files/Pharma.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=97/solution_files/Pharma - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Easy",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Comparables (Trading Comps)",
+      "time_range": "2-3h",
+      "difficulty_score": 2.3333,
+      "short_description": "Comparables Valuation (classic)",
+      "time_assumption_h": 2.6333,
+      "difficulty_category": "Easy"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/Pharma/starting_files/Pharma.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/Pharma/solution_files/Pharma - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 98,
+    "task_name": "SmallRiver",
+    "task_starting_files": [
+      "data/tasks/task_id=98/starting_files/SmallRiver.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=98/solution_files/SmallRiver - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Debt Schedule / Waterfall Modeling",
+      "time_range": "7-9h",
+      "difficulty_score": 5.3333,
+      "short_description": "Small debt waterfall model - monthly model including interest conventions and annual overview",
+      "time_assumption_h": 7.3333,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/SmallRiver/starting_files/SmallRiver.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/SmallRiver/solution_files/SmallRiver - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 99,
+    "task_name": "TAM",
+    "task_starting_files": [
+      "data/tasks/task_id=99/starting_files/TAM.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=99/solution_files/TAM - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium-Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Forecasting Model",
+      "time_range": "5-7h",
+      "difficulty_score": 3.6667,
+      "short_description": "TAM forecast based on different population forecasts",
+      "time_assumption_h": 5.7333,
+      "difficulty_category": "Medium-Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TAM/starting_files/TAM.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TAM/solution_files/TAM - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 100,
+    "task_name": "TBondIII",
+    "task_starting_files": [
+      "data/tasks/task_id=100/starting_files/TBondIII.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=100/solution_files/TBondIII - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Medium",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Bond Pricing / Yield Curve Analysis",
+      "time_range": "1-2h",
+      "difficulty_score": 2.6667,
+      "short_description": "Classical Treasury Bond Valuation",
+      "time_assumption_h": 1.95,
+      "difficulty_category": "Medium"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TBondIII/starting_files/TBondIII.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TBondIII/solution_files/TBondIII - Solution.xlsx"
+      ]
+    }
+  },
+  {
+    "id": 101,
+    "task_name": "TwoNOne",
+    "task_starting_files": [
+      "data/tasks/task_id=101/starting_files/TwoNOne.xlsx"
+    ],
+    "task_solution_files": [
+      "data/tasks/task_id=101/solution_files/TwoNOne - Solution.xlsx"
+    ],
+    "task_source": "v2",
+    "deprecated": false,
+    "deprecated_reason": null,
+    "created_at": "2026-09-04T22:46:48.341588+00:00",
+    "updated_at": "2026-09-09T01:42:54.511087+00:00",
+    "human_difficulty_measure": "Hard",
+    "case_classification": {
+      "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+      "model_type": "Sum-of-the-Parts Valuation",
+      "time_range": "25-30h",
+      "difficulty_score": 5.3333,
+      "short_description": "Two very Large 3-Statement Model with extensive CF Forecasting --> DCF (it.) + Comparables",
+      "time_assumption_h": 28.65,
+      "difficulty_category": "Hard"
+    },
+    "ai_time_estimate_min": null,
+    "ai_time_estimate_reasoning": null,
+    "s3_keys": {
+      "task_starting_files": [
+        "SpreadsheetSmith/tasks/TwoNOne/starting_files/TwoNOne.xlsx"
+      ],
+      "task_solution_files": [
+        "SpreadsheetSmith/tasks/TwoNOne/solution_files/TwoNOne - Solution.xlsx"
+      ]
+    }
+  }
+]

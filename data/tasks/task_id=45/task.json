@@ -1,0 +1,35 @@
+{
+  "id": 45,
+  "task_name": "PropertyPathways",
+  "task_starting_files": [
+    "data/tasks/task_id=45/starting_files/PropertyPathways.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=45/solution_files/PropertyPathways - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:45.645459+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Rent vs. Buy Analysis",
+    "time_range": "5-7h",
+    "difficulty_score": 3.3333,
+    "short_description": "Regular Rent vs. Buy Analysis - little bit more extensive tax involvement + time lag",
+    "time_assumption_h": 6.1667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 135.0,
+  "ai_time_estimate_reasoning": "This is a highly detailed personal finance and wealth management model spanning 80 years on a monthly basis. The complexity lies in modeling the dynamic renting-vs-owning cash flow differentials that drive the investment schedules, the separate inflation rates starting at specific dates, and the complex progressive tax system which requires doubling the brackets for married couples, inflating both the brackets and solidarity surcharge thresholds by 2% annually, and calculating hypothetical taxes on home appreciation and investment yields. An expert modeler will need substantial time to carefully structure the tax formulas and verify the exact outputs for the 35 specific questions.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/PropertyPathways/starting_files/PropertyPathways.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/PropertyPathways/solution_files/PropertyPathways - Solution.xlsx"
+    ]
+  }
+}

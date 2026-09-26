@@ -1,0 +1,35 @@
+{
+  "id": 20,
+  "task_name": "EasyDCF",
+  "task_starting_files": [
+    "data/tasks/task_id=20/starting_files/EasyDCF.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=20/solution_files/EasyDCF - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:29.352918+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "DCF (Discounted Cash Flow)",
+    "time_range": "1-2h",
+    "difficulty_score": 3.0,
+    "short_description": "Small DCF (no forecasting, estimates given)",
+    "time_assumption_h": 1.9,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 45.0,
+  "ai_time_estimate_reasoning": "This task requires building a 10-year DCF model with several advanced features: calculating NWC and Capex from balance sheet data, finding a constant tax rate using a historical/forecast average, implementing a time-weighted average for the normalized terminal FCFF, applying the mid-year convention (including for the terminal value), and rolling forward the enterprise value to the valuation date using day counts. Crucially, the model requires an iterative WACC loop because the market value of equity (used in WACC weights) depends on the resulting valuation, needing either Excel's iterative calculation option or an algebraic shortcut. A competent expert would take about 45 minutes to build, check, and refine this model.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/EasyDCF/starting_files/EasyDCF.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/EasyDCF/solution_files/EasyDCF - Solution.xlsx"
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": 83,
+  "task_name": "Equal",
+  "task_starting_files": [
+    "data/tasks/task_id=83/starting_files/Equal.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=83/solution_files/Equal - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Scenario / Sensitivity Analysis",
+    "time_range": "3-4h",
+    "difficulty_score": 3.6667,
+    "short_description": "Scenario backtesting for a equal weighted fund",
+    "time_assumption_h": 3.6333,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/Equal/starting_files/Equal.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/Equal/solution_files/Equal - Solution.xlsx"
+    ]
+  }
+}

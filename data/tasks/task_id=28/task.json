@@ -1,0 +1,35 @@
+{
+  "id": 28,
+  "task_name": "FruitJuice_3-Statement-Model - v2",
+  "task_starting_files": [
+    "data/tasks/task_id=28/starting_files/FruitJuice- 3-Statement Model.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=28/solution_files/FruitJuice- 3-Statement Model - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:32.023265+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "3-Statement Model",
+    "time_range": "16-20h",
+    "difficulty_score": 4.8333,
+    "short_description": "3-SM for a company producing fruit juices and beverages",
+    "time_assumption_h": 17.5,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 360.0,
+  "ai_time_estimate_reasoning": "This is an exceptionally complex FP&A and 3-statement modeling task that spans 69 SKUs and 24 raw materials across a 120-month forecast horizon. It requires building complex nested logic for dynamic machinery capex additions (triggered by an 80% capacity utilization cap), intricate energy consumption calculations based on machine runtimes, seasonal ingredient pricing mapping, a dynamic labor staffing model, and exact-date working capital (CCC) cycles. Additionally, integrating the 3-statements with seasonal tax payouts, 95% dividend distribution logic in specific months, and circular cash interest calculations makes this a heavyweight modeling test that would take an expert modeler approximately 6 hours of highly focused building and auditing to complete without errors.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FruitJuice_3-Statement-Model - v2/starting_files/FruitJuice- 3-Statement Model.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FruitJuice_3-Statement-Model - v2/solution_files/FruitJuice- 3-Statement Model - Solution.xlsx"
+    ]
+  }
+}

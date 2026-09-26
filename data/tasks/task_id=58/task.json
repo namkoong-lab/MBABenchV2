@@ -1,0 +1,35 @@
+{
+  "id": 58,
+  "task_name": "TechVentures",
+  "task_starting_files": [
+    "data/tasks/task_id=58/starting_files/TechVentures.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=58/solution_files/TechVentures - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:50.685251+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Easy",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Budget vs. Actuals Variance Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.0,
+    "short_description": "Regular Budget vs. Actuals Variance Analysis",
+    "time_assumption_h": 1.05,
+    "difficulty_category": "Easy"
+  },
+  "ai_time_estimate_min": 20.0,
+  "ai_time_estimate_reasoning": "The task requires setting up a Budget vs. Actuals Variance Analysis sheet. The modeler must map fifteen line items between the FY2024 Budget and the Statement of PL because the naming conventions differ slightly (e.g., 'Subscription – Enterprise' vs 'Subscription revenue – Enterprise'). Once mapped, the modeler will calculate absolute variances (Actual - Budget) and relative variances using the standard formulas (ensuring proper handling of negative cost values). Finally, the modeler will link the calculated outputs to the fifteen specific questions on the Questions sheet and perform a quick quality check on the signs and percentages.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TechVentures/starting_files/TechVentures.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TechVentures/solution_files/TechVentures - Solution.xlsx"
+    ]
+  }
+}

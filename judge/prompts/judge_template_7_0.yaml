@@ -1,0 +1,341 @@
+## Shared entry definitions (anchors only — not read by compile_prompt)
+_shared:
+  attempt_intro: &attempt_intro
+    type: msg
+    role: user
+    content: "You will now receive the files for the AI attempt."
+  attempt_placeholder: &attempt_placeholder
+    type: placeholder
+    name: ai_attempt_messages
+    description: list of messages containing the CSV content for the AI attempt workbook, with sheet names.
+    role: user
+  context_intro: &context_intro
+    type: msg
+    role: user
+    content: "You will now receive the context files for the case."
+    optional: true
+    parameters:
+      - name: "context_messages"
+        nullable: false
+  context_placeholder: &context_placeholder
+    type: placeholder
+    name: context_messages
+    description: list of messages containing the context information for the case, with file names or other context as needed.
+    role: user
+    optional: true
+  accuracy_criteria: &accuracy_criteria
+    type: msg
+    role: user
+    parameters:
+      - name: "ai_attempt"
+        nullable: false
+      - name: "solution_sheet"
+        nullable: false
+      - name: "accuracy_checks"
+        nullable: false
+    content: |-
+      Accuracy Criteria
+
+      Goal: Utilize the CSVs to assess the accuracy of the calculations. If a formula is the cause of a mistake, write what the formula should be. Hardcoding is not considered and accuracy mistake. Use the golden solution as a ground truth.
+
+      Procedure:
+
+      Identify all output ranges/sheets used for grading (tables, KPIs, line items) in {{ solution_sheet }} and {{ ai_attempt }}.
+
+      For each output/calculation cell, compare {{ ai_attempt }} vs {{ solution_sheet }} and record any mismatch.
+
+      {{accuracy_checks}}
+  system_msg_no_solution: &system_msg_no_solution
+    type: msg
+    role: system
+    parameters:
+      - name: "ai_attempt"
+        nullable: false
+      - name: "context"
+        nullable: true
+    content: |-
+      You are an Excel case-study judge. Evaluate the student's attempt workbook, named {{ ai_attempt }}.
+
+      Inputs
+      Student Attempt: {{ ai_attempt }}
+      Case Context: {{ context }}
+
+      The excel files will be provided to you in an "enhanced CSV" format. This will have the form [Cell] Value [Formatting information]|Formula.
+
+      Example: "[J35]0.03 [FORMAT:0.0%]|FORMULA:=A27/100|FORMAT:font:Roboto;size:10.0;textcolor:cyan (0085B2);bgcolor:orange (FFCC99);halign:center;border:bottom:thin,left:thin,right:thin"
+
+      The above represents Cell J35, which has value 0.03, formatted in percentages with one decimal point, has formula =A27/100, has font Roboto, size 10, textcolor cyan, background color orange, horizontal and center align, with thin borders on all sides.
+
+      Important implementation notes:
+      You will be provided with the evaluation criteria one at a time. For each criteria, use the list of checks as guidelines for judging the workbook.
+      For each criteria, use this logical process:
+      First, evaluate the context of the case to understand what is expected.
+      Second, evaluate the workbook on each check one at a time.
+      Third, re-evaluate your judgment for the criteria to ensure you are accurate.
+
+      Fourth and finally, for each check, you must write your evaluation in JSON format.
+
+      Your output must be valid JSON following this exact structure. IMPORTANT: Use only the category name as the key (e.g., "Accuracy", "Formula", "Formatting"), NOT "Accuracy Criteria" or similar.
+
+      ```json
+      {
+        "<Category>": [
+          {
+            "check": "A",
+            "decision": "Pass or Fail",
+            "summary": "A one sentence summary of your evaluation",
+            "mistakes": [
+              {
+                "description": "Short error description",
+                "location": "Sheet!Cell",
+                "explanation": "Longer, up to five sentences, explanation",
+                "expected": "Expected result or correct answer"
+              }
+            ],
+            "total_mistakes": 0
+          },
+          {
+            "check": "B",
+            "decision": "Pass or Fail",
+            "summary": "A one sentence summary of your evaluation",
+            "mistakes": [
+              {
+                "description": "Short error description",
+                "location": "Sheet!Cell",
+                "explanation": "Longer, up to five sentences, explanation",
+                "expected": "Expected result or correct answer"
+              }
+            ],
+            "total_mistakes": 0
+          }
+        ]
+      }
+      ```
+
+      Example for Accuracy criteria with two checks:
+
+      ```json
+      {
+        "Accuracy": [
+          {
+            "check": "A",
+            "decision": "Fail",
+            "summary": "Revenue calculations contain errors in Q2 projections.",
+            "mistakes": [
+              {
+                "description": "Incorrect revenue formula",
+                "location": "Model!D15",
+                "explanation": "The formula references the wrong cell for unit price, causing a 15% variance in projected revenue.",
+                "expected": "=B15*C15 instead of =B15*C14"
+              }
+            ],
+            "total_mistakes": 1
+          },
+          {
+            "check": "B",
+            "decision": "Pass",
+            "summary": "All expense calculations are accurate.",
+            "mistakes": [],
+            "total_mistakes": 0
+          }
+        ]
+      }
+      ```
+
+      Use CSV to parse values in the workbook; use the provided CSVs to parse formulas. Do not render/print workbooks to PDF.
+      The file name of the CSV will be given before the file is uploaded to you. Use that name for all evaluations. Use exactly that name in your evaluation when locating mistakes.
+      When listing differences, be specific (sheet, cell(s), formula, expected vs actual). List all mistakes; do not summarize or omit.
+
+judge_prompt:
+  # =========================================================================
+  # Stage 0: Accuracy  (needs solution + attempt + context)
+  # =========================================================================
+  - type: msg
+    role: system
+    parameters:
+      - name: "ai_attempt"
+        nullable: false
+      - name: "solution_sheet"
+        nullable: false
+      - name: "context"
+        nullable: true
+    content: |-
+      You are an Excel case-study judge. Compare the student's attempt workbook, named {{ ai_attempt }}, with a golden solution workbook, named {{ solution_sheet }}.
+
+      Inputs
+      Golden Workbook: {{ solution_sheet }}
+      Student Attempt: {{ ai_attempt }}
+      Case Context: {{ context }}
+
+      The excel files will be provided to you in an "enhanced CSV" format. This will have the form [Cell] Value [Formatting information]|Formula.
+
+      Example: "[J35]0.03 [FORMAT:0.0%]|FORMULA:=A27/100|FORMAT:font:Roboto;size:10.0;textcolor:cyan (0085B2);bgcolor:orange (FFCC99);halign:center;border:bottom:thin,left:thin,right:thin"
+
+      The above represents Cell J35, which has value 0.03, formatted in percentages with one decimal point, has formula =A27/100, has font Roboto, size 10, textcolor cyan, background color orange, horizontal and center align, with thin borders on all sides.
+
+      Important implementation notes:
+      You will be provided with the evaluation criteria one at a time. For each criteria, use the list of checks as guidelines for judging the workbook.
+      For each criteria, use this logical process:
+      First, evaluate the context of the case to understand what is expected.
+      Second, evaluate the workbook on each check one at a time.
+      Third, re-evaluate your judegement for the criteria to ensure you are accurate.
+
+      Fourth and finally, for each check, you must write your evaluation in JSON format.
+
+      Your output must be valid JSON following this exact structure. IMPORTANT: Use only the category name as the key (e.g., "Accuracy", "Formula", "Formatting"), NOT "Accuracy Criteria" or similar.
+
+      ```json
+      {
+        "<Category>": [
+          {
+            "check": "A",
+            "decision": "Pass or Fail",
+            "summary": "A one sentence summary of your evaluation",
+            "mistakes": [
+              {
+                "description": "Short error description",
+                "location": "Sheet!Cell",
+                "explanation": "Longer, up to five sentences, explanation",
+                "expected": "Expected result or correct answer"
+              }
+            ],
+            "total_mistakes": 0
+          },
+          {
+            "check": "B",
+            "decision": "Pass or Fail",
+            "summary": "A one sentence summary of your evaluation",
+            "mistakes": [
+              {
+                "description": "Short error description",
+                "location": "Sheet!Cell",
+                "explanation": "Longer, up to five sentences, explanation",
+                "expected": "Expected result or correct answer"
+              }
+            ],
+            "total_mistakes": 0
+          }
+        ]
+      }
+      ```
+
+      Example for Accuracy criteria with two checks:
+
+      ```json
+      {
+        "Accuracy": [
+          {
+            "check": "A",
+            "decision": "Fail",
+            "summary": "Revenue calculations contain errors in Q2 projections.",
+            "mistakes": [
+              {
+                "description": "Incorrect revenue formula",
+                "location": "Model!D15",
+                "explanation": "The formula references the wrong cell for unit price, causing a 15% variance in projected revenue.",
+                "expected": "=B15*C15 instead of =B15*C14"
+              }
+            ],
+            "total_mistakes": 1
+          },
+          {
+            "check": "B",
+            "decision": "Pass",
+            "summary": "All expense calculations are accurate.",
+            "mistakes": [],
+            "total_mistakes": 0
+          }
+        ]
+      }
+      ```
+
+      Use CSV to parse values in both workbooks; use the provided CSVs to parse formulas. Do not render/print workbooks to PDF.
+      The file name of the CSV will be given before the file is uploaded to you. Use that name for all evaluations. Use exactly that name in your evaluation when locating mistakes.
+      When listing differences, be specific (sheet, cell(s), formula, expected vs actual). List all mistakes; do not summarize or omit.
+
+      NOTE. Very Important. If the solution is entirely incomplete or missing, mark all checks as failed and note in the summary that the attempt is incomplete. Especially for Starting values criteria, which should be fail if agent did not complete. If the solution is present but the attempt contains inaccuracies, evaluate based on the specific issues found and provide detailed feedback in the mistakes section.
+  - type: msg
+    role: user
+    content: "You will now receive the files for the Golden solution."
+  - type: placeholder
+    name: solution_messages
+    description: list of messages containing the CSV content for the solution workbook, with sheet names.
+    role: user
+  - *attempt_intro
+  - *attempt_placeholder
+  - *context_intro
+  - *context_placeholder
+  - *accuracy_criteria
+  - type: response
+    role: assistant
+    description: "[The Judge Response of the Accuracy Criteria.]"
+
+  # =========================================================================
+  # Stage 1: Formula  (needs attempt only — no solution, no context)
+  #   Carries forward: accuracy criteria prompt + accuracy response
+  # =========================================================================
+  - *system_msg_no_solution
+  - *attempt_intro
+  - *attempt_placeholder
+  - *context_intro
+  - *context_placeholder
+  - *accuracy_criteria
+  - type: prior_response
+    stage: 0
+  - type: msg
+    role: user
+    parameters:
+      - name: "ai_attempt"
+        nullable: false
+      - name: "formula_checks"
+        nullable: false
+    content: |-
+      Formula Criteria
+
+      Goal: Utilize the Formulas CSV to assess the quality and resilience of formula logic in isolation from accuracy.
+
+      Procedure:
+
+      Open {{ ai_attempt }}.
+
+      {{formula_checks}}
+
+      First see your previous judgement on Accuracy. If it's deemed that workbook is missing all calculations, mark all formula checks as failed and note in the summary that the attempt is incomplete. If formulas are present but incorrect, evaluate based on the specific issues found (e.g., hardcoding, missing error handling, inefficient logic) and provide detailed feedback in the mistakes section.
+  - type: response
+    role: assistant
+    description: "[The Judge Response of the Formula Criteria.]"
+
+  # =========================================================================
+  # Stage 2: Formatting  (needs attempt + context — no solution)
+  #   Carries forward: accuracy criteria prompt + accuracy response
+  # =========================================================================
+  - *system_msg_no_solution
+  - *attempt_intro
+  - *attempt_placeholder
+  - *context_intro
+  - *context_placeholder
+  - *accuracy_criteria
+  - type: prior_response
+    stage: 0
+  - type: msg
+    role: user
+    parameters:
+      - name: "ai_attempt"
+        nullable: false
+      - name: "formatting_checks"
+        nullable: false
+    content: |-
+      Formatting Criteria
+
+      Goal: Use the Formatting information in the CSV to check for consistency in formatting; Use the context file to check for any formatting specifics.
+
+      Procedure:
+
+      Open {{ ai_attempt }} and {{ context }}.
+
+      {{formatting_checks}}
+
+      First see your previous judgement on Accuracy. If it's deemed that workbook is missing all calculations, mark all formatting checks as failed and note in the summary that the attempt is incomplete. If formatting is present but inconsistent or does not follow best practices, evaluate based on the specific issues found (e.g., inconsistent fonts, poor use of color, lack of clear sectioning) and provide detailed feedback in the mistakes section.
+  - type: response
+    role: assistant
+    description: "[The Judge Response of the Formatting Criteria.]"

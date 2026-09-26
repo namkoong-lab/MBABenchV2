@@ -1,0 +1,35 @@
+{
+  "id": 56,
+  "task_name": "TBondII",
+  "task_starting_files": [
+    "data/tasks/task_id=56/starting_files/TBondII.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=56/solution_files/TBondII - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:50.091067+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Bond Pricing / Yield Curve Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.6667,
+    "short_description": "Classical Treasury Bond Valuation - trap leap year day (02/29)",
+    "time_assumption_h": 1.95,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 25.0,
+  "ai_time_estimate_reasoning": "The task requires setting up a 200-period quarterly cashflow schedule (50 years) with dynamic dates, coupon calculations, and periodic discounting. Additionally, the modeler must construct an annual summary sheet aggregating the present value of cashflows by calendar year from 2028 to 2078 using SUMIFS formulas, and link these outputs to the 52 questions. An experienced modeler can efficiently set this up using EDATE, YEAR, and SUMIFS functions, with time built in to cross-verify the bond price against Excel's native PV functions.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TBondII/starting_files/TBondII.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TBondII/solution_files/TBondII - Solution.xlsx"
+    ]
+  }
+}

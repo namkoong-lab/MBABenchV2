@@ -1,0 +1,35 @@
+{
+  "id": 36,
+  "task_name": "Meridian",
+  "task_starting_files": [
+    "data/tasks/task_id=36/starting_files/Meridian.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=36/solution_files/Meridian - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:42.460436+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Easy",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Budget vs. Actuals Variance Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.0,
+    "short_description": "Regular Budget vs. Actuals Variance Analysis",
+    "time_assumption_h": 1.2833,
+    "difficulty_category": "Easy"
+  },
+  "ai_time_estimate_min": 25.0,
+  "ai_time_estimate_reasoning": "The task requires setting up a Budget vs. Actuals variance analysis for FY 2023 by mapping the consolidated Income Statement (Actuals) with the detailed General Ledger Budget. An expert modeler needs to carefully align the different sign conventions used in the two sheets (e.g., expenses are positive in the actuals' details but negative in the budget), calculate the absolute and relative variances using robust formulas, link the results to the 15 specific questions, and format them to four decimal places.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/Meridian/starting_files/Meridian.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/Meridian/solution_files/Meridian - Solution.xlsx"
+    ]
+  }
+}

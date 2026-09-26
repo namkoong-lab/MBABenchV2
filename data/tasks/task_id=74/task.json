@@ -1,0 +1,35 @@
+{
+  "id": 74,
+  "task_name": "CFQuarterly",
+  "task_starting_files": [
+    "data/tasks/task_id=74/starting_files/CFQuarterly.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=74/solution_files/CFQuarterly - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Forecasting Model",
+    "time_range": "9-12h",
+    "difficulty_score": 4.8333,
+    "short_description": "(Very) Complex forecasting model based on operations and interest conventions - including annual overview",
+    "time_assumption_h": 9.8667,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CFQuarterly/starting_files/CFQuarterly.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CFQuarterly/solution_files/CFQuarterly - Solution.xlsx"
+    ]
+  }
+}

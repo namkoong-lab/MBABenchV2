@@ -1,0 +1,35 @@
+{
+  "id": 30,
+  "task_name": "GermanLife",
+  "task_starting_files": [
+    "data/tasks/task_id=30/starting_files/GermanLife.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=30/solution_files/GermanLife - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:35.400489+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Retirement / Savings Calculators",
+    "time_range": "5-7h",
+    "difficulty_score": 4.1667,
+    "short_description": "Very complex financial life plan model including debt, salary raises, tax (extensive) and inflation - the model is including life decisions such as getting married and having kids and the resulting financial consequences",
+    "time_assumption_h": 6.4167,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 210.0,
+  "ai_time_estimate_reasoning": "This task is a highly complex personal finance and wealth management model spanning 75 years. It contains numerous intricate mechanics: dynamic salary promotions, multi-tier income tax indexing with 18 brackets, joint filing, a 'progression clause' tax adjustment for parental leave benefits, child-expense brackets that shift as the kids age (plus inflation), a mortgage amortization schedule, and a multi-phase investment portfolio with varying interest rates, overdraft penalties, and deferred capital gains taxes. Setting up the dynamic tax engine and tracking the age-dependent expenses alone will take significant time. An expert modeler would need approximately 3.5 hours to carefully build, audit, and verify all the interconnected parts.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/GermanLife/starting_files/GermanLife.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/GermanLife/solution_files/GermanLife - Solution.xlsx"
+    ]
+  }
+}

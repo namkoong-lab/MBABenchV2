@@ -1,0 +1,35 @@
+{
+  "id": 24,
+  "task_name": "FlightPlan",
+  "task_starting_files": [
+    "data/tasks/task_id=24/starting_files/FlightPlan.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=24/solution_files/FlightPlan - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:30.740027+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Non-Financial or Non-FP&A Model",
+    "time_range": "30-35h",
+    "difficulty_score": 5.1667,
+    "short_description": "Algorithmic route planning for an Airline - different planning categories",
+    "time_assumption_h": 33.15,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 135.0,
+  "ai_time_estimate_reasoning": "This task requires solving a complex network routing/shortest path problem on a graph of 144 airports and over 300 bidirectional connections. To calculate the shortest paths by time, distance, cost, and stopovers while strictly adhering to the specified tie-breaking rule (based on the original row order in the Connections sheet), an expert modeler must implement a custom Dijkstra or BFS algorithm (most likely in VBA or Python). Setting up the Haversine distance formula, mapping out starting/landing fees, implementing the graph search with custom tie-breaking, post-processing the paths to concatenate unique countries/continents alphabetically, and mapping the results to the 80 specific questions will take a highly skilled modeler over two hours to build and verify.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/FlightPlan/starting_files/FlightPlan.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/FlightPlan/solution_files/FlightPlan - Solution.xlsx"
+    ]
+  }
+}

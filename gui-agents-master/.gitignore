@@ -1,0 +1,108 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*_auth_state.json
+**/credentials*
+**/secrets*
+infra/configs/configs.yaml
+infra/dispatcher/.aws_defaults
+infra/dispatcher/boxes.yaml
+
+# Browser session data — browser_profiles/ holds the Chrome --user-data-dir
+# for each provider lane, i.e. the live claude.ai / chatgpt.com login cookies
+browser_profiles/
+browser_session_*/
+firefox_profile_for_playwright/
+
+# Logging and output directories
+logging_completions/
+*_logs/
+20*/
+main_tasks/
+artifacts/
+
+# Data files
+*.xlsx
+!test_artifacts/*.xlsx
+*.png
+*_result_*.json
+
+# Claude and tool state
+.claude/
+.playwright-mcp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+._*
+
+# Temporary files
+temp_parallel_tasks/
+excel_agent/task_*.yaml
+excel_agent/debug_screenshots/
+excel_agent/logs/
+
+# Per-attempt working dirs + downloaded task inputs
+scratch/
+
+# Local mirror of the S3 attempt files
+outputs/
+claude_web_batch_results.json
+
+# One-off overnight/test run scripts (local only)
+run_*.sh
+
+# Operational files — deliberately untracked (standing rule: orchestrators,
+# probes, ladder assets, and production run configs never enter git; prod
+# configs also carry the machine's DB connection string)
+orchestrate_wave.py
+claude_smoke_then_wave.py
+claude_cap_probe.py
+chatgpt_outage_probe.sh
+upload_outage_probe.sh
+tests/ladder/
+infra/configs/run_configs/prod_*.yaml
+infra/configs/run_configs/exp_*.yaml
+infra/configs/run_configs/ladder_*.yaml
+infra/configs/run_configs/tmp*.yaml
+orch_*.log
+gui_deferred_runtime.json*
+smoke_rung2.log
+20*_claudeGUI/
+20*_chatgptGUI/
+20*_smoke_*/
+20*_ladder*/
+
+# Dated lane folders (configs, logs, pids) of the 2026-09 full runs —
+# operational, same rule as the prod_/exp_/ladder_ configs above.
+infra/configs/run_configs/lanes_*/

@@ -1,0 +1,35 @@
+{
+  "id": 7,
+  "task_name": "CashNiagara",
+  "task_starting_files": [
+    "data/tasks/task_id=7/starting_files/CashNiagara.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=7/solution_files/CashNiagara - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:24.120305+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Debt Schedule / Waterfall Modeling",
+    "time_range": "7-9h",
+    "difficulty_score": 5.3333,
+    "short_description": "Very complex debt waterfall model (Mother of all debt waterfall models) - quarterly model including interest conventions and additional annual overview",
+    "time_assumption_h": 8.25,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": 240.0,
+  "ai_time_estimate_reasoning": "This is an exceptionally complex debt waterfall modeling task that requires building a quarterly model spanning 20 years (80 quarters) with 14 distinct waterfall steps. An expert modeler must handle multiple day-count (Act/360, 30/360, Act/Act) and interest quoting conventions (Nominal vs. EAR), track rolling/carried-forward unpaid scheduled repayments for six tranches of senior debt, manage subordinated debt capitalization, model interest-to-equity conversions for convertible debt, and implement intricate equity distribution rules. The equity rules require calculating dividend payouts across five share classes while dynamically tracking vesting periods and multi-year holding periods for converted shares. Building, auditing, and checking this highly detailed model against the 40 specific validation questions on the Questions tab will easily require 4 hours of focused, expert-level modeling.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CashNiagara/starting_files/CashNiagara.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CashNiagara/solution_files/CashNiagara - Solution.xlsx"
+    ]
+  }
+}

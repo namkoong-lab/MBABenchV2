@@ -1,0 +1,35 @@
+{
+  "id": 6,
+  "task_name": "CashConversionLab",
+  "task_starting_files": [
+    "data/tasks/task_id=6/starting_files/CashConversionLab.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=6/solution_files/CashConversionLab - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:23.809461+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Working Capital Modeling",
+    "time_range": "3-4h",
+    "difficulty_score": 3.6667,
+    "short_description": "Mixed period Working Capital Model including Forecasting, NWC and the CCC based on extensive initial IS/BS",
+    "time_assumption_h": 3.8667,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 110.0,
+  "ai_time_estimate_reasoning": "This FP&A task requires building a highly detailed, integrated 20-year quarterly financial model (5 years history, 15 years quarterly forecast) with complex forecasting rules. The modeler must compound annual price and volume growth rates for multiple revenue segments, allocate costs proportionally, and link 13 balance sheet accounts to income statement drivers. Additionally, projecting Accounts Receivable, Inventories, and Accounts Payable requires calculating historical DSO, DIO, and DPO metrics and dynamically applying a rolling 3-year running average to determine quarterly balances. Setting up this custom quarterly timeline, managing the logic for the rolling CCC average, and carefully referencing the results to answer 35 specific quarterly questions will take an experienced modeler approximately 110 minutes to execute and thoroughly verify.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/CashConversionLab/starting_files/CashConversionLab.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/CashConversionLab/solution_files/CashConversionLab - Solution.xlsx"
+    ]
+  }
+}

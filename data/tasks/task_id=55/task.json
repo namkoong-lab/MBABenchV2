@@ -1,0 +1,35 @@
+{
+  "id": 55,
+  "task_name": "TBond",
+  "task_starting_files": [
+    "data/tasks/task_id=55/starting_files/TBond.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=55/solution_files/TBond - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:49.807644+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Bond Pricing / Yield Curve Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.6667,
+    "short_description": "Classical Treasury Bond Valuation",
+    "time_assumption_h": 1.95,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 25.0,
+  "ai_time_estimate_reasoning": "The task requires constructing a detailed 144-period monthly cash flow schedule for a 12-year bond. It involves calculating exact payment dates using EDATE, applying a specific Act/Act day count convention formula to find the time fraction, and discounting cash flows using annual compounding. Finally, the modeler must build an annual summary table to aggregate the present values by year (from 2028 to 2040) using SUMIFS and link the results to the Questions sheet. An expert modeler would take about 25 minutes to build this dynamically, verify the date math, and ensure the rounding matches the required format.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TBond/starting_files/TBond.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TBond/solution_files/TBond - Solution.xlsx"
+    ]
+  }
+}

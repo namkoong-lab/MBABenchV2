@@ -1,0 +1,35 @@
+{
+  "id": 62,
+  "task_name": "TheLiquidityLoop",
+  "task_starting_files": [
+    "data/tasks/task_id=62/starting_files/TheLiquidityLoop.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=62/solution_files/TheLiquidityLoop - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:51.946417+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Working Capital Modeling",
+    "time_range": "4-5h",
+    "difficulty_score": 3.3333,
+    "short_description": "Quarterly Working Capital Model including Forecasting (easy), NWC and the CCC including an annual summary",
+    "time_assumption_h": 4.1667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 110.0,
+  "ai_time_estimate_reasoning": "An expert modeler will need about 110 minutes to complete this task. The model requires setting up a 15-year quarterly timeline (12 historical and 48 forecast quarters) and forecasting multiple balance sheet accounts. Key complexities include converting annual growth rates into quarterly equivalents, implementing a custom weighted-average basis (weights 1, 2, 3, 4) from the historical data, and mapping specific operating and non-operating line items for Net Working Capital (NWC), Operating Net Working Capital (ONWC), and Cash Conversion Cycle (CCC) calculations. Furthermore, translating these quarterly metrics into annualized KPIs and answering the 36 precise questions in the 'Questions' sheet requires meticulous referencing and verification.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TheLiquidityLoop/starting_files/TheLiquidityLoop.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TheLiquidityLoop/solution_files/TheLiquidityLoop - Solution.xlsx"
+    ]
+  }
+}

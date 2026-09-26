@@ -1,0 +1,27 @@
+# claudecode_anthropic/claude-fable-5-1-low — offline reproduction.
+#
+# Stage 4 thinking ablation: the same harness at effort low.
+#
+#   python -m coding_agent.run_sweep --config run_configs/offline/claudecode_anthropic__claude-fable-5-1-low.yaml
+#
+# Everything the attempt does is pinned elsewhere and referenced from here:
+# the cli / model / effort / extra_args / env by the agent_model_name entry in
+# coding_agent/agent_identities.yaml, the prompt by template_version
+# (v13 + system_prompt_coding_v1 -> prompt_version 113), the CLI versions by
+# the sandbox image tag. source/sink local read the bundled inputs under
+# local.data_root and write attempts under local.output_root — no database,
+# no object store (data/README.md).
+mode: internal
+benchmark: v2
+agent_model_name: claudecode_anthropic/claude-fable-5-1-low
+template_version: v13
+
+source: local
+sink: local
+
+tasks:
+  first: 1
+  last: 101
+
+sandbox:
+  image: spreadsheetsmith-coding-agent:v2

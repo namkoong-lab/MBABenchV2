@@ -1,0 +1,35 @@
+{
+  "id": 40,
+  "task_name": "Office",
+  "task_starting_files": [
+    "data/tasks/task_id=40/starting_files/Office.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=40/solution_files/Office - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:43.849858+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "NAV (Net Asset Value) Modeling",
+    "time_range": "1-2h",
+    "difficulty_score": 2.5,
+    "short_description": "REIT NAV Model - Office",
+    "time_assumption_h": 1.9167,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 40.0,
+  "ai_time_estimate_reasoning": "This modeling task requires building an income statement, FFO and AFFO reconciliations, and a Net Asset Value (NAV) bridge for a REIT. An expert modeler will need to carefully apply the specific guidelines for the cash-basis NOI (deducting property operating expenses and management fees but excluding corporate overhead and straight-line rent) and the asset-level NAV adjustments (omitting intangible lease assets/liabilities and deferred financing costs while retaining working capital and debt). Building out these formulas across the 6-year horizon, linking them to the balance sheet, and calculating the per-share metrics will realistically take about 40 minutes, including validation.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/Office/starting_files/Office.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/Office/solution_files/Office - Solution.xlsx"
+    ]
+  }
+}

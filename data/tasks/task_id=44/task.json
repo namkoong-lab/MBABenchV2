@@ -1,0 +1,35 @@
+{
+  "id": 44,
+  "task_name": "ProductionPlanning",
+  "task_starting_files": [
+    "data/tasks/task_id=44/starting_files/ProductionPlanning.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=44/solution_files/ProductionPlanning - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:45.372473+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Non-Financial or Non-FP&A Model",
+    "time_range": "3-4h",
+    "difficulty_score": 3.3333,
+    "short_description": "More or less simple production planning model - only production planning without financial implications planning",
+    "time_assumption_h": 3.8667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 70.0,
+  "ai_time_estimate_reasoning": "The model requires establishing a 10-year monthly timeline (120 months) and calculating the exact number of production days (excluding Sundays) for each month using NETWORKDAYS.INTL. The modeler must then compute material consumption (SUMPRODUCT of production volumes and product weights) and machine hour requirements. Calculating the minimum machines needed is tricky due to the monotonically non-decreasing constraint, which requires a running cumulative maximum of the monthly capacity-driven requirements. Additionally, the employee headcount sizing depends on total machine operating hours (productive hours divided by 85%) and monthly employee capacity (32 machine-hours multiplied by production days), rounded up to the nearest integer. Finally, tracking employee hires, fires, and machine purchases across multiple sheets requires careful formulation and QA, taking an experienced modeler about 70 minutes to complete error-free.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/ProductionPlanning/starting_files/ProductionPlanning.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/ProductionPlanning/solution_files/ProductionPlanning - Solution.xlsx"
+    ]
+  }
+}

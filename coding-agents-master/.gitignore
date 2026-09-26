@@ -1,0 +1,19 @@
+# Attempt working dirs and outputs
+workspaces/
+results/
+*.log
+
+# Batch orchestrators are operational scripts, deliberately untracked
+orchestrate_*.py
+deferred.json
+run_configs/prod_*.yaml
+
+# Secrets
+.env
+ladder/
+
+# Lane launchers, plans and wave scripts (Forge Codex cohorts + the v2 full
+# runs, 2026-09) — operational, same rule as orchestrate_*.py. Anchored here.
+/forge_codex_*
+/wave_*.sh
+/coding_full_run_lane_plan.json

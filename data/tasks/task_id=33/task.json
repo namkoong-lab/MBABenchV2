@@ -1,0 +1,35 @@
+{
+  "id": 33,
+  "task_name": "LiquiditySplatter",
+  "task_starting_files": [
+    "data/tasks/task_id=33/starting_files/LiquiditySplatter.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=33/solution_files/LiquiditySplatter - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:36.582241+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Debt Schedule / Waterfall Modeling",
+    "time_range": "4-5h",
+    "difficulty_score": 3.8333,
+    "short_description": "Easy and regular yearly debt waterfall modeling",
+    "time_assumption_h": 4.5,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 135.0,
+  "ai_time_estimate_reasoning": "This is a highly complex debt waterfall and equity modeling task. It requires modeling pro-rata repayment allocations with roll-forwards for multiple senior debt tranches, convertible debt with interest-to-equity conversion features, and a detailed vintage-based vesting tracker for new share classes to calculate dividend eligibility over a 20-year period. Since interest is calculated on opening balances, circular references are avoided, but the vintage tracking for conversion shares (requiring the later of standard vesting or conversion date plus 3/4 years) and the sequential distribution waterfall still require meticulous structuring and validation to answer the 30 specific output questions accurately.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/LiquiditySplatter/starting_files/LiquiditySplatter.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/LiquiditySplatter/solution_files/LiquiditySplatter - Solution.xlsx"
+    ]
+  }
+}

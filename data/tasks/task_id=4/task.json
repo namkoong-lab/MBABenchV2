@@ -1,0 +1,35 @@
+{
+  "id": 4,
+  "task_name": "BreakingDowntheBalance",
+  "task_starting_files": [
+    "data/tasks/task_id=4/starting_files/BreakingDowntheBalance.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=4/solution_files/BreakingDowntheBalance - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:23.210004+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium-Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Loan Amortization Schedules",
+    "time_range": "2-3h",
+    "difficulty_score": 3.5,
+    "short_description": "Loan Amortization Schedule for an Annuity Loan",
+    "time_assumption_h": 2.6833,
+    "difficulty_category": "Medium-Hard"
+  },
+  "ai_time_estimate_min": 25.0,
+  "ai_time_estimate_reasoning": "This task requires building a highly detailed weekly loan amortization schedule with 1,040 periods (20 years x 52 weeks) starting from a specific date. An expert modeler will need to set up the date increments, calculate the periodic interest rate, apply standard annuity formulas (using PMT, PPMT, and IPMT or standard schedule calculations), and then build lookup formulas (such as VLOOKUP, INDEX-MATCH, or SUMIFS) to extract exact values for specific dates and years to answer the list of questions. The setup, error checking of date alignments, and verification of lookups will take approximately 25 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/BreakingDowntheBalance/starting_files/BreakingDowntheBalance.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/BreakingDowntheBalance/solution_files/BreakingDowntheBalance - Solution.xlsx"
+    ]
+  }
+}

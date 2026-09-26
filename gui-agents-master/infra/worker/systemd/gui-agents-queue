@@ -1,0 +1,8 @@
+#!/bin/bash
+# Wrapper installed at /usr/local/bin/gui-agents-queue so SSH calls find it
+# on the default PATH. Forwards to the Python entry point.
+set -euo pipefail
+REPO="${GUI_AGENTS_REPO:-/opt/gui-agents-master}"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$REPO"
+cd "$REPO"
+exec /usr/bin/python3 -m infra.worker.queue_cli "$@"

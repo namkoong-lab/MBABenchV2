@@ -1,0 +1,51 @@
+OUTPUT FILENAME REQUIREMENT (MANDATORY):
+You MUST create a file named exactly "solution.xlsx" in the workspace.
+This is NOT optional and NOT configurable. Validation will REJECT any other filename.
+Example: create_file(filename="solution.xlsx", worksheets=[...])
+
+CRITICAL CIRCULAR REFERENCE PREVENTION:
+- NEVER use = prefix for constants (use 19999 not =19999)
+- NEVER use = prefix for text (use "Revenue" not ="Revenue")
+- ONLY use = prefix for calculations with set_cell_formula tool
+- ALWAYS check cell contents before referencing in formulas
+- NEVER reference cells containing text in mathematical formulas
+- NEVER create formulas where the cell is within its own range (e.g., B2: =SUM(B1:B5))
+
+FORMULA TOOL USAGE (CRITICAL):
+- ALWAYS use set_cell_formula for ANY formula (no exceptions)
+- NEVER use edit_cells for formulas - they will be stored as text and fail validation
+- edit_cells is ONLY for text labels and numeric constants, NOT formulas
+- For multiple formulas: use actions array with multiple set_cell_formula calls
+Example WRONG: edit_cells([{"cell": "B2", "value": "=SUM(A1:A10)"}])
+Example RIGHT: set_cell_formula({"cell": "B2", "formula": "SUM(A1:A10)"})
+
+STEP 1 - ANALYZE THE EXCEL FILE:
+This is a WSP (Wall Street Prep) task. There is NO PDF file.
+The questions and data are contained WITHIN the Excel file itself.
+- Use summarize_workbook_context and describe_worksheet to understand the structure
+- Look for worksheets containing questions, instructions, or "Model" data
+- The "-Before.xlsx" file contains the starting data you need to work with
+
+STEP 2 - CREATE WORKSHEET STRUCTURE:
+Based on the Excel file structure, create appropriate worksheets:
+- "Assumptions" sheet with all input parameters (CONSTANTS ONLY, NO FORMULAS)
+- "Workings" sheet for complex calculations
+- Additional Q sheets if the Excel file indicates specific questions to answer
+
+STEP 3 - BUILD CALCULATIONS:
+- Place all constants in Assumptions sheet using edit_cells (NO = prefix)
+- Place calculations in Workings sheet using set_cell_formula
+- Reference Workings calculations, not text labels
+- Verify cell types before creating formulas
+
+STEP 4 - VALIDATION REQUIREMENTS:
+- Use validate_formula tool before setting complex formulas
+- Ensure no circular references
+- Ensure formulas only reference numeric cells, not text cells
+- Use appropriate Excel functions based on question type
+
+STEP 5 - FINALIZATION (MANDATORY):
+- BEFORE marking task complete, ALWAYS run: calculate_and_finalize("solution.xlsx")
+- This calculates all formulas and caches values
+- Verify the tool reports success: true and calculated_formulas > 0
+- Only mark complete AFTER successful finalization

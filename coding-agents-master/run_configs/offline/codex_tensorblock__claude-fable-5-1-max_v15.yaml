@@ -1,0 +1,28 @@
+# codex_tensorblock/claude-fable-5-1-max — offline reproduction.
+#
+# Stage 5 prompt ablation, arm B: the current prompt minus the house standards
+# (v15 = the v10 text, byte-identical, under a new number).
+#
+#   python -m coding_agent.run_sweep --config run_configs/offline/codex_tensorblock__claude-fable-5-1-max_v15.yaml
+#
+# Everything the attempt does is pinned elsewhere and referenced from here:
+# the cli / model / effort / extra_args / env by the agent_model_name entry in
+# coding_agent/agent_identities.yaml, the prompt by template_version
+# (v15 + system_prompt_coding_v1 -> prompt_version 115), the CLI versions by
+# the sandbox image tag. source/sink local read the bundled inputs under
+# local.data_root and write attempts under local.output_root — no database,
+# no object store (data/README.md).
+mode: internal
+benchmark: v2
+agent_model_name: codex_tensorblock/claude-fable-5-1-max
+template_version: v15
+
+source: local
+sink: local
+
+tasks:
+  first: 1
+  last: 101
+
+sandbox:
+  image: spreadsheetsmith-coding-agent:v3

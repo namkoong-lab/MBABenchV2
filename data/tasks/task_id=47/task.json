@@ -1,0 +1,35 @@
+{
+  "id": 47,
+  "task_name": "QuarterlyRatios",
+  "task_starting_files": [
+    "data/tasks/task_id=47/starting_files/QuarterlyRatios.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=47/solution_files/QuarterlyRatios - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:46.421548+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Ratio Analysis",
+    "time_range": "1-2h",
+    "difficulty_score": 2.5,
+    "short_description": "Regular Ratio Analysis with provided IS/ BS (trip in the structure of those)",
+    "time_assumption_h": 1.9667,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 40.0,
+  "ai_time_estimate_reasoning": "An expert modeler would need about 40 minutes to complete this task. The modeler must first set up a structured calculation sheet for the 12 quarters (Q1'22 to Q4'24) and pull in the required items from the detailed Income Statement and Balance Sheet. Calculating 19 different quarterly ratios (many of which require setting up average balance sheet values, handling the Q4'21 prior period assumption, and applying specific day counts like 91.25 days/quarter) creates a significant formula footprint. Finally, linking and formatting the 30 specific quarterly questions on the 'Questions' sheet and auditing the results for rounding accuracy will take another 10 to 15 minutes.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/QuarterlyRatios/starting_files/QuarterlyRatios.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/QuarterlyRatios/solution_files/QuarterlyRatios - Solution.xlsx"
+    ]
+  }
+}

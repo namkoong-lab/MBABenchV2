@@ -1,0 +1,35 @@
+{
+  "id": 3,
+  "task_name": "Bosch",
+  "task_starting_files": [
+    "data/tasks/task_id=3/starting_files/Bosch.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=3/solution_files/Bosch - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-06-11T20:17:22.868388+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Medium",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Sum-of-the-Parts Valuation",
+    "time_range": "2-3h",
+    "difficulty_score": 3.3333,
+    "short_description": "Sum of the Parts Valuation using Comp multiples for a company with 4 business lines",
+    "time_assumption_h": 2.9333,
+    "difficulty_category": "Medium"
+  },
+  "ai_time_estimate_min": 45.0,
+  "ai_time_estimate_reasoning": "The task requires building a Sum of the Parts (SOTP) valuation model for Robert Bosch GmbH. The most complex part is implementing the two-stage statistical filtering for four metrics across four distinct business lines: first, removing negative or invalid multiples, and second, excluding any multiples that are strictly more than one standard deviation away from the preliminary average. Modern Excel dynamic array formulas (such as LET, FILTER, and STDEV.P) can streamline this outlier exclusion process significantly. Once the filtered multiples are computed, the expert will aggregate the implied enterprise or equity values for each part, apply the DEC '25 net debt adjustment of -€993m for EV-based metrics, and populate the final answers.",
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/Bosch/starting_files/Bosch.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/Bosch/solution_files/Bosch - Solution.xlsx"
+    ]
+  }
+}

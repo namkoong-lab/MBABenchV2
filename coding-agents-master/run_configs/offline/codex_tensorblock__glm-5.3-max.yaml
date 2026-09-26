@@ -1,0 +1,33 @@
+# codex_tensorblock/glm-5.3-max — offline reproduction.
+#
+# Codex on GLM 5.3 at effort max, through the model gateway.
+#
+#   python -m coding_agent.run_sweep --config run_configs/offline/codex_tensorblock__glm-5.3-max.yaml
+#
+# Everything the attempt does is pinned elsewhere and referenced from here:
+# the cli / model / effort / extra_args / env by the agent_model_name entry in
+# coding_agent/agent_identities.yaml, the prompt by template_version
+# (v13 + system_prompt_coding_v1 -> prompt_version 113), the CLI versions by
+# the sandbox image tag. source/sink local read the bundled inputs under
+# local.data_root and write attempts under local.output_root — no database,
+# no object store (data/README.md).
+mode: internal
+benchmark: v2
+agent_model_name: codex_tensorblock/glm-5.3-max
+template_version: v13
+
+source: local
+sink: local
+
+tasks:
+  first: 1
+  last: 101
+
+sandbox:
+  image: spreadsheetsmith-coding-agent:v3
+
+# The live run turned this on partway through (gateway 429 bursts at ~8 lanes):
+# the agent keeps its full working time and the waits are not charged to the
+# wall clock. Recorded in extra_configs.limits on the rows that ran with it.
+limits:
+  exclude_provider_waits: true

@@ -1,0 +1,35 @@
+{
+  "id": 101,
+  "task_name": "TwoNOne",
+  "task_starting_files": [
+    "data/tasks/task_id=101/starting_files/TwoNOne.xlsx"
+  ],
+  "task_solution_files": [
+    "data/tasks/task_id=101/solution_files/TwoNOne - Solution.xlsx"
+  ],
+  "task_source": "v2",
+  "deprecated": false,
+  "deprecated_reason": null,
+  "created_at": "2026-09-04T22:46:48.341588+00:00",
+  "updated_at": "2026-09-09T01:42:54.511087+00:00",
+  "human_difficulty_measure": "Hard",
+  "case_classification": {
+    "source": "SpreadsheetSmith v2 Data 101FM Attributes.xlsx (2026-09-08)",
+    "model_type": "Sum-of-the-Parts Valuation",
+    "time_range": "25-30h",
+    "difficulty_score": 5.3333,
+    "short_description": "Two very Large 3-Statement Model with extensive CF Forecasting --> DCF (it.) + Comparables",
+    "time_assumption_h": 28.65,
+    "difficulty_category": "Hard"
+  },
+  "ai_time_estimate_min": null,
+  "ai_time_estimate_reasoning": null,
+  "s3_keys": {
+    "task_starting_files": [
+      "SpreadsheetSmith/tasks/TwoNOne/starting_files/TwoNOne.xlsx"
+    ],
+    "task_solution_files": [
+      "SpreadsheetSmith/tasks/TwoNOne/solution_files/TwoNOne - Solution.xlsx"
+    ]
+  }
+}

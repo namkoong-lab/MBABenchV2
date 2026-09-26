@@ -1,0 +1,102 @@
+OUTPUT FILENAME REQUIREMENT (MANDATORY):
+You MUST create a file named exactly "solution.xlsx" in the workspace.
+This is NOT optional and NOT configurable. Validation will REJECT any other filename.
+Example: create_file(filename="solution.xlsx", worksheets=["model_Assumptions", "model_Workings", "answers_Q1", ...])
+
+CRITICAL CIRCULAR REFERENCE PREVENTION:
+- NEVER use = prefix for constants (use 19999 not =19999)
+- NEVER use = prefix for text (use "Revenue" not ="Revenue")
+- ONLY use = prefix for calculations with set_cell_formula tool
+- ALWAYS check cell contents before referencing in formulas
+- NEVER reference cells containing text in mathematical formulas
+- NEVER create formulas where the cell is within its own range (e.g., B2: =SUM(B1:B5))
+
+FORMULA TOOL USAGE (CRITICAL):
+- ALWAYS use set_cell_formula for ANY formula (no exceptions)
+- NEVER use edit_cells for formulas - they will be stored as text and fail validation
+- edit_cells is ONLY for text labels and numeric constants, NOT formulas
+- For multiple formulas: use actions array with multiple set_cell_formula calls
+Example WRONG: edit_cells([{"cell": "B2", "value": "=SUM(A1:A10)"}])
+Example RIGHT: set_cell_formula({"cell": "B2", "formula": "SUM(A1:A10)"})
+
+STEP 1 - READ THE QUESTIONS PDF:
+First, read the "Questions" or "Questions with Answers" PDF file in the workspace.
+This PDF contains specific numbered questions (Q1, Q2, Q3, Q4, etc.) that you must answer.
+
+STEP 2 - CREATE WORKSHEET STRUCTURE:
+CRITICAL NAMING CONVENTION: ALL worksheets MUST use a prefix:
+- "model_" prefix for calculation and input sheets
+- "answers_" prefix for answer/question sheets
+
+For EACH question in the PDF, create a worksheet with the answers_ prefix:
+- If questions are Q1, Q2, Q3, Q4 → create sheets "answers_Q1", "answers_Q2", "answers_Q3", "answers_Q4"
+- If questions are grouped (e.g., "Q1-5", "Q6-11") → create sheets "answers_Q1-5", "answers_Q6-11"
+
+Additionally create:
+- "model_Assumptions" sheet with all input parameters (CONSTANTS ONLY, NO FORMULAS)
+- "model_Workings" sheet for complex calculations
+
+IMPORTANT: The part after the underscore is the actual sheet identifier used for evaluation.
+Never create sheets without the model_ or answers_ prefix.
+
+STEP 3 - BUILD CALCULATIONS:
+- Place all constants in model_Assumptions sheet using edit_cells (NO = prefix)
+- Place calculations in model_Workings sheet using set_cell_formula
+- In answers_ sheets, reference model_Workings calculations, not text labels
+- Verify cell types before creating formulas
+
+STEP 4 - VALIDATION REQUIREMENTS:
+- Use validate_formula tool before setting complex formulas
+- Ensure no circular references
+- Ensure formulas only reference numeric cells, not text cells
+- Use appropriate Excel functions based on question type
+
+STEP 5 - SUMMARY & OUTPUT PRESENTATION:
+For each answers_ sheet, structure the output clearly:
+- Column A: Question text (e.g., "Q1: What is the total revenue?")
+- Column B: Formula referencing calculation sheets (e.g., ='model_Workings'!B15)
+- Column C: Units or multiple-choice answer if applicable (e.g., "$", "%", "A")
+
+For complex tasks with many questions, also create a model_Summary sheet:
+- Dashboard-style layout with all key outputs in one place
+- Each row: label in A, formula in B, units in C
+- Group by category (Revenue, Costs, Profitability, Returns, etc.)
+
+STEP 6 - PROFESSIONAL FORMATTING:
+After all calculations are complete, apply professional formatting:
+
+1. Header formatting: Apply dark blue fill with white bold font to all header rows
+   format_cells(filename, sheet, "A1:Z1", fill={"color": "002060"}, font={"color": "FFFFFF", "bold": true})
+
+2. Color-code inputs: Blue font on all hardcoded input values in model_Assumptions
+   format_cells(filename, "model_Assumptions", "B2:B50", font={"color": "0000FF"})
+
+3. Number formats: Apply appropriate number_format to all data cells
+   - Currency columns: "$#,##0_);($#,##0)"
+   - Percentage columns: "0.00%"
+   - Integer columns: "#,##0"
+
+4. Column widths: Set labels wide, data columns standard
+   set_column_width(filename, sheet, {"A": 35, "B:Z": 15})
+
+5. Freeze panes: Lock headers and labels on sheets with many rows
+   freeze_panes(filename, sheet, "B2")
+
+6. Borders: Thin under headers, double under totals
+   format_cells(filename, sheet, header_range, border={"style": "thin", "edges": ["bottom"]})
+   format_cells(filename, sheet, total_range, border={"style": "double", "edges": ["bottom"]})
+
+7. Alignment: Right-align numbers, center headers
+   format_cells(filename, sheet, data_range, alignment={"horizontal": "right"})
+   format_cells(filename, sheet, header_range, alignment={"horizontal": "center"})
+
+STEP 7 - FORMULA QUALITY CHECKS:
+Before marking the task complete, verify ALL of the following:
+
+- [ ] IFERROR: Are ALL divisions and lookups wrapped with IFERROR?
+- [ ] Absolute references: Do ALL references to model_Assumptions use $B$2 style?
+- [ ] No full-column refs: No A:A or B:B anywhere - always explicit bounds like B2:B100?
+- [ ] Consistent signs: Are expenses consistently positive (or negative) across ALL sheets?
+- [ ] Helper rows: Are complex formulas (>3 cross-sheet refs) broken into labeled intermediate rows?
+- [ ] No hardcoded answers: Do ALL answer cells contain formulas, not plain numbers?
+- [ ] Labels on everything: Does every formula row have a descriptive label in column A?

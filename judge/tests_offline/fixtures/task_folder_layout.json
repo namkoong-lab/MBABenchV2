@@ -1,0 +1,13 @@
+{
+ "_what": "Every entry setup_task_folder creates for one attempt, relative to the task folder (directories keep a trailing slash, the per-attempt .log is excluded).",
+ "_why": "The judge reads this folder and nothing else. Pinning it means a change to what an attempt is graded from has to be deliberate, and it is what makes the local source provably interchangeable with the object-store one: tests_offline/test_offline_source_sink.py stages the same attempt both ways and asserts both listings against this file.",
+ "entries": [
+  "Questions.pdf",
+  "_attempt_origin.json",
+  "ai_attempt.xlsx",
+  "solution/",
+  "solution/Case_solution.xlsx",
+  "starting/",
+  "starting/starting_workbook.xlsx"
+ ]
+}
