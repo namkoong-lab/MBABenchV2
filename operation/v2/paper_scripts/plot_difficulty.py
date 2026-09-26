@@ -64,6 +64,7 @@ BUCKET_WEIGHT = PRINT["legend_weight"]  # bucket names name the colours, as a le
 VALUE_FS = PRINT["pt"]["label"]  # counts at the bar tips
 YTICK_STEP = 10  # tasks between y ticks
 BAR_WIDTH = 0.62
+BAR_PITCH = 0.85  # bar centre to bar centre; under 1 pulls the bars together at the same width
 VALUE_GAP = 0.02  # bar tip to count, as a share of the tallest bar
 HEADROOM = 1.13  # the y-limit clears the tallest bar by this factor, then rounds up to a tick
 
@@ -110,7 +111,7 @@ def make_figure(counts: Counter) -> plt.Figure:
 
     fig, ax = plt.subplots(figsize=FIG_SIZE)
     fig.patch.set_facecolor(SURFACE)
-    x = range(len(labels))
+    x = [i * BAR_PITCH for i in range(len(labels))]
     bars = ax.bar(x, values, width=BAR_WIDTH, color=colors, linewidth=0, zorder=2)
     for xi, n in zip(x, values):
         ax.text(
@@ -121,7 +122,11 @@ def make_figure(counts: Counter) -> plt.Figure:
     quiet_axes(ax)
     ax.set_xticks(list(x), [tick_label(d) for d in labels], fontsize=TICK_FS, color=INK,
                   fontweight=BUCKET_WEIGHT)
-    ax.set_xlim(-0.5 - (1 - BAR_WIDTH) / 2, len(labels) - 0.5 + (1 - BAR_WIDTH) / 2)
+    # The span stays what unit pitch would need, so bars keep their printed width
+    # and the tighter group sits centred with the slack at the sides.
+    half_span = (len(labels) + 1 - BAR_WIDTH) / 2
+    centre = x[-1] / 2
+    ax.set_xlim(centre - half_span, centre + half_span)
     top, _ = tick_top(tallest * HEADROOM, YTICK_STEP)
     ax.set_ylim(0, top)
     ax.set_yticks(range(0, top + 1, YTICK_STEP))

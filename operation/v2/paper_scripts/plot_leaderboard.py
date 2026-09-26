@@ -16,9 +16,14 @@ parameter and the calculation, and its "Confidence" section gives
 P(pass | perfect workbook) from the single judge FPR and the tier counts in
 rubrics.csv. The FPR is a placeholder constant in that box.
 
-Draws leaderboard.pdf under operation/results/v2/plots/leaderboard/ (a .png
-alongside under --png), at the printed width (style_guide.yaml `print`) so
-nothing is scaled in the paper:
+By default draws leaderboard_v2.pdf under operation/results/v2/plots/leaderboard/
+(a .png alongside under --png), at the printed width (style_guide.yaml `print`)
+so nothing is scaled in the paper. Pass rate only: columns for the cohorts that
+pass at least once, the 0% cohorts listed right of a rule, stacked by vendor
+behind column-style swatches; the freed width lets the names tilt only as far as
+they must, and the legend sits above the panel.
+
+--v1 draws every cohort as a column instead, saved as leaderboard:
 
   column   the cohort's pass rate with a standard-error whisker, in the model
            vendor's hue (style_guide.yaml `company`) with a squircle cap
@@ -30,14 +35,9 @@ nothing is scaled in the paper:
            harnesses, the harness swatches on a neutral face so the hatch
            reads as a pattern
 
---with-score adds the composite-score panel above the pass rate (mean, whisker,
-"n/N" in slate when the cohort is not fully graded) and saves the figure as
-leaderboard_with_score instead.
-
---v2 (pass rate only) keeps columns for the cohorts that pass at least once and
-lists the 0% cohorts right of a rule, stacked by vendor behind column-style
-swatches; the freed width lets the names tilt only as far as they must, and the
-legend moves above the panel. Saved as leaderboard_v2.
+--with-score draws the v1 layout with the composite-score panel above the pass
+rate (mean, whisker, "n/N" in slate when the cohort is not fully graded), saved
+as leaderboard_with_score.
 
 Cohorts are named in style_guide.yaml `agents` (display name -> vendor and the
 database agent_model_names pooled into it, the newest grading kept when two of
@@ -49,7 +49,7 @@ Usage:
     python operation/v2/paper_scripts/plot_leaderboard.py
     python operation/v2/paper_scripts/plot_leaderboard.py --png
     python operation/v2/paper_scripts/plot_leaderboard.py --with-score
-    python operation/v2/paper_scripts/plot_leaderboard.py --v2
+    python operation/v2/paper_scripts/plot_leaderboard.py --v1
     python operation/v2/paper_scripts/plot_leaderboard.py --min-tasks 80 --plot-dir /tmp/plots
     python operation/v2/paper_scripts/plot_leaderboard.py --database-url postgresql://...
 """
@@ -105,7 +105,7 @@ MIN_JUDGE_VERSION = (
 )
 MIN_TASKS_DEFAULT = 30  # cohorts graded on fewer tasks are still in flight
 # Cohorts whose ungraded live tasks count as score 0 and a failed pass, so they sit on the full task set.
-BACKFILL_ZERO = {"Fable 5.1"}
+BACKFILL_ZERO = {"Fable 5.1", "Qwen 3.8", "Qwen 3.8-Code"}
 
 COMPANY_COLORS: dict[str, str] = STYLE["company"]
 HARNESS_TINT: dict[str, float] = STYLE["harness_tint"]
@@ -172,9 +172,9 @@ SAVE_DPI = 300
 PASS_AXES_H_IN = 1.2  # the pass-rate panel
 SCORE_AXES_H_IN = 2.0  # the composite-score panel above it, under --with-score
 PANEL_GAP_IN = 0.2  # between the score baseline and the pass panel's top tick
-TOP_PAD_IN = 0.06  # above the top panel, for the half-height of its top tick number
-LEGEND_ROW_IN = 0.15 # one legend row; vendor and harness stack in two, inside the pass panel's top right
-LEGEND_TITLE_PAD_PT = 5  # "Vendor" / "Harness" sit this far left of their row's entries
+LEGEND_ROW_IN = 0.15  # one legend row; vendor and harness stack in two, in a band above the top panel
+LEGEND_TITLE_PAD_PT = 10  # "Vendor" / "Harness" sit this far left of their row's first swatch
+LEGEND_MAX_COLS = 8  # vendors past this wrap onto another row, so the legend stays within the print width
 YLABEL_IN = 0.42  # y-axis title plus tick numbers
 RIGHT_IN = 0.04
 NAME_PAD_IN = 0.06  # below the deepest tilted name
@@ -201,9 +201,10 @@ PASS_YTICK_STEP = (
     5  # percent; doubles until the pass panel has at most PASS_MAX_TICKS ticks
 )
 PASS_MAX_TICKS = 6
-PASS_HEADROOM = 1.35  # the pass panel clears the tallest column + whisker by this factor, for the labels
-LEGEND_HANDLE_LENGTH = 2.4  # swatch size in font sizes, wide and tall enough to carry a few hatch repeats
+LEGEND_HANDLE_LENGTH = 1.6  # swatch size in font sizes, wide and tall enough to carry a few hatch repeats
 LEGEND_HANDLE_HEIGHT = 1.1
+LEGEND_COL_SPACING = 0.8  # between entries, in font sizes; with the swatch, keeps seven vendors on one row
+LEGEND_TEXT_PAD = 0.3  # swatch to label, in font sizes
 
 # --v2: the 0% cohorts leave the columns for a list right of a rule
 PLOT_NAME_V2 = "leaderboard_v2"
@@ -492,8 +493,9 @@ def make_figure(cohorts: list[Cohort], n_tasks: int, with_score: bool) -> plt.Fi
         left_in = max(YLABEL_IN, spill + NAME_PAD_IN)
     axes_w_in = FIG_W_IN - left_in - RIGHT_IN
     bottom_in = max(w * math.sin(theta) for _, w in widths) + NAME_PAD_IN
+    legend_in = legend_band_in(cohorts)  # the legend band above the top panel
     fig_h = (
-        TOP_PAD_IN
+        legend_in
         + (SCORE_AXES_H_IN + PANEL_GAP_IN if with_score else 0)
         + PASS_AXES_H_IN
         + bottom_in
@@ -512,7 +514,7 @@ def make_figure(cohorts: list[Cohort], n_tasks: int, with_score: bool) -> plt.Fi
     pass_pct = [(100 * c.pass_rate, 100 * c.pass_se) for _, c in cols]
     tallest = max(p + s for p, s in pass_pct)
     pass_top, tick_step = tick_top(
-        tallest * PASS_HEADROOM, PASS_YTICK_STEP, PASS_MAX_TICKS
+        tallest * V2_PASS_HEADROOM, PASS_YTICK_STEP, PASS_MAX_TICKS
     )
     quiet_axes(axp)
     axp.set_xlim(*xlim)
@@ -555,7 +557,8 @@ def make_figure(cohorts: list[Cohort], n_tasks: int, with_score: bool) -> plt.Fi
             hatch_color,
         )
 
-    draw_legend(axp, cohorts, hatch_color)
+    top_ax, top_h_in = (ax, SCORE_AXES_H_IN) if with_score else (axp, PASS_AXES_H_IN)
+    draw_legend(top_ax, cohorts, hatch_color, top=1 + legend_in / top_h_in)
     return fig
 
 
@@ -568,10 +571,27 @@ def vendor_order(cohorts: list[Cohort]) -> list[str]:
     return vendors
 
 
+def legend_rows(cohorts: list[Cohort]) -> int:
+    """Rows the legend takes: the vendors wrapped at LEGEND_MAX_COLS, then one for the harnesses."""
+    return math.ceil(len(vendor_order(cohorts)) / LEGEND_MAX_COLS) + 1
+
+
+def legend_band_in(cohorts: list[Cohort]) -> float:
+    """Height of the legend band above the top panel: its rows plus the gap to the panel's top tick."""
+    return legend_rows(cohorts) * LEGEND_ROW_IN + V2_LEGEND_GAP_IN
+
+
+def _row_major(handles: list, ncol: int) -> list:
+    """Reorder handles so matplotlib's column-major fill reads left to right, row by row."""
+    nrow = math.ceil(len(handles) / ncol)
+    return [handles[r * ncol + c] for c in range(ncol) for r in range(nrow) if r * ncol + c < len(handles)]
+
+
 def draw_legend(axp, cohorts: list[Cohort], hatch_color, right: float = 1.0, top: float = 1.0) -> None:
-    """Two legend rows, vendors above harnesses, right-aligned at `right` and hanging from `top`
-    (axes fractions; by default the panel's top-right corner, where the sorted order leaves room).
-    Each row is titled just left of its entries once its width is known."""
+    """Legend rows, vendors (wrapped at LEGEND_MAX_COLS, columns aligned) above harnesses, right-aligned
+    at `right` and hanging from `top` (fractions of `axp`; the callers pass a band above the panel, sized by
+    legend_band_in, so the key never sits on the data). Each group is titled just left of its first row
+    once its width is known."""
     fig = axp.figure
     v_handles = [
         mpatches.Patch(
@@ -595,22 +615,25 @@ def draw_legend(axp, cohorts: list[Cohort], hatch_color, right: float = 1.0, top
         labelcolor=INK,
         handlelength=LEGEND_HANDLE_LENGTH,
         handleheight=LEGEND_HANDLE_HEIGHT,
-        columnspacing=1.0,
-        handletextpad=0.4,
+        columnspacing=LEGEND_COL_SPACING,
+        handletextpad=LEGEND_TEXT_PAD,
         borderpad=0,
         borderaxespad=0,
         handler_map={mpatches.Patch: _HatchedHandler()},
     )
-    row_frac = LEGEND_ROW_IN / PASS_AXES_H_IN  # one row, as a fraction of the pass panel
-    for row, (title, handles) in enumerate(
-        (("Vendor", v_handles), ("Harness", h_handles))
-    ):
-        y = top - (row + 0.5) * row_frac
+    row_frac = LEGEND_ROW_IN / (axp.get_position().height * fig.get_figheight())  # one row, as a fraction of the panel
+    rows_above = 0
+    for title, handles in (("Vendor", v_handles), ("Harness", h_handles)):
+        ncol = min(len(handles), LEGEND_MAX_COLS)
+        nrow = math.ceil(len(handles) / ncol)
+        y = top - (rows_above + nrow / 2) * row_frac
+        rows_above += nrow
         leg = axp.legend(
-            handles=handles,
+            handles=_row_major(handles, ncol),
             loc="center right",
-            ncol=len(handles),
+            ncol=ncol,
             bbox_to_anchor=(right, y),
+            labelspacing=(LEGEND_ROW_IN * 72 - LEGEND_FS * LEGEND_HANDLE_HEIGHT) / LEGEND_FS,
             **common,
         )
         axp.add_artist(leg)  # a second axes.legend() call would replace the first
@@ -678,7 +701,7 @@ def make_figure_v2(cohorts: list[Cohort]) -> plt.Figure:
         max(w * math.sin(theta) for _, w in widths) + NAME_PAD_IN,
         list_h_in - PASS_AXES_H_IN,
     )
-    legend_in = 2 * LEGEND_ROW_IN + V2_LEGEND_GAP_IN  # the legend band above the panel
+    legend_in = legend_band_in(cohorts)
     fig_h = legend_in + PASS_AXES_H_IN + bottom_in
     fig.set_size_inches(FIG_W_IN, fig_h)
     axp = fig.add_axes(
@@ -838,9 +861,9 @@ def main() -> None:
         help="add the composite-score panel above the pass rate",
     )
     parser.add_argument(
-        "--v2",
+        "--v1",
         action="store_true",
-        help=f"list the 0%% cohorts beside the columns instead, saved as {PLOT_NAME_V2}",
+        help=f"draw every cohort as a column instead of {PLOT_NAME_V2}, saved as {PLOT_NAME}",
     )
     parser.add_argument(
         "--png", action="store_true", help="also save a .png preview next to the .pdf"
@@ -849,11 +872,9 @@ def main() -> None:
         "--plot-dir",
         type=Path,
         default=PLOT_DIR,
-        help=f"directory the figure is saved to as {PLOT_NAME}.pdf (default: {PLOT_DIR})",
+        help=f"directory the figure is saved to as {PLOT_NAME_V2}.pdf (default: {PLOT_DIR})",
     )
     args = parser.parse_args()
-    if args.v2 and args.with_score:
-        parser.error("--v2 draws the pass-rate panel only; drop --with-score")
 
     tiers = load_tiers()
     conn = psycopg2.connect(database_url(args))
@@ -866,11 +887,11 @@ def main() -> None:
     cohorts = ranked(cohorts, args.with_score)
     report(cohorts, n_tasks, tiers)
 
-    if args.v2:
-        fig, name = make_figure_v2(cohorts), PLOT_NAME_V2
-    else:
+    if args.v1 or args.with_score:  # the score panel exists only in the v1 layout
         fig = make_figure(cohorts, n_tasks, args.with_score)
         name = PLOT_NAME + ("_with_score" if args.with_score else "")
+    else:
+        fig, name = make_figure_v2(cohorts), PLOT_NAME_V2
     for path in save_figure(fig, args.plot_dir, name, png=args.png):
         print(f"wrote {path}")
     plt.close(fig)

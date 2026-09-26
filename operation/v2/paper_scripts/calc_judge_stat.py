@@ -15,6 +15,10 @@ recall, specificity and F1 for:
 Positive class is "check failed": TP both say fail, FP the judge failed a passing
 check, TN both say pass, FN the judge passed a failing check. FPR and FNR of the
 pooled groups also carry a 95% Wilson interval, since they rest on few errors.
+Last, P(pass | perfect) and P(pass | imperfect) under pass_rule.py at the
+LLM-decided FPR and FNR, both in closed form (pass_rule.confidence and
+pass_rule.pass_given_imperfect). Imperfect is any criterion actually wrong, each
+wrong at the per-tier rate the human labels give (TP + FN).
 
 Run with ~/.uv/uv_venvs/base:
     python operation/v2/paper_scripts/calc_judge_stat.py
@@ -28,6 +32,8 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
+
+import pass_rule
 
 # This file lives at <repo>/operation/v2/paper_scripts/, so the repo root is three levels up.
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -184,6 +190,99 @@ def report(rows: list[dict], tiers: dict[tuple[str, str], int]) -> None:
     print_table("by importance tier", by_tier, key_header="tier")
     print_table("by rubric category", by_category, key_header="category")
     print_intervals(overall | by_tier | by_category)
+    print_pass_probability(overall["LLM-decided"], rows)
+
+
+# ==============================================================================
+# ######## P(pass | perfect) and P(pass | imperfect)
+# ==============================================================================
+# Both are closed forms in pass_rule.py, at the LLM-decided FPR and FNR above.
+#
+#   perfect    every criterion right, so every flag is a false positive:
+#                  P(pass | perfect) = prod_t P(Binomial(N_t, FPR) <= k_t)
+#              (pass_rule.confidence).
+#
+#   imperfect  the answer passes the deterministic accuracy check, but at least one
+#              LLM-decided (judge) check is actually wrong. Each tier-t judge check is
+#              wrong independently with probability q_t, so it is flagged with
+#                  p_t = q_t (1 - FNR) + (1 - q_t) FPR,
+#              and with the perfect workbooks (prob P0) taken out
+#                  P(pass | imperfect) = (prod_t P(Binomial(N_t, p_t) <= k_t) - P0 P(pass | perfect))
+#                                        / (1 - P0),       P0 = prod_t (1 - q_t)^N_t
+#              (pass_rule.pass_given_imperfect, derivation there).
+#
+# q_t comes from the human labels on the annotated workbooks whose answer is right
+# (mistake_rates): a check is actually wrong when its label is TP (judge flagged it) or FN
+# (judge missed it), so q_t = (TP + FN) / labelled tier-t checks. Since the answer depends
+# on q, it is also printed over a range of q (the same in every tier). The judge's actual
+# verdict on those workbooks (TP + FP flags through the pass rule) is printed as a check.
+
+
+def workbook_truth(row: dict) -> dict:
+    """One annotated workbook, from its labels: real mistakes (TP/FN: the check really failed) and the judge's
+    flags (TP/FP), each as the deterministic check plus a count per pass_rule tier."""
+    tiers = pass_rule.load_tiers()
+    out = {"det_wrong": False, "det_flag": False, "mistakes": Counter(), "flags": Counter(), "checks": Counter()}
+    for key, label in row["labels"].items():
+        check = tuple(key.split("::", 1))
+        if label not in LABELS or (check not in DETERMINISTIC_CHECKS and check not in tiers):
+            continue
+        wrong, flag = label in ("TP", "FN"), label in ("TP", "FP")
+        if check in DETERMINISTIC_CHECKS:
+            out["det_wrong"] |= wrong
+            out["det_flag"] |= flag
+        else:
+            out["mistakes"][tiers[check]] += wrong
+            out["flags"][tiers[check]] += flag
+            out["checks"][tiers[check]] += 1
+    out["imperfect"] = not out["det_wrong"] and sum(out["mistakes"].values()) > 0
+    out["judge_passed"] = not out["det_flag"] and all(
+        out["flags"][t] <= pass_rule.TIER_TOLERANCE[t] for t in pass_rule.TIERS)
+    return out
+
+
+def mistake_rates(truths: list[dict]) -> dict[int, float]:
+    """q_t: the share of labelled tier-t judge checks actually wrong, over the workbooks whose answer is right."""
+    right = [w for w in truths if not w["det_wrong"]]
+    return {t: ratio(sum(w["mistakes"][t] for w in right), sum(w["checks"][t] for w in right))
+            for t in pass_rule.TIERS}
+
+
+def pass_given_imperfect(truths: list[dict], fpr: float, fnr: float) -> float:
+    """P(pass | answer right, some judge check wrong) at this FPR and FNR, at the annotated mistake rates."""
+    return pass_rule.pass_given_imperfect(pass_rule.load_tiers(), fpr, fnr, mistake_rates(truths))
+
+
+def print_pass_probability(c: Counter, rows: list[dict]) -> None:
+    """P(pass | perfect) and P(pass | imperfect) under pass_rule at the LLM-decided FPR and FNR."""
+    m = metrics(c)
+    fpr, fnr = m["FPR"], m["FNR"]
+    tiers = pass_rule.load_tiers()
+    truths = [workbook_truth(r) for r in rows]
+    imperfect = [w for w in truths if w["imperfect"]]
+    q = mistake_rates(truths)
+    counts = pass_rule.tier_counts(tiers)
+
+    print(f"\nP(pass) under pass_rule at the LLM-decided FPR {pct(fpr)} and FNR {pct(fnr)}"
+          f" (pass: flags_t <= k_t in every tier)")
+    print(f"imperfect = answer passes the accuracy check, some judge check actually wrong; q_t from the "
+          f"{len(imperfect)} annotated workbooks with the answer right")
+    print(f"  {'tier':<6}{'N_t':>5}{'k_t':>5}{'q_t (wrong)':>13}{'p_t (flagged)':>15}")
+    for t in pass_rule.TIERS:
+        p_t = q[t] * (1 - fnr) + (1 - q[t]) * fpr
+        print(f"  {t:<6}{counts[t]:>5}{pass_rule.TIER_TOLERANCE[t]:>5}{pct(q[t]):>13}{pct(p_t):>15}")
+
+    print(f"\nP(pass | perfect)    {pass_rule.confidence(tiers, fpr)[0]:.3g}   every criterion right")
+    print(f"P(pass | imperfect)  {pass_given_imperfect(truths, fpr, fnr):.3g}   "
+          f"at the q_t above ({sum(q[t] * counts[t] for t in pass_rule.TIERS):.1f} real mistakes on average)")
+    print(f"(check: the judge actually passed {sum(w['judge_passed'] for w in imperfect)} of those "
+          f"{len(imperfect)} annotated imperfect workbooks)")
+
+    print("\nP(pass | imperfect) by mistake rate q (the same in every tier)")
+    print(f"  {'q':>6}{'mean real mistakes':>20}{'P(pass | imperfect)':>21}")
+    for qq in (0.005, 0.01, 0.02, 0.03, 0.05, 0.10, 0.15):
+        p = pass_rule.pass_given_imperfect(tiers, fpr, fnr, {t: qq for t in pass_rule.TIERS})
+        print(f"  {qq:>6.1%}{qq * sum(counts.values()):>20.1f}{p:>21.3f}")
 
 
 def main():

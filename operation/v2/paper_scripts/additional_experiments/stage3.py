@@ -13,6 +13,8 @@ Prints to stdout:
                   verdict, next to how often two Sol runs do (stage 2)
   per check       how often the two judges flag a rubric check the same way on the same attempt, by tier, next
                   to two Sol runs on the 90 stage 2 attempts, and each judge's flag rate
+  error rates     each judge's FPR and FNR on LLM-decided checks against the human labels (calc_judge_stat.py),
+                  and from them P(pass | perfect workbook) and P(pass | imperfect workbook)
   main metrics    the numbers the paper cites: ranking under each judge, score correlation and per-check
                   agreement (all attempts, and on the stage 2 attempts next to Sol vs Sol), how much stricter
                   Fable is, and Fable's offset on its own model next to the other agents
@@ -39,13 +41,16 @@ from _common import (
     with_pass_verdicts,
     with_role,
 )
+from calc_judge_stat import DETERMINISTIC_CHECKS, GRADING_IDS, fetch, pass_given_imperfect, workbook_truth
+from pass_rule import TIER_TOLERANCE, load_tiers, pass_probability
 
 SOL, FABLE = "gpt-5.6-sol", "claude-fable-5-1"
 SOL_ROLE, FABLE_ROLE = "stage3:sol_production", "stage3:fable_judge"
 REPEAT_ROLES = ("stage2:sol_production", "stage2:sol_repeat")
 RUNS = [0, 1, 2]
 SHORT = {"gpt-6-astra-xhigh": "Astra", "claude-fable-5-1-max": "Fable (In-house)", "gemini-3.8-flash-high": "Gemini"}
-SELF_AGENT = "claude-fable-5-1-max"  # the agent sharing the Fable judge's model
+# Each judge's own-family agent: Fable judge -> the Fable agent, Sol (OpenAI) -> Astra (OpenAI).
+SELF_AGENT = {FABLE: "claude-fable-5-1-max", SOL: "gpt-6-astra-xhigh"}
 
 
 def main() -> None:
@@ -122,7 +127,8 @@ def main() -> None:
     print("(Sol vs Sol: the stage 2 attempts, mean over the 3 run pairs)")
 
     checks, repeats = per_check_agreement(df)
-    main_metrics(df, wide, verdicts, checks, repeats)
+    rates = error_rates(df, checks)
+    main_metrics(df, wide, verdicts, checks, repeats, rates)
 
 
 def per_check_agreement(df):
@@ -153,6 +159,46 @@ def per_check_agreement(df):
     return checks, repeats
 
 
+def error_rates(df, checks) -> dict[str, dict]:
+    """FPR and FNR on LLM-decided checks against the human labels, and the P(pass) they imply. Only Sol gradings
+    are annotated, so the labels give the truth of each (attempt, check) (TP/FN = the check really failed), and
+    Fable is scored against it on the stage 3 attempts whose Sol grading is annotated. Rows: Sol over every
+    GRADING_IDS annotation (calc_judge_stat.py's LLM-decided tally), and Sol and Fable on those stage 3 attempts.
+    P(pass | imperfect) uses the same mistake rates (the annotated workbooks') for every row, at that row's FPR/FNR."""
+    ann = fetch(GRADING_IDS)
+    truths = [workbook_truth(r) for r in ann]
+    labels = [(r["grading_id"], *key.split("::", 1), v) for r in ann for key, v in r["labels"].items()
+              if v in ("TP", "FP", "TN", "FN") and tuple(key.split("::", 1)) not in DETERMINISTIC_CHECKS]
+    labels = pd.DataFrame(labels, columns=["grading_id", "category", "check", "label"])
+    labels["truth"] = labels["label"].isin(["TP", "FN"])
+    labels["sol"] = labels["label"].isin(["TP", "FP"])
+    attempt = with_role(df, SOL_ROLE).set_index("grading_id")["attempt_id"]
+    s3 = labels[labels["grading_id"].isin(attempt.index)].assign(attempt_id=lambda x: x["grading_id"].map(attempt))
+    s3 = s3[["attempt_id", "category", "check", "truth"]].merge(checks, on=["attempt_id", "category", "check"])
+    n_s3 = s3["attempt_id"].nunique()
+
+    rows = {}
+    for name, t, flag in [(f"Sol, {len(ann)} annotated gradings", labels, "sol"),
+                          (f"Sol, {n_s3} stage 3 attempts", s3, "sol"),
+                          (f"Fable, same {n_s3} attempts", s3, "fable")]:
+        truth, f = t["truth"], t[flag]
+        fp, neg, fn, pos = (f & ~truth).sum(), (~truth).sum(), (~f & truth).sum(), truth.sum()
+        fpr, fnr = fp / neg, fn / pos
+        rows[name] = {"fpr": fpr, "fnr": fnr, "fp": f"{fp}/{neg}", "fn": f"{fn}/{pos}",
+                      "perfect": pass_probability(load_tiers(), fpr, fnr, {}),
+                      "imperfect": pass_given_imperfect(truths, fpr, fnr)}
+
+    header("Judge error rates against human labels, and P(pass) they imply")
+    print("perfect = every criterion right; imperfect = answer passes the accuracy check, some judge check wrong,\n"
+          "each wrong at the rate of the annotated answer-right workbooks (calc_judge_stat.mistake_rates), closed\n"
+          f"form in pass_rule; k = {TIER_TOLERANCE}\n")
+    print(f"{'judge, labels':<32}{'FPR':>16}{'FNR':>16}{'P(pass|perfect)':>17}{'P(pass|imperfect)':>19}")
+    for name, r in rows.items():
+        print(f"{name:<32}{r['fpr']:>7.2%} ({r['fp']:>7}){r['fnr']:>7.2%} ({r['fn']:>6}){r['perfect']:>17.3f}"
+              f"{r['imperfect']:>19.2e}")
+    return rows
+
+
 def pair_agree(repeats) -> float:
     """Share of (attempt, check) cells two Sol runs flag the same way, mean over the 3 run pairs."""
     return sum((repeats[i] == repeats[j]).mean() for i, j in combinations(RUNS, 2)) / 3
@@ -167,7 +213,7 @@ def order(values: pd.Series) -> str:
     return out
 
 
-def main_metrics(df, wide, verdicts, checks, repeats) -> None:
+def main_metrics(df, wide, verdicts, checks, repeats, error) -> None:
     """The numbers the paper's judge-choice paragraph cites, restated at the end of the output."""
     s3 = with_role(df, SOL_ROLE, FABLE_ROLE)
     scores = s3.pivot(index="attempt_id", columns="judge", values="total_score")
@@ -194,9 +240,11 @@ def main_metrics(df, wide, verdicts, checks, repeats) -> None:
     print(f"tasks common to all 3 agents (ranking, offset)  {wide['task_id'].nunique()}  ({len(wide)} attempts)")
     print("\nranking")
     for label, col, table in [("mean score", "", means), ("pass rate", "passed_", rates)]:
-        o_s, o_f = order(table[f"{col}{SOL}"]), order(table[f"{col}{FABLE}"])
-        print(f"  {label:<12} Sol    {o_s}")
-        print(f"  {'':<12} Fable  {o_f}   {'(same)' if o_s == o_f else '(DIFFERS)'}")
+        a, b = table[f"{col}{SOL}"], table[f"{col}{FABLE}"]
+        flipped = any((a[x] - a[y]) * (b[x] - b[y]) < 0 for x, y in combinations(a.index, 2))
+        status = "same" if order(a) == order(b) else "PAIR REVERSED" if flipped else "ties differ, no pair reversed"
+        print(f"  {label:<12} Sol    {order(a)}")
+        print(f"  {'':<12} Fable  {order(b)}   ({status})")
     print("\nagreement                                       Sol vs Fable   Sol vs Sol")
     print(f"  score Pearson r, all {len(scores)} attempts            {scores[SOL].corr(scores[FABLE]):>10.3f}")
     print(f"  score Pearson r, the {len(runs)} stage 2 attempts      {r_sf:>10.3f}   {r_ss:>10.3f}")
@@ -213,13 +261,20 @@ def main_metrics(df, wide, verdicts, checks, repeats) -> None:
         g = verdicts[verdicts["agent"] == agent]
         print(f"  pass rate {SHORT.get(agent, agent):<18} Sol / Fable  "
               f"{pass_pct(g[f'verdict_{SOL}']).strip()} / {pass_pct(g[f'verdict_{FABLE}']).strip()} %")
-    print("\nFable does not favor Fable (mean Fable - Sol per agent)")
+    # Difference of differences over the common tasks: (Fable - Sol) on the Fable agent minus (Fable - Sol) on
+    # Astra. A judge favoring its own family by x (Fable) and y (Sol) makes it x + y, so it is > 0 under
+    # same-family bias; the two judges' biases are not separable with two judges.
+    fa, sa = SELF_AGENT[FABLE], SELF_AGENT[SOL]
+    per_task = {a: g.set_index("task_id")[FABLE] - g.set_index("task_id")[SOL] for a, g in wide.groupby("agent")}
+    did = per_task[fa] - per_task[sa]
+    print("\nno same-family bias (mean Fable - Sol per agent)")
     for agent, d in sorted(offset.items(), key=lambda kv: -kv[1].mean()):
         print(f"  {SHORT.get(agent, agent):<18}{d.mean():>+8.2f} +- {se(d):.2f} pts")
-    others = [a for a in offset if a != SELF_AGENT]
-    for a in others:
-        gap = offset[SELF_AGENT].mean() - offset[a].mean()
-        print(f"  {SHORT[SELF_AGENT]} offset - {SHORT.get(a, a)} offset".ljust(48) + f"{gap:+.2f} pts")
+    print(f"  difference of differences ({SHORT[fa]} - {SHORT[sa]}, {len(did)} tasks; > 0 = same-family bias)")
+    print(f"  {'':<18}{did.mean():>+8.2f} +- {se(did):.2f} pts")
+    print("\njudge error vs human labels             FPR     FNR   P(pass|perfect)  P(pass|imperfect)")
+    for name, r in error.items():
+        print(f"  {name:<34}{r['fpr']:>7.2%}{r['fnr']:>8.2%}{r['perfect']:>12.3f}{r['imperfect']:>18.2e}")
 
 
 if __name__ == "__main__":

@@ -97,6 +97,9 @@ agents:
   Gemini 3.8-Code: {vendor: Google, db: [codex_tensorblock/gemini-3.8-flash-high]}
   Grok 4.6-Code: {vendor: xAI, db: [codex_tensorblock/grok-4.6-xhigh]}
   Kimi K3-Code: {vendor: Moonshot, db: [codex_tensorblock/kimi-k3-max]}
+  Qwen 3.8-Code: {vendor: Alibaba, db: [codex_tensorblock/qwen3.8-max-xhigh]}
+  Opus 5-Code: {vendor: Anthropic, db: [codex_tensorblock/claude-opus-5-max, claudecode_anthropic/claude-opus-5-max]}  # Codex via Forge did 65 tasks, Claude Code the other 36
+  # GLM 5.3-Code: {vendor: Zhipu, db: [codex_tensorblock/glm-5.3-max]}
   Fable 5.1: {vendor: Anthropic, db: [openpyxl_anthropic/claude-fable-5-1-max]}
   Fable 5: {vendor: Anthropic, db: [openpyxl_anthropic/claude-fable-5-max]}
   Astra: {vendor: OpenAI, db: [openpyxl_openai/gpt-6-astra-xhigh, openpyxl_tensorblock/gpt-6-astra-xhigh]}
@@ -109,7 +112,7 @@ agents:
 # Model vendors on Okabe-Ito, the colour-blind-safe set scientific journals default to; its slots match the brand hue families
 # (plot_leaderboard.py). Bars carry the agent name, so identity never rests on hue alone. dataviz validate_palette.js --pairs all
 # over the four plotted vendors: normal dE 16.5, CVD dE 11.0, all >= 3:1 on white. xAI is charcoal by design (black brand) and
-# waived from the chroma floor. Moonshot and Alibaba are best-effort: six hues cannot clear the all-pairs floor, and neither is plotted yet.
+# waived from the chroma floor. Moonshot, Alibaba and Zhipu are best-effort: seven hues cannot clear the all-pairs floor.
 company:
   Anthropic: "#d55e00"    # vermilion
   OpenAI: "#009e73"       # bluish green

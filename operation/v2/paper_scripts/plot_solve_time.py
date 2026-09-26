@@ -10,7 +10,7 @@ Draws two figures under operation/results/v2/plots/solve_time/:
 
   solve_time.{png,pdf}
     Every task's expert estimate as a dot, grouped by
-    tasks.human_difficulty_measure on a log axis, with the bucket median drawn
+    tasks.human_difficulty_measure on a power (Y_POWER) axis that stretches the long tail, with the bucket median drawn
     as a bar and labelled. Each bucket's column is as wide as its share of the
     tasks (the x axis runs 0-100% of the set), so the dots sit at one density
     and the widths are the proportions. Pale rounded bands, tints of one blue
@@ -82,7 +82,7 @@ RANGES_PLOT_NAME = "solve_time_ranges"
 # are the axes', and the canvas grows by whatever hangs above and below them.
 PRINT = STYLE["print"]
 FIG_W_IN = PRINT["textwidth_in"]
-FIG_SIZE = (FIG_W_IN / 2, 1.3)  # half the text width; the header above adds its own height
+FIG_SIZE = (FIG_W_IN / 2, 1.05)  # half the text width; the header above adds its own height
 RANGES_FIG_SIZE = (FIG_W_IN, 1.9)
 FIT_ITERS = 3  # fit_to_canvas passes; the spill settles after the second
 SAVE_DPI = 300
@@ -103,18 +103,20 @@ BAR_X_PAD = 0.6  # bars' worth of space before the first and after the last bar
 DOT_SIZE = 9  # scatter marker area in points^2 (~3 pt across)
 DOT_ALPHA = 0.85
 DOT_EDGE_LW = 0.4
-JITTER = 0.25  # half-width of the horizontal jitter, as a share of the column's width
+JITTER = 0.325  # half-width of the horizontal jitter, as a share of the column's width
 MEDIAN_OVERHANG = 1  # % of the set the median bar runs past the dot cloud on each side
 MEDIAN_LINE_PT = 1.4
 MEDIAN_LABEL_GAP = 1  # % of the set between the median bar and its value
-LOG_TICKS = (0.5, 1, 2, 5, 10, 20, 40)  # hours shown on the log axis; 40 closes it just above the 33 h task
+Y_TICKS = (1, 2, 5, 10, 20, 40)  # hours shown on the y axis; 40 closes it just above the 33 h task
+Y_FLOOR = 0.5  # hours at the bottom of the y axis, just under the shortest task; unlabelled
+Y_POWER = 0.4  # y axis plots hours**Y_POWER: between log (0) and linear (1), so the long tail stretches out
 JITTER_SEED = 0  # fixed so the figure is reproducible
 
 ROW_EM = 1.2  # a text line's height, in font sizes
 # the header above the axes, in points from the axes' top so it keeps its room at any height
-SHARE_PT = 7  # the shares of the set, over the bands (and the unbanded columns)
-BAND_CAPTION_PT = 24  # the bands' captions (bottom of their two lines)
-BAND_TOP_PT = 50  # where the bands end, clear of the captions
+SHARE_PT = 4  # the shares of the set, over the bands (and the unbanded columns)
+BAND_CAPTION_PT = 18  # the bands' captions (bottom of their two lines)
+BAND_TOP_PT = 42  # where the bands end, clear of the captions
 BAND_HUE = DIFFICULTY_COLORS["Medium"]  # both bands are tints of this blue, so they read as one family; deeper blues tint to grey
 BAND_ROUND_PT = 5  # band corner radius
 BAND_GAP_PT = 3  # between neighbouring bands
@@ -142,7 +144,7 @@ def newest_results() -> Path:
     return files[-1]
 
 
-def _log_ticks(ax, axis: str, candidates, lo: float, hi: float) -> None:
+def _set_ticks(ax, axis: str, candidates, lo: float, hi: float) -> None:
     ticks = [t for t in candidates if lo <= t <= hi]
     labels = [f"{t:g}" for t in ticks]
     if axis == "x":
@@ -209,6 +211,7 @@ def plot_hours_by_difficulty(ax, report: dict) -> list[tuple[float, float, str]]
     rng = np.random.default_rng(JITTER_SEED)
     spans = column_spans(difficulties, tasks)
     all_hours = []
+    longest_xy = (0.0, -np.inf)  # the longest task's dot, for the callout
     for d in difficulties:
         hours = np.array([t["time_h"] for t in tasks if t["difficulty"] == d])
         all_hours += hours.tolist()
@@ -216,6 +219,8 @@ def plot_hours_by_difficulty(ax, report: dict) -> list[tuple[float, float, str]]
         x0, x1 = spans[d]
         i = (x0 + x1) / 2
         xs = i + rng.uniform(-JITTER, JITTER, len(hours)) * (x1 - x0)
+        if hours.max() > longest_xy[1]:
+            longest_xy = (xs[hours.argmax()], hours.max())
         ax.scatter(
             xs, hours, s=DOT_SIZE, color=color, alpha=DOT_ALPHA,
             edgecolor=SURFACE, linewidth=DOT_EDGE_LW, zorder=3,
@@ -231,12 +236,13 @@ def plot_hours_by_difficulty(ax, report: dict) -> list[tuple[float, float, str]]
             ha="left", va="center_baseline", fontsize=VALUE_FS, color=INK, zorder=4,
         )
     quiet_axes(ax)
-    ax.set_yscale("log")
-    # snap to the ticks just outside the data, so the grid closes the panel at both ends
-    lo = max(t for t in LOG_TICKS if t <= min(all_hours))
-    hi = min(t for t in LOG_TICKS if t >= max(all_hours))
+    ax.set_yscale("function", functions=(lambda h: np.power(np.maximum(h, 0), Y_POWER),
+                                           lambda y: np.power(np.maximum(y, 0), 1 / Y_POWER)))
+    # the top snaps to the tick just above the data, so the grid closes the panel
+    lo = Y_FLOOR
+    hi = min(t for t in Y_TICKS if t >= max(all_hours))
     ax.set_ylim(lo, hi)
-    _log_ticks(ax, "y", LOG_TICKS, lo, hi)
+    _set_ticks(ax, "y", Y_TICKS, lo, hi)
     # 'Medium-Hard' -> 'Medium-\nHard' so the four names fit side by side
     ax.set_xticks([sum(spans[d]) / 2 for d in difficulties], [d.replace("-", "-\n") for d in difficulties],
                   fontsize=TICK_FS, color=INK, fontweight=LEGEND_WEIGHT)
@@ -247,7 +253,7 @@ def plot_hours_by_difficulty(ax, report: dict) -> list[tuple[float, float, str]]
     ax.tick_params(axis="x", pad=AXIS["tick_pad_pt"] + TICK_FS * ROW_EM * lines / 2)
     ax.set_xlim(0, 100)
     axis_title(ax, "Expected solve time (h)")
-    return annotate_shares(ax, difficulties, tasks, spans)
+    return annotate_shares(ax, difficulties, spans, longest_xy)
 
 
 def column_spans(difficulties: list[str], tasks: list[dict]) -> dict[str, tuple[float, float]]:
@@ -260,10 +266,11 @@ def column_spans(difficulties: list[str], tasks: list[dict]) -> dict[str, tuple[
     return spans
 
 
-def annotate_shares(ax, difficulties: list[str], tasks: list[dict],
-                    spans: dict[str, tuple[float, float]]) -> list[tuple[float, float, str]]:
+def annotate_shares(ax, difficulties: list[str], spans: dict[str, tuple[float, float]],
+                    longest_xy: tuple[float, float]) -> list[tuple[float, float, str]]:
     """Caption and share of the set over each BANDS entry, the unbanded buckets' shares in
-    slate, and the longest task; returns each band's (left, right, fill) for draw_bands."""
+    slate, and the longest task's dot at longest_xy; returns each band's (left, right, fill)
+    for draw_bands."""
     over = ax.get_xaxis_transform()  # x in data, y in axes fraction
 
     def share(x0: float, x1: float, color: str) -> None:
@@ -287,10 +294,8 @@ def annotate_shares(ax, difficulties: list[str], tasks: list[dict],
     for d in difficulties:
         if d not in banded:
             share(*spans[d], SLATE)
-    longest = max(tasks, key=lambda t: t["time_h"])
     ink = HEADER_INK
-    ax.annotate(f"Longest: {longest['time_h']:.0f} h",
-                xy=(sum(spans[longest["difficulty"]]) / 2, longest["time_h"]),
+    ax.annotate(f"Longest: {longest_xy[1]:.0f} h", xy=longest_xy,
                 xytext=LONGEST_OFFSET_PT, textcoords="offset points", ha="right", va="center_baseline",
                 fontsize=VALUE_FS, color=ink, fontweight=LONGEST_WEIGHT,
                 arrowprops=dict(arrowstyle="-", color=ink, lw=LEADER_LW, shrinkA=1, shrinkB=3))

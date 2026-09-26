@@ -15,9 +15,11 @@ tasks.human_difficulty_measure; each task's expert estimate,
 case_classification.time_assumption_h, comes from the task-analysis JSON written
 by plot_difficulty_and_types.py (newest unless --results is given).
 
-Only the cohorts in ROSTER are plotted (display names from style_guide.yaml
-`agents`, which gives each its vendor and the database agent_model_names pooled
-into it, the newest grading kept when two of them cover a task).
+Cohorts are named in style_guide.yaml `agents`, as for plot_leaderboard.py
+(display name -> vendor and the database agent_model_names pooled into it, the
+newest grading kept when two of them cover a task); an agent_model_name that is
+not there is skipped and listed on stderr, and a cohort graded on fewer than
+--min-tasks tasks is left out.
 
 Draws accuracy_by_difficulty.pdf (a .png alongside under --png) under
 operation/results/v2/plots/accuracy_by_difficulty/, at the printed width
@@ -26,9 +28,9 @@ operation/results/v2/plots/accuracy_by_difficulty/, at the printed width
   Top           accuracy leaderboard over the selected difficulties
                 (--difficulty, default Medium and harder): one column per
                 cohort, best at the left, the pass share with a standard-error
-                whisker, and "n/N" in slate when the cohort has not covered
-                every selected task. Columns carry the leaderboard's encoding:
-                vendor hue, harness tint and hatch, squircle cap.
+                whisker. Columns carry the leaderboard's encoding: vendor hue,
+                harness tint and hatch, squircle cap; its vendor/harness key
+                sits in a band above the panel.
   Bottom left   mean accuracy of the selected cohorts (--models or --top, default
                 BOTTOM_DEFAULT) at each difficulty bucket, easiest
                 to hardest (E, M, M-H, H): a PCHIP-smoothed line through the
@@ -53,6 +55,7 @@ Usage:
     python operation/v2/paper_scripts/plot_accuracy_by_difficulty.py --models "Fable 5.1-Code" "Astra-Code"
     python operation/v2/paper_scripts/plot_accuracy_by_difficulty.py --difficulty Medium-Hard Hard
     python operation/v2/paper_scripts/plot_accuracy_by_difficulty.py --time-scale linear
+    python operation/v2/paper_scripts/plot_accuracy_by_difficulty.py --min-tasks 80
     python operation/v2/paper_scripts/plot_accuracy_by_difficulty.py --results operation/results/v2/task_analysis/<stamp>.json
     python operation/v2/paper_scripts/plot_accuracy_by_difficulty.py --database-url postgresql://...
 """
@@ -66,7 +69,6 @@ from pathlib import Path
 
 import matplotlib.colors as mcolors
 import matplotlib.lines as mlines
-import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import psycopg2
@@ -92,23 +94,17 @@ from plot_leaderboard import (  # noqa: E402
     COHORTS,
     COMPANY_COLORS,
     HARNESS,
-    HARNESS_HATCH,
-    HARNESS_ORDER,
     HATCH_ALPHA,
-    LEGEND_HANDLE_HEIGHT,
-    LEGEND_HANDLE_LENGTH,
-    LEGEND_HARNESS_FACE,
-    HATCH_DENSITY,
     LEGEND_WEIGHT,
     MIN_JUDGE_VERSION,
+    MIN_TASKS_DEFAULT,
     SLATE,
-    YLIM,
     YTICKS,
-    _HatchedHandler,
     _tinted,
-    db_names,
     draw_columns,
+    draw_legend,
     fold_cohorts,
+    legend_band_in,
     name_tilt,
     save_figure,
     text_width_in,
@@ -123,29 +119,6 @@ DIFFICULTY_DEFAULT = ("Medium", "Medium-Hard", "Hard")  # the leaderboard's task
 BOTTOM_DEFAULT = ("Fable 5.1", "Fable 5.1-Code", "Grok 4.6-Code", "Astra-Work", "Gemini 3.8-Code", "Gemini 3.8")
 FINAL_ACCURACY = "Accuracy/Final calculation accuracy"  # key in scored_results.accuracy_engine.checks
 
-# The cohorts in this figure, by display name (style_guide.yaml `agents`, which holds their vendors and database names).
-ROSTER = (
-    # GUI
-    "Fable 5.1-Cowork",
-    "Astra-Work",
-    "GPT-6-Pro",
-    # Excel
-    "Fable 5.1-Excel",
-    "Opus 5-Excel",
-    "Sol-Excel",
-    # Code
-    "Fable 5.1-Code",
-    "Astra-Code",
-    "Gemini 3.8-Code",
-    "Grok 4.6-Code",
-    "Kimi K3-Code",
-    # In-house
-    "Fable 5.1",
-    "Astra",
-    "Gemini 3.8",
-    "Grok 4.6",
-)
-
 # ============================================================================
 # FIGURE STYLE
 # ============================================================================
@@ -156,21 +129,19 @@ ROSTER = (
 PRINT = STYLE["print"]
 FIG_W_IN = PRINT["textwidth_in"]
 
-BOARD_H_IN = 1.36  # the leaderboard; its y-axis title 'Accuracy, Medium+ (%)' runs 1.33 in, so no shorter
-LINE_H_IN = 1.05  # each of the three panels on the bottom row
+BOARD_H_IN = 1.15  # the leaderboard panel
+LINE_H_IN = 0.85  # each of the three panels on the bottom row
 TITLE_IN = 0.2  # above each bottom panel, for its title
 ROW_GAP_IN = 0.16  # between the deepest tilted name and the bottom panels' titles; the row rule sits midway
 LINE_GAP_IN = 0.5  # between the bottom panels; each has its own y ticks
-TOP_PAD_IN = 0.06  # above the leaderboard, for the half-height of its top tick number
 YLABEL_IN = 0.42  # y-axis title plus tick numbers
 RIGHT_IN = 0.04
 NAME_PAD_IN = 0.06  # below the deepest tilted name
 BUCKET_IN = 0.17  # bucket abbreviations under the bottom panels
-PACE_XTITLE_IN = 0.19  # what the pace panel's x-axis title hangs below the bucket names
+PACE_XTITLE_IN = 0.24  # what the pace panel's x-axis title hangs below the bucket names, with room above the cohort legend
+PACE_XTITLE_PAD_PT = 1  # pace x title to its tick numbers, tighter than the style guide's so it clears the cohort legend
 COHORT_LEGEND_IN = 0.32  # cohort legend beneath the bottom row (two rows)
 BOARD_X_PAD = 0.6  # columns of empty space before the first and after the last column
-LEGEND_ROW_IN = 0.16  # one row of the vendor/harness key, inside the leaderboard's top right
-LEGEND_TITLE_PAD_PT = 5  # "Vendor" / "Harness" sit this far left of their row's entries
 BUCKET_ABBREV = {"Easy": "E", "Medium": "M", "Medium-Hard": "M-H", "Hard": "H"}
 ROW_RULE_COLOR = STYLE["ink"]["slate_light"]  # hairline between the leaderboard and the bottom row
 ROW_RULE_LW = 0.5
@@ -190,6 +161,8 @@ MARKER_SIZE = 4.0
 MARKER_EDGE_LW = 0.6
 HARNESS_MARKER = {"GUI": "o", "Excel": "s", "Code": "D", "In-house": "^"}
 LINE_X_PAD = 0.25  # x units beyond the first and last bucket
+BOARD_YLIM = (0, 80)  # the leaderboard tops out near 60%; the key sits in a band above the top tick
+BOARD_YTICKS = (0, 20, 40, 60, 80)
 ACCURACY_YLIM = (0, 105)  # headroom so a marker at 100 is not clipped by the axes edge
 SMOOTH_SAMPLES = 200  # interpolated points per line under --smooth
 TIME_TICK_CANDIDATES = (0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50)  # hours
@@ -228,7 +201,6 @@ SQL = """
       and g.failed is not true and g.deprecated is not true
       and ta.deprecated is not true and t.deprecated is not true
       and g.scored_results->>'total_score' is not null
-      and ta.agent_model_name = any(%(roster)s)
     order by ta.agent_model_name, ta.task_id, g.created_at desc
 """
 
@@ -276,24 +248,28 @@ def mean_se(values: list[float]) -> tuple[float, float]:
 # --- data ----------------------------------------------------------------------
 
 
-def fetch(conn) -> tuple[dict[str, Cohort], dict[str, int]]:
-    """Every ROSTER cohort with its per-difficulty accuracies and times, and live tasks per difficulty."""
+def fetch(conn, min_tasks: int) -> tuple[dict[str, Cohort], dict[str, int]]:
+    """Every registered cohort with its per-difficulty accuracies and times, and live tasks per difficulty."""
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("select id, human_difficulty_measure as d from tasks where deprecated is not true")
     live = {r["id"]: r["d"] for r in cur.fetchall()}
     tasks_per_difficulty: dict[str, int] = {}
     for d in live.values():
         tasks_per_difficulty[d] = tasks_per_difficulty.get(d, 0) + 1
-    cur.execute(SQL, {"judge": MIN_JUDGE_VERSION, "check": FINAL_ACCURACY, "roster": db_names(ROSTER)})
+    cur.execute(SQL, {"judge": MIN_JUDGE_VERSION, "check": FINAL_ACCURACY})
     rows = fold_cohorts(cur.fetchall())
 
     by_name: dict[str, Cohort] = {}
+    unknown: dict[str, int] = {}
     not_harness = no_time = 0
     for r in rows:
+        name = r["cohort"]
+        if name is None:
+            unknown[r["agent_model_name"]] = unknown.get(r["agent_model_name"], 0) + 1
+            continue
         if r["engine"] != "harness" or r["decision"] not in ("pass", "fail"):
             not_harness += 1
             continue
-        name = r["cohort"]
         if name not in by_name:
             company, dbs = COHORTS[name]
             by_name[name] = Cohort(dbs[0], name, company, HARNESS.get(r["agent_model_type"], "?"))
@@ -320,13 +296,15 @@ def fetch(conn) -> tuple[dict[str, Cohort], dict[str, int]]:
     if no_time:
         print(f"{no_time} graded attempts have no positive time_taken_min; left out of the time panel",
               file=sys.stderr)
-    for name in ROSTER:
-        if name not in by_name:
-            print(f"skipping {name}: no graded tasks", file=sys.stderr)
+    for key, n in sorted(unknown.items()):
+        print(f"skipping {key}: {n} graded tasks but not in style_guide.yaml agents", file=sys.stderr)
     for c in by_name.values():
+        n = len(c.over(c.scores))
+        if n < min_tasks:
+            print(f"skipping {c.name}: {n} < {min_tasks} graded tasks", file=sys.stderr)
         if c.company not in COMPANY_COLORS:
             print(f"{c.name}: vendor {c.company!r} has no colour in style_guide.yaml", file=sys.stderr)
-    return by_name, tasks_per_difficulty
+    return {k: c for k, c in by_name.items() if len(c.over(c.scores)) >= min_tasks}, tasks_per_difficulty
 
 
 def leaderboard(cohorts: dict[str, Cohort], difficulties: tuple[str, ...]) -> list[Cohort]:
@@ -351,7 +329,8 @@ def select_models(cohorts: dict[str, Cohort], ranked: list[Cohort], names: list[
     for name in names:
         c = lookup.get(name.lower())
         if c is None:
-            sys.exit(f"--models: {name!r} is not a graded cohort in ROSTER")
+            sys.exit(f"--models: {name!r} is not a plotted cohort (registered in style_guide.yaml agents, "
+                     f"at least --min-tasks graded)")
         if c not in chosen:
             chosen.append(c)
     return chosen
@@ -360,13 +339,12 @@ def select_models(cohorts: dict[str, Cohort], ranked: list[Cohort], names: list[
 # --- figure ----------------------------------------------------------------------
 
 
-def plot_leaderboard_panel(ax, ranked: list[Cohort], difficulties: tuple[str, ...], n_tasks: int,
-                           theta: float) -> None:
+def plot_leaderboard_panel(ax, ranked: list[Cohort], difficulties: tuple[str, ...], theta: float) -> None:
     cols = [(float(i), c) for i, c in enumerate(ranked)]
     quiet_axes(ax)
     ax.set_xlim(-BOARD_X_PAD, cols[-1][0] + BOARD_X_PAD)
-    ax.set_ylim(*YLIM)
-    ax.set_yticks(list(YTICKS))
+    ax.set_ylim(*BOARD_YLIM)
+    ax.set_yticks(list(BOARD_YTICKS))
     axis_title(ax, f"Accuracy, {_difficulty_phrase(difficulties)} (%)")
     ax.set_xticks([x for x, _ in cols], [c.name for _, c in cols], fontsize=NAME_FS, color=INK,
                   rotation=math.degrees(theta), ha="right", rotation_mode="anchor")
@@ -374,7 +352,7 @@ def plot_leaderboard_panel(ax, ranked: list[Cohort], difficulties: tuple[str, ..
     for _, c in cols:
         scores = c.over(difficulties)
         m, se = mean_se(scores)
-        values.append((m, se, f"{m:.0f}%", f"{len(scores)}/{n_tasks}" if len(scores) < n_tasks else None))
+        values.append((m, se, f"{m:.0f}%", None))
     draw_columns(ax, cols, values, mcolors.to_rgba(SURFACE, HATCH_ALPHA))
 
 
@@ -458,7 +436,7 @@ def plot_time_panel(ax, selected: list[Cohort], buckets: list[str], smooth: bool
             ticks = [t for t in TIME_TICK_CANDIDATES if lo <= t <= hi]
             ax.set_yticks(ticks, [f"{t:g}" for t in ticks])
             ax.yaxis.set_minor_locator(plt.NullLocator())
-    axis_title(ax, "Agent solve time (h)")
+    axis_title(ax, "Agent time (h)")
     ax.set_title("Solve Time by Difficulty", fontsize=TITLE_FS, color=INK, fontweight=TITLE_WEIGHT, pad=4)
 
 
@@ -501,8 +479,9 @@ def plot_pace_panel(ax, selected: list[Cohort]) -> None:
     for label in ax.get_xticklabels():  # x ticks in ink, as on the bucket axes
         label.set_color(INK)
     axis_title(ax, "Expected solve time (h)", axis="x")
+    ax.xaxis.labelpad = PACE_XTITLE_PAD_PT
     ax.xaxis.label.set_color(INK)
-    axis_title(ax, "Agent solve time (h)")
+    axis_title(ax, "Agent time (h)")
     ax.set_title("Agent vs. Expert Time", fontsize=TITLE_FS, color=INK, fontweight=TITLE_WEIGHT, pad=4)
     label_slopes(ax, fitted)
 
@@ -531,42 +510,8 @@ def label_slopes(ax, fitted: list[Cohort]) -> None:
                     annotation_clip=False)
 
 
-def add_key(fig, ax, cohorts: list[Cohort]) -> None:
-    """Vendor and harness rows in the leaderboard's top right, each titled just left of its entries."""
-    vendors = []
-    for c in cohorts:
-        if c.company not in vendors:
-            vendors.append(c.company)
-    hatch_color = mcolors.to_rgba(SURFACE, HATCH_ALPHA)
-    v_handles = [mpatches.Patch(facecolor=COMPANY_COLORS.get(v, UNKNOWN_COLOR), edgecolor="none")
-                 for v in vendors]
-    harnesses = [h for h in HARNESS_ORDER if any(c.harness == h for c in cohorts)]
-    h_handles = [mpatches.Patch(facecolor=_tinted(LEGEND_HARNESS_FACE, h), edgecolor=hatch_color,
-                                hatch=HARNESS_HATCH[h] * HATCH_DENSITY)
-                 for h in harnesses]
-    common = dict(frameon=False, prop={"size": LEGEND_FS, "weight": LEGEND_WEIGHT}, labelcolor=INK,
-                  handleheight=LEGEND_HANDLE_HEIGHT, columnspacing=1.0,
-                  handletextpad=0.4, borderpad=0, borderaxespad=0,
-                  handler_map={mpatches.Patch: _HatchedHandler()})
-    row_frac = LEGEND_ROW_IN / BOARD_H_IN
-    rows = (("Vendor", v_handles, vendors, LEGEND_HANDLE_LENGTH),
-            ("Harness", h_handles, harnesses, LEGEND_HANDLE_LENGTH))
-    for row, (title, handles, labels, handlelength) in enumerate(rows):
-        y = 1 - (row + 0.5) * row_frac
-        leg = ax.legend(handles=handles, labels=labels, loc="center right", ncol=len(handles),
-                        bbox_to_anchor=(1, y), handlelength=handlelength, **common)
-        ax.add_artist(leg)  # a second axes.legend() call would replace the first
-        fig.canvas.draw()  # the row's extent is only known once drawn
-        # the title lines up with the entry labels' centre, not the row's, which the swatches skew
-        label = leg.get_texts()[0].get_window_extent()
-        left, y_label = ax.transAxes.inverted().transform((leg.get_window_extent().x0, (label.y0 + label.y1) / 2))
-        ax.annotate(title, xy=(left, y_label), xycoords="axes fraction", xytext=(-LEGEND_TITLE_PAD_PT, 0),
-                    textcoords="offset points", ha="right", va="center", fontsize=LEGEND_FS, color=SLATE,
-                    annotation_clip=False)
-
-
 def make_figure(ranked: list[Cohort], selected: list[Cohort], difficulties: tuple[str, ...],
-                buckets: list[str], n_tasks: int, smooth: bool, log_time: bool) -> plt.Figure:
+                buckets: list[str], smooth: bool, log_time: bool) -> plt.Figure:
     fig = plt.figure(figsize=(FIG_W_IN, 1.0), facecolor=SURFACE)  # height follows the margins
 
     # leaderboard margins from the rendered names: each hangs w*cos(theta) left and w*sin(theta)
@@ -586,7 +531,9 @@ def make_figure(ranked: list[Cohort], selected: list[Cohort], difficulties: tupl
     # their titles, the tilted names, leaderboard
     line_bottom_in = COHORT_LEGEND_IN + PACE_XTITLE_IN + BUCKET_IN
     board_bottom_in = line_bottom_in + LINE_H_IN + TITLE_IN + ROW_GAP_IN + names_in
-    fig_h = board_bottom_in + BOARD_H_IN + TOP_PAD_IN
+    key_cohorts = ranked + [c for c in selected if c not in ranked]
+    legend_in = legend_band_in(key_cohorts)  # the vendor/harness key, in a band above the leaderboard
+    fig_h = board_bottom_in + BOARD_H_IN + legend_in
     fig.set_size_inches(FIG_W_IN, fig_h)
 
     full_w_in = FIG_W_IN - left_in - RIGHT_IN
@@ -597,11 +544,11 @@ def make_figure(ranked: list[Cohort], selected: list[Cohort], difficulties: tupl
                       line_w_in / FIG_W_IN, LINE_H_IN / fig_h])
         for i in range(3)
     )
-    plot_leaderboard_panel(ax_board, ranked, difficulties, n_tasks, theta)
+    plot_leaderboard_panel(ax_board, ranked, difficulties, theta)
     plot_accuracy_panel(ax_acc, selected, buckets, smooth)
     plot_time_panel(ax_time, selected, buckets, smooth, log_time)
     plot_pace_panel(ax_pace, selected)
-    add_key(fig, ax_board, ranked + [c for c in selected if c not in ranked])
+    draw_legend(ax_board, key_cohorts, mcolors.to_rgba(SURFACE, HATCH_ALPHA), top=1 + legend_in / BOARD_H_IN)
 
     # hairline midway between the deepest tilted name and the tallest bottom title, as rendered
     fig.canvas.draw()
@@ -660,12 +607,13 @@ def add_cohort_legend(fig, selected: list[Cohort], x_center: float) -> None:
 
 
 def _difficulty_phrase(difficulties: tuple[str, ...]) -> str:
-    """'Medium and harder' when the selection is a tail of the ladder, else the list."""
+    """'M+' when the selection is a tail of the ladder, else the list, in the bottom row's abbreviations."""
     ordered = sorted(difficulties, key=order_key(DIFFICULTY_ORDER))
     tail = DIFFICULTY_ORDER[DIFFICULTY_ORDER.index(ordered[0]):] if ordered[0] in DIFFICULTY_ORDER else ()
+    abbrev = [BUCKET_ABBREV.get(d, d) for d in ordered]
     if tuple(ordered) == tail and len(ordered) > 1:
-        return f"{ordered[0]}+"
-    return ", ".join(ordered)
+        return f"{abbrev[0]}+"
+    return ", ".join(abbrev)
 
 
 # --- report ----------------------------------------------------------------------
@@ -707,6 +655,8 @@ def report(ranked: list[Cohort], selected: list[Cohort], difficulties: tuple[str
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--database-url", help="full connection string; bypasses config/config.yaml")
+    parser.add_argument("--min-tasks", type=int, default=MIN_TASKS_DEFAULT,
+                        help=f"drop cohorts graded on fewer tasks (default {MIN_TASKS_DEFAULT})")
     parser.add_argument("--difficulty", nargs="+", default=list(DIFFICULTY_DEFAULT), metavar="BUCKET",
                         help=f"difficulty buckets the leaderboard ranks on (default: {' '.join(DIFFICULTY_DEFAULT)})")
     parser.add_argument("--models", nargs="+", metavar="NAME",
@@ -724,9 +674,6 @@ def main() -> None:
                         help=f"directory the figure is saved to as {PLOT_NAME}.pdf (default: {PLOT_DIR})")
     args = parser.parse_args()
 
-    missing = [n for n in ROSTER if n not in COHORTS]
-    if missing:
-        sys.exit(f"ROSTER names cohorts with no entry in style_guide.yaml `agents`: {missing}")
     difficulties = tuple(args.difficulty)
     unknown = [d for d in difficulties if d not in DIFFICULTY_ORDER]
     if unknown:
@@ -734,7 +681,7 @@ def main() -> None:
 
     conn = psycopg2.connect(database_url(args))
     try:
-        cohorts, tasks_per_difficulty = fetch(conn)
+        cohorts, tasks_per_difficulty = fetch(conn, args.min_tasks)
     finally:
         conn.close()
     results = args.results or newest_results()
@@ -744,13 +691,12 @@ def main() -> None:
         c.pace = [(expert_h[t], m / 60) for t, m in c.task_minutes.items() if t in expert_h]
     ranked = leaderboard(cohorts, difficulties)
     if not ranked:
-        sys.exit("no ROSTER cohort is graded on the selected difficulties")
+        sys.exit("no cohort is graded on the selected difficulties")
     selected = select_models(cohorts, ranked, args.models, args.top)
     buckets = sorted((d for d in tasks_per_difficulty if d in DIFFICULTY_ORDER), key=order_key(DIFFICULTY_ORDER))
     report(ranked, selected, difficulties, buckets, tasks_per_difficulty)
 
-    n_tasks = sum(tasks_per_difficulty.get(d, 0) for d in difficulties)
-    fig = make_figure(ranked, selected, difficulties, buckets, n_tasks, args.smooth, args.time_scale == "log")
+    fig = make_figure(ranked, selected, difficulties, buckets, args.smooth, args.time_scale == "log")
     for path in save_figure(fig, args.plot_dir, PLOT_NAME, png=args.png):
         print(f"wrote {path}")
     plt.close(fig)
