@@ -21,7 +21,9 @@ from .batch_runner import BatchRunner, WorkspaceConfig, WorkspaceResult, BatchRe
 from .models_config import DEFAULT_MAX_ITERATIONS
 from .prompt_versions import (
     PROMPTS_DIR, PROMPT_VERSIONS, DEFAULT_PROMPT_VERSION, attachment_names_for, attachments_for, parse_prompt_version,
+    system_prompt_file,
 )
+from .models_config import uses_gemini_tool_calls
 from .repo_config import resolve_attachments
 
 
@@ -77,7 +79,10 @@ class LocalBatchRunner(BatchRunner):
         task_type = config['task_type']
         template_key = 'wsp' if task_type == 'wsp' else 'fmwc'
 
-        self._system_prompt_path = PROMPTS_DIR / ver_files["system"]
+        # The set's system prompt - or, for Gemini 3.8 Flash alone, its
+        # function-call variant (prompt_versions.MODEL_SYSTEM_PROMPT_VARIANTS).
+        self._system_prompt_path = PROMPTS_DIR / system_prompt_file(
+            prompt_ver, identity.model, require_variant=uses_gemini_tool_calls(identity.model))
         self._task_template_path = PROMPTS_DIR / ver_files[template_key]
         config['system_prompt_path'] = str(self._system_prompt_path)
         # Same rule as auto mode: the prompt version names the files shipped
@@ -181,6 +186,7 @@ class LocalBatchRunner(BatchRunner):
                 **self._identity.settings(),
                 **self._recalc_extra_configs(),
                 **self._attachment_extra_configs(),
+                **self._response_contract_extra_configs(),
             },
             "start_time": datetime.fromtimestamp(result.start_time).isoformat() if result.start_time else None,
             "end_time": datetime.fromtimestamp(result.end_time).isoformat() if result.end_time else None,
