@@ -26,7 +26,7 @@ scripts/
   install_task_files.py    Puts the downloaded task workbooks under data/tasks/ and checks their hashes.
   verify_offline_bundle.py Hash and completeness check of data/, no credentials.
   export_benchmark_data.py Regenerates data/ from the cloud stores (maintainers, read-only).
-house_standards/           House modelling conventions handed to every v2 attempt with the
+house_standards/           House modelling conventions handed to v2 attempts with the
                            starting files (append-only, versioned; selected by prompt version).
 gui-agents-master/         claude.ai / chatgpt.com via Playwright + CDP.
 cli-agents-master/         Raw model APIs + a local Excel MCP server.
@@ -96,7 +96,7 @@ source and sink. Each pipeline's README describes that path first.
 ## Running things
 
 - **Re-run a cohort**: one run config per leaderboard cohort under each
-  pipeline's `offline/` config folder; commands, expected time and cost in
+  pipeline's `offline/` config folder; commands in
   `REPRODUCE.md`. Attempts land under `outputs/<label>/` with a
   `task_attempts.jsonl` row each.
 - **Grade**: `judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass
@@ -108,9 +108,9 @@ source and sink. Each pipeline's README describes that path first.
 The maintainers keep a Postgres database and an object store (`<bucket>`).
 The names the cloud profile expects (the database name, the object-store
 prefix, the sandbox image tag, the OneDrive folder) follow the project name;
-stores created under an earlier name need renaming, or the presets in each
-package's `BENCHMARKS` table adjusting, before the cloud profile connects.
+stores under other names need renaming, or the benchmark presets in each
+package adjusting, before the cloud profile connects.
 Setting `database.v2_url` (and `v1_url`) and `aws.*` in `config/config.yaml`
 switches every pipeline and the judge to that source and sink, with the same
-`benchmark` guards as before; `scripts/export_benchmark_data.py` regenerates
-`data/tasks/` from it read-only.
+`benchmark` guards as before; `scripts/export_benchmark_data.py --only tasks`
+regenerates `data/tasks/` from it read-only.

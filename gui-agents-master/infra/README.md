@@ -13,7 +13,7 @@ uv run python -m infra.run -y \
 
 With no database url configured the runner reads the bundle (`source.kind: bundle`) and writes `outputs/<label>/task_attempts.jsonl` plus one folder per attempt (`sink.kind: local`); re-running resumes at the first task without a successful row. To use several browsers at once, start one Chrome per port/profile and run one `infra.run` per browser with disjoint `--start/--end` slices (or `--task-id`), each with its own `<provider>_web.browser.cdp_port` — nothing under `dispatcher/` or `worker/` is involved. Everything below assumes you want the EC2 fleet instead.
 
-Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
+Operator guide for running gui-agents on EC2 boxes from your laptop (every command runs from `gui-agents-master/`). Keep
 [dispatcher/common_commands.md](dispatcher/common_commands.md) (the full
 `dispatch` CLI reference) open alongside it.
 
@@ -46,7 +46,7 @@ Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
 3. **AWS key pair + security group** — idempotent bootstrap:
 
    ```bash
-   dispatch bootstrap --region us-east-1
+   python -m infra.dispatcher.dispatch bootstrap --region us-east-1
    ```
 
    Prompts for a key-pair and security-group name on first run, creates both,
@@ -63,7 +63,7 @@ Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
    [dispatcher/boxes.yaml](dispatcher/):
 
    ```bash
-   dispatch spinup --alias chatgpt-pro-1 \
+   python -m infra.dispatcher.dispatch spinup --alias chatgpt-pro-1 \
      --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
    ```
 

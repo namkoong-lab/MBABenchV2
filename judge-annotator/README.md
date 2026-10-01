@@ -13,12 +13,12 @@
 > with live attempt rows, a cutoff date, a join against the annotations table —
 > and its file links are presigned object-store URLs. A `--local` flag would
 > therefore not be a flag: the queue, the grade page, its templates and the
-> label derivation would all have to be rewritten, to rebuild a tool whose
-> results are already in the bundle. If the human review is ever repeated, that
+> label derivation would all have to be rewritten, to rebuild a tool that
+> reproducing the benchmark does not need. If the human review is ever repeated, that
 > rewrite is the right moment for it.
 
 Web app for human annotation of SpreadsheetSmith judge gradings. Reviewers see each
-grading's per-check verdicts (from the bundle `ai_judgement.json`), download the
+grading's per-check verdicts (from the grading bundle's `ai_judgement.json`), download the
 attempt workbook / golden solution / task files via presigned S3 URLs, and mark
 agree/disagree with a note per check (derived TP/TN/FP/FN).
 

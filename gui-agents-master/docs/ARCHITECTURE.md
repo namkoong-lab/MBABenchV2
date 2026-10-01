@@ -20,7 +20,7 @@ configs.yaml          │                        ▼               chatgpt.com
                       │                        │
                       ▼                        ▼
                  TaskSource               AttemptSink
-              (yaml | postgres_s3)     (local | postgres_s3)
+       (bundle | yaml | postgres_s3)   (local | postgres_s3)
 ```
 
 `infra/run.py` owns everything above the engine: the three-layer config merge, prompt resolution, agent identity, preflight, the per-task subprocess, and handing the result to the sink. The engine owns one task inside one browser. Neither imports the other's concepts — the engine sees only a plain dict.
@@ -151,7 +151,7 @@ Provider UIs change often. Two conventions keep that survivable:
 One attempt = one working directory + one destination prefix:
 
 ```
-scratch/gui-agents/attempts/{ts}_{task}/
+scratch/gui-agents/attempts/{ts}_{task}_p{pid}/
 ├── solutions/                     # downloaded .xlsx
 ├── json_logs/                     # one completion_*.json per agent attempt
 ├── logs/                          # runtime log + chat transcript
@@ -160,7 +160,7 @@ scratch/gui-agents/attempts/{ts}_{task}/
 
 The prompts JSON records text, not paths — a path stops being evidence the moment the file changes.
 
-The working directory is deleted once the sink reports it has taken custody (`retains_files`). The `local` sink does not copy files elsewhere, so it leaves them in place.
+The working directory is deleted once the sink reports it has taken custody (`retains_files`). Both reference sinks copy every file — `local` to `outputs/<label>/task_id=<N>/<ts>/`, `postgres_s3` to the object store — so either one lets the runner delete it.
 
 **JSON logs** carry `task_name`, `task_status` (`success` / `agent_failure` / `pipeline_failure`), `duration_seconds`, `attempt_number`, per-prompt timing, the agent name, and the prompt version.
 
@@ -171,9 +171,9 @@ The working directory is deleted once the sink reports it has taken custody (`re
 import json
 from pathlib import Path
 
-for log in Path("scratch/gui-agents/attempts").glob("*/json_logs/*.json"):
-    data = json.loads(log.read_text())
-    print(f"{data['task_name']}: {data['task_status']} in {data['duration_seconds']:.0f}s")
+for log in Path("../outputs").glob("*/task_id=*/*/completion_*.json"):  # local sink, from gui-agents-master/
+    for task in json.loads(log.read_text())["tasks"]:
+        print(f"{task['task_name']}: {task['task_status']} in {task['duration_seconds']:.0f}s")
 ```
 
 ---

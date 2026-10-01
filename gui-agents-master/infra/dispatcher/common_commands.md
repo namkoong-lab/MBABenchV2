@@ -1,7 +1,7 @@
 # Dispatcher — common commands
 
-All commands run from the repo root as `python -m infra.dispatcher.dispatch <...>`.
-`<alias>` refers to a box alias defined in [boxes.yaml](boxes.yaml).
+All commands run from `gui-agents-master/` as `python -m infra.dispatcher.dispatch <...>`.
+`<alias>` refers to a box alias in `boxes.yaml` next to this file (gitignored; `spinup` writes it).
 
 `status` / `show` / `assign` check whether your current public IP is in the
 dispatcher security group before fanning out over SSH. If it isn't, they print
@@ -23,23 +23,23 @@ volume and the browser login on it survive. The public DNS changes, and
 
 ```bash
 # Launch (or re-provision) a box from a config template
-dispatch spinup --alias chatgpt-sol56-chat-1 --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
+python -m infra.dispatcher.dispatch spinup --alias chatgpt-sol56-chat-1 --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
 
 # Skip the prompt
-dispatch spinup --alias chatgpt-sol56-chat-1 --config-template ... --instance-type t3.large
+python -m infra.dispatcher.dispatch spinup --alias chatgpt-sol56-chat-1 --config-template ... --instance-type t3.large
 
 # Terminate one box by alias
-dispatch teardown --alias chatgpt-pro-1
+python -m infra.dispatcher.dispatch teardown chatgpt-pro-1
 
 # Terminate every gui-agents box in the region
-dispatch teardown --all
+python -m infra.dispatcher.dispatch teardown --all
 ```
 
 ## Rename a box
 
-Changes the alias in [boxes.yaml](boxes.yaml) **and** the instance's `alias` /
+Changes the alias in `boxes.yaml` **and** the instance's `alias` /
 `Name` EC2 tags, which is why it's a command rather than an edit: `teardown
---all` and spinup's recovery path filter on `tag:alias`, so a hand-edited
+<alias>` selects the instance by `tag:alias`, so a hand-edited
 registry leaves the box unfindable under the name you now use.
 
 The alias is laptop-side only — nothing on the box records it — so renaming is

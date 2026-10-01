@@ -7,12 +7,12 @@ and fill in the model keys, then install the task workbooks from the download (`
 pipeline reads the bundled tasks under `data/tasks/` and writes attempts under
 `outputs/<label>/` (`data/README.md`), and the judge reads those rows and writes
 `outputs/gradings/`. One ready-made run config per leaderboard cohort sits in each pipeline's
-`offline/` config folder; `REPRODUCE.md` lists them with the recorded time and cost. The cloud
+`offline/` config folder; `REPRODUCE.md` lists them. The cloud
 profile (`database.*` + `aws.*` in `config/config.yaml`) is optional: it switches every pipeline
 to the Postgres + object-store source and sink. Every run sets `benchmark: v1|v2`, which selects
 prompts + rubric (and, in the cloud profile, the data stores) **together**; guards refuse
-mismatches; v1 has no bundled data. Every v2 prompt version (gui/excel 204/205, cli v15, coding
-v13) also attaches `house_standards/House_Standards_v1.md` with the starting files — the version,
+mismatches; v1 has no bundled data. The v2 prompt versions the leaderboard cohorts ran (gui/excel 205, cli v16,
+coding v13) also attach `house_standards/House_Standards_v1.md` with the starting files — the version,
 not the run config, selects it. Always check the logged source/sink line (`Database: SpreadsheetSmith
 (from config/config.yaml database.v2_url)` or the offline `data/` + `outputs/` line) before
 letting a run proceed. All registries are **append-only**: never edit an entry that has recorded
@@ -30,9 +30,11 @@ runs, add a new one.
   config fields (provider, mode, model, effort) looked up in append-only Python tables; unknown
   combinations refuse to run. File: `infra/configs/agent_identity.py`. To add: append one entry
   to the benchmark's `_V2_*_IDENTITIES` dict mapping the new axis tuple to `AgentIdentity(label, s3_folder)`.
-- **Run**: first start Chrome on the port your run config's `browser.cdp_port` names (9223 =
-  the Claude lane; 9222 = the ChatGPT lane). The profile dir is keyed by the port, so a new lane
-  only needs a new `PORT=` — Chrome allows one process per profile dir, and a launch against a
+- **Run**: first start Chrome on the port your run config's `browser.cdp_port` names (the offline
+  cohort configs keep the default 9222; the `v1_*`/`v2_*` examples use 9223 for the Claude lane,
+  9222 for ChatGPT). The profile dir below is keyed by the port; set the run config's
+  `<provider>_web.browser.profile_dir` to the same dir (gui README), or a runner relaunch of Chrome
+  opens its default, logged-out profile. A new lane needs a new `PORT=` plus that setting — Chrome allows one process per profile dir, and a launch against a
   running profile hands off to it and silently ignores the new port. First launch on a new port
   opens a blank profile: log in once there; it persists. Keep the `$HOME` spelling — zsh does not
   expand `~` after `=` (a bare `~/...` creates a literal `./~` dir in whatever cwd you launch from):
@@ -60,19 +62,19 @@ cd gui-agents-master && uv run python -m infra.run --run-config infra/configs/ru
 - **Config**: one self-contained batch YAML, no layering — copy an offline cohort config from
   `examples/offline/<label>.yaml` (`source: local`, `sink: local`) or, for the cloud profile,
   `examples/batch_config_template_auto.yaml` (keep `auto_mode: true`); it sets `benchmark`,
-  `agent_model_name`, `prompt_version`, task selection (`tasks:` or `task_filter:`), `max_trials`.
+  `agent_model_name`, `prompt_version`, task selection (`task_ids:`, `tasks:` or `task_filter:`), `max_trials`.
 - **Identity**: the config names only `agent_model_name`; that label's stanza in the YAML
   registry pins model, reasoning effort, token limits, base_url and context settings, and the
   run refuses to start if the config sets any of them. Files:
   `excel_cli_agent/agent_identities.yaml` (resolver `excel_cli_agent/agent_identity.py`).
   To add: append a stanza with a new unique label — an unregistered label refuses and prints a paste-ready stanza.
-- **Run** (no `--dry-run` — verify the startup banner's database + resolved identity):
+- **Run** (no `--dry-run` — verify the startup banner's storage/database line + resolved identity):
 
 ```bash
-cd cli-agents-master && excel-agent --batch-config my_config.yaml
+cd cli-agents-master && uv run excel-agent --batch-config my_config.yaml
 ```
 
-  Long runs: `nohup excel-agent --batch-config my.yaml > run.log 2>&1 &`. Everything else comes
+  Long runs: `nohup uv run excel-agent --batch-config my.yaml > run.log 2>&1 &`. Everything else comes
   from the YAML; `EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate cross-benchmark pairing.
   Needs LibreOffice (`soffice`) installed for formula recalc — startup fails loudly without it.
 
@@ -93,7 +95,7 @@ cd coding-agents-master && uv run python -m coding_agent.run_task --config run_c
 cd coding-agents-master && uv run python -m coding_agent.run_sweep --config run_configs/offline/claudecode_anthropic__claude-fable-5-1-max.yaml --dry-run
 ```
 
-  Key args: `--config` (required), `--task-id` (internal/DB mode); `--task-dir` + `--results-dir`
+  Key args: `--config` (required), `--task-id` (internal mode); `--task-dir` + `--results-dir`
   (external mode, local folders). Infra failures record nothing — rerun freely.
 
 ## Excel — `excel-agents-master/` (Claude/ChatGPT add-ins inside Excel Online)
@@ -124,7 +126,7 @@ cd excel-agents-master && uv run python -m infra.run --run-config my_run.yaml --
   repo `config/config.yaml` (keys; DB/AWS only for the cloud profile). `--source local|db` /
   `--sink local|db` default to local when no database url resolves. `--benchmark` picks rubric
   (and, in the cloud profile, DB + object store): `judge/prompts/rubrics/rubric_8.json` (v1, classic
-  3-stage judge) / `rubric_9.json` (v2 — must be graded with `--agentic`).
+  3-stage judge) / `rubric_9.json` (v2 — agentic judge only: `--single-pass`, the leaderboard mode, or `--agentic`).
 - **Identity**: `--model <label>` resolves in the YAML registry, pinning provider (endpoint),
   wire model id, and reasoning effort; the label is stored verbatim in `gradings.grader_model`.
   Files: `judge/judge_identities.yaml` (resolver `judge/utils/judge_identity.py`). To add:
@@ -135,10 +137,10 @@ cd excel-agents-master && uv run python -m infra.run --run-config my_run.yaml --
 ```bash
 uv run python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass --source local --sink local --all-local --model openai/gpt-5.6-sol --accuracy-check harness --dry-run
 uv run python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --attempt-ids 123 124      # cloud profile
-uv run python judge/main_scripts/grade_with_orchestration.py --benchmark v2 --agentic --all-tasks --workers 4
+uv run python judge/main_scripts/grade_with_orchestration.py --benchmark v2 --agentic --all-tasks --workers 4   # cloud profile only
 ```
 
-  grade_from_db: `--attempt-ids | --task-ids` (one required), `--model <label>`, `--dry-run`,
+  grade_from_db: `--attempt-ids | --attempt-ids-file | --task-ids | --all-local` (one required), `--model <label>`, `--dry-run`,
   `--no-db-write`, `--run-calculation` (LibreOffice recalc first), `--reasoning-effort` (override pin).
   Orchestration: `--all-tasks | --task-ids`, `--workers N`, `--models` (agent cohorts to grade);
   dedups to the latest attempt per (task, model, prompt_version) unless `--no-dedup`.

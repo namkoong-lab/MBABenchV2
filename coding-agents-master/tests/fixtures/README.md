@@ -8,6 +8,9 @@ checked against the shape the cloud path produces, without a connection.
   nothing the tests assert depends on its name.
 * `task_attempts_columns.json` — `task_attempts` column names in ordinal
   order. A local sink row must carry exactly this set.
+* `claude_stream.jsonl` / `codex_events.jsonl` — short hand-written Claude
+  Code / Codex event streams for the telemetry parser test
+  (`tests/test_smoke.py`); not from the database.
 
 Refresh them with a plain SELECT (autocommit, no session settings) when the
 schema changes:

@@ -2,7 +2,7 @@
 
 Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT. The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads the Excel workbooks the model produces.
 
-> **Looking at the SpreadsheetSmith repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
+> **Looking at the SpreadsheetSmith repo as a whole?** See the root [`../README.md`](../README.md) ("Layout") for an orientation across all agent suites in this repo.
 
 ---
 
@@ -62,7 +62,7 @@ outputs/
 
 ### Grading the outputs
 
-The judge grades the first `.xlsx` in `attempt_files` against the task's golden solution under `../data/tasks/task_id=<N>/solution_files/`. Point it at `outputs/<label>/task_attempts.jsonl` — the offline replacement for the `task_attempts` table — and it writes `outputs/gradings/` in the layout [`../data/README.md`](../data/README.md) specifies. See [`../judge/README.md`](../judge/README.md) for the judge itself.
+The judge grades the first `.xlsx` in `attempt_files` against the task's golden solution under `../data/tasks/task_id=<N>/solution_files/`. Its local source reads every `outputs/**/task_attempts.jsonl` — the offline replacement for the `task_attempts` table — and it writes `outputs/gradings/` in the layout [`../data/README.md`](../data/README.md) specifies; [`../REPRODUCE.md`](../REPRODUCE.md) (section 1) has the leaderboard command. See [`../judge/README.md`](../judge/README.md) for the judge itself.
 
 ### Roots
 
@@ -141,7 +141,7 @@ google-chrome \
 
 The `--user-data-dir` flag creates an isolated Chrome profile. Your login session persists across runs as long as you launch Chrome with the same directory — typically a few weeks until cookies expire. Each parallel browser instance needs its own profile dir (and its own port).
 
-This must agree with `<provider>_web.browser.profile_dir` in the run config, which defaults to `browser_profiles/chrome-claude` / `browser_profiles/chrome-chatgpt`. A relative value there is resolved against the repo root, so it names the same profile no matter where you invoke the runner from. The offline cohort configs leave the browser block at its defaults (port 9222, those profile dirs); override `cdp_port` / `profile_dir` in `infra/configs/configs.yaml` (gitignored) or in a copy of the config to run several browsers side by side.
+This must agree with `<provider>_web.browser.profile_dir` in the run config, which defaults to `browser_profiles/chrome-claude` / `browser_profiles/chrome-chatgpt`. A relative value there is resolved against `gui-agents-master/`, so it names the same profile no matter where you invoke the runner from. The offline cohort configs leave the browser block at its defaults (port 9222, those profile dirs); override `cdp_port` / `profile_dir` in `infra/configs/configs.yaml` (gitignored) or in a copy of the config to run several browsers side by side.
 
 In the Chrome window that just opened:
 
@@ -210,7 +210,7 @@ Results land under `../outputs/<label>/` in the same layout as the offline cohor
 
 The `postgres_s3` source and sink, the `infra/dispatcher/` EC2 fan-out and the `infra/worker/` box-side loop are the tooling the original runs used against a Postgres database and an object-store bucket. They are in the repo for transparency and for anyone who wants to run the same pipeline at scale, but they are **not needed to reproduce the results** — the offline path above is the supported one.
 
-To use them you need: an AWS account with EC2 permissions, a Postgres database holding the `tasks` and `task_attempts` tables, and an S3 bucket (`s3://<bucket>/SpreadsheetSmith/...`). Put `database.v1_url` / `database.v2_url` and `aws.access_key_id` / `aws.secret_access_key` in `config/config.yaml` at the repo root (gitignored); the run config's `benchmark:` picks which url applies. Example configs: [`infra/configs/run_configs/spreadsheetsmith_run_examples/`](infra/configs/run_configs/spreadsheetsmith_run_examples/) and the tutorial configs [`v2_fable5_claude.yaml`](infra/configs/run_configs/v2_fable5_claude.yaml) / [`v2_sol56_chatgpt.yaml`](infra/configs/run_configs/v2_sol56_chatgpt.yaml). The dispatcher operator guide is [`infra/README.md`](infra/README.md), with the full CLI reference in [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md). No schema migration ships with the repo; the table shapes are the ones [`../data/README.md`](../data/README.md) documents row by row.
+To use them you need: an AWS account with EC2 permissions, a Postgres database holding the `tasks` and `task_attempts` tables, and an S3 bucket (`s3://<bucket>/SpreadsheetSmith/...`). Put `database.v1_url` / `database.v2_url` and `aws.access_key_id` / `aws.secret_access_key` in `config/config.yaml` at the repo root (gitignored); the run config's `benchmark:` picks which url applies. Example configs: [`infra/configs/run_configs/spreadsheetsmith_run_examples/`](infra/configs/run_configs/spreadsheetsmith_run_examples/) and the tutorial configs [`v2_fable5_claude.yaml`](infra/configs/run_configs/v2_fable5_claude.yaml) / [`v2_sol56_chatgpt.yaml`](infra/configs/run_configs/v2_sol56_chatgpt.yaml). The dispatcher operator guide is [`infra/README.md`](infra/README.md), with the full CLI reference in [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md). No schema migration ships with the repo; the `tasks` rows are the ones under [`../data/tasks/`](../data/README.md), and [`task_io/sinks/attempt_row.py`](task_io/sinks/attempt_row.py) lists the `task_attempts` columns.
 
 ---
 
@@ -375,7 +375,7 @@ Offline checks — no database, object store, or browser:
 uv run python -m pytest tests/
 ```
 
-- `tests/test_offline_bundle.py` — parity of the offline path with the database path: the bundle source yields the same TaskSpec as the postgres source's own row-to-spec code (fixture `tests/fixtures/tasks_row_task_1.json`), the prompt payload and attachment list are byte-identical, the local sink's row carries exactly the `task_attempts` columns, and the no-url fallback switches (only) `postgres_s3` configs to bundle + local. Bundle-dependent checks skip when `../data/tasks/` is absent.
+- `tests/test_offline_bundle.py` — parity of the offline path with the database path: the bundle source yields the same TaskSpec as the postgres source's own row-to-spec code (fixture `tests/fixtures/tasks_row_task_1.json`), the prompt payload and attachment list are byte-identical, the local sink's row carries exactly the `task_attempts` columns, and the no-url fallback switches (only) `postgres_s3` configs to bundle + local. Bundle-dependent checks skip when `../data/tasks/` is absent, and workbook-dependent ones until the task workbooks are installed (root README, "Task files").
 - `tests/test_checked_in_configs.py` — loads every run config (including `run_configs/offline/`) and dispatcher template and asserts it merges, resolves prompts, resolves an identity, and clears preflight. Run it after touching anything under `infra/configs/`.
 
 Credential-resolution tests are skipped unless the workspace's monorepo `config` module is importable, since worker boxes deliberately run without it.
@@ -457,7 +457,7 @@ gui-agents-master/
 │   ├── file_validator.py             # Excel file validation
 │   ├── task_status.py                # status enums
 │   └── web_agent.py                  # abstract base class
-├── tasks_configs/prompts{,_v2,_pv9}/ # prompt payloads + registry.yaml
+├── tasks_configs/prompts*/           # prompt payloads (prompts/, _pv9/, _v2/, _v3/, _v4/) + registry.yaml
 ├── tests/                            # offline pytest checks (+ fixtures/)
 ├── docs/                             # architecture diagram + ARCHITECTURE.md
 └── pyproject.toml

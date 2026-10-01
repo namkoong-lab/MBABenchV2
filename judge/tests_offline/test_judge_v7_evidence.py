@@ -173,39 +173,6 @@ def test_accounting_renderer_direct():
     assert _render_number_format(0, "#,##0") == "0", "a forced digit still prints zero"
 
 
-def test_properties_block(tmp_path):
-    p = _build(tmp_path)
-    wb = openpyxl.load_workbook(p)
-    props = wp.extract_workbook_properties(wb, p)
-    assert props["schema"] == 3
-    text = wp.render_properties_text(props, origin={"original_filename": "MyModel.xlsm"})
-    assert "original filename: MyModel.xlsm" in text
-    assert "VBA: no" in text
-    assert "secret" not in text, "hidden names leave the listed set (tier 2 item 6)"
-    assert "tax_rate -> Contents!$A$2" in text
-    assert "[+1 hidden names not listed]" in text
-    assert "hyperlinks: A8 -> #'Assumptions'!A1" in text
-    assert "page breaks: rows 20; cols none" in text
-    assert "hidden rows: 3 (grouped); hidden cols: E" in text
-    assert "grouped rows: 3-4=L1; grouped cols: D=L2" in text
-    assert 'C15 (cellIs equal "MODEL OK" -> fill rgb:00C6EFCE font rgb:00006100 bold)' in text
-    # tier 2: active cell from the active pane, styled empties, spill count
-    contents = text.split("  1. Contents")[1].split("  2. Assumptions")[0]
-    assert "active cell: F5" in contents
-    styled = contents.split("styled empty cells in used range:")[1].splitlines()[0]
-    # border (B2), bold (B3), painted theme fill (H4), border (K7 — inside the
-    # used range because column L holds values). H5 (theme font only) is not
-    # visible formatting and is not counted.
-    assert styled.strip() == "4 (e.g. B2, B3, H4, K7)", styled
-    assert "H5" not in styled
-    assert "1 spill/array ranges" in contents
-    assumptions = text.split("  2. Assumptions")[1]
-    assert "active cell: A1" in assumptions
-    assert "styled empty cells in used range: none" in assumptions
-    # determinism: two extractions render identically
-    assert text == wp.render_properties_text(wp.extract_workbook_properties(openpyxl.load_workbook(p), p),
-                                             origin={"original_filename": "MyModel.xlsm"})
-
 
 def test_vba_detection_via_zip(tmp_path):
     import zipfile

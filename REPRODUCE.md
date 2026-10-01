@@ -41,7 +41,7 @@ $EDITOR config/config.yaml                   # fill in the keys you need; leave 
 
 ```bash
 uv run python scripts/install_task_files.py ~/Downloads/v410gr4w0zf8.zip   # copies the 202 workbooks into data/tasks/, checks sha256
-uv run python scripts/verify_offline_bundle.py   # hashes, task completeness, manifests, prompt versions
+uv run python scripts/verify_offline_bundle.py   # hashes, task completeness, prompt versions
 ```
 
 The installer never overwrites an existing workbook (`--force` to), skips the
@@ -77,9 +77,9 @@ is Claude Fable 5.1 at $11.6 per attempt.
 
 One config per cohort, named after its `agent_model_name` label (a `/` in the
 label becomes `__` in the file name). Every config pins benchmark v2, the
-identity, the effort, the prompt or template version the cohort ran with, the
-House Standards attachment, the timeouts, and tasks 1–101; the identities
-themselves live in each pipeline's identity yaml. Attempts land in
+identity, the effort, the prompt or template version the cohort ran with (which
+selects the House Standards attachment, if any), the timeouts, and tasks 1–101; the identities
+themselves live in each pipeline's identity registry. Attempts land in
 `outputs/<label>/`; re-launching a config skips tasks that already have a row.
 
 | Cohort | Pipeline | Command |
@@ -114,15 +114,16 @@ themselves live in each pipeline's identity yaml. Attempts land in
 `…` stands for the same command as the first row of that pipeline. The GUI and
 Excel pipelines first need Chrome started on the CDP port the config names and
 signed in to the provider account (see `CheatSheet.md`); add `-y` to run for
-real. Each pipeline has a dry run (`--dry-run`) that prints the resolved
-prompt, attachments and output paths for a task without calling a model, and
-each pipeline's README describes its offline path in detail.
+real. The GUI, Excel and coding (`run_sweep`) pipelines have a dry run
+(`--dry-run`) that prints the resolved prompt, attachments and output paths for
+a task without calling a model (the CLI pipeline has none), and each
+pipeline's README describes its offline path in detail.
 
 ## Verification without spending
 
 ```bash
 uv run python scripts/verify_offline_bundle.py
-(cd cli-agents-master && uv run pytest -o addopts="" tests)   # 3 known failures in test_multi_actions
+(cd cli-agents-master && uv run pytest -o addopts="" tests)
 uv run pytest coding-agents-master/tests
 uv run pytest gui-agents-master/tests                          # one package per invocation: the GUI and
 uv run pytest excel-agents-master/tests                        # Excel suites share module names
@@ -140,7 +141,7 @@ an offline attempt row has exactly the database columns.
   caps, so a 101-task cohort takes several accounts or several weeks.
 * **Provider-side change.** Consumer products change their UI and retire
   models without notice; a cohort whose model is no longer offered cannot be
-  re-run, only re-graded.
+  re-run, and its recorded attempts are not part of this repository.
 * **Costs.** The API cohorts above cost from a few hundred to several thousand
   dollars each at the recorded effort levels.
 
@@ -148,5 +149,5 @@ an offline attempt row has exactly the database columns.
 
 The maintainers' path keeps a Postgres database and an object store. Setting
 `database.v2_url` and `aws.*` in `config/config.yaml` switches every pipeline
-back to it; nothing in the offline path is lost. `scripts/export_benchmark_data.py`
+back to it; nothing in the offline path is lost. `scripts/export_benchmark_data.py --only tasks`
 regenerates this bundle from it, read-only.

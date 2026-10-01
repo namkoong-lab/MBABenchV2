@@ -1,8 +1,8 @@
 # Box setup — EC2 worker
 
-> **`spinup.sh` automates all of this.** Prefer
-> `./infra/dispatcher/spinup.sh --alias <name> --config-template <path>`
-> and re-run it against an existing alias to push code/config updates.
+> **`dispatch spinup` automates all of this except the `house_standards/` copy in step 1** (it rsyncs only `gui-agents-master/`; boxes running prompt 204/205 also need `/opt/house_standards/`). Prefer
+> `python -m infra.dispatcher.dispatch spinup --alias <name> --config-template <path>`
+> (from `gui-agents-master/`) and re-run it against an existing alias to push code/config updates.
 > This doc is the manual fallback — useful for diagnosis or when rebuilding
 > a box from scratch without the dispatcher.
 
@@ -11,9 +11,14 @@ One-time install per box. Run as root (or wrap with `sudo`).
 ## 1. Install the repo
 
 ```bash
-sudo git clone <your-fork-url> /opt/gui-agents-master
+# The units expect gui-agents-master/ itself at /opt/gui-agents-master (what `dispatch spinup` rsyncs);
+# prompt versions 204/205 also attach ../house_standards/House_Standards_v1.md
+git clone <your-fork-url> /tmp/spreadsheetsmith
+sudo cp -r /tmp/spreadsheetsmith/gui-agents-master /opt/gui-agents-master
+sudo cp -r /tmp/spreadsheetsmith/house_standards /opt/house_standards
 cd /opt/gui-agents-master
-sudo pip3 install -r requirements.txt  # or a pinned subset: boto3 psycopg2-binary pyyaml
+# [project].dependencies of pyproject.toml; the units reach the code through PYTHONPATH
+sudo pip3 install playwright pyyaml python-dotenv openpyxl boto3 psycopg2-binary
 ```
 
 ## 2. Drop the queue CLI wrapper onto PATH
@@ -49,24 +54,31 @@ python -m infra.dispatcher.dispatch config push <alias> ./path/to/configs.yaml
 ```
 (Or `scp` it into place manually the first time, then SSH in to set perms.)
 
-## 5. Install the worker systemd unit
+## 5. Install the systemd units
+
+The worker unit requires `xvfb.service` and only connects to the Chrome that
+`gui-agents-chrome.service` owns, so install all five (what `dispatch spinup` installs):
 
 ```bash
-sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/gui-agents-worker.service \
-  /etc/systemd/system/gui-agents-worker.service
+for unit in xvfb.service gui-agents-chrome.service gui-agents-worker.service \
+            gui-agents-auth-probe.service gui-agents-auth-probe.timer; do
+  sudo install -m 0644 /opt/gui-agents-master/infra/worker/systemd/$unit \
+    /etc/systemd/system/$unit
+done
 
-# If using EnvironmentFile, uncomment the line in the unit:
-sudo sed -i 's|^# EnvironmentFile=|EnvironmentFile=|' \
+# Uncomment the (indented) EnvironmentFile line in the worker unit:
+sudo sed -i 's|^#[[:space:]]*EnvironmentFile=|EnvironmentFile=|' \
   /etc/systemd/system/gui-agents-worker.service
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now gui-agents-worker.service
+sudo systemctl enable --now xvfb.service gui-agents-chrome.service \
+  gui-agents-worker.service gui-agents-auth-probe.timer
 sudo systemctl status gui-agents-worker.service
 ```
 
 ## 6. Verify from the laptop
 
-`spinup.sh` has already registered the box in [../../dispatcher/boxes.yaml](../../dispatcher/boxes.yaml) (if you used it). Verify:
+`dispatch spinup` registers the box in `infra/dispatcher/boxes.yaml` (gitignored); after a manual install add the entry yourself (schema in [`../../dispatcher/helper/boxes.py`](../../dispatcher/helper/boxes.py)). Verify:
 ```bash
 python -m infra.dispatcher.dispatch status
 python -m infra.dispatcher.dispatch assign --tasks <known-good-task-id> --box <alias>

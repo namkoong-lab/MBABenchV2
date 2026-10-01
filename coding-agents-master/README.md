@@ -18,7 +18,7 @@ unchanged for whoever has the credentials.
 > bundle, so it runs against the database and object store only. v2 targets
 > the 101-task set under `data/` (the v13 template: rubric-free, the
 > Questions-sheet answer convention and the House Standards pointer, graded
-> by the agentic judge). The benchmark key picks the database URL, the
+> by the single-pass agentic judge). The benchmark key picks the database URL, the
 > object-store root (`s3://<bucket>/<SpreadsheetSmithV1|SpreadsheetSmith>/…`), the offline
 > roots and the template together; the template picks its attachments. It is
 > the third agent surface alongside the GUI pipeline (vendor chat products)
@@ -26,8 +26,8 @@ unchanged for whoever has the credentials.
 
 ## How it differs from the CLI pipeline
 
-The old CLI pipeline *was* the agent: it serialized the workbook to text,
-asked the model for one edit at a time, and applied edits with its own code.
+The CLI pipeline *is* the agent: it serializes the workbook to text, asks
+the model for the next edits, and applies them with its own code.
 Here the vendor ships the whole agent — Claude Code / Codex read files
 themselves, write and run their own code, and iterate. This pipeline is only
 the proctor: seed a workspace, start the agent in a sandbox, validate what
@@ -63,7 +63,7 @@ coding_agent/            The single-task runner package
 docker/                  Sandbox image: pinned CLIs + default-deny egress firewall
 run_configs/             Example YAML configs (prod configs are untracked)
   offline/               One config per leaderboard cohort, ready to run offline
-tools/                   build_v8/v9/v12/v13_template.py + build_v10_v11_templates.py (v2 template generators), validate_trajectory.py
+tools/                   build_v8/v9/v12/v13_template.py + build_v10_v11 / build_v14_v15_templates.py (v2 template generators), validate_trajectory.py
 tests/                   Offline tests (no Docker/DB/keys needed)
 ```
 
@@ -82,6 +82,15 @@ cd docker && docker build -t spreadsheetsmith-coding-agent:v2 \
 
    The tag is recorded per attempt (`extra_configs.sandbox_image`) as the
    CLI-version pin — use a new tag whenever a rebuild changes the contents.
+   The offline configs name their tag: the three Claude Code Fable 5.1
+   cohorts use `:v2`, every Codex cohort `:v3` (Codex 0.155.1) and the
+   Claude Code Opus 5 cohort `:v4` (Claude Code 2.1.280). `:v3` and `:v4`
+   are built `FROM` `:v2`, so build `:v2` first:
+
+```bash
+cd docker && docker build -f Dockerfile.v3 -t spreadsheetsmith-coding-agent:v3 . \
+  && docker build -f Dockerfile.v4 -t spreadsheetsmith-coding-agent:v4 .
+```
 
 4. **Agent API key** — the only secret an offline run needs, and never in a
    run config or a workspace: `ANTHROPIC_API_KEY` (claude) /
@@ -458,8 +467,8 @@ that make up the v2 coding leaderboard each have a ready-to-run config in
 ## Judging
 
 Unchanged: the existing `judge/` pipeline grades these attempts exactly like
-any others (V1 rubric for v1 rows; the agentic judge + rubric_9 for v2 — see
-`judge/project_configs.yaml`).
+any others (V1 rubric for v1 rows; for v2, rubric_9 under the agentic judge
+in its `--single-pass` mode, the leaderboard setting — see `judge/README.md`).
 
 ## Rollout ladder (spend nothing until each rung passes)
 
@@ -486,6 +495,6 @@ python3 tests/test_benchmark_config.py  # v1/v2 switch + v8/v9/v12/v13 template 
 python3 tests/test_agent_identity.py    # identity registry rules
 python3 tests/test_repo_config.py       # config/config.yaml resolution ladder
 python3 tests/test_offline_parity.py    # bundled source/sink == the cloud path
-python3 -m pytest tests/test_relay.py   # trajectory relay
+python3 tests/test_relay.py             # trajectory relay
 ```
 All offline. No Docker, database, object store or keys required.

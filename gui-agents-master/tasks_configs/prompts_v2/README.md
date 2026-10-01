@@ -1,13 +1,14 @@
 # V2 benchmark prompts (rubric-v9)
 
-Single source of truth for the SpreadsheetSmith (benchmark: v2) prompt sequence.
-Every run reaches these files the same way: the run config sets
+The rubric-v9 prompt sequence for SpreadsheetSmith (benchmark: v2); the GUI
+leaderboard cohorts ran 205 (`tasks_configs/prompts/v2_3.txt`), not these files.
+A run reaches them the same way as any prompt set: the run config sets
 `prompt_version`, and the registry in `tasks_configs/prompts/registry.yaml`
 maps it to the files below. That holds for local runs and for the EC2
-dispatcher templates in `infra/dispatcher/config_templates/`, which set
-`prompt_version: 201` and carry no prompt text of their own.
+dispatcher templates in `infra/dispatcher/config_templates/`, which carry no
+prompt text of their own (they set `prompt_version: 205`).
 
-## 3-step set (the default)
+## 3-step set
 
 | File | Step | Used by |
 |---|---|---|

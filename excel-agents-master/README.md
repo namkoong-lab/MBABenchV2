@@ -12,7 +12,7 @@ database, no object store. What it cannot avoid is Excel Online itself — the
 add-ins only exist inside a signed-in Microsoft 365 browser session, so
 "offline" here means DB/S3-free, not network-free.
 
-Ported 2026-08-26 from the original public SpreadsheetSmith excel-agents tree with the
+Ported 2026-08-26 from an earlier excel-agents tree with the
 V2 conventions and the verified correctness fixes. TabAI/Firefox support was
 dropped in the port.
 
@@ -143,7 +143,7 @@ python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass \
     --source local --sink local --all-local              # grade every local row
 ```
 
-It grades the first `.xlsx` in `attempt_files` against the bundled golden in
+It grades the first `.xlsx` in `attempt_files` against the installed golden in
 `data/tasks/task_id=<N>/solution_files/` and appends to
 `outputs/gradings/gradings.jsonl` — see `<repo>/judge/README.md` ("Grade
 offline") and `<repo>/data/README.md` ("outputs/").
@@ -217,8 +217,8 @@ attributable to the interface, not the text:
 | 200 | rubric-v9 3-step | `prompts_v2/` | — |
 | 202 | 200 + Questions-sheet answers | `prompts_v3/` | — |
 | 203 | 202 folded into one panel turn | `prompts/v2_2.txt` | — |
-| 204 | 202 + House Standards | `prompts_v4/` | `../house_standards/House_Standards_v1.md` |
-| 205 | 203 + House Standards (**default**) | `prompts/v2_3.txt` | `../house_standards/House_Standards_v1.md` |
+| 204 | 202, rubric removed, + House Standards | `prompts_v4/` | `../house_standards/House_Standards_v1.md` |
+| 205 | 203, rubric removed, + House Standards (**default**) | `prompts/v2_3.txt` | `../house_standards/House_Standards_v1.md` |
 
 A version's `attachments:` (repo-root-relative; `..` reaches the monorepo's
 `house_standards/`) are uploaded into the add-in panel after the task's

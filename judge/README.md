@@ -5,7 +5,7 @@ LLM-based grader for Excel-task attempts.
 Two switches decide everything about a run. `--benchmark v1|v2` picks the
 rubric pair. `--source` and `--sink` pick where attempts are read from and
 where gradings are written: **`local`**, meaning the repository itself —
-`data/` for the benchmark inputs and records, `outputs/` for what a run
+`data/` for the benchmark tasks, `outputs/` for what a run
 produces — or **`db`**, the project's own Postgres and object store. Given
 neither flag the run picks by what the machine has: local when no database URL
 resolves for the benchmark, the database otherwise, and the run log says which
@@ -13,8 +13,9 @@ and why.
 
 Everything the judge does is identical either way. `local` and `db` change
 where files come from and where rows land, not what the judge is shown or what
-it produces. A clone of this repository plus one model API key is enough to
-reproduce every grading in the paper; the database and the object store are
+it produces. A clone of this repository, the task files (root README,
+"Task files") and one model API key are enough to grade any attempt an
+offline agent run writes; the database and the object store are
 the tooling the experiments were originally run on, not a dependency of the
 benchmark.
 
@@ -35,9 +36,9 @@ export OPENAI_API_KEY=sk-...
 python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass \
     --source local --sink local --all-local --dry-run
 
-# Grade a run this machine just produced, or a handful of bundled attempts
+# Grade chosen attempts of a run this machine produced (ids from its task_attempts.jsonl)
 python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass \
-    --source local --sink local --attempt-ids 1591 1592
+    --source local --sink local --attempt-ids <id> <id>
 ```
 
 Attempts are looked up in every `outputs/**/task_attempts.jsonl` an offline
@@ -52,14 +53,14 @@ are millisecond epochs. Layout and row shapes: [data/README.md](../data/README.m
 
 Cohorts live in data files, not in shell history: `--attempt-ids-file` takes a
 JSON list of ids or an `{"attempt_ids": [...]}` document;
-`--all-local` grades every local attempt row; `--repeats N` grades the whole
+`--all-local` grades every local attempt row whose workbook is on disk; `--repeats N` grades the whole
 selection N times, which is how the judge-repeatability experiment was run.
 
 `--benchmark v1` has no offline bundle and says so; v1 is graded against its
 database or not at all.
 
 Sizes worth knowing before starting one of these: `data/tasks/` is about
-430 MB once the workbooks are installed from the download (they are not
+383 MB once the workbooks are installed from the download (they are not
 tracked), and a full 101-task cohort is a hundred paid gradings. `--dry-run` first.
 
 ## Configuration
@@ -97,17 +98,18 @@ checkout with no database URL never enters this path.
 ```bash
 python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 1 2 3
 python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --task-ids 4 5
-# judge v4 experiment: all checks in ONE conversation (implies agentic)
+# the leaderboard judge: all checks in ONE conversation (implies --agentic)
 python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass --attempt-ids 6
 ```
 
-v2 must be graded with `--agentic`: the standard judge's
+v2 must be graded agentically (`--agentic`, or `--single-pass`, the
+leaderboard judge, which sets it): the standard judge's
 `prompts/judge_template_7_0.yaml` hardcodes one stage per v1 category.
 (TODO: a template whose stages are generated from `JUDGE_CHECK_ORDER`
 would lift this.)
 
 Useful flags: `--dry-run`, `--no-db-write`, `--no-s3-upload`, `--nocall`,
-`--model <slug>`, `--reasoning-effort {none,minimal,low,medium,high}`.
+`--model <slug>`, `--reasoning-effort {none,minimal,low,medium,high,xhigh,max}`.
 `--model` takes a grader label registered in `judge_identities.yaml`, which
 pins the endpoint (openrouter | gemini | anthropic | openai | tensorblock), the wire model
 id, and the default reasoning effort. An unregistered label refuses to run
@@ -155,7 +157,7 @@ adopted from the same sheet), a v2 agentic grading additionally:
   merged-cells/frozen-panes metadata once per sheet in Formatting and
   Structure. Listings show dimensions only, and the per-category user
   message keeps static blocks first so consecutive categories share a
-  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation (now `_v6`, see judge v7).
+  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation (now `_v9`, see judge v12).
 
 ### judge_version 4 / single-pass 5 (2026-09)
 
@@ -172,7 +174,7 @@ are NOT comparable to judge_version 3 rows):
   stages the task's starting xlsx as `starting/starting_workbook.xlsx`;
   `read_file` serves it as `source='starting'` so inherited-vs-agent-authored
   questions are checked, not guessed. Cached per task in
-  `starting_csv_cache_v2`.
+  `starting_csv_cache_v2` (now `_v9`).
 - **Single-pass mode** (`--single-pass` on grade_from_db and
   grade_with_orchestration — the judge v4 experiment): one conversation
   over every applicable check (globally numbered 1..132 in the rubric's
@@ -240,7 +242,7 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
   is the header cell starting with "answer" in the block's header row.
 - **Workbook properties block** (`utils/workbook_properties.py`,
   `_workbook_properties.json` beside the CSVs; caches moved to
-  `*_csv_cache_v3`, now `_v4`): true tab order (file listings now follow it), hidden
+  `*_csv_cache_v3`, now `_v9`): true tab order (file listings now follow it), hidden
   sheets/rows/cols, data validation, column widths / row heights, comments,
   conditional formats, hyperlinks, defined names, calc mode, print setup —
   rendered for attempt / solution / starting workbooks in the seed.
@@ -257,7 +259,7 @@ The pipeline update after the v4/v5 canaries (single-pass only; the
 
   `grade_with_orchestration` also stages suitability annotations itself now
   (before 2026-09 it never passed them through, so it could not grade v2 at
-  all) and shares the CSV cache generation with grade_from_db (`_v6` today).
+  all) and shares the CSV cache generation with grade_from_db (`_v9` today).
 
 ### judge v7 — single-pass 7 / template_8 (2026-09-09)
 
@@ -471,7 +473,7 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     point on 1084 `Owning model!B3` and 1085 `Owning!B4`); "shown to" /
     "displayed to" or "carried unrounded" is the accurate wording. Display
     precision stays acceptable for Rounded outputs (104). The House
-    Standards prescribed the "rounded to" wording until the same day: v1
+    Standards prescribed the "rounded to" wording until the next day: v1
     was amended in place, version unchanged (`house_standards/README.md`,
     Amendments), so attempts built under the earlier text fail 105 for
     following it. Rubric 10 queue: 105 reads "rounded or shown to", label
@@ -510,7 +512,7 @@ brief `JUDGE_IMPLEMENTATION_BRIEF_2026-09-16.md`, both outside the repo).
     among unchecked key outputs does not pass. 1075 (typed EV/EBITDA, P/E,
     WACC ranges) and 1076 (peer percentiles) are the passing shape. The
     four reviewed goldens carry no sense-check section at all.
-  Golden/toy-Pass sweep counts are in the session notes for 2026-09-16.
+  Golden/toy-Pass sweep counts are in the session notes for 2026-09-16 (outside the repo).
   Tests: `tests_offline/test_evidence_flags_v9.py`.
 - **Guidance 36 → 42 notes**: replaced 50, 70, 126; extended 2, 4, 55, 66,
   82; new 7, 33, 108, 112, 115, 129; general block gains "similarity to the
@@ -628,9 +630,7 @@ attempts whose `prompt_version` is the pipeline's latest —
 `LATEST_PROMPT_VERSION_BY_TYPE` in `utils/misc_utils.py` (gui/excel 205, api
 1609, coding_cli 113 as of the House Standards set) — and log what they
 dropped. `--all-prompt-versions` grades everything; `--attempt-ids` is always
-explicit and never filtered. `scripts/export_good_attempts.py` carries the same
-numbers (`LATEST_PV`) and an offline test keeps the two tables in agreement.
-Bump the table whenever a pipeline cuts a new prompt version.
+explicit and never filtered. Bump the table whenever a pipeline cuts a new prompt version.
 
 ## Grade a task of your own (one folder, no records at all)
 
@@ -653,10 +653,10 @@ Where each pipeline leaves the agent's workbook in local mode:
 
 | Pipeline | Local output |
 |---|---|
-| gui-agents (`sink.kind: local`) | `<paths.scratch_dir>/attempts/<ts>_<task>_p<pid>/solutions/*.xlsx` |
+| gui-agents (`sink.kind: local`) | `outputs/<agent_model_name>/task_id=<N>/<YYYYmmdd_HHMMSS>/*.xlsx` |
 | cli-agents (`local_mode: true`) | `<results_dir>/<task folder name>/solution.xlsx` |
 | coding-agents (`mode: external`) | `<results_dir>/<task>_<ts>_<pid>/solution.xlsx` |
-| excel-agents (`sink.kind: local`) | `<paths.scratch_dir>/attempts/<ts>_<task>/solutions/*.xlsx` |
+| excel-agents (`sink.kind: local`) | `outputs/<agent_model_name>/task_id=<N>/<YYYYmmdd_HHMMSS>/*.xlsx` |
 
 Then grade it with the same judge the v2 benchmark uses (single-pass,
 harness answer check, OpenAI grader called directly — no OpenRouter):
@@ -667,14 +667,14 @@ JUDGE_SKIP_SUITABILITY=1 python judge/main_scripts/judge.py \
     --benchmark v2 --single-pass --model openai/gpt-5.6-sol -f /path/to/<folder>
 ```
 
-- `--single-pass` is the production v2 judge (one conversation over all 132
-  checks). `--agentic` alone is the older 12-category judge (one conversation
+- `--single-pass` is the production v2 judge (one conversation over every
+  applicable check). `--agentic` alone is the older 12-category judge (one conversation
   per category); scores from the two are not comparable.
 - `JUDGE_SKIP_SUITABILITY=1` is required for tasks outside the SpreadsheetSmith task
   pool: v2 grading otherwise expects a per-task rubric-suitability annotation
   (bundled under `judge/rubric_suitability/` for the 101 benchmark tasks, or
   placed in the folder as `rubric_suitability.json`). Skipping grades every
-  check ungated and records that in `scores.json`.
+  non-retired check ungated and records that in `scores.json`.
 - `--model` takes any label in `judge_identities.yaml`; the provider and
   reasoning effort are pinned there. Add `--reasoning-effort` to override the
   pin, `--nocall` to test extraction without spending, `--run-calculation` to
@@ -692,10 +692,8 @@ Results land in `<folder>/judge_results/`: extracted CSVs,
 
 Tooling for running the benchmark, not for reproducing it. Most of these read
 the database or the object store directly and are only useful with access to
-them. Two run offline: `report_toy_reliability.py` reads the bundled
-judge-reliability records by default (`--from-db` / `--from-local` force
-either side), and `cache_solution_csvs.py --source local` extracts every
-bundled golden into the cache the graders read, which is worth doing once
+them. `cache_solution_csvs.py --source local` needs neither: it extracts
+every installed golden into the cache the graders read, which is worth doing once
 before a large run — it is the slow half of a grading and its result is the
 same for every attempt on that task. Every script that touches the DB or S3
 takes `--benchmark` too, e.g.
@@ -716,7 +714,7 @@ for t in tests_offline/*.py; do python "$t" || echo "FAILED $t"; done
 ```
 
 A few worth knowing by name: `test_offline_source_sink.py` (the local source
-and sink — that a bundled attempt stages into the same task folder an
+and sink — that a local attempt stages into the same task folder an
 object-store attempt does, and that a local grading row is the `gradings` row
 column for column), `test_benchmark_presets.py`, `test_rubric9_consistency.py`,
 `test_formula_cache.py`, `test_single_pass.py`.

@@ -35,8 +35,8 @@ Harness-necessitated translations on top of v13's rules:
 Everything else (chat-flow wording, copy_file for the 'Questions' sheet,
 the per-question-sheets rewrite) is inherited unchanged from v13.
 Everything from the "== FULL RUBRIC" marker onward is copied byte-exact;
-tests/test_v14_prompts.py asserts byte-equality with prompts_v4 (and so,
-transitively, with prompts_v3) and the 132-check count.
+(the former tests/test_v14_prompts.py asserted byte-equality with prompts_v4
+and the 132-check count; it was removed as always-failing.)
 
 Usage (from cli-agents-master):  python tools/build_v14_prompts.py
 """

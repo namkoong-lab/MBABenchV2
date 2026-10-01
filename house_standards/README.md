@@ -1,7 +1,9 @@
 # House Standards
 
-The house financial-modelling conventions handed to every agent on a
-**benchmark v2** attempt, alongside the task's starting files. This directory
+The house financial-modelling conventions handed to the agent on a
+**benchmark v2** attempt whose prompt version attaches them (not every v2
+version does: e.g. gui/excel 200–203, cli v12/v13 and coding templates v14/v15
+attach nothing), alongside the task's starting files. This directory
 is the single source of truth; every pipeline reads the file from here at run
 time and delivers it under its own filename (`House_Standards_v1.md`), which
 is the name the prompt directive uses.
@@ -51,13 +53,16 @@ other pipeline reads this directory directly. Edit here, then copy.
   (cli, coding, excel) record `house_standards: {version, file, sha256}`;
   pipelines that upload a prompt snapshot to S3 upload the file with it.
   GUI records the attachment text in the per-attempt `prompts_*.json`.
-- Precedence, as stated in the prompts: case instructions and the prompt
-  (including the rubric) govern over the house standards; departures are
-  noted on the cover.
+- Precedence, as stated in the prompts: the case instructions govern over
+  the house standards. The gui/excel prompts (204/205), cli v14 and coding v12
+  also put the prompt itself above them (cli v14 and coding v12: "including
+  the rubric") and ask for departures to be noted on the cover. cli v16 goes the
+  other way for its own modelling and formatting guidance: there the house
+  standards govern (the tool limits still apply).
 
 ## Amendments
 
-- **2026-09-18, v1 amended in place (the maintainer's decision; the one exception to
+- **2026-09-19, v1 amended in place (the maintainer's decision of 2026-09-18; the one exception to
   the append-only rule above).** The Rounding line changed from `"$mm, rounded
   to $0.01mm" at the head of the block` to wording that must match what the
   model does: `"shown to $0.01mm"` for display-only precision, `"rounded to"`

@@ -28,7 +28,7 @@ The architecture has three modular layers. The **agent core** is reusable — sw
                              │
 ┌─ OUTPUT LAYER (swappable) ─┴──────────────────────────────┐
 │                                                            │
-│  Auto mode:   S3 upload + DB TaskAttempt row               │
+│  Auto mode:   S3 + DB row, or outputs/ (sink: local)       │
 │  Local mode:  results_dir/ + attempts.jsonl                │
 │                                                            │
 └────────────────────────────────────────────────────────────┘
@@ -50,7 +50,7 @@ Each component below corresponds to a box in the system architecture diagram. Co
 
 The input layer determines where tasks come from and how workspaces are set up. You choose one by setting `auto_mode` or `local_mode` in your config YAML.
 
-**AutoBatchRunner** (`auto_batch_runner.py`) — Queries the PostgreSQL `tasks` table for work, downloads starting files from S3, and after execution uploads results back to S3 and writes a `task_attempts` row. Used for production benchmarking at scale. DB and S3 settings come from `<SpreadsheetSmith>/config/config.yaml` (`DATABASE_URL` / `AWS_*` env vars are the fallback for standalone checkouts).
+**AutoBatchRunner** (`auto_batch_runner.py`) — Queries the PostgreSQL `tasks` table for work, downloads starting files from S3, and after execution uploads results back to S3 and writes a `task_attempts` row. Used for production benchmarking at scale. With `source: local` / `sink: local` (the `examples/offline/` configs) it reads the bundled `data/tasks/` and writes `outputs/<label>/` instead — no DB, no S3 (README, "Auto Batch Pipeline"). DB and S3 settings come from `<SpreadsheetSmith>/config/config.yaml` (`DATABASE_URL` / `AWS_*` env vars are the fallback for standalone checkouts).
 
 **LocalBatchRunner** (`local_batch_runner.py`) — Reads task files from local folders you specify in `workspaces[].path`. No database, no S3, no cloud credentials needed. Results are saved to `results_dir/` with an `attempts.jsonl` log. Best for development, testing new prompts, or running on a single machine.
 
@@ -60,7 +60,7 @@ The input layer determines where tasks come from and how workspaces are set up. 
 
 The agent core is the heart of the system. It doesn't know or care where tasks come from or where results go — it just receives a workspace path and runs the AI loop.
 
-**TaskExecutor** (`task_executor.py`, ~2400 lines) — The AI reasoning engine. Each iteration: builds context (system prompt + current Excel state + recent history), calls the LLM, parses the JSON/JSONL response into tool calls, executes them via MCP, and loops until the model signals `is_complete` or `max_iterations` is reached. Supports fresh context mode (reload `.xlsx` each iteration to prevent context bloat) and multiple providers via `base_url` auto-detection.
+**TaskExecutor** (`task_executor.py`, ~3100 lines) — The AI reasoning engine. Each iteration: builds context (system prompt + current Excel state + recent history), calls the LLM, parses the JSON/JSONL response into tool calls, executes them via MCP, and loops until the model signals `is_complete` or `max_iterations` is reached. Supports fresh context mode (reload `.xlsx` each iteration to prevent context bloat) and multiple providers via `base_url` auto-detection.
 
 > **To customize:** This is the most impactful component to tune. Key levers:
 > - **`max_iterations`** — How many plan-execute-observe cycles the agent gets. Higher = more thorough but slower and more expensive.
@@ -68,13 +68,13 @@ The agent core is the heart of the system. It doesn't know or care where tasks c
 > - **`model`** / **`base_url`** — Swap the underlying LLM. Any OpenAI-compatible API works (vLLM, SGLang, OpenRouter, OpenAI). Anthropic direct is also supported with extended thinking.
 > - **`reasoning_effort`** — For models that support it. `"none"` for GPT 5.2 lets the model use its full token budget for tool calls instead of internal reasoning.
 
-**MCPClient** (`mcp_client.py`) — Launches the MCP server as a subprocess and communicates over stdio using JSON-RPC. Handles connection lifecycle, timeouts (`asyncio.wait_for`), and subprocess management. You generally don't need to modify this.
+**MCPClient** (`mcp_client.py`) — Launches the MCP server as a subprocess and communicates over stdio using JSON-RPC. Handles connection lifecycle, per-tool timeouts (a stuck server is killed), and subprocess management. You generally don't need to modify this.
 
 ### Prompts (customizable)
 
 Prompts are the single highest-leverage customization point. Small changes to the system prompt or task template can dramatically change agent behavior.
 
-**System Prompt** (`prompts/system_prompt_v{N}.txt`) — Defines the agent's role, tool usage rules, quality standards, formatting criteria, and the expected JSON response schema. Currently ~866 lines (v10). Contains the rubric criteria the agent is evaluated against.
+**System Prompt** (`prompts/system_prompt_v{N}.txt`) — Defines the agent's role, tool usage rules, quality standards, formatting criteria, and the expected JSON response schema. v10 (the v1 default, ~866 lines) states the v1 rubric criteria; v15 and v16 (the v2 default) carry no grading material — see the README, "System Prompt".
 
 **Task Template** (`prompts/task_template_{source}_v{N}.txt`) — Injected per-task to frame the specific work. Kept intentionally short (~56 lines) — heavier templates consistently degraded performance by encouraging one-shot mega-batches instead of iterative reasoning.
 
@@ -90,13 +90,13 @@ The MCP server provides the agent's capabilities — everything the model can ac
 **MCP Server** (`server.py`) — FastMCP-based server that registers all 21 tools. Runs as a subprocess, receives JSON-RPC calls from MCPClient, executes them against the workbook, and returns results.
 
 **Tool Categories** (in `tools/`):
-- **File tools** (5) — `create_file`, `list_files`, `copy_file`, `get_file_metadata`, `delete_file`. File creation has a two-layer defense: the system prompt warns it's destructive, and the server hard-blocks duplicate creation.
+- **File tools** (4) — `create_file`, `list_files`, `copy_file`, `get_file_metadata`. File creation has a two-layer defense: the system prompt warns it's destructive, and the server hard-blocks duplicate creation.
 - **Worksheet tools** (3) — `list_worksheets`, `create_worksheet`, `delete_worksheet`. Same two-layer defense against duplicate worksheets.
-- **Cell Read tools** (3) — `get_cell_range`, `get_formula`, `search_worksheet`. Non-mutating reads of cell values, formulas, and content search.
+- **Cell Read tools** (4) — `get_cell_range`, `get_formula`, `get_used_range`, `search_worksheet`. Non-mutating reads of cell values, formulas, the used range, and content search.
 - **Cell Write tools** (2) — `edit_cells` (for labels/values), `set_cell_formula` (for formulas). Both trigger LibreOffice auto-recalculation after every write.
-- **Analysis tools** (5) — `get_used_range`, `scan_worksheet_structure`, `summarize_workbook_context`, `describe_worksheet`, `validate_formula`. Help the agent understand the current state of the workbook.
-- **Formatting tools** (3) — `format_cells`, `freeze_panes`, `set_column_width`. Applied in later iterations, after calculation work is done.
-- **Meta tools** (2) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check). The validator's function whitelist (`formula_validator.VALID_EXCEL_FUNCTIONS`) includes every function the house standards recommend — `XLOOKUP`, `XMATCH`, `IFS`, `SWITCH`, `LET` (the last two added with prompt v14; local LibreOffice 25.8 evaluates them).
+- **Analysis tools** (3) — `scan_worksheet_structure`, `summarize_workbook_context`, `describe_worksheet`. Help the agent understand the current state of the workbook.
+- **Formatting tools** (2) — `format_cells`, `freeze_panes`. Applied in later iterations, after calculation work is done.
+- **Meta tools** (3) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check), `get_recalc_engine_info` (which recalc engine is live; recorded as `extra_configs.recalc_engine`). The validator's function whitelist (`formula_validator.VALID_EXCEL_FUNCTIONS`) includes every function the house standards recommend — `XLOOKUP`, `XMATCH`, `IFS`, `SWITCH`, `LET` (the last two added with prompt v14; local LibreOffice 25.8 evaluates them).
 
 > **To customize:** Add new tools for your domain in `excel_mcp_server/tools/`. Each tool is an async function decorated with `@mcp.tool()` that returns a JSON string; follow the existing tools in the same module. Common extensions: adding chart generation, pivot table creation, or domain-specific validation rules.
 
@@ -120,11 +120,11 @@ The MCP server provides the agent's capabilities — everything the model can ac
 
 The output layer determines where results end up after execution.
 
-**Auto mode** — Uploads `solution.xlsx`, `transcript.md`, `openai_requests.csv`, and `task.json` to S3. Creates a `task_attempts` row in PostgreSQL with cost, timing, prompt version, and S3 URIs.
+**Auto mode** — Uploads `solution.xlsx`, `transcript.md`, `openai_requests.csv`, and `task.json` to S3. Creates a `task_attempts` row in PostgreSQL with cost, timing, prompt version, and S3 URIs. With `sink: local` the attempt's files go to `outputs/<label>/task_id=<N>/<timestamp>/` and the row to `outputs/<label>/task_attempts.jsonl` instead.
 
 **Local mode** — Copies results to `results_dir/{task_name}/`. Appends a JSON line to `results_dir/attempts.jsonl`. No cloud infrastructure needed.
 
-> **To customize:** For a different output destination (e.g., a different cloud provider, a local database, a webhook), modify the `_save_results()` method in the relevant batch runner.
+> **To customize:** For a different output destination (e.g., a different cloud provider, a local database, a webhook), modify `save_results()` (local mode) or `upload_result()` (auto mode) in the relevant batch runner.
 
 ### LLM Layer (configurable via base_url)
 
@@ -144,7 +144,7 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 
 **.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `LIBREOFFICE_PATH` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
 
-**prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
+**prompts/{type}_v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
 
 **Prompt attachments** (`PROMPT_VERSIONS[ver]["attachments"]`, v14+; `attachment_names` maps a source to the name delivered in the workspace, v15+: `HOUSE_STANDARDS.md`) — Monorepo-root-relative files the version ships with every workspace; `repo_config.resolve_attachments` turns them into absolute paths at `load_config` time and refuses to start if one is missing. v14 attaches `house_standards/House_Standards_v1.md`: the runners copy it into the workspace, `detect_workspace_files` picks up `*.md` as text context, and `TaskExecutor._assemble_context` embeds the full text under a `HOUSE STANDARDS (<file>)` header — exempt from the reduced-context ladder (it is ~5 KB against a 20 K floor) and placed before the truncatable PDF text. The Excel-tool guard that refuses `.pdf` filenames covers `.md` too. Provenance: `upload_prompts` uploads the file alongside the system prompt (so `prompt_files` reproduces it) and `extra_configs.house_standards = {version, file, sha256}` is computed from the shipped file at run time.
 
@@ -154,19 +154,23 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 excel-cli-agent/
 ├── excel_cli_agent/              # Main package
 │   ├── cli.py                    # Entry point, argument parsing, routing
-│   ├── task_executor.py          # AI reasoning engine (~2400 lines)
+│   ├── task_executor.py          # AI reasoning engine (~3100 lines)
 │   ├── auto_batch_runner.py      # Automated DB→S3 pipeline
 │   ├── local_batch_runner.py     # Local mode (no DB/S3, JSONL logging)
 │   ├── batch_runner.py           # Base batch runner (shared by auto and local)
 │   ├── mcp_client.py             # MCP subprocess management
 │   ├── models_config.py          # Model pricing, defaults, slugs
 │   ├── prompt_versions.py        # Shared prompt version registry
+│   ├── agent_identities.yaml     # Cohort registry (agent_model_name -> settings)
+│   ├── local_source.py           # Offline tasks: data/tasks/
+│   ├── local_sink.py             # Offline attempts: outputs/<label>/
 │   ├── db/                       # Database models (bundled)
 │   │   ├── database.py           # SQLAlchemy engine, lazy connection
 │   │   └── models.py             # Task, TaskAttempt ORM models
 │   └── prompts/                  # Versioned prompt files (bundled)
 │       ├── system_prompt_v{N}.txt
 │       ├── task_template_fmwc_v{N}.txt
+│       ├── task_template_shared_v{N}.txt
 │       └── task_template_wsp_v{N}.txt
 │
 ├── excel_mcp_server/             # MCP server package
@@ -180,11 +184,11 @@ excel-cli-agent/
 │   ├── tools/
 │   │   ├── file_tools.py         # create_file, list_files, copy_file, etc.
 │   │   ├── worksheet_tools.py    # list/create/delete worksheets
-│   │   ├── cell_read_tools.py    # get_cell_range, get_formula, get_used_range
+│   │   ├── cell_read_tools.py    # get_cell_range, get_formula, get_used_range, search_worksheet
 │   │   ├── cell_write_tools.py   # edit_cells, set_cell_formula
-│   │   ├── analysis_tools.py     # scan_structure, search, summarize, describe
-│   │   ├── formatting_tools.py   # format_cells, freeze_panes, set_column_width
-│   │   └── meta_tools.py         # report_mcp_issue, validate_formula
+│   │   ├── analysis_tools.py     # scan_structure, summarize, describe
+│   │   ├── formatting_tools.py   # format_cells, freeze_panes
+│   │   └── meta_tools.py         # report_mcp_issue, validate_formula, get_recalc_engine_info
 │   └── helpers/
 │       ├── cell_validation.py    # Cell reference parsing
 │       ├── formula_evaluation.py # Formula eval helpers
@@ -193,6 +197,7 @@ excel-cli-agent/
 │
 ├── pyproject.toml                # Package config, deps, entry point
 └── examples/
+    ├── offline/                  # One per leaderboard cohort (source/sink local)
     ├── batch_config_template_auto.yaml  # Auto mode template, all options
     ├── local/
     │   └── test_local.yaml       # Local mode (no DB/S3 needed)
@@ -299,13 +304,13 @@ The server is discovered via `import excel_mcp_server` — works whether install
 
 | Category | Tools |
 |----------|-------|
-| **File** | `create_file`, `list_files`, `copy_file`, `get_file_metadata`, `delete_file` |
+| **File** | `create_file`, `list_files`, `copy_file`, `get_file_metadata` |
 | **Worksheet** | `list_worksheets`, `create_worksheet`, `delete_worksheet` |
-| **Cell Read** | `get_cell_range`, `get_formula`, `get_used_range` |
+| **Cell Read** | `get_cell_range`, `get_formula`, `get_used_range`, `search_worksheet` |
 | **Cell Write** | `edit_cells`, `set_cell_formula` |
-| **Analysis** | `scan_worksheet_structure`, `search_worksheet`, `summarize_workbook_context`, `describe_worksheet` |
-| **Formatting** | `format_cells`, `freeze_panes`, `set_column_width` |
-| **Meta** | `validate_formula`, `report_mcp_issue` |
+| **Analysis** | `scan_worksheet_structure`, `summarize_workbook_context`, `describe_worksheet` |
+| **Formatting** | `format_cells`, `freeze_panes` |
+| **Meta** | `validate_formula`, `report_mcp_issue`, `get_recalc_engine_info` |
 
 `set_cell_formula` and `edit_cells` trigger LibreOffice auto-recalculation after every write.
 
@@ -317,7 +322,7 @@ tasks (READ-ONLY)
 ├── task_name           varchar(512)
 ├── task_starting_files JSON (S3 URIs)
 ├── task_solution_files JSON (S3 URIs)
-├── task_source         varchar(100): 'fmwc', 'modeloff', 'wsp'
+├── task_source         varchar(100): 'fmwc', 'modeloff', 'wsp', 'v2'
 ├── deprecated          bool (nullable)
 └── created_at          timestamp
 
@@ -385,25 +390,27 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `model` | string | — | registry | Model slug (e.g. `openai/gpt-4o-mini`). Pinned by the agent identity |
 | `base_url` | string | — | registry | API endpoint. Pinned by the agent identity |
 | `max_completion_tokens` | int | — | registry | Max tokens for model output. Pinned by the agent identity |
-| `reasoning_effort` | string | — | registry | `none`, `low`, `medium`, `high`, `xhigh`. Pinned by the agent identity |
+| `reasoning_effort` | string | — | registry | `none`, `low`, `medium`, `high`, `xhigh`, `max`. Pinned by the agent identity |
 | `thinking_budget_tokens` | int | — | registry | For Anthropic extended thinking. Pinned by the agent identity |
 | `benchmark` | string | required | auto | `v1` (SpreadsheetSmithV1 DB/S3) or `v2` (SpreadsheetSmith DB/S3); also picks the default `prompt_version` |
 | **Task input** | | | | |
 | `workspaces` | list | required | local | `[{path: "./folder/"}]` — folders with task files |
 | `tasks` | list | — | auto | Explicit task names from DB |
 | `task_filter` | object | — | auto | Auto-discover: `{task_source: "fmwc", missing_for_model: true}` |
+| `task_ids` | list | — | auto | Explicit task ids (the offline configs list 1-101) |
+| `source` / `sink` | string | — | auto | `local` = `data/tasks/` in / `outputs/<label>/` out; `db` / `postgres` / `database` (sink also `s3`) = DB / S3. Unset: DB when a URL resolves for the benchmark, else local |
 | `task_type` | string | `fmwc` | local | Template selection: `fmwc` or `wsp` |
 | **Execution** | | | | |
-| `max_iterations` | int | 30 | both | Max agent iterations per task |
-| `prompt_version` | string | `v10` (v1) / `v15` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
+| `max_iterations` | int | 40 | both | Max agent iterations per task |
+| `prompt_version` | string | `v10` (v1) / `v16` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
 | `fresh_context_mode` | bool | — | registry | Reload xlsx each iteration. Pinned by the agent identity |
 | `enhanced_excel_context` | bool | — | registry | Grid format for Excel context. Pinned by the agent identity |
 | `recent_history_count` | int | — | registry | Recent tool calls replayed in fresh context. Pinned by the agent identity |
-| `api_timeout_seconds` | int | 180 | both | API call timeout |
+| `api_timeout_seconds` | int | by effort: 3600 (`max`, `xhigh`), 240 (`high`), 180 otherwise | both | API call timeout |
 | **Output** | | | | |
-| `workspace_base_dir` | string | required | both | Where fresh workspaces are created |
+| `workspace_base_dir` | string | `./workspaces` (local) / `batch_logs/batch_<ts>/workspaces` (auto) | both | Where fresh workspaces are created |
 | `results_dir` | string | `./results` | local | Where results + attempts.jsonl are saved |
-| `cleanup_workspace` | bool | true | both | Delete workspace after completion |
+| `cleanup_workspace` | bool | true (auto) / false (local) | both | Delete workspace after completion |
 | **Trial management** | | | | |
 | `max_trials` | int | 7 | auto | Skip task after N attempts |
 | `trials_since` | string | today | auto | Only count attempts after this date |

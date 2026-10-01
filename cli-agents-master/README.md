@@ -78,8 +78,7 @@ workspace/
 ├── solution.xlsx          # Generated Excel file with formulas
 └── agent_logs/           # Detailed execution logs
     ├── openai_requests.csv
-    ├── task_execution.log
-    └── iteration_*.json
+    └── <task_id>/         # task.json, task_prompt.txt, transcript.md
 
 batch_logs/               # Batch run summaries
 ├── batch_<timestamp>/
@@ -124,15 +123,16 @@ batch_name: "Auto Batch - My Model"
 # base_url, fresh_context_mode, enhanced_excel_context, recent_history_count.
 agent_model_name: "openpyxl_openai/gpt-5.2-none"
 auto_mode: true
+benchmark: "v2"                     # required: v1 | v2 (task set, store, default prompt)
 
 workspace_base_dir: "./workspaces"
 
 max_trials: 7                       # Skip after 7 attempts per task
 trials_since: "2026-02-05"          # Ignore old attempts before this date
 
-# Auto-discover all FMWC tasks missing for this model
+# Auto-discover all v2 tasks missing for this model
 task_filter:
-  task_source: "fmwc"
+  task_source: "v2"
   missing_for_model: true
 
 max_iterations: 40        # the default when omitted (models_config.DEFAULT_MAX_ITERATIONS)
@@ -216,7 +216,7 @@ checkout where the monorepo config isn't installed; an offline run needs
 neither:
 
 ```bash
-# Required
+# Required: the key of your cohort's provider (table above), e.g.
 OPENAI_API_KEY=sk-...
 
 # Optional - cloud backend outside the monorepo (not needed offline)
@@ -298,8 +298,8 @@ Create a new `_v{N+1}.txt` file, register it in `PROMPT_VERSIONS` in `excel_cli_
 excel_mcp_server/tools/
 ├── file_tools.py                  # create_file, list_files, copy_file, ...
 ├── cell_write_tools.py            # edit_cells, set_cell_formula
-├── analysis_tools.py              # scan_structure, search, summarize
-└── formatting_tools.py            # format_cells, freeze_panes, ...
+├── analysis_tools.py              # scan_structure, summarize, describe
+└── formatting_tools.py            # format_cells, freeze_panes
 ```
 Add a new `@mcp.tool()` async function that returns a JSON string, following the existing tools in the same module.
 
@@ -307,7 +307,7 @@ Add a new `@mcp.tool()` async function that returns a JSON string, following the
 ```
 examples/
 ├── offline/                       # one per leaderboard cohort: all 101 tasks,
-│                                  # data/ in, outputs/ out, no credentials
+│                                  # data/ in, outputs/ out, only a model key
 ├── batch_config_template_auto.yaml  # Full auto mode template with all options
 ├── local/
 │   └── test_local.yaml            # Workspaces from local folders, results_dir out
@@ -336,7 +336,7 @@ For detailed information, see:
 ## Troubleshooting
 
 **Empty Excel files?** Check that:
-- OpenAI API key is set correctly
+- The cohort's provider API key is set correctly
 - PDF files in workspace are readable
 - Agent completed without hitting max_iterations
 
@@ -346,7 +346,7 @@ For detailed information, see:
 - Label vs formula confusion
 - Placeholder formulas
 
-Check `agent_logs/task_execution.log` for detailed execution trace.
+Check `agent_logs/<task_id>/transcript.md` for the detailed execution trace.
 
 ## Development
 
@@ -358,4 +358,4 @@ ruff check .
 
 ---
 
-Built with OpenAI API and Excel MCP Server. See docs/ for implementation details and fix history.
+Built with OpenAI API and Excel MCP Server. See docs/ARCHITECTURE.md for implementation details.

@@ -61,9 +61,8 @@ BENCHMARKS = {
 # template v9, rubric-scrubbed; 2026-09-19: v16 = v15 with the tool manual's
 # contradictions of the House Standards removed, no row was ever recorded
 # under 1509), coding 113 (template v13, rubric-scrubbed). Both DB drivers refuse to spend on
-# older prompt versions for v2 by default (--all-prompt-versions overrides);
-# scripts/export_good_attempts.py carries the same numbers. Bump here when a
-# pipeline cuts a new prompt version.
+# older prompt versions for v2 by default (--all-prompt-versions overrides).
+# Bump here when a pipeline cuts a new prompt version.
 LATEST_PROMPT_VERSION_BY_TYPE = {
     "v2": {"gui": 205, "excel": 205, "api": 1609, "coding_cli": 113},
 }
@@ -171,7 +170,8 @@ def add_benchmark_arg(parser, required=True):
         help=(
             "Which benchmark to grade: selects the database "
             "(config/config.yaml database.<bm>_url), the S3 grading root and "
-            "the rubric pair. v2 must be graded with --agentic."
+            "the rubric pair. v2 must be graded agentically (--agentic, or "
+            "--single-pass, which sets it)."
         ),
     )
 

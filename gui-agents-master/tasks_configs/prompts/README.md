@@ -6,6 +6,7 @@
 | Version | Turns | Prompt set |
 | --- | --- | --- |
 | 0 | 1 | `v000_test.txt` — pipeline smoke test, **not** a benchmark prompt |
+| 1 | 1 | `v000_test.txt` + the House Standards attachment — attachment-path smoke test, **not** a benchmark prompt |
 | 9 | 1 | `prompts_pv9/SHARED_pv9_prompt.txt` — 17-check rubric |
 | 200 | 3 | `prompts_v2/step1_analyze` → `step2_build` → `step3_qa` — 132-check rubric |
 | 201 | 1 | `v2_1.txt` — same 132-check rubric, single pass |
@@ -30,10 +31,10 @@ apart.
 
 ## Attachments
 
-An entry may also declare `attachments:` — repo-root-relative paths (`..`
-allowed, so a version can reach a monorepo-level file) that are uploaded
-with the task's starting files on every run of that version. 204 and 205
-attach the house standards. The version selects the attachment for the same
+An entry may also declare `attachments:` — paths relative to `gui-agents-master/` (`..`
+allowed, so a version can reach a file at the repository root) that are uploaded
+with the task's starting files on every run of that version. 1 (the
+attachment smoke test), 204 and 205 attach the house standards. The version selects the attachment for the same
 reason it selects the text: a run config never names the file, so
 `task_attempts.prompt_version` and what the agent was handed cannot drift.
 `infra/run.py` resolves them once at startup (a missing file refuses the
@@ -72,8 +73,9 @@ already carries), `2xx` is v2.
 
 ## Where the files live
 
-Only new prompt sets live in this directory. The existing sets stay where
-they are — `tasks_configs/prompts_v2/` and `tasks_configs/prompts_pv9/`,
-both of which carry READMEs documenting their provenance — and the registry
-references them by repo-relative path. They are frozen records of what
+This directory holds the smoke test and the single-pass sets (`v2_1.txt`,
+`v2_2.txt`, `v2_3.txt`). The multi-turn sets and the v1 payload live in
+`tasks_configs/prompts_v2/`, `prompts_v3/`, `prompts_v4/` and `prompts_pv9/`,
+each with a README documenting its provenance, and the registry references
+them by path relative to `gui-agents-master/`. They are frozen records of what
 production runs have already sent, so they are not moved.

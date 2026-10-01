@@ -87,7 +87,7 @@ Chrome with Chrome DevTools Protocol is recommended because it:
 
 1. Start Chrome with debugging:
 ```bash
-# from the repo root; swap chrome-claude for chrome-chatgpt on ChatGPT runs
+# from gui-agents-master/; swap chrome-claude for chrome-chatgpt on ChatGPT runs
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --remote-debugging-port=9222 \
   --user-data-dir="$PWD/browser_profiles/chrome-claude"
@@ -99,15 +99,17 @@ Chrome with Chrome DevTools Protocol is recommended because it:
 
 ## Output Files
 
-After running tasks, you'll find:
+After a standalone run you'll find (under `infra.run` everything goes to the attempt's working directory and then to the sink instead):
 
 ```
-claude_web_logs/
+claude_web_logs/                     # chatgpt_web_logs/ on ChatGPT runs
 ├── claude_web_20260119_123456_task-name.log  # Execution log
-├── json_logs/
-│   └── completion_claude_web_20260119_123456_task-name.json  # Timing data
 └── conversations/
     └── conversation_20260119_123456_task-name.json  # Full conversation
+20260119_claudeGUI/                  # run directory (…_chatgptGUI/ on ChatGPT runs)
+├── solutions/                       # downloaded workbooks
+└── json_logs/
+    └── completion_claude_web_20260119_123456_task-name.json  # Timing data
 ```
 
 ## Troubleshooting
