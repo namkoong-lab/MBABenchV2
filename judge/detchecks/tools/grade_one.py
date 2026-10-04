@@ -26,10 +26,11 @@ def main(argv=None) -> int:
     ap.add_argument("--value-path", default=None, help="recalculation copy for formula values (manual override)")
     ap.add_argument("--recalc", action="store_true", help="run the recalculation pipeline for value checks")
     ap.add_argument("--no-excel", action="store_true", help="pipeline: never reroute to Excel (fail loudly instead)")
+    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default; Patrick 2026-10-04: agents never launch Excel)")
     ap.add_argument("--workdir", default=DEFAULT_WORKDIR, help="pipeline cache directory")
     args = ap.parse_args(argv)
     checks = [int(x) for x in args.checks.split(",")] if args.checks else None
-    recalc = RecalcPolicy(workdir=args.workdir, excel_allowed=not args.no_excel) if args.recalc else None
+    recalc = RecalcPolicy(workdir=args.workdir, excel_allowed=bool(args.allow_excel and not args.no_excel)) if args.recalc else None
     try:
         v = grade(args.path, checks=checks, value_path=args.value_path, recalc=recalc)
     except GradingError as e:

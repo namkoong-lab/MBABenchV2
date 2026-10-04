@@ -105,6 +105,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--recalc", action="store_true", help="run the recalculation pipeline for value checks")
     ap.add_argument("--no-excel", action="store_true", help="pipeline: never reroute to Excel")
+    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default; Patrick 2026-10-04: agents never launch Excel)")
     ap.add_argument("--workdir", default=DEFAULT_WORKDIR)
     ap.add_argument("--lo-timeout", type=float, default=600.0)
     ap.add_argument("--excel-timeout", type=float, default=600.0)
@@ -112,7 +113,7 @@ def main(argv=None) -> int:
     ap.add_argument("--llm-check", type=int, default=None, help="add the LLM verdict for this check from verdicts.json")
     args = ap.parse_args(argv)
     numbers = sorted(REGISTRY) if not args.checks else [int(x) for x in args.checks.split(",")]
-    recalc = (RecalcPolicy(workdir=args.workdir, excel_allowed=not args.no_excel, lo_timeout_s=args.lo_timeout,
+    recalc = (RecalcPolicy(workdir=args.workdir, excel_allowed=bool(args.allow_excel and not args.no_excel), lo_timeout_s=args.lo_timeout,
                            excel_timeout_s=args.excel_timeout) if args.recalc else None)
     files = delivered_files(args.glob)
     rows = []

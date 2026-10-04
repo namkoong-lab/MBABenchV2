@@ -116,9 +116,10 @@ def main(argv=None) -> int:
                     help="grade from the files' caches only (default: the recalc pipeline decides; every toy is "
                          "Excel-saved, so no office application is launched)")
     ap.add_argument("--no-excel", action="store_true", help="pipeline: never reroute to Excel")
+    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default; Patrick 2026-10-04: agents never launch Excel)")
     ap.add_argument("--workdir", default=DEFAULT_WORKDIR)
     args = ap.parse_args(argv)
-    recalc = None if args.no_recalc else RecalcPolicy(workdir=args.workdir, excel_allowed=not args.no_excel)
+    recalc = None if args.no_recalc else RecalcPolicy(workdir=args.workdir, excel_allowed=bool(args.allow_excel and not args.no_excel))
 
     numbers = sorted(REGISTRY) if not args.checks else [int(x) for x in args.checks.split(",") if x.strip()]
     unknown = [n for n in numbers if n not in REGISTRY]

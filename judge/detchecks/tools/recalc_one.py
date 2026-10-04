@@ -24,14 +24,17 @@ def main(argv=None) -> int:
     ap.add_argument("path")
     ap.add_argument("--workdir", default=DEFAULT_WORKDIR)
     ap.add_argument("--no-excel", action="store_true")
+    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default; Patrick 2026-10-04: agents never launch Excel)")
     ap.add_argument("--no-cache", action="store_true")
     ap.add_argument("--lo-timeout", type=float, default=600.0)
     ap.add_argument("--excel-timeout", type=float, default=600.0)
     ap.add_argument("--force-excel", action="store_true")
     args = ap.parse_args(argv)
-    pol = RecalcPolicy(workdir=args.workdir, excel_allowed=not args.no_excel, use_cache=not args.no_cache,
+    pol = RecalcPolicy(workdir=args.workdir, excel_allowed=bool(args.allow_excel and not args.no_excel), use_cache=not args.no_cache,
                        lo_timeout_s=args.lo_timeout, excel_timeout_s=args.excel_timeout)
     try:
+        if args.force_excel and not args.allow_excel:
+            raise SystemExit("--force-excel also needs --allow-excel (Excel is off by default; agents never launch Excel)")
         if args.force_excel:
             out_dir = os.path.join(args.workdir, file_hash(args.path), "excel_forced")
             t0 = time.perf_counter()
