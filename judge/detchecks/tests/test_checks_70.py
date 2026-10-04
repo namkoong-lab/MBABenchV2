@@ -361,7 +361,7 @@ def test_70_wrapped_unwrapped_and_merged():
     assert v["decision"] == "pass", v["mistakes"]
     v = run(book([("S", ws(rows, cols=col(2, 2, stored(170))))], st))
     assert v["decision"] == "fail" and "capped at 80" in v["mistakes"][0]["description"], v["mistakes"]
-    # the widest line of wrapped text counts; unwrapped text counts in full (150 chars < Test C's 200)
+    # the widest line of wrapped text counts; unwrapped text counts in full
     v = run(book([("S", ws({1: [c("B1", digits(150))]}, cols=col(2, 2, stored(120))))]))
     assert v["decision"] == "pass", v["mistakes"]
     v = run(book([("S", ws({1: [c("B1", digits(20) + "\n" + digits(30), s_wrap)]}, cols=col(2, 2, stored(100))))], st))
@@ -437,40 +437,31 @@ def test_70_outlier_rule():
     assert v["decision"] == "pass" and v["stats"]["n_outlier_tags"] == 0, v["mistakes"]
 
 
-# ============================================================================ Test C (long text left unwrapped)
-def test_70_long_text_unwrapped():
+# ============================================================================ no "long text left unwrapped" test
+def test_70_long_unwrapped_text_is_not_a_width_problem():
+    """Patrick 2026-10-04: Test C (200+ characters left unwrapped, spilling into empty cells) is dropped -
+    unwrapped text is a problem only when it is cut off, which Sufficient column widths (69) grades.  Every case
+    that failed Test C now passes; a long unwrapped text still justifies its column's width under Test A."""
     st = Styles()
-    s_wrap = st.xf(wrap=True)
     s_right = st.xf(horizontal="right")
     note = sentence(250)
-    v = run(book([("Summary", ws({5: [c("B5", note)]}))], st))
-    assert v["decision"] == "fail" and locs(v) == ["Summary!B:B"], v["mistakes"]
-    assert "B5" in v["mistakes"][0]["description"] and "250 characters" in v["mistakes"][0]["description"]
-    assert v["stats"]["tests_failed"] == ["C"] and v["stats"]["switches"]["test_c_off"] == "pass"
-    for rows, why in (({5: [c("B5", note, s_wrap)]}, "wrapped"),
-                      ({5: [c("B5", note), c("C5", "next")]}, "blocked by a filled neighbour"),
-                      ({5: [c("B5", sentence(190))]}, "under 200 characters"),
-                      ({5: ('hidden="1"', [c("B5", note)])}, "hidden row")):
+    for rows, why in (({5: [c("B5", note)]}, "250 characters spilling right"),
+                      ({5: [c("E5", note, s_right)]}, "right-aligned, spilling left"),
+                      ({5: [c("B5", note, f='REPT("a",250)')]}, "a cached text formula result")):
         v = run(book([("Summary", ws(rows))], st))
-        assert v["decision"] == "pass", (why, v["mistakes"])
-    v = run(book([("Summary", ws({5: [c("B5", note)]}, tail=merges("B5:H5")))], st))
-    assert v["decision"] == "pass" and v["stats"]["merged_long_text"] == 1, v["mistakes"]
-    # right-aligned text overflows to the left
-    v = run(book([("Summary", ws({5: [c("E5", note, s_right)]}))], st))
-    assert v["decision"] == "fail" and locs(v) == ["Summary!E:E"], v["mistakes"]
-    v = run(book([("Summary", ws({5: [c("D5", "x"), c("E5", note, s_right)]}))], st))
+        assert v["decision"] == "pass" and v["stats"]["tests_failed"] == [], (why, v["mistakes"])
+    v = run(book([("Instructions", ws({7: [c("B7", note)]}))], st))
     assert v["decision"] == "pass", v["mistakes"]
-    # a cached text formula result counts (unknown writer: trusted cache)
-    v = run(book([("Summary", ws({5: [c("B5", note, f='REPT("a",250)')]}))], st))
-    assert v["decision"] == "fail" and locs(v) == ["Summary!B:B"], v["mistakes"]
-    # the case brief: skipped by Test C by default, failed with the option off
-    p = book([("Instructions", ws({7: [c("B7", note)]}))], st)
-    v = run(p)
-    assert v["decision"] == "pass" and v["stats"]["switches"]["brief_in_test_c"] == "fail", v["mistakes"]
-    with patched(M, LONG_TEXT_SKIP_BRIEF=False):
-        assert locs(run(p)) == ["Instructions!B:B"]
-    with patched(M, LONG_TEXT_UNWRAPPED=False):
-        assert run(book([("Summary", ws({5: [c("B5", note)]}))], st))["decision"] == "pass"
+    assert not any(k in v["stats"]["switches"] for k in ("test_c_off", "test_c_on", "brief_in_test_c"))
+    assert not any(k in v["stats"] for k in ("long_text_candidates", "merged_long_text"))
+    assert not any(k.startswith("long_text") for k in v["stats"]["options"])
+    assert not hasattr(M, "LONG_TEXT_UNWRAPPED") and not hasattr(M, "LONG_TEXT_MIN_CHARS")
+    # Test A still counts unwrapped text at its full width: 250 characters (about 233 Normal characters wide)
+    # justify a 150-character column; a 150 column of short labels fails
+    v = run(book([("Summary", ws({5: [c("B5", note)]}, cols=col(2, 2, stored(150))))], st))
+    assert v["decision"] == "pass", v["mistakes"]
+    v = run(book([("Summary", ws({5: [c("B5", "short label")]}, cols=col(2, 2, stored(150))))], st))
+    assert v["decision"] == "fail" and v["stats"]["tests_failed"] == ["A"], v["mistakes"]
 
 
 # ============================================================================ brief, hidden sheets
@@ -514,17 +505,16 @@ def test_70_formula_values():
     assert v["decision"] == "fail" and locs(v) == ["S!H:H"] and v["stats"]["formula_values_read"] >= 2
     assert "Enterprise Value" in v["mistakes"][0]["description"]
     raises(lambda: run(book([("S", x)], st)), "cannot decide S!H1", "writer=unknown")
-    # Test C: an untrusted unwrapped formula that could spill is undecided ...
-    raises(lambda: run(book([("S", ws({1: [c("B1", None, f="A1&A1")]}))], st, app=OPENPYXL)), "cannot decide S!B1")
-    # ... but not when a filled neighbour blocks it, or when it is wrapped
-    v = run(book([("S", ws({1: [c("B1", None, f="A1&A1"), c("C1", 1)], 2: [c("B2", None, s_wrap, f="A1")]}))], st,
-                 app=OPENPYXL))
-    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v
+    # an untrusted formula outside the judged columns is never read (no Test C any more): an unwrapped formula
+    # that could spill, a blocked one and a wrapped one all pass without reading a value
+    v = run(book([("S", ws({1: [c("B1", None, f="A1&A1")], 2: [c("B2", None, f="A1&A1"), c("C2", 1)],
+                            3: [c("B3", None, s_wrap, f="A1")]}))], st, app=OPENPYXL))
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0 and v["stats"]["formula_values_read"] == 0, v
 
 
 TESTS = [test_70_geometry_and_text, test_70_wide_outlier_port, test_70_judge_port_parity, test_70_cap_rule,
          test_70_empty_hidden_and_default_columns, test_70_wrapped_unwrapped_and_merged,
-         test_70_rich_text_fonts_units, test_70_outlier_rule, test_70_long_text_unwrapped,
+         test_70_rich_text_fonts_units, test_70_outlier_rule, test_70_long_unwrapped_text_is_not_a_width_problem,
          test_70_brief_and_hidden_sheets, test_70_formula_values]
 
 

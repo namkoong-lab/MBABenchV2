@@ -45,38 +45,31 @@ Rule as implemented (the toys' wording; every judgement call is a module constan
   width (the toys' wording; the judge's guidance excuses a column "whose own content needs the
   width").
 
-  Test C (long text left unwrapped, LONG_TEXT_UNWRAPPED).  A text cell (constant, or a trusted
-  formula result) of LONG_TEXT_MIN_CHARS (200) or more characters that is not wrapped, not merged,
-  not shrink-to-fit, unrotated, aligned general / left / right / center, wider than its column and
-  spilling into an empty neighbour (on the side its alignment overflows to) FAILS.
+  No "long text left unwrapped" test (Patrick 2026-10-04): unwrapped text is a problem only when it
+  is cut off, which Sufficient column widths (69) grades.  The former Test C (200+ character
+  unwrapped text spilling into empty cells) is removed with its switches and stats.
 
   Case brief.  The guidance excludes "the case's own brief (the Instructions sheet the agent was
   given) ... including its text wrapping and column widths"; Patrick's rule grades the whole
   workbook.  EXCLUDE_CASE_BRIEF = False: the sheet named "Instructions" (c74.is_instructions_sheet)
-  is graded by Tests A and B.  LONG_TEXT_SKIP_BRIEF = True: Test C does not look at it (every case
-  brief holds 200+ character unwrapped paragraphs; with them all three Pass toys fail).
+  is graded by Tests A and B.
 
   stats["switches"] gives the verdict under each alternative setting (cap 75, outlier share 0.75,
-  exact judge port, Test C off, brief excluded, brief in Test C, the judge's sheet skip); they never
-  decide.
+  exact judge port, brief excluded, the judge's sheet skip); they never decide.
 
 Values (needs_values).  Constants are read from the file.  A formula result's value is read only
-for cells of columns being judged (Tests A / B) and for Test C's candidates (unwrapped cells that can
-overflow), and only when trusted (the recalc pipeline supplies a value for every non-Excel file).
-An untrusted value matters only when its column's measured need is still under the line (Tests A /
-B), or for an unwrapped cell that would spill (Test C); if the workbook fails anyway such cells are
-listed in stats (UNTRUSTED_ONLY_IF_VERDICT_NEEDS), otherwise the first one raises GradingError (no
-fallback).
+for cells of columns being judged (Tests A / B), and only when trusted (the recalc pipeline supplies
+a value for every non-Excel file).  An untrusted value matters only when its column's measured need
+is still under the line; if the workbook fails anyway such cells are listed in stats
+(UNTRUSTED_ONLY_IF_VERDICT_NEEDS), otherwise the first one raises GradingError (no fallback).
 
 Mistakes: one per run of adjacent failing columns with the same test(s) per sheet (location
-'Sheet'!H:H, 'Sheet'!AE:AF), naming the widths, the content need with its widest cell, and the test;
-Test C: one per column per sheet, naming the cells.
+'Sheet'!H:H, 'Sheet'!AE:AF), naming the widths, the content need with its widest cell, and the test.
 """
 from __future__ import annotations
 
 import math
 import re
-import unicodedata
 from bisect import bisect_left, bisect_right
 from typing import Optional
 
@@ -85,8 +78,8 @@ from ..core.refs import MAX_COL, index_to_col, location, make_ref
 from ..core.sheet import ExcelError
 from ..errors import GradingError
 from .base import Check
-from .c69 import (CELL_MARGIN_PX, DEFAULT_FONT_PT, GLYPH_CHARS, _normal_font, col_px, default_col_px, face_key,
-                  glyph_row, mdw_px, ppem_at, space_px)
+from .c69 import (CELL_MARGIN_PX, DEFAULT_FONT_PT, GLYPH_CHARS, WIDE_CHAR, _normal_font, col_px, default_col_px,
+                  face_key, glyph_row, mdw_px, ppem_at, resolve_char, space_px)
 from .c74 import is_instructions_sheet
 
 # ---------------------------------------------------------------- rule constants
@@ -98,16 +91,10 @@ WIDE_OUTLIER_EQUAL_TOL = 0.01     # judge port: stored widths (rounded to 2 deci
 JUDGE_DEFAULT_COL_WIDTH = 8.43    # judge port: stored width of columns without <col> on a sheet without a default
 OUTLIER_UNEQUAL_GROUPS = True     # Test B extension: >= 2 adjacent lone columns of unequal widths form a group too
 OUTLIER_NEED_SHARE = 0.5          # Test B: an outlier column fails when its content needs less than this share
-LONG_TEXT_UNWRAPPED = True        # Test C on / off
-LONG_TEXT_MIN_CHARS = 200         # Test C: unwrapped spilling text of at least this many characters fails
-LONG_TEXT_SKIP_BRIEF = True       # Test C does not look at the case brief (the sheet named "Instructions")
 EXCLUDE_CASE_BRIEF = False        # True: the case brief is not graded at all (guidance); False: whole workbook
 UNTRUSTED_ONLY_IF_VERDICT_NEEDS = True   # untrusted values raise only while the verdict is still open
 INDENT_SPACES_PER_LEVEL = 3       # ECMA-376 alignment/@indent: one level = 3 spaces of the Normal font
 WRAP_ALIGNMENTS = ("justify", "distributed")    # horizontal alignments Excel wraps like wrapText
-OVERFLOW_RIGHT = (None, "general", "left")      # unwrapped text overflows to the right ...
-OVERFLOW_LEFT = ("right",)                      # ... to the left ...
-OVERFLOW_BOTH = ("center",)                     # ... both ways (fill / centerContinuous / justify: never)
 ROTATED_LINE_PER_PT = 1.3         # rotated text: one line is 1.3 x the font size (as Reasonable row heights (73))
 # stats only: the verdict under the alternatives the doc reports (they never decide)
 ALT_CAP_CHARS = 75.0              # the rubric's "roughly 75-80": the lower end
@@ -115,34 +102,9 @@ ALT_OUTLIER_NEED_SHARE = 0.75     # the earlier prototype's excuse (content need
 JUDGE_SKIP_SHEETS = re.compile(r"instruction|question|brief|readme", re.I)   # sheets the judge's tag skips
 MAX_LISTED = 12
 MAX_UNDECIDED_LISTED = 12
-MAX_PENDING_UNTRUSTED = 20_000    # untrusted Test C candidates kept per sheet (more are counted)
 
 # ---------------------------------------------------------------- text width (c69's glyph tables)
-_CHAR_INDEX = {ch: i for i, ch in enumerate(GLYPH_CHARS)}
-_DIGIT_IDX = _CHAR_INDEX["0"]
-_SPACE_IDX = _CHAR_INDEX[" "]
-_WIDE, _ZERO = -1, -2
-_RESOLVED: dict = {}
-
-
-def _resolve(ch: str):
-    """Glyph-table index of a character, or _WIDE (East Asian wide: 1 em), _ZERO (combining mark),
-    None (anything else: measured as a digit, c69's rule for a glyph the table lacks)."""
-    if ch in _RESOLVED:
-        return _RESOLVED[ch]
-    i = _CHAR_INDEX.get(ch)
-    if i is None:
-        if ch == "\t":
-            i = _SPACE_IDX
-        elif unicodedata.combining(ch):
-            i = _ZERO
-        elif unicodedata.east_asian_width(ch) in ("W", "F"):
-            i = _WIDE
-        else:
-            base = unicodedata.normalize("NFD", ch)[:1]
-            i = _CHAR_INDEX.get(base) if base != ch else None
-    _RESOLVED[ch] = i
-    return i
+_DIGIT_IDX = GLYPH_CHARS.index("0")
 
 
 def text_px(row: tuple, text: str, ppem: float) -> int:
@@ -153,12 +115,12 @@ def text_px(row: tuple, text: str, ppem: float) -> int:
     tot = 0
     dig = row[_DIGIT_IDX]
     for ch in text:
-        i = _resolve(ch)
+        i = resolve_char(ch)                      # c69's text-character rule (shared)
         if i is None:
             a = dig
         elif i >= 0:
             a = row[i] or dig
-        elif i == _WIDE:
+        elif i == WIDE_CHAR:
             a = 1000
         else:
             continue
@@ -327,33 +289,30 @@ def judge_tag(group) -> str:
 # ---------------------------------------------------------------- settings (the verdict and its alternatives)
 def default_setting() -> dict:
     return {"cap": WIDTH_CAP_CHARS, "share": OUTLIER_NEED_SHARE, "ext": OUTLIER_UNEQUAL_GROUPS,
-            "test_c": LONG_TEXT_UNWRAPPED, "c_brief": not LONG_TEXT_SKIP_BRIEF, "brief": not EXCLUDE_CASE_BRIEF,
-            "judge_skip": False, "regardless": False}
+            "brief": not EXCLUDE_CASE_BRIEF, "judge_skip": False, "regardless": False}
 
 
 def alternative_settings() -> dict:
     """Stats only (stats.switches): the verdict under each alternative; none of them decides.
     *_regardless: Test A fails every column over the cap whatever its content (the rubric's "rule of
     thumb" read literally, as the judge guidance's second test does); llm_like: that plus the brief
-    excluded, Test C off, the 75 % outlier excuse and the judge's sheet skip - how the LLM judge is
-    instructed to grade."""
+    excluded, the 75 % outlier excuse and the judge's sheet skip - how the LLM judge is instructed to
+    grade (the LLM judge also never failed long unwrapped text on its own)."""
     d = default_setting()
     alts = {"cap_75": dict(d, cap=ALT_CAP_CHARS), "cap_80": dict(d, cap=80.0),
             "outlier_share_0.75": dict(d, share=ALT_OUTLIER_NEED_SHARE),
-            "outlier_exact_port": dict(d, ext=False), "test_c_off": dict(d, test_c=False),
-            "test_c_on": dict(d, test_c=True), "brief_excluded": dict(d, brief=False),
-            "brief_in_test_c": dict(d, c_brief=True, test_c=True),
+            "outlier_exact_port": dict(d, ext=False), "brief_excluded": dict(d, brief=False),
             "judge_sheet_skip": dict(d, judge_skip=True),
             "cap_80_regardless": dict(d, cap=80.0, regardless=True),
             "cap_75_regardless": dict(d, cap=ALT_CAP_CHARS, regardless=True),
-            "llm_like": dict(d, cap=80.0, regardless=True, brief=False, test_c=False, ext=False,
+            "llm_like": dict(d, cap=80.0, regardless=True, brief=False, ext=False,
                              share=ALT_OUTLIER_NEED_SHARE, judge_skip=True)}
     return alts
 
 
 class _Sty:
     __slots__ = ("row", "ppem", "size", "bold", "face_k", "font", "wrap", "shrink", "rot", "indent_px", "code",
-                 "fmt_err", "overflow")
+                 "fmt_err")
 
 
 class _Need:
@@ -383,7 +342,7 @@ class _Need:
 
 
 def _filled(cell) -> bool:
-    """A cell that shows something or blocks text overflow: a formula (even one returning "") or a
+    """A cell that counts for the sheet's used range (Test B): a formula (even one returning "") or a
     stored value."""
     return cell.formula is not None or cell.array is not None or (cell.raw is not None and cell.raw != "")
 
@@ -420,9 +379,8 @@ class C70(Check):
         self._sheets = []
         self._recs = {}
         self.unknown_faces = {}
-        self.counts = {"cells_measured": 0, "formula_values_read": 0, "long_text_candidates": 0,
-                       "sheets_with_overlapping_cols": 0, "cols_without_width": 0, "merged_long_text": 0,
-                       "second_pass_sheets": 0}
+        self.counts = {"cells_measured": 0, "formula_values_read": 0, "sheets_with_overlapping_cols": 0,
+                       "cols_without_width": 0, "second_pass_sheets": 0}
 
     def chars(self, px) -> float:
         """Pixels -> Normal-font characters (Excel's Column Width dialog: (px - 5) / MDW)."""
@@ -453,16 +411,6 @@ class C70(Check):
         v.rot = int(al.text_rotation or 0)
         lv = int(al.indent or 0) if al.horizontal in (None, "general", "left", "right", "distributed") else 0
         v.indent_px = lv * INDENT_SPACES_PER_LEVEL * self.space * (2 if al.horizontal == "distributed" else 1)
-        if v.wrap or v.shrink or v.rot:
-            v.overflow = None
-        elif al.horizontal in OVERFLOW_RIGHT:
-            v.overflow = "right"
-        elif al.horizontal in OVERFLOW_LEFT:
-            v.overflow = "left"
-        elif al.horizontal in OVERFLOW_BOTH:
-            v.overflow = "both"
-        else:
-            v.overflow = None
         v.fmt_err = None
         try:
             v.code = N.resolve_format(xf.num_fmt_id, st.num_fmts)
@@ -606,17 +554,8 @@ class C70(Check):
         self._zero_default = bool(head.format.zero_height)
         self._row_hidden = False
         self._hidden_rows = set()
-        self._cur_row = None
-        self._last_filled = 0
-        self._pend = []                  # Test C candidates waiting for the cell to their right
-        self._long = []                  # Test C hits: (r, c, nchars, need_px, col_px, snippet, untrusted)
-        self._n_long_untrusted = 0
 
     def row(self, row):
-        if self._pend:
-            self._flush_pending()
-        self._cur_row = row.r
-        self._last_filled = 0
         ht = row.ht
         self._row_hidden = bool(row.hidden) or (ht is not None and ht <= 0) or (ht is None and self._zero_default)
         if self._row_hidden:
@@ -630,82 +569,26 @@ class C70(Check):
                 self._minc = c
             if self._maxc is None or c > self._maxc:
                 self._maxc = c
-        if cell.row != self._cur_row:            # defensive: a cell outside its <row>
-            if self._pend:
-                self._flush_pending()
-            self._cur_row = cell.row
-            self._last_filled = 0
-        if self._pend:
-            self._neighbour(c, filled)
-        if self._row_hidden or not filled:
-            return
-        left_filled = self._last_filled == c - 1
-        self._last_filled = c
-        measure = self._flags[c]
-        sty = None
-        if not measure:
-            # outside the judged columns only Test C's candidates matter (always collected: the switches
-            # report Test C on and off): text that can overflow, or a formula result that may be text
-            if not cell.is_formula_result and cell.t not in ("s", "inlineStr", "str"):
-                return
-            sty = self._style(cell.s)
-            if sty.overflow is None:
-                return
+        if self._row_hidden or not filled or not self._flags[c]:
+            return                               # only the judged columns' displayed cells are measured
         px = self.geo.px(c)
         if px is None:                           # hidden / zero-width column: not displayed
             return
-        if sty is None:
-            sty = self._style(cell.s)
+        sty = self._style(cell.s)
         kind, v = self._route(cell)
-        if measure:
-            nd = self._needs.get(c)
-            if nd is None:
-                nd = self._needs[c] = _Need()
-            if kind == "untrusted":
-                nd.add_untrusted(cell.row, c)
-            elif kind != "empty":
-                text, runs = self._display(cell, sty, kind, v)
-                if text:
-                    nd.add(self._need_px(sty, text, runs), sty.wrap and kind == "text", cell.row, c, text[:60],
-                           sty.font)
-                    self.counts["cells_measured"] += 1
-        if sty.overflow is None:
-            return
+        nd = self._needs.get(c)
+        if nd is None:
+            nd = self._needs[c] = _Need()
         if kind == "untrusted":
-            self._n_long_untrusted += 1
-            if self._n_long_untrusted <= MAX_PENDING_UNTRUSTED:
-                self._pend.append((cell.row, c, sty.overflow, left_filled, None, px, None, True, None))
-        elif kind == "text" and len(v) >= LONG_TEXT_MIN_CHARS:
-            self.counts["long_text_candidates"] += 1
-            w = self._need_px(sty, v, self._display(cell, sty, kind, v)[1])
-            if w > px - CELL_MARGIN_PX:
-                self._pend.append((cell.row, c, sty.overflow, left_filled, w, px, v[:80], False, len(v)))
-
-    def _neighbour(self, c: int, filled: bool):
-        """Settle pending Test C candidates of this row against the cell now at column c."""
-        keep = []
-        for p in self._pend:
-            if c <= p[1]:
-                keep.append(p)
-            else:
-                self._settle_long(p, right_empty=not (c == p[1] + 1 and filled))
-        self._pend = keep
-
-    def _flush_pending(self):
-        for p in self._pend:
-            self._settle_long(p, right_empty=p[1] < MAX_COL)
-        self._pend = []
-
-    def _settle_long(self, p, right_empty: bool):
-        r, c, side, left_filled, w, px, snippet, untrusted, n = p
-        left_empty = c > 1 and not left_filled
-        spills = right_empty if side == "right" else left_empty if side == "left" else (right_empty and left_empty)
-        if spills:
-            self._long.append((r, c, n, w, px, snippet, untrusted))
+            nd.add_untrusted(cell.row, c)
+        elif kind != "empty":
+            text, runs = self._display(cell, sty, kind, v)
+            if text:
+                nd.add(self._need_px(sty, text, runs), sty.wrap and kind == "text", cell.row, c, text[:60],
+                       sty.font)
+                self.counts["cells_measured"] += 1
 
     def sheet_end(self, head, tail):
-        if self._pend:
-            self._flush_pending()
         name = head.name
         merges = [m for m in tail.merges if not m.is_single_cell]
         lo, hi = self._minc, self._maxc
@@ -718,7 +601,7 @@ class C70(Check):
                "judge_skip": bool(JUDGE_SKIP_SHEETS.search(name)), "geo": self.geo, "wide": self._wide,
                "groups": groups, "outlier_of": outlier_of, "needs": self._needs, "used": (lo, hi),
                "hidden_rows": self._hidden_rows, "spans": [], "anchors": {}, "anchor_need": {},
-               "remeasure": set(), "long": [], "n_long_untrusted": self._n_long_untrusted}
+               "remeasure": set()}
         # merges over a judged column: covered cells need nothing and the merged content needs the span,
         # so those columns are measured again in a second pass, merges known
         if merges:
@@ -734,16 +617,8 @@ class C70(Check):
             if rec["spans"]:
                 self.counts["second_pass_sheets"] += 1
                 self.request_second_pass(name, None)
-        # Test C: merged cells are not "left unwrapped" long text
-        for x in self._long:
-            if merges and any(m.r1 <= x[0] <= m.r2 and m.c1 <= x[1] <= m.c2 for m in merges):
-                self.counts["merged_long_text"] += 1
-                continue
-            rec["long"].append(x)
         self._recs[name] = rec
         self._sheets.append(rec)
-        self._long = []
-        self._pend = []
         self._needs = {}
 
     def _in_wide(self, c: int) -> bool:
@@ -869,8 +744,8 @@ class C70(Check):
         return cols, empties
 
     def _evaluate(self, rec, cols, empties, s: dict) -> tuple:
-        """(fails, undecided) of one sheet under setting s.  fails: [("col", c, tests) | ("empty", a, b) |
-        ("long", item)]; undecided: [(sheet, ref, why)]."""
+        """(fails, undecided) of one sheet under setting s.  fails: [("col", c, tests) | ("empty", a, b)];
+        undecided: [(sheet, ref, why)]."""
         fails, und = [], []
         name = rec["sheet"]
         if rec["brief"] and not s["brief"]:
@@ -900,16 +775,6 @@ class C70(Check):
         for a, b, W in empties:
             if W > cap:
                 fails.append(("empty", a, b))
-        if s["test_c"] and (not rec["brief"] or s["c_brief"]):
-            for x in rec["long"]:
-                if x[6]:
-                    und.append((name, make_ref(x[0], x[1]), "formula value untrusted; an unwrapped cell that "
-                                                           "would spill (long text left unwrapped)"))
-                else:
-                    fails.append(("long", x))
-            n_more = rec["n_long_untrusted"] - MAX_PENDING_UNTRUSTED
-            if n_more > 0:
-                und.append((name, "", f"{n_more} more untrusted formula values in unwrapped cells"))
         return fails, und
 
     def finish(self) -> dict:
@@ -942,7 +807,7 @@ class C70(Check):
                     undecided.extend(u)
             per_sheet.append({"sheet": name, "used_columns": [index_to_col(x) if x else None for x in rec["used"]],
                               "judged_columns": len(cols), "outlier_groups": len(rec["groups"]),
-                              "long_text_cells": len(rec["long"]), "brief": rec["brief"]})
+                              "brief": rec["brief"]})
         for rec, fails in default_fails:
             for kind in self._add_mistakes(rec, fails):
                 tests_failed.add(kind)
@@ -974,9 +839,7 @@ class C70(Check):
             "per_sheet": per_sheet,
             "options": {"width_cap_chars": WIDTH_CAP_CHARS, "excess_factor": EXCESS_FACTOR,
                         "wide_outlier_ratio": WIDE_OUTLIER_RATIO, "outlier_unequal_groups": OUTLIER_UNEQUAL_GROUPS,
-                        "outlier_need_share": OUTLIER_NEED_SHARE, "long_text_unwrapped": LONG_TEXT_UNWRAPPED,
-                        "long_text_min_chars": LONG_TEXT_MIN_CHARS, "long_text_skip_brief": LONG_TEXT_SKIP_BRIEF,
-                        "exclude_case_brief": EXCLUDE_CASE_BRIEF,
+                        "outlier_need_share": OUTLIER_NEED_SHARE, "exclude_case_brief": EXCLUDE_CASE_BRIEF,
                         "untrusted_only_if_verdict_needs": UNTRUSTED_ONLY_IF_VERDICT_NEEDS},
         })
         und_note = ""
@@ -985,15 +848,15 @@ class C70(Check):
                         f"not depend on them (see stats).")
         return self.verdict(
             f"No excessive column width: no visible column is over {WIDTH_CAP_CHARS:g} characters and more than "
-            f"{EXCESS_FACTOR:g}x its content, no WIDE OUTLIER column is more than twice its content, and no long text "
-            f"is left unwrapped ({len(self._sheets)} sheet(s)).",
-            f"{{n}} excessive column width(s) or unwrapped long text: "
+            f"{EXCESS_FACTOR:g}x its content, and no WIDE OUTLIER column is more than twice its content "
+            f"({len(self._sheets)} sheet(s)).",
+            f"{{n}} excessive column width(s): "
             f"{', '.join(sorted({m['location'].rsplit('!', 1)[0] for m in self.mistakes.items}))}.{und_note}",
             stats)
 
     # ------------------------------------------------------------------ mistakes
     def _add_mistakes(self, rec, fails) -> set:
-        """One mistake per run of adjacent failing columns with the same tests; Test C one per column."""
+        """One mistake per run of adjacent failing columns with the same tests."""
         name = rec["sheet"]
         hid = " (hidden sheet)" if rec["state"] != "visible" else ""
         cols = rec["_cols"]
@@ -1014,24 +877,6 @@ class C70(Check):
         for a, b, t in runs:
             kinds.update(t)
             self.add_mistake(location(name, _colrange(a, b)), self._describe(rec, name, hid, a, b, t, cols))
-        longs = {}
-        for f in fails:
-            if f[0] == "long":
-                longs.setdefault(f[1][1], []).append(f[1])
-        for c in sorted(longs):
-            kinds.add("C")
-            xs = sorted(longs[c])
-            W = self.chars(xs[0][4])
-            refs = ", ".join(make_ref(x[0], c) for x in xs[:MAX_LISTED]) + (" ..." if len(xs) > MAX_LISTED else "")
-            worst = max(xs, key=lambda x: x[3])
-            n = len(xs)
-            self.add_mistake(
-                location(name, _colrange(c, c)),
-                f"{n} text cell{'s' if n != 1 else ''} in column {index_to_col(c)} on sheet '{name}'{hid} "
-                f"({refs}) hold{'' if n != 1 else 's'} {LONG_TEXT_MIN_CHARS}+ characters left unwrapped, running past "
-                f"the {W:.2f}-character column into the empty cells beside: long text should be wrapped. E.g. "
-                f"{make_ref(worst[0], c)} ({worst[2]} characters) needs {self.chars(worst[3] + CELL_MARGIN_PX):.2f} "
-                f"characters on one line: '{worst[5][:60]}...'.")
         return kinds
 
     def _describe(self, rec, name, hid, a, b, tests, cols) -> str:
