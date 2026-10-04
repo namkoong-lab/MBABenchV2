@@ -1,0 +1,81 @@
+{
+  "_doc": "Overrides of the toy runner's default expectation (Pass/ -> pass, Fail/ -> fail). Keys: check number -> 'Pass|Fail/<file name>' -> {expected?, reason, failing_sheets?}. 'expected' overrides the decision; only rulings by Patrick belong there. 'failing_sheets' is the exact set of sheets the check must flag (the sheets named by its mistake locations), derived from a ruling and the toy's Overview row; it lets a gate whose toys all fail tell a correct check from one that fails everything.",
+  "62": {
+    "Pass/T1 - Proportionality - Solution.xlsx": {
+      "expected": "fail",
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. 'Solution Model' is frozen below row 3 and its active pane (bottomLeft) cursor is A4, the frozen corner, not A1.",
+      "failing_sheets": [
+        "Solution Model"
+      ]
+    },
+    "Pass/T2 - MarketBalanced - Solution.xlsx": {
+      "expected": "fail",
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. 'Overview' and the 8 sector sheets are frozen below row 3 with the active pane (bottomLeft) cursor at A4, the frozen corner, not A1.",
+      "failing_sheets": [
+        "Overview",
+        "Consumer Goods",
+        "Energy",
+        "Financial Services",
+        "Healthcare",
+        "Industrials",
+        "Real Estate",
+        "Technology",
+        "Utilities"
+      ]
+    },
+    "Pass/T3 - EasyDCF - Solution.xlsx": {
+      "expected": "fail",
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. 'Solution Model' is frozen at F4 and its active pane (bottomRight) cursor is F4, the frozen corner, not A1.",
+      "failing_sheets": [
+        "Solution Model"
+      ]
+    },
+    "Pass/T4 - DoorstepDecisions - Solution.xlsx": {
+      "expected": "fail",
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. 'Solution Model - Owning', 'Solution Model - Renting' and 'Summary' are frozen below row 4 with the active pane (bottomLeft) cursor at A5, the frozen corner, not A1.",
+      "failing_sheets": [
+        "Solution Model - Owning",
+        "Solution Model - Renting",
+        "Summary"
+      ]
+    },
+    "Fail/T1 - Proportionality - Solution.xlsx": {
+      "failing_sheets": [
+        "MPHG IS",
+        "MPHG BS",
+        "Solution Model"
+      ],
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. Per the toy Overview row and its sheet views: cursors left on 'MPHG IS'!D23, 'MPHG BS'!B12 and 'Solution Model'!K37 (active bottomLeft pane); Instructions and Questions have no selection (A1)."
+    },
+    "Fail/T2 - MarketBalanced - Solution.xlsx": {
+      "failing_sheets": [
+        "Marketcap",
+        "Overview",
+        "Consumer Goods",
+        "Energy",
+        "Financial Services",
+        "Healthcare",
+        "Industrials",
+        "Real Estate",
+        "Technology",
+        "Utilities"
+      ],
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. Per the toy Overview row and its sheet views: 'Marketcap' cursor on B1; 'Overview' and the 8 sector sheets keep the Pass toy's frozen-corner cursor A4 (active bottomLeft pane; Utilities' stale first topLeft selection I276 is not the active pane). The other 4 case sheets have no selection (A1)."
+    },
+    "Fail/T3 - EasyDCF - Solution.xlsx": {
+      "failing_sheets": [
+        "Solution Model"
+      ],
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. Per the toy Overview row and its sheet views: 'Solution Model' active pane (bottomRight) cursor F5; the other sheets have no selection (A1)."
+    },
+    "Fail/T4 - DoorstepDecisions - Solution.xlsx": {
+      "failing_sheets": [
+        "Questions",
+        "Solution Model - Owning",
+        "Solution Model - Renting",
+        "Summary"
+      ],
+      "reason": "Patrick 2026-10-02: 62 is strict A1 on every sheet. Per the toy Overview row and its sheet views: 'Questions' cursor on C7; the three frozen sheets keep the Pass toy's frozen-corner cursor A5 (active bottomLeft pane). Instructions and Assumptions have no selection (A1)."
+    }
+  }
+}
