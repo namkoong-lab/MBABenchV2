@@ -1,12 +1,13 @@
 """69 Formatting/Sufficient column widths.
 
 Rubric: "All values display fully; no truncation or '###'" / bad: "Some columns truncate values or
-show '###'".  Rule as implemented (report.md approach C, "sure overflow"):
+show '###'".  Two rules, both "sure" (they fail a cell only when it fails under EVERY platform
+model by more than SURE_TOL_PX = 2 px at 96 dpi; report.md approach C, kept by Patrick 2026-10-04):
 
-A visible numeric or date cell - constant or formula result, spill / array members included -
-FAILS when the text Excel displays for it (its full number format, including a conditional-format
-number format that applies) is wider than the column's text area under EVERY platform model by more
-than SURE_TOL_PX (2 px at 96 dpi).  Excel then shows '####' whatever the viewer's platform.
+NUMBERS ('####').  A visible numeric or date cell - constant or formula result, spill / array
+members included - FAILS when the text Excel displays for it (its full number format, including a
+conditional-format number format that applies) is wider than the column's text area under EVERY
+platform model by more than SURE_TOL_PX.  Excel then shows '####' whatever the viewer's platform.
 
   * Platform models (MODELS): Windows 96 dpi and 120 dpi (Excel for Mac behaves like the 120 dpi
     grid: a 9 px digit for Calibri 11), each with per-glyph rounded advances (GDI) and fractional
@@ -42,25 +43,52 @@ than SURE_TOL_PX (2 px at 96 dpi).  Excel then shows '####' whatever the viewer'
     Hidden sheets ARE graded (whole-workbook rule, as 73 and 66 do).  Fill, centre-across-selection
     and rotated numbers are skipped (how Excel clips them is unverified; counted in stats).
     Booleans and errors are not values this check measures.
-  * Text labels overflowing into empty neighbours, or cut off by a filled neighbour, are ordinary
-    formatting and pass (toy T4; rubric guidance), with two exceptions from report.md, each behind a
-    constant: TEXT_NUMBER_CLIP - a number stored as text (constant, <= TEXT_NUMBER_MAX_CHARS
-    characters, left/general aligned, unwrapped) that is cut off by a filled cell to its right by at
-    least one Normal digit under every model; TEXT_HIDDEN_COL_MAX_PX - any text of >= 3 characters
-    in a column of at most 12 px (reference model) whose overflow is blocked by a filled cell.
+
+CUT-OFF TEXT (Patrick 2026-10-04: text of any length, anywhere in the workbook, that cannot be fully
+seen fails; text running into empty neighbours and staying visible is fine).  Displayed text =
+constants (numbers stored as text included) and trusted text formula results, through the cell's
+number format (a text section can add to it or blank it).  Same models, glyph tables (characters
+outside them: accented letters as their base letter, East Asian wide characters 1 em, combining
+marks 0, anything else a digit), indent, tolerance and hidden-row / hidden-column / hidden-sheet
+scope as the numbers.  Rich text is measured run by run (run size and weight; the reader keeps no
+run face).
+  (a) Unwrapped text (TEXT_CLIP) is cut off when its visible glyphs (blanks at the ends only push
+      them) reach past the space it can use under EVERY model by more than SURE_TOL_PX (typed line
+      breaks show as nothing).  Space = its column (or merged span) text area plus the
+      contiguous EMPTY cells in the direction it overflows: general / left alignment to the right,
+      right alignment to the left, center to both sides (each side must hold half the excess).
+      Overflow stops at the first non-empty cell (a value, any formula result - "" included - a
+      boolean or error, an empty-string constant), at a merged range (MERGES_BLOCK_OVERFLOW: merged
+      cells take no overflow), and at the sheet's first / last column.  An empty cell in a hidden
+      column lets the text through (0 px of room); a filled cell in a hidden column still stops it
+      (HIDDEN_CELLS_BLOCK_OVERFLOW).  Text never spills out of a merge: an anchor's space is the
+      merge's visible width.  Centre-across-selection text is centred over the cell and the
+      contiguous empty cells to its right that carry the same alignment, then overflows both ways
+      like centred text; fill text never spills (space = the cell and the contiguous empty
+      fill-aligned cells to its right).  Shrink-to-fit text is never cut off; rotated text is
+      skipped (counted).
+  (b) Wrapped text (WRAPPED_TEXT_CLIP; wrapText, or justify / distributed alignment) is cut off when
+      it needs more lines than its row shows - only in rows with a custom height (customHeight=1):
+      Excel auto-fits every other row on open (docs/excel_measurements.md item 6).  Lines: the
+      greedy word wrap of Reasonable row heights (73) (c73.wrap_lines) with this check's per-glyph
+      widths in the cell's column (or merged span), under every model; the FEWEST lines count.
+      Line height: c73's LINE_HEIGHT_PER_PT x font size.  The row shows height / line height lines;
+      the text is cut off when more than WRAP_HIDDEN_LINES_TOL (half a line) is hidden.  A merge
+      over several rows counts the custom heights of its visible rows; with any auto-fitted row in
+      it, it is not graded (counted).
 
 Values.  Constants are read from the file and routed by their stored type.  A formula result is
 routed by its TRUSTED value, never by the delivered `t` attribute (review fix 69-F1: `t` is a cache
 attribute - agent tools write t="str" placeholders with empty caches, LibreOffice a #NAME? placeholder -
 so a number behind such a placeholder was never measured, even when a value copy held it).  A trusted
 value (Excel cache, LibreOffice copy, unknown-writer cache) that is a number is measured; a trusted
-text / boolean / error result is not a value this check measures (the recalc pipeline vets a LibreOffice
-copy's #NAME? / #VALUE! values, so with it those cells are trusted errors and skipped, as ruled
-2026-10-04).  An untrusted value (openpyxl / XlsxWriter cache, no cache, a LibreOffice-written #NAME? /
-#VALUE! cache read without the pipeline, missing from the copy) leaves the cell
-undecided whatever its placeholder type - unless its display cannot depend on the value: a covered
-(non-anchor) merged cell is never displayed, and a format whose numeric sections are all empty (';;;')
-prints nothing for every number (review fix 69-F2; a conditional-format number format over the cell
+text result goes to the text rules; a boolean / error result is not a value this check measures (the
+recalc pipeline vets a LibreOffice copy's #NAME? / #VALUE! values, so with it those cells are trusted
+errors and skipped, as ruled 2026-10-04).  An untrusted value (openpyxl / XlsxWriter cache, no cache, a
+LibreOffice-written #NAME? / #VALUE! cache read without the pipeline, missing from the copy) leaves the
+cell undecided whatever its placeholder type - unless its display cannot depend on the value: a covered
+(non-anchor) merged cell is never displayed, and a format that prints nothing for every number AND
+every text (';;;') shows nothing (review fix 69-F2; a conditional-format number format over the cell
 keeps it undecided).  If the workbook fails on measured cells anyway, undecided cells are listed in
 stats and nothing is raised (UNTRUSTED_ONLY_IF_VERDICT_NEEDS); otherwise the first one raises
 GradingError (no fallback).  The same holds for a conditional-format number format whose rule cannot
@@ -69,20 +97,23 @@ be evaluated when the possible displays disagree, and for a rendering numfmt mar
 Conditional formats.  Sheets whose rules carry a number format (dxf numFmt) are streamed a second
 time: every numeric cell inside such a range is rendered under each possible outcome (c66.fires
 decides which rules fire; unknown rules branch), and the cell fails only if every outcome overflows.
-First-pass candidates inside those ranges are handed to the second pass.
+First-pass candidates inside those ranges are handed to the second pass.  (A conditional format
+does not change how text is displayed here.)
 """
 from __future__ import annotations
 
 import itertools
 import math
-import re
+import unicodedata
 from bisect import bisect_left, bisect_right
 
 from ..core import numfmt as N
-from ..core.refs import group_cells, index_to_col, location, make_ref, range_to_str
+from ..core.refs import MAX_COL, group_cells, index_to_col, location, make_ref, range_to_str
+from ..core.sheet import ExcelError
 from ..errors import GradingError
 from .base import Check
 from .c66 import UNKNOWN, fires
+from .c73 import LINE_HEIGHT_PER_PT, wrap_lines
 
 # ---------------------------------------------------------------- rule constants
 SURE_TOL_PX = 2.0                 # a cell fails when its overflow (96-dpi px) exceeds this under EVERY model
@@ -97,18 +128,20 @@ NEGATIVE_DATE_FAILS = False       # '#####' for a negative date/time is not a wi
 GENERAL_SHORTENS = True           # General format falls back to fewer decimals / scientific before '####'
 UNTRUSTED_ONLY_IF_VERDICT_NEEDS = True   # undecided cells raise only while the verdict is still open
 HIDDEN_ANCHOR_SPAN = True         # a merge anchor in a hidden row / column is measured against the visible span (69-F4)
-TEXT_NUMBER_CLIP = True           # a number stored as text cut off by a filled neighbour fails
-TEXT_NUMBER_MAX_CHARS = 20
-TEXT_NUMBER_MIN_CLIP_DIGITS = 1.0  # ... when at least this many Normal digits are cut off (every model)
-TEXT_HIDDEN_COL_MAX_PX = 12       # any text (>= 3 chars) in a column this narrow, blocked by a filled cell, fails
-TEXT_HIDDEN_MIN_CHARS = 3
-TEXT_WALK_MAX_COLS = 60           # how far right an overflowing label is followed for a blocker
+# cut-off text (Patrick 2026-10-04; replaces the two narrow text rules TEXT_NUMBER_CLIP / TEXT_HIDDEN_COL_MAX_PX)
+TEXT_CLIP = True                  # (a) unwrapped text that cannot be fully seen (blocked overflow) fails
+WRAPPED_TEXT_CLIP = True          # (b) wrapped text needing more lines than its custom-height row shows fails
+WRAP_HIDDEN_LINES_TOL = 0.5       # (b) ... when more than this many lines are hidden (a line counts as shown
+                                  #     when at least half of it is visible)
+WRAP_ALIGNMENTS = ("justify", "distributed")    # alignments Excel wraps like wrapText (as 73)
+MERGES_BLOCK_OVERFLOW = True      # (a) a merged range takes no overflowing text from a neighbour
+HIDDEN_CELLS_BLOCK_OVERFLOW = True  # (a) a filled cell in a hidden column still stops overflowing text
 MAX_UNDECIDED_LISTED = 12
 MAX_BAND_LISTED = 8
+MAX_TEXT_EXAMPLES = 8
+TEXT_SNIPPET_CHARS = 30           # characters of a cut-off text quoted in a mistake
 MAX_CANDIDATES = 2_000_000        # buffered overflow candidates per sheet; more raises
 RENDER_CACHE_MAX = 400_000
-
-_NUMLIKE = re.compile(r"^\(?[-+]?[$€£¥]?\s?\d[\d,]*(\.\d+)?\s?%?\)?$")
 
 # ---------------------------------------------------------------- glyph metrics (stdlib only)
 # Advance widths in 1/1000 em of every character a rendered number or date can contain, per face and
@@ -264,6 +297,78 @@ def blank_for_any_number(code: str) -> bool:
     return all(f.sections[i].is_empty for i in f.numeric)
 
 
+def blank_for_any_value(code: str) -> bool:
+    """True when the format prints nothing for every number AND every text (';;;': all numeric sections
+    empty and a text section that shows nothing).  Under ';;' (no text section) text shows as typed, so
+    since the cut-off text rule an untrusted formula result there can still show something and stays
+    undecided (69-F2, narrowed 2026-10-04)."""
+    if not blank_for_any_number(code):
+        return False
+    f = N.parse_format(code)
+    if f.text_index is None:
+        return False
+    sec = f.sections[f.text_index]
+    if sec.has_at or sec.kind == "general":
+        return False
+    try:
+        return N.render("x", code, value_type="s").is_blank
+    except GradingError:
+        return False
+
+
+# ---------------------------------------------------------------- text characters (cut-off text rule)
+WIDE_CHAR, ZERO_CHAR = -1, -2
+_RESOLVED: dict = {}
+
+
+def resolve_char(ch: str):
+    """Glyph-table index of a text character, or WIDE_CHAR (East Asian wide / full-width: 1 em), ZERO_CHAR
+    (combining mark: 0), None (anything else: measured as a digit, the rule for a glyph the table lacks).
+    Accented letters are measured as their base letter, a tab as a space.  Shared with Reasonable column
+    widths (70)."""
+    if ch in _RESOLVED:
+        return _RESOLVED[ch]
+    i = _CHAR_INDEX.get(ch)
+    if i is None:
+        if ch == "\t":
+            i = _SPACE_IDX
+        elif unicodedata.combining(ch):
+            i = ZERO_CHAR
+        elif unicodedata.east_asian_width(ch) in ("W", "F"):
+            i = WIDE_CHAR
+        else:
+            base = unicodedata.normalize("NFD", ch)[:1]
+            i = _CHAR_INDEX.get(base) if base != ch else None
+    _RESOLVED[ch] = i
+    return i
+
+
+def char_em1000(row: tuple, ch: str) -> int:
+    """Advance of one TEXT character in 1/1000 em (resolve_char; numbers keep adv_em1000)."""
+    i = resolve_char(ch)
+    if i is None:
+        return row[_DIGIT_IDX]
+    if i >= 0:
+        return row[i] or row[_DIGIT_IDX]
+    return 1000 if i == WIDE_CHAR else 0
+
+
+def _deficits(e, kind: str, area: float, room_l: float, room_r: float) -> tuple:
+    """(right, left) px by which a text's visible glyphs reach past the space they may use on each side
+    (None: the text does not reach that side).  e = (reach right, reach left) from C69._unwrapped_ext,
+    measured from the cell's left edge (left-aligned, fill), its right edge (right-aligned) or the centre
+    of its area (centred, centre-across); area = the cell's (or span's) text area, rooms = the empty
+    cells it may overflow into."""
+    er, el = e
+    if kind == "spill_both" or kind == "across":
+        return er - area / 2.0 - room_r, el - area / 2.0 - room_l
+    return (None if er is None else er - area - room_r, None if el is None else el - area - room_l)
+
+
+def _worst(d) -> float:
+    return max(x for x in d if x is not None)
+
+
 def _normal_font(st):
     """Font of the Normal cell style (builtinId 0), else fonts[0]; None without fonts."""
     fid = None
@@ -278,7 +383,8 @@ def _normal_font(st):
 
 class _Style:
     __slots__ = ("shrink", "skip", "code", "fmt_err", "row", "face", "known", "size", "bold", "indent_levels",
-                 "indent_sides", "horizontal", "wrap", "rot", "text_overflow_ok", "always_blank")
+                 "indent_sides", "horizontal", "wrap", "rot", "always_blank", "face_k", "text_kind", "text_mode",
+                 "text_err", "line_pt")
 
     def __init__(self):
         self.skip = None
@@ -294,7 +400,7 @@ class _Model:
 
 class _SheetGeo:
     """Column text areas per model for one sheet (lazy, cached per column)."""
-    __slots__ = ("head", "models", "dflt", "cache")
+    __slots__ = ("head", "models", "dflt", "cache", "_cols", "_starts")
 
     def __init__(self, head, models):
         self.head, self.models = head, models
@@ -303,6 +409,7 @@ class _SheetGeo:
             strict, lenient = default_col_px(head.format, m.mdw)
             self.dflt[m.name] = strict if m.name == REFERENCE_MODEL else lenient
         self.cache = {}
+        self._cols = self._starts = None
 
     def col_pixels(self, c: int):
         """{model: px} for column c, or None when the column is hidden / zero width."""
@@ -331,6 +438,39 @@ class _SheetGeo:
             for k, px in p.items():
                 tot[k] += px
         return tot if any_vis else None
+
+    def room(self, a: int, b: int, target=None) -> dict:
+        """{model: px} summed over the columns a..b (hidden / zero-width columns count 0: an empty cell
+        there lets text through without giving it room).  Walks runs of columns that share one <col>
+        entry, exactly as col_info reads them; with target ({model: px}) it stops once every model has
+        at least its target (the sum is then a lower bound, which is all a fit decision needs)."""
+        tot = {m.name: 0 for m in self.models}
+        a, b = max(a, 1), min(b, MAX_COL)
+        if a > b:
+            return tot
+        cols = self._cols
+        if cols is None:
+            cols = sorted(self.head.cols, key=lambda ci: ci.min)
+            self._cols, self._starts = cols, [ci.min for ci in cols]
+        starts = self._starts
+        x = a
+        while x <= b:
+            i = bisect_right(starts, x) - 1
+            nxt = starts[i + 1] - 1 if i + 1 < len(cols) else MAX_COL
+            if i >= 0 and cols[i].min <= x <= cols[i].max:
+                end = min(cols[i].max, nxt)
+            else:
+                end = nxt
+            end = min(end, b)
+            px = self.col_pixels(x)
+            if px is not None:
+                n = end - x + 1
+                for k in tot:
+                    tot[k] += px[k] * n
+                if target is not None and all(tot[k] >= target[k] for k in tot):
+                    break
+            x = end + 1
+        return tot
 
 
 class _CfRule:
@@ -372,9 +512,22 @@ class C69(Check):
         self.n_band = 0
         self.counts = {"numeric_cells": 0, "measured": 0, "sure_overflows": 0, "hidden_row_cells": 0,
                        "hidden_col_cells": 0, "hidden_anchor_cells": 0, "shrink_to_fit": 0, "skipped_alignment": 0,
-                       "general_cells": 0, "negative_dates": 0, "blank_display": 0, "cf_cells": 0, "text_cells": 0,
-                       "text_number_clips": 0, "text_hidden_col": 0, "text_overflow_into_empty": 0,
+                       "general_cells": 0, "negative_dates": 0, "blank_display": 0, "cf_cells": 0,
                        "formula_nonnumeric": 0, "undecided_not_displayed": 0}
+        # cut-off text (a: unwrapped, b: wrapped); each count is described in docs/checks/69.md ("Mistakes")
+        self.tcounts = {"text_cells": 0, "text_formula_results": 0, "text_hidden_col_cells": 0, "text_shrink": 0,
+                        "text_rotated_skipped": 0, "text_blank_format": 0, "text_wider_than_cell": 0,
+                        "text_covered_merged": 0, "text_fits_with_spill": 0, "text_cut_off": 0, "text_band": 0,
+                        "text_center_across": 0, "text_fill": 0, "text_rows_under_half_line": 0,
+                        "wrapped_text_cells": 0, "wrapped_auto_rows": 0, "wrapped_custom_rows": 0,
+                        "wrapped_cut_off": 0, "wrapped_band": 0, "wrapped_merge_auto_rows": 0,
+                        "wrapped_merged_in_auto_rows": 0, "text_hidden_anchor_cells": 0}
+        self.text_blockers = {}      # what stops cut-off text: value kinds, merge, sheet edge, own merge, fill
+        self.text_unknown_faces = {}
+        self.text_band_examples = []
+        self.text_short_row_examples = []
+        self.wrapped_merged_auto_examples = []
+        self._char_fns = {}          # (id(glyph row), ppem, rounded) -> character -> px (cached tables)
 
     # ------------------------------------------------------------------ styles
     def _style(self, s) -> _Style:
@@ -400,15 +553,45 @@ class C69(Check):
             v.code = N.resolve_format(xf.num_fmt_id, st.num_fmts)
         except GradingError as e:
             v.code, v.fmt_err = "General", str(e)
-        v.always_blank = v.fmt_err is None and blank_for_any_number(v.code)
+        # an untrusted formula result is "not displayed whatever its value" only when the format prints
+        # nothing for numbers AND text (';;;'); under ';;' a text result would show (cut-off text rule)
+        v.always_blank = v.fmt_err is None and blank_for_any_value(v.code)
         k, known = face_key(font.name)
-        v.face, v.known = (font.name or "").strip() or None, known
+        v.face, v.known, v.face_k = (font.name or "").strip() or None, known, k
         v.row = glyph_row(k, font.b)
         v.size = float(font.sz) if font.sz and font.sz > 0 else DEFAULT_FONT_PT
         v.bold = bool(font.b)
         v.indent_levels = int(al.indent or 0) if al.indent and al.horizontal in INDENT_ALIGNMENTS else 0
         v.indent_sides = 2 if al.horizontal == "distributed" else 1
-        v.text_overflow_ok = (not v.wrap and not v.shrink and not v.rot and al.horizontal in (None, "general", "left"))
+        # cut-off text: how a text in this style is laid out (direction of overflow, or why not graded)
+        h = al.horizontal
+        if v.rot:
+            v.text_kind = "rotated"              # skipped (how Excel clips rotated text is unverified)
+        elif v.shrink:
+            v.text_kind = "shrink"               # shrinks to fit: never cut off
+        elif v.wrap or h in WRAP_ALIGNMENTS or al.vertical in WRAP_ALIGNMENTS:
+            v.text_kind = "wrap"                 # (b)
+        elif h == "right":
+            v.text_kind = "spill_left"           # right-aligned: overflows to the left
+        elif h == "center":
+            v.text_kind = "spill_both"           # half the excess on each side
+        elif h == "centerContinuous":
+            v.text_kind = "across"               # centred over its selection, then both ways
+        elif h == "fill":
+            v.text_kind = "fill"                 # never spills
+        else:
+            v.text_kind = "spill_right"          # general / left (/ unknown): overflows to the right
+        v.text_mode, v.text_err = "plain", None
+        if v.fmt_err is not None:
+            v.text_mode, v.text_err = "error", v.fmt_err     # raises when a displayed text needs the format
+        else:
+            try:
+                f = N.parse_format(v.code)
+                if f.text_index is not None and f.sections[f.text_index].kind != "general":
+                    v.text_mode = "format"       # a text section decides what is shown (prefix, padding, blank)
+            except GradingError as e:
+                v.text_mode, v.text_err = "error", str(e)
+        v.line_pt = LINE_HEIGHT_PER_PT * v.size  # Reasonable row heights (73)'s line height
         self._styles[s] = v
         return v
 
@@ -497,6 +680,7 @@ class C69(Check):
     def sheet_start(self, head):
         f = head.format
         self.geo = _SheetGeo(head, self.models)
+        self._head = head
         self._sheet_name = head.name
         self._zero_default = bool(f.zero_height)
         self._row_hidden = False
@@ -507,12 +691,21 @@ class C69(Check):
         self._uncertain = []         # [(r, c, ref, why)]
         self._undec_sheet = []       # untrusted formula results [(r, c, ref, s)], settled at sheet_end
         self._hidden_valued = 0      # value / formula cells in hidden rows or columns (merge anchors among them: pass 2)
-        self._text_pending = []      # labels overflowing their column, waiting for a blocker (this row)
-        self._text_clips = []        # [(r, c, kind, text, clip_chars, blocker_col)]
         self._sheet_counts = {"numeric_cells": 0, "sure_overflows": 0, "values_read": 0}
+        # cut-off text: the current row (blockers are its filled cells) and the sheet's candidates
+        self._row_ht = None          # custom height (pt) of the current row, None = auto-fitted by Excel
+        self._row_style = None
+        self._custom_ht = {}         # r -> custom height of every visible custom-height row (merged blocks)
+        self._rf_cols = []           # filled columns of the current row, and what fills them
+        self._rf_kinds = []
+        self._r_sel = {}             # empty cells with fill / centre-across alignment: col -> horizontal
+        self._r_cands = []           # text cells of the current row wider than their own cell
+        self._tcands = []            # [(r, c, s, text, segments, ext, kind, formula, lb, lbk, rb, rbk, sel_end)]
+        self._wcands = []            # wrapped text in custom-height rows that may need more lines than shown
+        self._wauto = []             # wrapped multi-line text in auto-fitted rows (merge anchors counted only)
 
     def row(self, row):
-        self._text_pending = []
+        self._flush_row()
         self._cur_row = row.r
         ht = row.ht
         self._row_hidden = bool(row.hidden) or (ht is not None and ht <= 0) or (ht is None and self._zero_default)
@@ -520,6 +713,11 @@ class C69(Check):
             self._hidden_rows.add(row.r)
         elif self._zero_default:
             self._shown_rows.add(row.r)
+        self._row_style = row.style
+        self._row_ht = None
+        if not self._row_hidden and row.custom_height and ht is not None and ht > 0:
+            self._row_ht = ht
+            self._custom_ht[row.r] = ht
 
     def _span_has_visible_row(self, r1: int, r2: int) -> bool:
         """Is any row r1..r2 displayed?  Rows without <row> are visible unless the sheet is zeroHeight."""
@@ -540,27 +738,51 @@ class C69(Check):
                 self.counts["hidden_row_cells"] += 1
                 self._hidden_valued += 1
             return
+        if cell.row != self._cur_row:            # defensive: a cell outside its <row>
+            self._flush_row()
+            self._cur_row = cell.row
+            self._row_ht = self._custom_ht.get(cell.row)
+        c = cell.col
         if cell.is_formula_result:
-            # a formula result blocks overflowing labels whatever it shows (even ""); its delivered
-            # type is a cache attribute and says nothing reliable (69-F1): the trusted value decides
-            self._block_check(cell, filled=True)
-            self._numeric(cell, cell.t)
+            # a formula result stops overflowing text whatever it shows (even ""); its delivered type
+            # is a cache attribute and says nothing reliable (69-F1): the trusted value decides
+            self._rf_cols.append(c)
+            self._rf_kinds.append("formula")
+            routed = self._formula_value(cell)
+            self._numeric(cell, cell.t, routed)
+            kind, v, _t = routed
+            if kind == "other" and isinstance(v, str) and not isinstance(v, ExcelError):
+                self.tcounts["text_formula_results"] += 1
+                self._text(cell, v, None, True)
+            elif kind == "untrusted":
+                self._text_untrusted(cell)
             return
         t = cell.t
         if t == "n" or t == "d":
-            if cell.raw is None:
-                self._block_check(cell, filled=False)
-                return
-            self._block_check(cell, filled=True)
-            self._numeric(cell, t)
+            if cell.raw is not None and cell.raw != "":
+                self._rf_cols.append(c)
+                self._rf_kinds.append("date" if t == "d" else "number")
+            else:
+                self._note_empty(cell)
+            if cell.raw is not None:
+                self._numeric(cell, t)
             return
         if t in ("s", "inlineStr", "str"):
-            self._block_check(cell, filled=cell.raw is not None)
-            if cell.raw is not None:
-                self._text(cell)
+            if cell.raw is None:
+                self._note_empty(cell)
+                return
+            self._rf_cols.append(c)                 # an empty-string constant stops overflow too
+            self._rf_kinds.append("text")
+            v = cell.value
+            if isinstance(v, str):
+                self._text(cell, v, cell.rich_runs, False)
             return
-        # booleans, errors: not values this check measures, but they block overflow
-        self._block_check(cell, filled=cell.raw is not None)
+        # booleans, errors: not values this check measures, but they stop overflowing text
+        if cell.raw is not None and cell.raw != "":
+            self._rf_cols.append(c)
+            self._rf_kinds.append("boolean" if t == "b" else "error value")
+        else:
+            self._note_empty(cell)
 
     # ------------------------------------------------------------------ numeric cells
     def _route(self, cell):
@@ -589,11 +811,11 @@ class C69(Check):
             return "number", v, "d"
         return "other", v, cell.t                   # text (str), error (ExcelError)
 
-    def _numeric(self, cell, t):
+    def _numeric(self, cell, t, routed=None):
         formula = cell.is_formula_result
         kind = "number"
         if formula:
-            kind, v, t = self._formula_value(cell)
+            kind, v, t = routed if routed is not None else self._formula_value(cell)
             if kind == "other":
                 self.counts["formula_nonnumeric"] += 1
                 return
@@ -660,70 +882,564 @@ class C69(Check):
             raise GradingError(f"{self.key}: more than {MAX_CANDIDATES:,} overflowing cells on sheet "
                                f"{self._sheet_name!r}; too many to grade")
 
-    # ------------------------------------------------------------------ text cells (two narrow rules)
-    def _text(self, cell):
-        self.counts["text_cells"] += 1
-        if not (TEXT_NUMBER_CLIP or TEXT_HIDDEN_COL_MAX_PX):
-            return
+    # ------------------------------------------------------------------ cut-off text: measuring
+    def _char_fn(self, row, ppem: float, rounded: bool):
+        """Character -> px of a glyph row at ppem (each advance rounded to whole px, or fractional), cached."""
+        key = (id(row), ppem, rounded)
+        fn = self._char_fns.get(key)
+        if fn is None:
+            tab = {}
+
+            def fn(ch, tab=tab, row=row, k=ppem / 1000.0, rounded=rounded):
+                w = tab.get(ch)
+                if w is None:
+                    a = char_em1000(row, ch) * k
+                    w = tab[ch] = float(round(a)) if rounded else a
+                return w
+            self._char_fns[key] = fn
+        return fn
+
+    def _segments(self, sty: _Style, text: str, runs) -> tuple:
+        """((glyph row, size, text), ...) of a displayed text: rich runs in their own size and weight (the
+        reader keeps no run face: the cell's face is used), plain text in the cell font."""
+        if not runs:
+            return ((sty.row, sty.size, text),)
+        segs = []
+        rest = len(text) - sum(len(rn.text) for rn in runs)
+        if rest > 0:
+            segs.append((sty.row, sty.size, text[:rest]))
+        for rn in runs:
+            if not rn.text:
+                continue
+            f = rn.font
+            if f is None:
+                segs.append((sty.row, sty.size, rn.text))
+                continue
+            size = float(f.sz) if ("sz" in f.specified and f.sz and f.sz > 0) else sty.size
+            bold = bool(f.b) if "b" in f.specified else sty.bold
+            segs.append((glyph_row(sty.face_k, bold), size, rn.text))
+        return tuple(segs)
+
+    def _char_widths(self, segs, m: _Model) -> list:
+        out = []
+        for row, size, t in segs:
+            out.extend(map(self._char_fn(row, ppem_at(size, m.dpi), m.rounded), t))
+        return out
+
+    def _text_parts(self, segs, n: int, i0: int, j0: int, m: _Model) -> tuple:
+        """(leading blanks, visible part, trailing blanks) widths in model px of a displayed text of n
+        characters whose visible part (first to last non-blank character) is [i0, j0)."""
+        if len(segs) == 1:
+            row, size, t = segs[0]
+            fn = self._char_fn(row, ppem_at(size, m.dpi), m.rounded)
+            if i0 == 0 and j0 == n:
+                return 0.0, sum(map(fn, t)), 0.0
+            return sum(map(fn, t[:i0])), sum(map(fn, t[i0:j0])), sum(map(fn, t[j0:]))
+        w = self._char_widths(segs, m)
+        return sum(w[:i0]), sum(w[i0:j0]), sum(w[j0:])
+
+    def _indent_px(self, sty: _Style, m: _Model) -> float:
+        if not sty.indent_levels:
+            return 0.0
+        return sty.indent_levels * INDENT_SPACES_PER_LEVEL * m.space * sty.indent_sides
+
+    def _em_fn(self, row):
+        """Character -> advance in 1/1000 em for a glyph row (cached)."""
+        key = (id(row), 0, None)
+        fn = self._char_fns.get(key)
+        if fn is None:
+            tab = {}
+
+            def fn(ch, tab=tab, row=row):
+                a = tab.get(ch)
+                if a is None:
+                    a = tab[ch] = char_em1000(row, ch)
+                return a
+            self._char_fns[key] = fn
+        return fn
+
+    def _unwrapped_ext(self, sty: _Style, disp: str, segs, kind: str, pixels: dict):
+        """Per-model reach (right, left) of an unwrapped text's visible glyphs, in model px (see _deficits), or
+        None when it fits its own cell (within SURE_TOL_PX) under EVERY model: it then needs no room at all.
+        Blanks at the ends are invisible: a leading blank pushes left-aligned text right, a trailing one
+        pushes right-aligned text left, and centred text is centred with both."""
+        n = len(disp)
+        centred = kind == "spill_both" or kind == "across"
+        if len(segs) == 1:
+            # cheap screen: the fractional width (one pass) plus half a pixel per glyph bounds every model
+            row, size, t = segs[0]
+            em = sum(map(self._em_fn(row), t))
+            for m in self.models:
+                w = em * ppem_at(size, m.dpi) / 1000.0 + (0.5 * n if m.rounded else 0.0)
+                area = pixels[m.name] - CELL_MARGIN_PX
+                reach = w / 2.0 - area / 2.0 if centred else self._indent_px(sty, m) + w - area
+                if reach * m.scale > SURE_TOL_PX:
+                    break
+            else:
+                return None
+        i0 = n - len(disp.lstrip())
+        j0 = len(disp.rstrip())
+        ext = []
+        over = False
+        for m in self.models:
+            lead, vis, trail = self._text_parts(segs, n, i0, j0, m)
+            ind = self._indent_px(sty, m)
+            if kind == "spill_right" or kind == "fill":
+                e = (ind + lead + vis, None)
+            elif kind == "spill_left":
+                e = (None, ind + trail + vis)
+            else:                                    # centred / centred across selection
+                w = lead + vis + trail
+                e = (w / 2.0 - trail, w / 2.0 - lead)
+            if _worst(_deficits(e, kind, pixels[m.name] - CELL_MARGIN_PX, 0.0, 0.0)) * m.scale > SURE_TOL_PX:
+                over = True
+            ext.append(e)
+        return tuple(ext) if over else None
+
+    def _wrap_lines_models(self, row, size: float, text: str, pixels: dict, sty: _Style) -> tuple:
+        """Lines a wrapped text needs under each model: Reasonable row heights (73)'s greedy word wrap
+        (c73.wrap_lines) with this check's per-glyph widths, in the column (or span) text area minus the
+        alignment indent."""
+        out = []
+        for m in self.models:
+            usable = pixels[m.name] - CELL_MARGIN_PX - self._indent_px(sty, m)
+            out.append(wrap_lines(text, 1.0, usable, em=self._char_fn(row, ppem_at(size, m.dpi), m.rounded)))
+        return tuple(out)
+
+    def _wrap_font(self, sty: _Style, disp: str, runs):
+        """(glyph row, size) a wrapped text is laid out in: the cell font; for rich text the narrowest
+        (smallest size, regular unless every run is bold) - lenient, so a cut-off is sure."""
+        if not runs:
+            return sty.row, sty.size
+        segs = self._segments(sty, disp, runs)
+        size = min(sz for _r, sz, t in segs if t)
+        bold = all(r is glyph_row(sty.face_k, True) for r, _sz, t in segs if t) and \
+            glyph_row(sty.face_k, True) is not glyph_row(sty.face_k, False)
+        return glyph_row(sty.face_k, bold), size
+
+    @staticmethod
+    def _snippet(text: str) -> str:
+        t = " ".join(text.split())
+        return t if len(t) <= TEXT_SNIPPET_CHARS else t[:TEXT_SNIPPET_CHARS].rstrip() + "…"
+
+    # ------------------------------------------------------------------ cut-off text: streaming
+    def _note_empty(self, cell):
+        """An empty cell lets overflowing text through; with fill / centre-across alignment it can also be
+        part of a neighbour's fill / centre-across selection."""
+        h = self._style(cell.s).horizontal
+        if h == "fill" or h == "centerContinuous":
+            self._r_sel[cell.col] = h
+
+    def _text_untrusted(self, cell):
+        """An untrusted formula result in a fill / centre-across cell: the number rule skips such cells
+        (unverified), but a text there is graded, so its value is needed (undecided, settled at sheet_end)."""
         sty = self._style(cell.s)
-        if not sty.text_overflow_ok:
+        if sty.skip in ("fill", "centerContinuous") and not sty.shrink and self.geo.col_pixels(cell.col) is not None:
+            self._undec_sheet.append((cell.row, cell.col, cell.ref, cell.s))
+
+    def _display_text(self, cell, sty: _Style, s: str):
+        """What a text shows under the cell's number format (a text section can add to it or blank it),
+        or None when nothing visible is shown."""
+        if sty.text_mode == "error":
+            raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.text_err}")
+        disp = s
+        if sty.text_mode == "format":
+            r = N.render(s, sty.code, value_type="s")
+            if r.is_blank:
+                return None
+            disp = r.text
+        return disp if disp.strip() else None
+
+    def _text(self, cell, s: str, runs, formula: bool):
+        """A displayed text (constant, or trusted text formula result): the cut-off text rules (a) / (b)."""
+        tc = self.tcounts
+        tc["text_cells"] += 1
+        if not s:
+            return                                   # "" shows nothing (it still stops overflow)
+        sty = self._style(cell.s)
+        kind = sty.text_kind
+        if kind == "rotated":
+            tc["text_rotated_skipped"] += 1
+            return
+        if kind == "shrink":
+            tc["text_shrink"] += 1
             return
         pixels = self.geo.col_pixels(cell.col)
         if pixels is None:
+            # not displayed; a merge anchor here is measured on the merge's visible part (69-F4, pass 2)
+            tc["text_hidden_col_cells"] += 1
+            self._hidden_valued += 1
             return
-        v = cell.value
-        if not isinstance(v, str):
+        disp = self._display_text(cell, sty, s)
+        if disp is None:
+            tc["text_blank_format"] += 1
             return
-        s = v.strip()
-        if not s or "\n" in s:
+        if disp != s:
+            runs = None                              # rearranged by a text section: measured in the cell font
+        if not sty.known:
+            nm = sty.face or "(none)"
+            self.text_unknown_faces[nm] = self.text_unknown_faces.get(nm, 0) + 1
+        if kind == "wrap":
+            self._wrapped(cell, sty, disp, runs, pixels, formula)
             return
-        kind = None
-        if TEXT_HIDDEN_COL_MAX_PX and pixels[REFERENCE_MODEL] <= TEXT_HIDDEN_COL_MAX_PX and len(s) >= TEXT_HIDDEN_MIN_CHARS:
-            kind = "hidden_col"
-        elif TEXT_NUMBER_CLIP and len(s) <= TEXT_NUMBER_MAX_CHARS and _NUMLIKE.match(s):
-            kind = "number_text"
-        if kind is None:
+        if kind == "across":
+            tc["text_center_across"] += 1
+        elif kind == "fill":
+            tc["text_fill"] += 1
+        if self._row_ht is not None and self._row_ht < 0.5 * sty.line_pt:
+            # stats only: one line of text in a custom-height row lower than half a line (not graded)
+            tc["text_rows_under_half_line"] += 1
+            if len(self.text_short_row_examples) < MAX_TEXT_EXAMPLES:
+                self.text_short_row_examples.append(f"{self._sheet_name}!{cell.ref} row {cell.row} = "
+                                                    f"{self._row_ht:g} pt: '{self._snippet(disp)}'")
+        disp, segs = self._one_line(sty, disp, runs)
+        if disp is None:
             return
-        need = {m.name: self._need_px(sty, s, "", m) for m in self.models}
-        span = {k: px - CELL_MARGIN_PX for k, px in pixels.items()}
-        if all(need[k] <= span[k] for k in need):
+        ext = self._unwrapped_ext(sty, disp, segs, kind, pixels)
+        if ext is None:
             return
-        self._text_pending.append([cell.col, cell.col, need, span, kind, s])
+        tc["text_wider_than_cell"] += 1
+        self._r_cands.append((cell.row, cell.col, cell.s, disp, segs, ext, kind, formula))
 
-    def _block_check(self, cell, filled: bool):
-        """Follow pending overflowing labels of this row: empty columns extend their room, a filled
-        cell blocks them (clipped)."""
-        pend = self._text_pending
-        if not pend:
+    def _one_line(self, sty: _Style, disp: str, runs):
+        """(text, segments) of an unwrapped text as Excel shows it on one line: a typed line break shows as
+        nothing.  (None, None) when nothing visible is left."""
+        segs = self._segments(sty, disp, runs)
+        if "\n" in disp or "\r" in disp:
+            segs = tuple((r_, sz, t.replace("\r", "").replace("\n", "")) for r_, sz, t in segs)
+            disp = "".join(t for _r, _sz, t in segs)
+            if not disp.strip():
+                return None, None
+        return disp, segs
+
+    def _wrapped(self, cell, sty: _Style, disp: str, runs, pixels: dict, formula: bool):
+        """(b) wrapped text: candidate when its row has a custom height that may show fewer lines than
+        the text needs (merges settled at sheet_end)."""
+        tc = self.tcounts
+        tc["wrapped_text_cells"] += 1
+        text = disp.rstrip()                         # trailing blanks / line breaks show nothing
+        row, size = self._wrap_font(sty, disp, runs)
+        line_pt = LINE_HEIGHT_PER_PT * size
+        ht = self._row_ht
+        if ht is None:
+            # auto-fitted row: Excel fits it to the text on open (docs/excel_measurements.md item 6).  Its
+            # AutoFit ignores merged cells, though: a merge anchor needing several lines is counted at
+            # sheet_end (stats only, not graded)
+            tc["wrapped_auto_rows"] += 1
+            m = self.models[3]
+            usable = pixels[m.name] - CELL_MARGIN_PX - self._indent_px(sty, m)
+            if wrap_lines(text, 1.0, usable, em=self._char_fn(row, ppem_at(size, m.dpi), m.rounded)) > 1:
+                self._wauto.append((cell.row, cell.col, cell.s, text, row, size))
             return
-        c = cell.col
-        keep = []
-        for p in pend:
-            start, last, need, span, kind, s = p
-            if c <= start:
-                keep.append(p)
+        tc["wrapped_custom_rows"] += 1
+        lines = self._wrap_lines_models(row, size, text, pixels, sty)
+        if max(lines) - ht / line_pt <= WRAP_HIDDEN_LINES_TOL:
+            return
+        self._wcands.append((cell.row, cell.col, cell.s, text, row, size, line_pt, ht, lines, formula))
+
+    def _flush_row(self):
+        """End of a row: find what stops each overflowing text of the row (the nearest filled cell on
+        each side; merges are applied at sheet_end)."""
+        cands = self._r_cands
+        if cands:
+            cols, kinds = self._rf_cols, self._rf_kinds
+            if not HIDDEN_CELLS_BLOCK_OVERFLOW:
+                keep = [i for i, c in enumerate(cols) if self.geo.col_pixels(c) is not None]
+                cols, kinds = [cols[i] for i in keep], [kinds[i] for i in keep]
+            if any(cols[i] > cols[i + 1] for i in range(len(cols) - 1)):
+                order = sorted(range(len(cols)), key=cols.__getitem__)
+                cols, kinds = [cols[i] for i in order], [kinds[i] for i in order]
+            n = len(cols)
+            for r, c, s, disp, segs, ext, kind, formula in cands:
+                i = bisect_left(cols, c)
+                lb, lbk = (cols[i - 1], kinds[i - 1]) if i > 0 else (0, "edge")
+                j = bisect_right(cols, c)
+                rb, rbk = (cols[j], kinds[j]) if j < n else (MAX_COL + 1, "edge")
+                sel_end = c
+                if kind == "across" or kind == "fill":
+                    sel_end = self._selection_end(c, rb, "centerContinuous" if kind == "across" else "fill")
+                self._tcands.append((r, c, s, disp, segs, ext, kind, formula, lb, lbk, rb, rbk, sel_end))
+            if len(self._tcands) > MAX_CANDIDATES:
+                raise GradingError(f"{self.key}: more than {MAX_CANDIDATES:,} overflowing text cells on sheet "
+                                   f"{self._sheet_name!r}; too many to grade")
+            self._r_cands = []
+        if self._rf_cols:
+            self._rf_cols = []
+            self._rf_kinds = []
+        if self._r_sel:
+            self._r_sel = {}
+
+    def _selection_end(self, c: int, rb: int, h: str) -> int:
+        """Last column of a fill / centre-across selection starting at c: the contiguous empty cells to its
+        right with the same alignment (their own, or for a cell without <c> the row's or column's style)."""
+        x = c + 1
+        head = self._head
+        while x < rb:
+            hx = self._r_sel.get(x)
+            if hx is None:
+                s = self._row_style if self._row_style is not None else head.col_style(x)
+                hx = self._style(s).horizontal if s is not None else None
+            if hx != h:
+                break
+            x += 1
+        return x - 1
+
+    # ------------------------------------------------------------------ cut-off text: sheet end
+    @staticmethod
+    def _row_merges(merges, rows) -> dict:
+        """{row: [(c1, c2, merge)]} of the multi-cell merges covering the given rows."""
+        if not merges or not rows:
+            return {}
+        rs = sorted(rows)
+        out = {}
+        for m in merges:
+            if m.is_single_cell:
                 continue
-            for cc in range(last + 1, c):             # columns with no <c>: empty, more room
-                px = self.geo.col_pixels(cc)
-                if px:
-                    for k in span:
-                        span[k] += px[k]
-            if all(need[k] <= span[k] for k in need):
-                self.counts["text_overflow_into_empty"] += 1
+            for k in range(bisect_left(rs, m.r1), bisect_right(rs, m.r2)):
+                out.setdefault(rs[k], []).append((m.c1, m.c2, m))
+        return out
+
+    def _text_fit(self, ext, kind, own: dict, start: int, end: int, lb: int, rb: int, spill: bool):
+        """Overflow of a text's visible glyphs past the space it can use, per model -> ({model: 96-dpi px},
+        reference-model (right, left) deficits, area and rooms).  spill=False: no room beyond start..end."""
+        d0 = [_deficits(ext[k], kind, own[m.name] - CELL_MARGIN_PX, 0.0, 0.0) for k, m in enumerate(self.models)]
+        room_r = room_l = None
+        if spill:
+            need_r = {m.name: (d[0] if d[0] is not None and d[0] > 0 else 0.0) for m, d in zip(self.models, d0)}
+            need_l = {m.name: (d[1] if d[1] is not None and d[1] > 0 else 0.0) for m, d in zip(self.models, d0)}
+            if any(v > 0 for v in need_r.values()):
+                room_r = self.geo.room(end + 1, rb - 1, need_r)
+            if any(v > 0 for v in need_l.values()):
+                room_l = self.geo.room(lb + 1, start - 1, need_l)
+        over, ref = {}, None
+        for k, m in enumerate(self.models):
+            dr, dl = d0[k]
+            rr = room_r[m.name] if room_r is not None else 0.0
+            rl = room_l[m.name] if room_l is not None else 0.0
+            if dr is not None:
+                dr -= rr
+            if dl is not None:
+                dl -= rl
+            over[m.name] = _worst((dr, dl)) * m.scale
+            if m is self.ref_model:
+                ref = {"dr": dr, "dl": dl, "area": own[m.name] - CELL_MARGIN_PX, "room_r": rr, "room_l": rl}
+        return over, ref
+
+    def _settle_text(self, merges) -> list:
+        """(a): decide the sheet's overflowing unwrapped texts now that merges are known -> cut-off records."""
+        cands = self._tcands
+        out = []
+        if not cands:
+            return out
+        tc = self.tcounts
+        ml = self._merge_lookup(merges, [(x[0], x[1]) for x in cands])
+        rowm = self._row_merges(merges, {x[0] for x in cands}) if MERGES_BLOCK_OVERFLOW else {}
+        for r, c, s, disp, segs, ext, kind, formula, lb, lbk, rb, rbk, sel_end in cands:
+            m = ml.get((r, c))
+            if m is not None:
+                if (m.r1, m.c1) != (r, c):
+                    tc["text_covered_merged"] += 1   # a covered cell is not displayed
+                    continue
+                own = self.geo.span_pixels(m.c1, m.c2)
+                if own is None:
+                    continue
+                start, end, spill = m.c1, m.c2, False
+                why_r = why_l = ("own_merge", m)
+            else:
+                start, end = c, sel_end
+                own = self.geo.col_pixels(c) if end == c else self.geo.span_pixels(c, end)
+                if own is None:
+                    continue
+                spill = kind != "fill"
+                why_r, why_l = (("fill", end) if kind == "fill" else ("cell", rb, rbk)), ("cell", lb, lbk)
+                for c1, c2, mm in rowm.get(r, ()):
+                    if end < c1 < rb:
+                        rb, why_r = c1, ("merge", mm)
+                    if lb < c2 < start:
+                        lb, why_l = c2, ("merge", mm)
+            over, ref = self._text_fit(ext, kind, own, start, end, lb, rb, spill)
+            rec = self._text_decide(r, c, s, disp, segs, kind, formula, over, ref, why_r, why_l, m)
+            if rec is not None:
+                out.append(rec)
+        return out
+
+    def _text_decide(self, r, c, s, disp, segs, kind, formula, over, ref, why_r, why_l, merge):
+        """A sure cut-off (every model past SURE_TOL_PX) -> its record; band / fit -> counted only."""
+        tc = self.tcounts
+        lo, hi = min(over.values()), max(over.values())
+        if lo > SURE_TOL_PX:
+            tc["text_cut_off"] += 1
+            blockers = []
+            if ref["dr"] is not None and ref["dr"] > 0:
+                blockers.append(("right", why_r, self._blocker_phrase("right", why_r, r)))
+            if ref["dl"] is not None and ref["dl"] > 0:
+                blockers.append(("left", why_l, self._blocker_phrase("left", why_l, r)))
+            for _side, why, _phrase in blockers:
+                b = self._blocker_kind(why)
+                self.text_blockers[b] = self.text_blockers.get(b, 0) + 1
+            return {"r": r, "c": c, "s": s, "disp": disp, "segs": segs, "kind": kind, "formula": formula,
+                    "over": over[REFERENCE_MODEL], "over_by_model": over, "ref": ref, "blockers": blockers,
+                    "merge": merge}
+        if hi > SURE_TOL_PX:
+            tc["text_band"] += 1
+            if len(self.text_band_examples) < MAX_BAND_LISTED:
+                self.text_band_examples.append({"cell": f"{self._sheet_name}!{make_ref(r, c)}",
+                                                "text": self._snippet(disp),
+                                                "overflow_px_by_model": {k: round(x, 1) for k, x in over.items()}})
+        else:
+            tc["text_fits_with_spill"] += 1
+        return None
+
+    def _hidden_anchor_text(self, cell, v, m, p):
+        """69-F4 for text: a merge anchor in a hidden row / column shows its text across the merge's visible
+        part.  Unwrapped text cannot overflow a merge; wrapped text must fit the visible rows of the merge
+        (custom heights only)."""
+        runs = None
+        if cell.is_formula_result:
+            if not isinstance(v, str) or isinstance(v, ExcelError):
+                return
+            s, formula = v, True
+        else:
+            if cell.t not in ("s", "inlineStr", "str") or cell.raw is None:
+                return
+            s, runs, formula = cell.value, cell.rich_runs, False
+            if not isinstance(s, str):
+                return
+        if not s:
+            return
+        sty = self._style(cell.s)
+        if sty.text_kind in ("rotated", "shrink"):
+            return
+        pixels = self.geo.span_pixels(m.c1, m.c2)
+        if pixels is None:
+            return
+        disp = self._display_text(cell, sty, s)
+        if disp is None:
+            return
+        if disp != s:
+            runs = None
+        self.tcounts["text_hidden_anchor_cells"] += 1
+        if sty.text_kind == "wrap":
+            text = disp.rstrip()
+            row, size = self._wrap_font(sty, disp, runs)
+            block = self._block_height(m, *p["row_info"])
+            if block is None or block <= 0:
+                return
+            lines = self._wrap_lines_models(row, size, text, pixels, sty)
+            rec = self._wrap_decide(cell.row, cell.col, cell.s, text, size, LINE_HEIGHT_PER_PT * size, block,
+                                    lines, m, formula, pixels)
+            if rec is not None:
+                p["wrap_cut"].append(rec)
+            return
+        kind = sty.text_kind
+        disp, segs = self._one_line(sty, disp, runs)
+        if disp is None:
+            return
+        ext = self._unwrapped_ext(sty, disp, segs, kind, pixels)
+        if ext is None:
+            return
+        over, ref = self._text_fit(ext, kind, pixels, m.c1, m.c2, 0, MAX_COL + 1, False)
+        rec = self._text_decide(cell.row, cell.col, cell.s, disp, segs, kind, formula, over, ref,
+                                ("own_merge", m), ("own_merge", m), m)
+        if rec is not None:
+            p["text_cut"].append(rec)
+
+    def _blocker_phrase(self, side: str, why, r: int) -> str:
+        """What stops a cut-off text on one side, for the mistake text."""
+        k = why[0]
+        if k == "own_merge":
+            return f"the edge of its merged range {why[1].ref} (text never spills out of a merge)"
+        if k == "merge":
+            return f"the merged range {why[1].ref} (merged cells take no overflow)"
+        if k == "fill":
+            return "its fill alignment (fill text does not spill into other cells)"
+        col, ck = why[1], why[2]
+        if ck == "edge":
+            return f"the {side} edge of the sheet"
+        hidden = self.geo.col_pixels(col) is None
+        art = {"number": "a number", "date": "a date", "text": "text", "formula": "a formula result",
+               "boolean": "a boolean", "error value": "an error value"}.get(ck, ck)
+        return f"{make_ref(r, col)} ({art}{', in hidden column ' + index_to_col(col) if hidden else ''})"
+
+    def _blocker_kind(self, why) -> str:
+        """Stats key of what stops a cut-off text."""
+        if why[0] != "cell":
+            return {"own_merge": "own merged range", "merge": "merged range", "fill": "fill alignment"}[why[0]]
+        if why[2] == "edge":
+            return "sheet edge"
+        hidden = self.geo.col_pixels(why[1]) is None
+        return f"{why[2]}{' (hidden column)' if hidden else ''}"
+
+    def _block_height(self, m, hidden_rows, custom_ht, zero_default, shown_rows):
+        """Height (pt) of the visible rows of a merge, or None when one of them is auto-fitted (Excel
+        then decides its height: not graded)."""
+        tot = 0.0
+        for rr in range(m.r1, m.r2 + 1):
+            if rr in hidden_rows or (zero_default and rr not in shown_rows):
                 continue
-            if c - start > TEXT_WALK_MAX_COLS:
-                continue
-            if filled:
-                clip = min((need[m.name] - span[m.name]) / m.mdw for m in self.models)
-                self._text_clips.append((cell.row, start, kind, s, clip, c))
-                continue
+            h = custom_ht.get(rr)
+            if h is None:
+                return None
+            tot += h
+        return tot
+
+    def _settle_wrapped(self, merges) -> list:
+        """(b): decide the sheet's wrapped-text candidates now that merges are known -> cut-off records."""
+        tc = self.tcounts
+        out = []
+        cands = self._wcands
+        ml = self._merge_lookup(merges, [(x[0], x[1]) for x in cands] + [(x[0], x[1]) for x in self._wauto])
+        for r, c, s, text, row, size, line_pt, ht, lines, formula in cands:
+            m = ml.get((r, c))
+            block = ht
             px = self.geo.col_pixels(c)
-            if px:
-                for k in span:
-                    span[k] += px[k]
-            p[1] = c
-            keep.append(p)
-        self._text_pending = keep
+            if m is not None:
+                if (m.r1, m.c1) != (r, c):
+                    continue                         # a covered cell is not displayed
+                px = self.geo.span_pixels(m.c1, m.c2)
+                if px is None:
+                    continue
+                if m.r2 > m.r1:
+                    block = self._block_height(m, self._hidden_rows, self._custom_ht, self._zero_default,
+                                               self._shown_rows)
+                    if block is None:
+                        tc["wrapped_merge_auto_rows"] += 1
+                        continue
+                lines = self._wrap_lines_models(row, size, text, px, self._style(s))
+            rec = self._wrap_decide(r, c, s, text, size, line_pt, block, lines, m, formula, px)
+            if rec is not None:
+                out.append(rec)
+        for r, c, s, text, row, size in self._wauto:
+            m = ml.get((r, c))
+            if m is None or (m.r1, m.c1) != (r, c):
+                continue
+            px = self.geo.span_pixels(m.c1, m.c2)
+            if px is None:
+                continue
+            lines = min(self._wrap_lines_models(row, size, text, px, self._style(s)))
+            rows = sum(1 for rr in range(m.r1, m.r2 + 1)
+                       if rr not in self._hidden_rows and not (self._zero_default and rr not in self._shown_rows))
+            if lines > max(rows, 1):
+                tc["wrapped_merged_in_auto_rows"] += 1
+                if len(self.wrapped_merged_auto_examples) < MAX_TEXT_EXAMPLES:
+                    self.wrapped_merged_auto_examples.append(
+                        f"{self._sheet_name}!{m.ref}: {lines} lines in {rows} auto-fitted row(s): '{self._snippet(text)}'")
+        return out
+
+    def _wrap_decide(self, r, c, s, text, size, line_pt, block, lines, merge, formula, px):
+        """Sure cut-off of a wrapped text: even the fewest lines (any model) hide more than
+        WRAP_HIDDEN_LINES_TOL lines of the block; band when only some models do."""
+        tc = self.tcounts
+        shown = block / line_pt
+        lo, hi = min(lines), max(lines)
+        if lo - shown > WRAP_HIDDEN_LINES_TOL:
+            tc["wrapped_cut_off"] += 1
+            return {"r": r, "c": c, "s": s, "text": text, "size": size, "line_pt": line_pt, "block": block,
+                    "lines": lo, "lines_by_model": dict(zip((m.name for m in self.models), lines)),
+                    "shown": shown, "merge": merge, "formula": formula, "width_px": px[REFERENCE_MODEL]}
+        if hi - shown > WRAP_HIDDEN_LINES_TOL:
+            tc["wrapped_band"] += 1
+        return None
 
     # ------------------------------------------------------------------ conditional formats
     def _cf_rules(self, tail) -> list:
@@ -806,12 +1522,13 @@ class C69(Check):
         return out
 
     def sheet_end(self, head, tail):
+        self._flush_row()
         name = head.name
         rules = self._cf_rules(tail)
         cands = self._cands
         merges = tail.merges
         # merged spans: covered cells are not displayed; an anchor has the whole span
-        ml = self._merge_lookup(merges, [(r, c) for r, c, *_ in cands] + [(r, c) for r, c, *_ in self._text_clips])
+        ml = self._merge_lookup(merges, [(r, c) for r, c, *_ in cands])
         final = []
         for cand in cands:
             r, c, s, v, t, text, ov96, note = cand
@@ -829,8 +1546,8 @@ class C69(Check):
                     continue
                 cand = (r, c, s, v, t, text, ov[REFERENCE_MODEL], note)
             final.append(cand)
-        clips = [x for x in self._text_clips if (x[0], x[1]) not in ml]
-        self._text_pending = []
+        text_cut = self._settle_text(merges)         # cut-off text (a), merges known
+        wrap_cut = self._settle_wrapped(merges)      # cut-off text (b)
         if self._uncertain:
             # an unverified rendering in a covered (non-anchor) merged cell is never displayed (as 69-F2)
             mu = self._merge_lookup(merges, [(r, c) for r, c, *_ in self._uncertain])
@@ -838,15 +1555,16 @@ class C69(Check):
                                if mu.get((x[0], x[1])) is None or (mu[(x[0], x[1])].r1, mu[(x[0], x[1])].c1) == (x[0], x[1])]
         undecided = self._settle_undecided(merges, rules)
         hidden_anchors = self._hidden_anchors(merges)
-        rec = {"sheet": name, "state": head.state, "cands": final, "clips": clips, "uncertain": self._uncertain,
+        rec = {"sheet": name, "state": head.state, "cands": final, "uncertain": self._uncertain,
                "undecided": undecided, "counts": self._sheet_counts, "cf_second_pass": False,
-               "cf_undecided": []}
+               "cf_undecided": [], "text_cut": text_cut, "wrap_cut": wrap_cut}
         self._sheets.append(rec)
         if rules or hidden_anchors:
             rec["rules"] = rules
             rec["hidden_anchors"] = hidden_anchors
             rec["merges"] = [m for m in merges if not m.is_single_cell]
             rec["hidden_rows"] = self._hidden_rows
+            rec["row_info"] = (self._hidden_rows, self._custom_ht, self._zero_default, self._shown_rows)
             rec["geo"] = self.geo
             self._pass2[name] = rec
         if rules:
@@ -859,9 +1577,12 @@ class C69(Check):
         elif hidden_anchors:
             self.request_second_pass(name, list(hidden_anchors))
         self._cands = []
-        self._text_clips = []
+        self._tcands = []
+        self._wcands = []
+        self._wauto = []
         self._hidden_rows = set()
         self._shown_rows = set()
+        self._custom_ht = {}
         self._undec_sheet = []
 
     def _settle_undecided(self, merges, rules) -> list:
@@ -928,6 +1649,8 @@ class C69(Check):
         # routed exactly as in pass 1: constants by stored type, formula results by trusted value (69-F1)
         kind, v, t = self._route(cell)
         if kind == "other":
+            if hidden_anchor is not None:
+                self._hidden_anchor_text(cell, v, hidden_anchor, p)
             return
         sty = self._style(cell.s)
         if sty.shrink or sty.skip:
@@ -1006,6 +1729,7 @@ class C69(Check):
         n_sure = 0
         per_sheet = []
         undecided = []
+        blocks = {"numbers": 0, "unwrapped_text": 0, "wrapped_text": 0}
         for rec in self._sheets:
             name = rec["sheet"]
             hid = " (hidden sheet)" if rec["state"] != "visible" else ""
@@ -1035,23 +1759,14 @@ class C69(Check):
                             f"than the column's text area at 96 dpi and overflowing under every platform model "
                             f"(96/120 dpi, rounded or fractional glyph widths).")
                     self.add_mistake(location(name, rng), desc)
-            for r, c, kind, s, clip, bc in rec["clips"]:
-                if kind == "number_text":
-                    if clip < TEXT_NUMBER_MIN_CLIP_DIGITS:
-                        continue
-                    self.counts["text_number_clips"] += 1
-                    desc = (f"{make_ref(r, c)} on sheet '{name}'{hid} holds the number '{s}' stored as text; it is "
-                            f"about {clip:.1f} digit(s) wider than its column and cut off by the filled cell "
-                            f"{make_ref(r, bc)}, so the value cannot be read.")
-                else:
-                    self.counts["text_hidden_col"] += 1
-                    desc = (f"{make_ref(r, c)} on sheet '{name}'{hid} holds '{s[:40]}' in a column of at most "
-                            f"{TEXT_HIDDEN_COL_MAX_PX} px; the filled cell {make_ref(r, bc)} cuts it off, so the "
-                            f"text is hidden by its column.")
-                self.add_mistake(location(name, make_ref(r, c)), desc)
+                    blocks["numbers"] += 1
+            if TEXT_CLIP and rec["text_cut"]:
+                blocks["unwrapped_text"] += self._text_mistakes(name, hid, rec["text_cut"])
+            if WRAPPED_TEXT_CLIP and rec["wrap_cut"]:
+                blocks["wrapped_text"] += self._wrap_mistakes(name, hid, rec["wrap_cut"])
             per_sheet.append({"sheet": name, **rec["counts"], "undecided": len(rec["undecided"]) + len(rec["uncertain"])
                               + len(rec["cf_undecided"]), "cf_second_pass": rec["cf_second_pass"],
-                              "text_clips_flagged": len(rec["clips"])})
+                              "text_cut_off": len(rec["text_cut"]), "wrapped_text_cut_off": len(rec["wrap_cut"])})
         self.counts["sure_overflows"] = n_sure
         failed = self.mistakes.total > 0
         if undecided and not (failed and UNTRUSTED_ONLY_IF_VERDICT_NEEDS):
@@ -1060,9 +1775,10 @@ class C69(Check):
             why = (f"writer={prov.writer}, value_path={'given' if prov and prov.value_path else 'none'}"
                    if prov else "no provenance")
             raise GradingError(f"{self.key}: cannot decide {u['sheet']}!{u['cell']}: {u['why']} ({why}); "
-                               f"{len(undecided)} cell(s) undecided in all, no measured cell overflows, so the "
-                               f"verdict depends on them (no fallback)")
+                               f"{len(undecided)} cell(s) undecided in all, no measured cell overflows and no text "
+                               f"is cut off, so the verdict depends on them (no fallback)")
         stats = dict(self.counts)
+        stats.update(self.tcounts)
         stats.update({
             "n_sheets_checked": len(self._sheets),
             "normal_font": f"{self.normal_face} {self.normal_size:g}",
@@ -1073,21 +1789,122 @@ class C69(Check):
             "formula_values_read": self.n_values_read,
             "undecided_cells": len(undecided), "undecided_examples": undecided[:MAX_UNDECIDED_LISTED],
             "unknown_faces": self.unknown_faces,
+            "text_unknown_faces": self.text_unknown_faces,
+            "mistakes_by_rule": blocks,
+            "text_blockers": dict(sorted(self.text_blockers.items(), key=lambda kv: -kv[1])),
+            "text_band_examples": self.text_band_examples,
+            "text_rows_under_half_line_examples": self.text_short_row_examples,
+            "wrapped_merged_in_auto_rows_examples": self.wrapped_merged_auto_examples,
             "second_pass_sheets": sorted(self._pass2),
             "per_sheet": per_sheet,
             "options": {"negative_date_fails": NEGATIVE_DATE_FAILS, "general_shortens": GENERAL_SHORTENS,
-                        "text_number_clip": TEXT_NUMBER_CLIP, "text_hidden_col_max_px": TEXT_HIDDEN_COL_MAX_PX,
                         "untrusted_only_if_verdict_needs": UNTRUSTED_ONLY_IF_VERDICT_NEEDS,
                         "hidden_anchor_span": HIDDEN_ANCHOR_SPAN,
+                        "text_clip": TEXT_CLIP, "wrapped_text_clip": WRAPPED_TEXT_CLIP,
+                        "wrap_hidden_lines_tol": WRAP_HIDDEN_LINES_TOL, "line_height_per_pt": LINE_HEIGHT_PER_PT,
+                        "merges_block_overflow": MERGES_BLOCK_OVERFLOW,
+                        "hidden_cells_block_overflow": HIDDEN_CELLS_BLOCK_OVERFLOW,
                         "models": [m[0] for m in MODELS]},
         })
         und_note = ""
         if undecided:
             und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values or conditional "
                         f"formats); the verdict does not depend on them (see stats).")
-        flagged = ", ".join(f"'{p['sheet']}'" for p in per_sheet if p["sure_overflows"] or p["text_clips_flagged"])
+        flagged = ", ".join(f"'{p['sheet']}'" for p in per_sheet
+                            if p["sure_overflows"] or (TEXT_CLIP and p["text_cut_off"])
+                            or (WRAPPED_TEXT_CLIP and p["wrapped_text_cut_off"]))
         return self.verdict(
-            f"No value is wider than its column: {self.counts['numeric_cells']} numeric cell(s) on "
-            f"{len(self._sheets)} sheet(s) fit under every platform model; nothing displays '####'.",
-            f"{{n}} block(s) of values too wide for their columns ('####' or cut off) on: {flagged}.{und_note}",
+            f"No value is wider than its column and no text is cut off: {self.counts['numeric_cells']} numeric "
+            f"cell(s) and {self.tcounts['text_cells']} text cell(s) on {len(self._sheets)} sheet(s); nothing displays "
+            f"'####' and every text can be seen in full under at least one platform model.",
+            f"{{n}} block(s) of values shown as '####' or text cut off on: {flagged}.{und_note}",
             stats)
+
+    # ------------------------------------------------------------------ cut-off text: mistakes
+    _ALIGN_WORDS = {"spill_right": "left-aligned", "spill_left": "right-aligned", "spill_both": "centred",
+                    "across": "centred across selection", "fill": "fill-aligned"}
+
+    def _font_text(self, sty: _Style) -> str:
+        return f"{sty.face or 'default font'} {sty.size:g}{' bold' if sty.bold else ''}"
+
+    def _hidden_chars(self, x) -> tuple:
+        """(hidden characters, visible-part characters) of a cut-off text under the reference model: a
+        character counts as hidden when any part of its glyph lies outside the space the text may use."""
+        sty = self._style(x["s"])
+        disp, ref, kind = x["disp"], x["ref"], x["kind"]
+        m = self.ref_model
+        w = self._char_widths(x["segs"], m)
+        n = len(disp)
+        i0, j0 = n - len(disp.lstrip()), len(disp.rstrip())
+        total = sum(w)
+        ind = self._indent_px(sty, m)
+        area = ref["area"]
+        if kind in ("spill_right", "fill"):
+            x0 = ind
+        elif kind == "spill_left":
+            x0 = area - ind - total
+        else:
+            x0 = area / 2.0 - total / 2.0
+        lo, hi = -ref["room_l"] - 1e-6, area + ref["room_r"] + 1e-6
+        hidden, pos = 0, x0
+        for k in range(n):
+            if i0 <= k < j0 and (pos < lo or pos + w[k] > hi):
+                hidden += 1
+            pos += w[k]
+        return hidden, j0 - i0
+
+    def _text_mistakes(self, name: str, hid: str, cuts: list) -> int:
+        """One mistake per rectangle of adjacent cut-off texts (unwrapped), naming its worst cell."""
+        by_cell = {(x["r"], x["c"]): x for x in cuts}
+        boxes = group_cells(by_cell)
+        for box in boxes:
+            cells = [by_cell[(rr, cc)] for rr in range(box[0], box[2] + 1) for cc in range(box[1], box[3] + 1)
+                     if (rr, cc) in by_cell]
+            x = max(cells, key=lambda y: y["over"])
+            sty = self._style(x["s"])
+            rng = range_to_str(*box)
+            n = len(cells)
+            phrases = []
+            for _side, _why, phrase in x["blockers"]:
+                if phrase not in phrases:
+                    phrases.append(phrase)
+            hc, nv = self._hidden_chars(x)
+            hp = sum(d for d in (x["ref"]["dr"], x["ref"]["dl"]) if d is not None and d > 0)
+            what = "a text formula result" if x["formula"] else "text"
+            lead = (f"Text in {rng} on sheet '{name}'{hid} is cut off: " if n == 1 else
+                    f"{n} text cells {rng} on sheet '{name}'{hid} are cut off; e.g. ")
+            self.add_mistake(location(name, rng), lead + (
+                f"{make_ref(x['r'], x['c'])} '{self._snippet(x['disp'])}' ({what}, {self._font_text(sty)}, "
+                f"{self._ALIGN_WORDS[x['kind']]}) is cut off by {' and '.join(phrases)}: about {hc} of its {nv} "
+                f"characters ({hp:.0f} px at 96 dpi) cannot be seen under any platform model (96/120 dpi, rounded or "
+                f"fractional glyph widths)."))
+        return len(boxes)
+
+    def _wrap_mistakes(self, name: str, hid: str, cuts: list) -> int:
+        """One mistake per rectangle of adjacent cut-off wrapped texts, naming its worst cell."""
+        by_cell = {(x["r"], x["c"]): x for x in cuts}
+        boxes = group_cells(by_cell)
+        for box in boxes:
+            cells = [by_cell[(rr, cc)] for rr in range(box[0], box[2] + 1) for cc in range(box[1], box[3] + 1)
+                     if (rr, cc) in by_cell]
+            x = max(cells, key=lambda y: y["lines"] - y["shown"])
+            sty = self._style(x["s"])
+            rng = range_to_str(*box)
+            n = len(cells)
+            m = x["merge"]
+            chars = (x["width_px"] - CELL_MARGIN_PX) / self.ref_model.mdw
+            where = (f"its merged range {m.ref} ({chars:.2f} characters wide)" if m is not None else
+                     f"its {chars:.2f}-character column {index_to_col(x['c'])}")
+            if m is not None and m.r2 > m.r1:
+                rows = f"rows {m.r1}:{m.r2} of the merge have custom heights totalling {x['block']:g} pt"
+            else:
+                rows = f"row {x['r']} has a custom height of {x['block']:g} pt"
+            what = "a wrapped text formula result" if x["formula"] else "wrapped text"
+            lead = (f"Wrapped text in {rng} on sheet '{name}'{hid} is cut off at the bottom: " if n == 1 else
+                    f"{n} wrapped text cells {rng} on sheet '{name}'{hid} are cut off at the bottom; e.g. ")
+            self.add_mistake(location(name, rng), lead + (
+                f"{make_ref(x['r'], x['c'])} '{self._snippet(x['text'])}' ({what}, {self._font_text(sty)}) needs "
+                f"{x['lines']} lines in {where}, but {rows}: room for about {x['shown']:.1f} lines of "
+                f"{x['line_pt']:.1f} pt, so about {x['lines'] - x['shown']:.1f} line(s) cannot be seen under any "
+                f"platform model (96/120 dpi, rounded or fractional glyph widths)."))
+        return len(boxes)

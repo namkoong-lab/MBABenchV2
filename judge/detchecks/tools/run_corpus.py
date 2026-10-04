@@ -38,11 +38,15 @@ from .bench import TouchAll, peak_rss_mb
 
 BASE = "/Users/patrick/MBABench-deterministic-checks"
 EXTS = (".xlsx", ".xlsm", ".xlsb", ".xls", ".xltx", ".xltm", ".csv", ".ods")
-# verdict stats kept in the output rows (22: error cells; 70: the switches and what decided)
+# verdict stats kept in the output rows (No formula errors (22): error cells; Reasonable column widths (70): the
+# switches and what decided; Sufficient column widths (69): which rule decided - '####' numbers or cut-off text,
+# unwrapped (a) / wrapped (b) - and what stops the cut-off text)
 KEEP_STATS = ("error_cells_by_code", "implicit_intersection_cells", "typed_error_constants", "formula_cells",
               "examples", "switches", "tests_failed", "n_outlier_tags", "n_outlier_tags_unequal", "outlier_tags",
               "n_outlier_band_columns", "outlier_band_columns", "brief_fails", "undecided_cells",
-              "undecided_examples", "sheets_with_overlapping_cols", "second_pass_sheets", "unknown_faces")
+              "undecided_examples", "sheets_with_overlapping_cols", "second_pass_sheets", "unknown_faces",
+              "mistakes_by_rule", "sure_overflows", "text_cut_off", "wrapped_cut_off", "text_band", "wrapped_band",
+              "text_blockers", "wrapped_merged_in_auto_rows")
 
 
 def delivered_files(pattern: str) -> list[str]:

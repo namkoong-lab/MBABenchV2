@@ -211,18 +211,22 @@ def _paragraphs(text: str, wrap: bool) -> list:
     return [t.replace("\n", "")]
 
 
-def wrap_lines(text: str, px_per_em: float, usable_px: float) -> int:
+def wrap_lines(text: str, px_per_em: float, usable_px: float, em=None) -> int:
     """Greedy word wrap (Excel-like) of text into lines `usable_px` wide; a character is
-    helv_em(ch) x px_per_em pixels.  Each typed line break starts a paragraph (an empty
-    paragraph is one line); a word wider than a line breaks by characters."""
+    em(ch) x px_per_em pixels (em defaults to helv_em, this check's Helvetica/Arial table;
+    Sufficient column widths (69) passes its own per-glyph widths in pixels with px_per_em 1).
+    Each typed line break starts a paragraph (an empty paragraph is one line); a word wider
+    than a line breaks by characters."""
+    if em is None:
+        em = helv_em
     usable = max(usable_px, 1.0)
-    space = helv_em(" ") * px_per_em
+    space = em(" ") * px_per_em
     total = 0
     for para in _paragraphs(text, True):
         lines = 1
         cur = 0.0                    # width used on the current line (0 = empty line)
         for word in para.split(" "):
-            wp = text_em(word) * px_per_em
+            wp = sum(em(ch) for ch in word) * px_per_em
             if cur > 0:
                 if cur + space + wp <= usable + 1e-6:
                     cur += space + wp
@@ -233,7 +237,7 @@ def wrap_lines(text: str, px_per_em: float, usable_px: float) -> int:
                 cur = wp
                 continue
             for ch in word:          # a word wider than a line breaks by characters
-                cw = helv_em(ch) * px_per_em
+                cw = em(ch) * px_per_em
                 if cur > 0 and cur + cw > usable + 1e-6:
                     lines += 1
                     cur = 0.0
