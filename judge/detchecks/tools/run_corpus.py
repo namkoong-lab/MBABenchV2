@@ -38,6 +38,11 @@ from .bench import TouchAll, peak_rss_mb
 
 BASE = "/Users/patrick/MBABench-deterministic-checks"
 EXTS = (".xlsx", ".xlsm", ".xlsb", ".xls", ".xltx", ".xltm", ".csv", ".ods")
+# verdict stats kept in the output rows (22: error cells; 70: the switches and what decided)
+KEEP_STATS = ("error_cells_by_code", "implicit_intersection_cells", "typed_error_constants", "formula_cells",
+              "examples", "switches", "tests_failed", "n_outlier_tags", "n_outlier_tags_unequal", "outlier_tags",
+              "n_outlier_band_columns", "outlier_band_columns", "brief_fails", "undecided_cells",
+              "undecided_examples", "sheets_with_overlapping_cols", "second_pass_sheets", "unknown_faces")
 
 
 def delivered_files(pattern: str) -> list[str]:
@@ -138,9 +143,7 @@ def main(argv=None) -> int:
                                    "n_mistakes": x["stats"].get("n_mistakes"),
                                    "mistakes": x["mistakes"][:8],
                                    "values": x["stats"].get("values"),
-                                   "stats": {kk: vv for kk, vv in x["stats"].items()
-                                             if kk in ("error_cells_by_code", "implicit_intersection_cells",
-                                                       "typed_error_constants", "formula_cells", "examples")}}
+                                   "stats": {kk: vv for kk, vv in x["stats"].items() if kk in KEEP_STATS}}
                                for k, x in v.items()}
             for k, x in v.items():
                 decisions[(k, x["decision"])] += 1

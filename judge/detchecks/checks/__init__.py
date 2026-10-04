@@ -18,6 +18,7 @@ from .c62 import C62
 from .c65 import C65
 from .c66 import C66
 from .c69 import C69
+from .c70 import C70
 from .c73 import C73
 from .c74 import C74
 from .c77 import C77
@@ -28,7 +29,7 @@ from .c93 import C93
 from .c94 import C94
 from .c95 import C95
 
-_CLASSES = (C22, C29, C47, C49, C50, C51, C61, C62, C65, C66, C69, C73, C74, C77, C80, C87, C92, C93, C94, C95)
+_CLASSES = (C22, C29, C47, C49, C50, C51, C61, C62, C65, C66, C69, C70, C73, C74, C77, C80, C87, C92, C93, C94, C95)
 
 REGISTRY: dict[int, type] = {c.number: c for c in _CLASSES}
 BY_KEY: dict[str, type] = {c.key: c for c in _CLASSES}
