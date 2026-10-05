@@ -66,6 +66,7 @@ from utils.prompt_utils import (
 )
 from utils.trajectory import TrajectoryRecorder
 from utils.answer_check import run_answer_check, summary_block
+from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, run_det_checks
 
 ### Obtain constants
 load_project_configs()
@@ -5346,6 +5347,19 @@ def main(args):
         except Exception as e:  # noqa: BLE001 — score-neutral by design
             logger.warning(f"  [answer_check] skipped on error: {e}")
 
+        # Deterministic rubric checks (judge v13), before the judge and NOT
+        # score-neutral: a check that cannot grade the delivered workbook
+        # raises DetChecksError here (no fallback, no API call). A local
+        # folder needs the _attempt_origin.json sidecar for File extension
+        # (.xlsx) (77). Same wiring as grade_from_db.grade_single_attempt.
+        det_run = run_det_checks(
+            task_folder,
+            rubric_path=rubric_path,
+            weights_path=rubric_weight_path,
+            mode=args.det_checks,
+        )
+        harness_verdicts = merge_harness_verdicts(harness_verdicts, det_run.harness_verdicts)
+
         single_pass_judge_case(
             task_folder=args.folder_to_grade,
             client=client,
@@ -5363,6 +5377,7 @@ def main(args):
             reasoning_effort=args.reasoning_effort,
             harness_verdicts=harness_verdicts,
             accuracy_engine=args.accuracy_check,
+            det_checks=det_run.for_judge(),
         )
     elif args.agentic:
         agentic_judge_case(
@@ -5514,6 +5529,7 @@ if __name__ == "__main__":
             "always recorded in scores.json."
         ),
     )
+    add_det_checks_arg(parser)
     parser.add_argument(
         "--carry-over-context",
         action="store_true",

@@ -351,11 +351,14 @@ class GradeOrchestrator:
         single_pass=False,
         accuracy_check="harness",
         max_forced_rounds=None,
+        det_checks=None,
     ):
         self.workers = workers
         self.single_pass = single_pass
         self.accuracy_check = accuracy_check
         self.max_forced_rounds = max_forced_rounds
+        # judge v13 deterministic checks: harness | llm | off (None = config)
+        self.det_checks = det_checks
         self.model = model
         self.rubric_path = rubric_path
         self.template_path = template_path
@@ -687,6 +690,7 @@ class GradeOrchestrator:
                 suitability_source_path=suitability_src,
                 accuracy_check=self.accuracy_check,
                 max_forced_rounds=self.max_forced_rounds,
+                det_checks=self.det_checks,
             )
         except Exception as e:
             logger.error(f"  [attempt {attempt_id}] grade_single_attempt raised: {e}")
@@ -1072,6 +1076,7 @@ def main():
         ),
     )
     _gfd.add_accuracy_check_arg(parser)
+    _gfd.add_det_checks_arg(parser)
 
     # Execution modes
     parser.add_argument("--dry-run", action="store_true")
@@ -1139,6 +1144,10 @@ def main():
     # Refuse to start if rubric, check_order and judge mode don't all belong
     # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
+    # ...or if the deterministic checks' config does not match the rubric
+    # (judge v13; single-pass only).
+    if single_pass:
+        _gfd.det_checks_mod.startup_check(rubric_path, args.det_checks)
 
     # uuid suffix (2026-09): two orchestrator processes launched in the same
     # second used to share one grade_runs/<id> tree and destroy each other's
@@ -1265,6 +1274,7 @@ def main():
         single_pass=single_pass,
         accuracy_check=args.accuracy_check,
         max_forced_rounds=args.max_forced_rounds,
+        det_checks=args.det_checks,
     )
 
     orch.run(hydrated)

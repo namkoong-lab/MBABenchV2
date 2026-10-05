@@ -297,6 +297,10 @@ def main():
     ap.add_argument("--full-rubric", action="store_true", help="grade all 132 checks (JUDGE_SKIP_SUITABILITY=1) instead of the target only")
     ap.add_argument("--manifest", help="read toys from this manifest JSON instead of judge_reliability.toy_tasks")
     ap.add_argument("--accuracy-check", default="harness", choices=["harness", "llm"])
+    # judge v13 deterministic checks (utils/det_checks.py). With "harness" (the config default)
+    # the toy's target check, when it is one of them, is decided by Python and `verdict` below
+    # reports it; "llm" keeps the LLM's verdict counting (Python still recorded).
+    gfd.add_det_checks_arg(ap)
     ap.add_argument("--run-calculation", action="store_true")
     ap.add_argument("--max-tool-rounds", type=int, default=None)
     ap.add_argument("--max-forced-rounds", type=int, default=None)
@@ -325,6 +329,7 @@ def main():
     rubric = load_rubric(rubric_path)
     flat = flatten(rubric)
     rubric_sha = sha256_file(rubric_path)
+    gfd.det_checks_mod.startup_check(rubric_path, args.det_checks)   # judge v13: refuse a bad det_checks config
     if args.full_rubric:
         os.environ["JUDGE_SKIP_SUITABILITY"] = "1"
 
@@ -401,7 +406,7 @@ def main():
                 agentic=True, single_pass=True, max_tool_rounds=max_tool_rounds,
                 no_s3_upload=args.no_s3_upload or args.stage_only, reasoning_effort=args.reasoning_effort,
                 suitability_source_path=suit_path, accuracy_check=args.accuracy_check,
-                max_forced_rounds=args.max_forced_rounds,
+                max_forced_rounds=args.max_forced_rounds, det_checks=args.det_checks,
             )
         if args.stage_only:
             logger.info(f"  staged: {result.get('task_folder')} (no LLM call)"); continue

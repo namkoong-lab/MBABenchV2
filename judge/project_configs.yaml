@@ -177,7 +177,20 @@ single_pass:
   # typed for the sense check is an outside comparison wherever it sits and
   # judgment is basis enough, 88 went from 2 to 11 fails of 12 under the jv11
   # note). Prompt version and template unchanged.
-  version: 12
+  # 13 (2026-10-04, deterministic rubric checks; utils/det_checks.py over
+  # judge/detchecks/): Python grades the delivered workbook BEFORE the LLM
+  # and its verdict replaces the LLM's at scoring for the 19 checks in
+  # det_checks.live; No formula errors (22) and Negatives in parentheses (65)
+  # are recorded beside the LLM's verdict, which counts. No fallback: a check
+  # that cannot grade the file fails the grading before any API call. Files
+  # not saved by Excel are recalculated by LibreOffice for the value checks
+  # (files up to det_checks.libreoffice_max_mb, 10 MB; larger ones fail;
+  # Excel recalculation off). --det-checks harness|llm|off on every
+  # single-pass driver (default: det_checks.enabled). The LLM still grades
+  # every check, blind to Python; prompt, evidence and CSV caches unchanged.
+  # Existing gradings are not re-scored: rows graded under 13 are not
+  # comparable with version 12 rows.
+  version: 13
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500

@@ -35,6 +35,8 @@ import psycopg2
 import psycopg2.extras
 from utils import repo_config, rubric_suitability, workbook_properties
 from utils.answer_check import run_answer_check, summary_block
+from utils import det_checks as det_checks_mod
+from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, run_det_checks
 from utils.excel_utils import find_golden_solution_file
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
@@ -688,12 +690,20 @@ def grade_single_attempt(
     suitability_source_path=None,
     accuracy_check="harness",
     max_forced_rounds=None,
+    det_checks=None,
 ):
     """Grade a single attempt. Returns a result dict.
 
     `accuracy_check` ("harness" | "llm"): which engine's verdict on the
     harness-decidable Accuracy checks lands in the recorded total. Both are
     always recorded (scored_results.accuracy_engine); single-pass only.
+
+    `det_checks` ("harness" | "llm" | "off"; None = project_configs.yaml
+    det_checks.enabled): the deterministic rubric checks of judge v13
+    (utils/det_checks.py), single-pass only. They grade the delivered
+    ai_attempt.xlsx BEFORE the judge and are not score-neutral: a check that
+    cannot grade it fails this attempt (success False, logged FAILED, no DB
+    row) before any LLM spend, like the formula-cache refusal.
     """
     attempt_id = attempt["attempt_id"]
     task_name = attempt["task_name"] or f"task_{attempt['task_id']}"
@@ -776,12 +786,31 @@ def grade_single_attempt(
     harness_verdicts = ac_result.get("harness_verdicts") or {}
 
     try:
+        # Deterministic rubric checks (judge v13, utils/det_checks.py) —
+        # deliberately OUTSIDE the answer check's score-neutral try above: no
+        # fallback. A DetChecksError lands in the except below exactly like
+        # the formula-cache refusal (FAILED, success False, no DB row, the
+        # batch continues), before any API spend. They read the delivered
+        # ai_attempt.xlsx, so they must run before prune_workbook_copies.
+        det_run = None
+        if single_pass:
+            det_run = run_det_checks(
+                task_folder,
+                rubric_path=rubric_path,
+                weights_path=rubric_weight_path,
+                mode=det_checks,
+            )
+            harness_verdicts = merge_harness_verdicts(
+                harness_verdicts, det_run.harness_verdicts
+            )
+
         # Step 2: Run judge
         if single_pass:
             logger.info("[Judge] Running single_pass_judge_case...")
             result = single_pass_judge_case(
                 harness_verdicts=harness_verdicts,
                 accuracy_engine=accuracy_check,
+                det_checks=det_run.for_judge(),
                 max_forced_rounds=max_forced_rounds,
                 task_folder=str(task_folder),
                 client=client,
@@ -1059,6 +1088,9 @@ def prune_workbook_copies(result):
     bundle itself is in S3. Scores, logs, and judge conversations stay. Only
     paths inside the attempt's own task folder are touched, so the shared CSV
     caches are never affected. Returns bytes freed.
+
+    Judge v13: also the deterministic checks' LibreOffice recalculation copy
+    (det_checks_recalc/); det_checks.json stays with the logs.
     """
     task_folder = Path(result["task_folder"]).resolve()
     output_dir = Path(result.get("output_dir") or task_folder / "judge_results")
@@ -1069,6 +1101,7 @@ def prune_workbook_copies(result):
         task_folder / "ai_attempt.xlsx",
         task_folder / "solution",
         task_folder / "starting",
+        task_folder / det_checks_mod.RECALC_DIRNAME,
     ]
     if output_dir.is_dir():
         targets += [
@@ -1305,6 +1338,10 @@ def main(args):
     # Refuse to start if rubric, check_order and judge mode don't all belong
     # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
+    # ...or if the deterministic checks' config does not match the rubric
+    # (judge v13; single-pass only).
+    if single_pass:
+        det_checks_mod.startup_check(rubric_path, args.det_checks)
 
     scratch_base = str(
         relative_path_from_project_root(
@@ -1571,6 +1608,7 @@ def main(args):
                 suitability_source_path=suitability_src,
                 accuracy_check=args.accuracy_check,
                 max_forced_rounds=args.max_forced_rounds,
+                det_checks=args.det_checks,
             )
             results.append(result)
 
@@ -1973,6 +2011,7 @@ Examples:
         ),
     )
     add_accuracy_check_arg(parser)
+    add_det_checks_arg(parser)
 
     # Execution modes
     parser.add_argument(
