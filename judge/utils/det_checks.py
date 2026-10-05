@@ -400,25 +400,42 @@ def json_safe(obj):
 
 
 _CODE_SHA = None
+# The grading code: what code_sha fingerprints. Nothing else under detchecks/ (scratch/ is
+# git-ignored and full of probes, tests/, tools/, docs/, out/) may move the fingerprint, so the
+# same commit always records the same code_sha.
+CODE_SHA_FILES = ("__init__.py", "api.py", "errors.py")
+CODE_SHA_DIRS = ("core", "checks")
+
+
+def code_sha_files(root) -> list:
+    """The .py files code_sha hashes under a detchecks package folder `root`, in hashing order."""
+    root = Path(root)
+    files = [root / f for f in CODE_SHA_FILES if (root / f).is_file()]
+    for d in CODE_SHA_DIRS:
+        files += [p for p in (root / d).rglob("*.py") if "__pycache__" not in p.parts]
+    return sorted(files, key=lambda p: p.relative_to(root).as_posix())
+
+
+def code_sha_of(root) -> str:
+    """Fingerprint of the grading code in the detchecks package folder `root`: relative path and
+    bytes of detchecks/__init__.py, api.py, errors.py and every .py under core/ and checks/."""
+    root = Path(root)
+    h = hashlib.sha256()
+    for p in code_sha_files(root):
+        h.update(p.relative_to(root).as_posix().encode())
+        h.update(b"\0")
+        h.update(p.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()[:16]
 
 
 def code_sha() -> str:
-    """Fingerprint of the grading code (detchecks api/core/checks), recorded per grading."""
+    """Fingerprint of the grading code (code_sha_of the imported detchecks), recorded per grading."""
     global _CODE_SHA
     if _CODE_SHA is None:
         import detchecks
 
-        root = Path(detchecks.__file__).resolve().parent
-        h = hashlib.sha256()
-        for p in sorted(root.rglob("*.py")):
-            rel = p.relative_to(root).as_posix()
-            if rel.startswith(("tests/", "tools/")):
-                continue
-            h.update(rel.encode())
-            h.update(b"\0")
-            h.update(p.read_bytes())
-            h.update(b"\0")
-        _CODE_SHA = h.hexdigest()[:16]
+        _CODE_SHA = code_sha_of(Path(detchecks.__file__).resolve().parent)
     return _CODE_SHA
 
 

@@ -492,6 +492,41 @@ def test_json_safety():
         strict_json((folder / D.ARTEFACT_FILENAME).read_text())
 
 
+def test_code_sha_hashes_only_the_grading_code():
+    """code_sha fingerprints detchecks/__init__.py, api.py, errors.py, core/ and checks/ only: a
+    probe dropped into the git-ignored scratch/ (or tests/, tools/, docs/, out/) must not move it,
+    so the same commit always records the same code_sha; any change to the grading code must."""
+    import detchecks
+
+    root = Path(detchecks.__file__).resolve().parent
+    files = [p.relative_to(root).as_posix() for p in D.code_sha_files(root)]
+    assert {"__init__.py", "api.py", "errors.py", "core/recalc.py", "core/lo_watchdog.py", "checks/c92.py"} <= set(files)
+    assert all(f in D.CODE_SHA_FILES or f.startswith(("core/", "checks/")) for f in files), files
+    assert D.code_sha() == D.code_sha_of(root)
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = Path(tmp) / "detchecks"
+        for f in files:
+            (copy / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(root / f, copy / f)
+        base = D.code_sha_of(copy)
+        assert base == D.code_sha(), "the same grading code elsewhere gives the same code_sha"
+        for extra in ("scratch/review_v13/ops/probe.py", "tests/test_new.py", "tools/new_tool.py", "docs/x.py",
+                      "out/y.py", "core/__pycache__/recalc.cpython-312.py"):
+            (copy / extra).parent.mkdir(parents=True, exist_ok=True)
+            (copy / extra).write_text("x = 1\n")
+        assert D.code_sha_of(copy) == base, "a file outside the grading code moved code_sha"
+        (copy / "checks" / "c92.py").write_text((copy / "checks" / "c92.py").read_text() + "\n# changed\n")
+        assert D.code_sha_of(copy) != base
+    # and in the real package folder: a new file under scratch/ leaves it unchanged
+    probe = root / "scratch" / f"_code_sha_probe_{os.getpid()}.py"
+    probe.parent.mkdir(exist_ok=True)
+    try:
+        probe.write_text("print('probe')\n")
+        assert D.code_sha_of(root) == D.code_sha()
+    finally:
+        probe.unlink(missing_ok=True)
+
+
 def test_merge_harness_verdicts():
     a = {"Accuracy/Final calculation accuracy": {"engine": "harness"}}
     b = {key(92): {"engine": "harness"}}

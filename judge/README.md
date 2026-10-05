@@ -655,7 +655,8 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   (`startup_check`), before any download.
 - **Artefacts**: `det_checks.json` in the bundle (config, gate, task metadata,
   the full verdicts with the recalculation plan, `code_sha` = a fingerprint of
-  the grading code) and `scored_results.det_checks` (status, mode, graded and
+  the grading code: `detchecks/__init__.py`, `api.py`, `errors.py`, `core/` and
+  `checks/` only, so the same commit always records the same value) and `scored_results.det_checks` (status, mode, graded and
   not-applicable numbers, per-check engine / decision / live / n_mistakes); a
   compact copy in `_metadata.json`.
 - Not changed: the paper scripts still read `judge_version >= 12`
