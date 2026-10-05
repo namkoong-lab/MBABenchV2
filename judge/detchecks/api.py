@@ -66,6 +66,7 @@ class Engine:
         self.failures: dict[str, str] = {}
         self.dead: set = set()
         self.timings: dict = {}
+        self.retry_later = False              # a failure came from the machine (LibreOfficeUnavailable), not the file
 
     # ------------------------------------------------------------------ failure handling
     def _fail(self, chk: Check, exc: BaseException, where: str = ""):
@@ -143,6 +144,9 @@ class Engine:
                             pkg.provenance.value_writer = value_source.writer
                             pkg.provenance.value_sheets = value_source.sheet_names()
                     except GradingError as e:
+                        # LibreOfficeUnavailable (memory wait timed out, every try failed) marks the whole
+                        # grading retry_later: the attempt is re-run later, when memory is free
+                        self.retry_later = self.retry_later or bool(getattr(e, "retry_later", False))
                         for c in needs:
                             self._fail(c, GradingError(f"values unavailable: {e}"))
                     except Exception as e:  # noqa: BLE001
@@ -160,7 +164,7 @@ class Engine:
             msg = f"{len(self.failures)} check(s) could not grade {self.path}: {keys}\n" + \
                   "\n".join(f"  - {m}" for m in self.failures.values())
             raise GradingError(msg, check=next(iter(self.failures)), path=self.path,
-                               failures=dict(self.failures), verdicts=verdicts)
+                               failures=dict(self.failures), verdicts=verdicts, retry_later=self.retry_later)
         return verdicts
 
     def _run_unparsed(self, pkg: Package):

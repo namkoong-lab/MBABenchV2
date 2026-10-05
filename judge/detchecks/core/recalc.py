@@ -9,7 +9,10 @@
 1. The delivered file was saved by Excel (values.detect_writer == 'excel'): Excel's own caches
    are the display -> source 'cache', no recalculation.
 2. Otherwise LibreOffice recalculates a copy (headless, private profile, threaded calculation
-   and OpenCL off, OOXMLRecalcMode = always, per-file timeout).  The copy is cached in
+   and OpenCL off, OOXMLRecalcMode = always, per-file timeout), whatever the file's size, under
+   the memory guard of core/lo_guard.py (Patrick 2026-10-05): one LibreOffice at a time on the
+   machine, started only once enough memory is free, a failed run retried with the timeout
+   doubled, then LibreOfficeUnavailable (re-run the attempt later).  The copy is cached in
    `workdir/<sha256 of the delivered file>/` so a file is recalculated once.
 3. "LibreOffice gaps": formula cells whose LibreOffice value is #NAME? / #VALUE! although Excel
    would compute them (a function LibreOffice does not implement, a spill reference A1#, a
@@ -42,6 +45,7 @@ from typing import Callable, Optional
 
 from ..errors import GradingError
 from . import formula as F
+from . import lo_guard
 from . import lo_watchdog
 from .package import Package
 from .sheet import ExcelError, SheetStream
@@ -143,16 +147,30 @@ def lo_version_of(app: Optional[str]) -> Optional[tuple]:
 class RecalcPolicy:
     workdir: str = DEFAULT_WORKDIR
     libreoffice_path: str = DEFAULT_SOFFICE
-    lo_timeout_s: float = 600.0
+    lo_timeout_s: float = 600.0         # the first try's timeout; doubled on every retry
     excel_allowed: bool = False         # Patrick 2026-10-04 (evening): LibreOffice only for now; the Excel step stays
                                         # built but OFF (Mac sandbox prompts per file, 70-155 s per file). A file
                                         # LibreOffice cannot compute fails loudly on value-based checks.
     excel_timeout_s: float = 600.0
     use_cache: bool = True              # reuse a copy made earlier for the same file hash
+    # Memory safety (Patrick 2026-10-05, core/lo_guard.py): no size limit; one LibreOffice at a time on the
+    # machine (lock file), started only once lo_min_free_pct of memory is free (at most lo_max_wait_s of
+    # waiting), a failed run retried lo_retries times with the timeout doubled; then LibreOfficeUnavailable.
+    lo_retries: int = 3
+    lo_min_free_pct: float = 25.0
+    lo_max_wait_s: float = 3600.0
+    lo_lock_path: Optional[str] = None  # None: lo_guard.default_lock_path() (/tmp/mbabench_libreoffice.lock)
+    lo_log: Optional[Callable] = None   # where the guard logs its waits and retries (None: stderr)
     # test hooks (fakes): callables (src_path, out_dir, policy) -> path of the copy
     lo_runner: Optional[Callable] = None
     excel_runner: Optional[Callable] = None
     excel_available: Optional[bool] = None   # None = probe the machine
+    lo_memory_reader: Optional[Callable] = None   # () -> free memory % (None: lo_guard.free_memory_pct)
+
+    def guard_settings(self) -> lo_guard.GuardSettings:
+        return lo_guard.GuardSettings(lock_path=self.lo_lock_path, min_free_pct=self.lo_min_free_pct,
+                                      max_wait_s=self.lo_max_wait_s, retries=self.lo_retries,
+                                      memory_reader=self.lo_memory_reader)
 
 
 @dataclass
@@ -340,14 +358,25 @@ def _kill_tree(proc: subprocess.Popen):
 
 
 def libreoffice_recalc(src: str, out_dir: str, policy: RecalcPolicy) -> str:
-    """Recalculate `src` headless and write `<out_dir>/<stem>.xlsx`.  Private profile per run
-    (threaded calculation off, OpenCL off, recalculate always on load), one process under the
-    watchdog, in the grader's process group, timeout.  Paths are passed as encoded file URLs
-    (file_url).  Returns the copy's path; GradingError on timeout / failure."""
+    """Recalculate `src` headless and write `<out_dir>/<stem>.xlsx`, under the memory guard (Patrick
+    2026-10-05, core/lo_guard.py: one LibreOffice at a time on the machine, started only when memory is
+    free, a failed run retried policy.lo_retries times with the timeout doubled).  Each try: private
+    profile (threaded calculation off, OpenCL off, recalculate always on load), one process under the
+    watchdog, in the grader's process group, timeout; paths passed as encoded file URLs (file_url).
+    Returns the copy's path.  GradingError when the binary is missing (not retried);
+    LibreOfficeUnavailable (retry_later) when the memory wait times out or every try failed."""
     soffice = policy.libreoffice_path
     if not (soffice and os.path.exists(soffice)):
         raise GradingError(f"LibreOffice not found at {soffice!r} (set DETCHECKS_SOFFICE)")
     install_termination_reaper()
+    return lo_guard.run_guarded(lambda timeout_s: _libreoffice_once(src, out_dir, policy, timeout_s),
+                                timeout_s=policy.lo_timeout_s, settings=policy.guard_settings(),
+                                what=f"recalculate {os.path.basename(src)}", log=policy.lo_log)
+
+
+def _libreoffice_once(src: str, out_dir: str, policy: RecalcPolicy, timeout_s: float) -> str:
+    """One LibreOffice try (libreoffice_recalc's doc); GradingError on timeout / no copy."""
+    soffice = policy.libreoffice_path
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(src))[0]
     out = os.path.join(out_dir, stem + ".xlsx")
@@ -371,10 +400,10 @@ def libreoffice_recalc(src: str, out_dir: str, policy: RecalcPolicy) -> str:
                                 stderr=subprocess.PIPE, env=env)
         _ACTIVE[run_id]["pid"] = proc.pid
         try:
-            so, se = proc.communicate(timeout=policy.lo_timeout_s)
+            so, se = proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             _kill_tree(proc)
-            raise GradingError(f"LibreOffice recalculation of {src} timed out after {policy.lo_timeout_s:.0f} s")
+            raise GradingError(f"LibreOffice recalculation of {src} timed out after {timeout_s:.0f} s")
         except BaseException:                 # KeyboardInterrupt, SystemExit, ...: LibreOffice goes too
             _kill_tree(proc)
             raise

@@ -20,7 +20,7 @@ caches under the trust policy (reader.md §6).
 | step | rule |
 |---|---|
 | 1 | The delivered file was saved by Excel (`values.detect_writer == "excel"`: Excel application string, AppVersion, `fileVersion appName="xl"`, Excel's XML declarations on every part) → **source `cache`**: Excel's own cached values are the display. No recalculation, even with `fullCalcOnLoad` (toy 22/T5 relies on the implicit-intersection detector for that). |
-| 2 | Any other writer (openpyxl, XlsxWriter, LibreOffice, ChatGPT / unknown) → **LibreOffice recalculation copy**: `soffice --headless --convert-to xlsx`, private profile per run with threaded calculation OFF, OpenCL OFF, `OOXMLRecalcMode = 0` (always recalculate on load, otherwise LibreOffice keeps the agent's caches), macros off, `--norestore`, one process, `lo_timeout_s` (600 s default; timeout → GradingError). Same sheet names. |
+| 2 | Any other writer (openpyxl, XlsxWriter, LibreOffice, ChatGPT / unknown) → **LibreOffice recalculation copy**, whatever the file's size: `soffice --headless --convert-to xlsx`, private profile per run with threaded calculation OFF, OpenCL OFF, `OOXMLRecalcMode = 0` (always recalculate on load, otherwise LibreOffice keeps the agent's caches), macros off, `--norestore`, one process, `lo_timeout_s` (600 s default), under the memory guard below (one LibreOffice at a time, memory wait, retries with the timeout doubled; then `LibreOfficeUnavailable`). Same sheet names. |
 | 3 | **Gap scan** (`find_gaps`): every formula cell whose LibreOffice value is `#NAME?` or `#VALUE!` is classified (`classify_lo_error`, table below). Any gap → the file **needs Excel**. No gap → the copy is used with `errors_vetted=True`: its `#NAME?` / `#VALUE!` are genuine Excel errors and trusted values. |
 | 4 | Gaps and `policy.excel_allowed` and Excel available → **Excel recalculation copy** (`excel_recalc`): open read-only, links not updated, alerts off, `CalculateFullRebuild`, save a copy as .xlsx, close without saving the original, quit Excel if it was not running before. → source `excel`. |
 | 5 | Gaps and Excel **off** (`excel_allowed=False`, the default since 2026-10-04 evening) → the LibreOffice copy is used **as displayed** (`errors_vetted=True`): the cells LibreOffice could not compute keep their `#NAME?`/`#VALUE!`, value checks see an error value (not a number, not a zero, not a negative) and skip them, exactly as judge v12 effectively did. The gap list and a note stay in `stats["values"]`. Gaps and Excel **on** but not available / failing → `GradingError("Excel recalculation required: ...")`; only value checks fail. |
@@ -49,6 +49,26 @@ Excel becomes available). Default workdir `detchecks/out/recalc_cache/`.
   (`lo_watchdog.kill_tree`: SIGSTOP the tree until no new child appears, then SIGKILL), and every run
   ends with a sweep of its private profile (`reap_profiles`, raw path or file URL in a command line).
   The profile folder is private to one grading, so other jobs' LibreOffice is never touched.
+
+## Memory safety (`core/lo_guard.py`; Patrick 2026-10-05)
+
+"For production runs, every attempt must be graded. Doesn't matter what size."  No file is refused for
+its size (the judge's `det_checks.libreoffice_max_mb` is 0 = no limit; a positive value is a test-run
+setting).  Instead `libreoffice_recalc` - and, in the judge, the answer check's recalculation and
+`--run-calculation` (`utils.det_checks.run_libreoffice`) - go through `lo_guard.run_guarded`:
+
+| step | rule | setting (RecalcPolicy / judge `det_checks.*`) |
+|---|---|---|
+| lock | ONE LibreOffice at a time on the machine: `fcntl.flock` on the lock file plus a process-wide `threading.Lock` (worker threads); re-entrant within a thread; the descriptor is close-on-exec (LibreOffice never holds it) and the kernel releases it when a grader dies; a waiting grader logs who holds it (pid, host, file) at most once a minute | `lo_lock_path` / `libreoffice_lock_path`, default `/tmp/mbabench_libreoffice.lock` (`$DETCHECKS_LO_LOCK` for tools) |
+| memory | holding the lock, wait until the machine's free memory (macOS `memory_pressure -Q` "System-wide memory free percentage", Linux `MemAvailable / MemTotal`) is at least the threshold; logged while waiting; unreadable → no wait (logged once) | `lo_min_free_pct` / `libreoffice_min_free_pct` = 25 |
+| max wait | after this long the run is not started: `LibreOfficeUnavailable` (`retry_later`) - the attempt is re-run later | `lo_max_wait_s` / `libreoffice_max_wait_minutes` = 3600 s / 60 min |
+| retries | a try that fails (crash, no copy, timeout) is retried, the timeout doubled each time (600, 1200, 2400, 4800 s), each retry taking the lock and waiting for memory again; a missing binary is not retried | `lo_retries` / `libreoffice_retries` = 3 |
+| failure | after the last try: `LibreOfficeUnavailable` listing every try's error; through `grade()` the value checks fail with `values unavailable: ...` and the `GradingError` carries `retry_later`, which `utils/det_checks` passes on (`DetChecksError.retry_later`, `det_checks.json` `retry_later`); the judge's drivers list those attempts at the end of the run to be re-run when the machine has memory to spare | - |
+
+The watchdog, the termination handler, the timeout tree-kill and the profile sweeps below are unchanged
+and apply to every try.  Tests: `tests/test_lo_guard.py` (lock across two processes and threads, the
+memory wait, the maximum wait, the retries) and `tests/test_recalc_libreoffice.py` (a stand-in soffice
+that crashes twice then converts; one that always fails; two grader processes sharing the lock).
 
 ## Gap classification (`classify_lo_error`)
 
