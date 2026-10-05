@@ -235,9 +235,9 @@ det_checks:
   # Formula values of a file not saved by Excel come from a LibreOffice
   # recalculation of the delivered file (paths.libreoffice_path; the copy
   # goes to <task folder>/det_checks_recalc/, deleted by the adapter as soon
-  # as the checks finish). Excel recalculation stays OFF (maintainer 2026-10-04: Mac Excel
-  # asks for file access on every file); cells LibreOffice cannot compute
-  # are used as displayed.
+  # as the checks finish). Excel recalculation stays OFF (maintainer
+  # 2026-10-04: Mac Excel asks for file access on every file); cells
+  # LibreOffice cannot compute are used as displayed.
   excel_recalc: false
   libreoffice_timeout_seconds: 600
   # LibreOffice never recalculates a delivered file larger than this

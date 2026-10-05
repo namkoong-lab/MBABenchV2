@@ -152,7 +152,18 @@ def test_grade_toy_records_the_det_checks_mode_that_ran():
         manifest = Path(tmp) / "manifest.json"
         manifest.write_text(json.dumps({"toys": [{"check_no": 92, "folder": "toy092", "files": {
             "Pass": {"name": "p.xlsx", "s3_key": "toys/p.xlsx"}, "Fail": {"name": "f.xlsx", "s3_key": "toys/f.xlsx"}}}]}))
-        os.environ[f"{prefix}_PATHS_SCRATCH_PATH"] = str(Path(tmp) / "scratch")
+        scratch = Path(tmp) / "scratch"
+        load_configs = gt.load_project_configs
+
+        def _configs_then_temp_scratch(*a, **k):
+            # main() reloads the v2 config, which resets PATHS_SCRATCH_PATH: keep its toy_runs/<run>
+            # folders (run.log, suitability/) in this test's temporary folder, not judge/scratch/
+            load_configs(*a, **k)
+            os.environ[f"{prefix}_PATHS_SCRATCH_PATH"] = str(scratch)
+
+        gt.load_project_configs = _configs_then_temp_scratch
+        toy_runs = JUDGE / "scratch" / "toy_runs"
+        before = set(toy_runs.iterdir()) if toy_runs.is_dir() else set()
         try:
             for flag, want in ((None, "harness"), ("llm", "llm")):
                 sys.argv = ["grade_toy.py", "--run-label", "t", "--model", load_env_var("JUDGE_DEFAULT_GRADER"),
@@ -162,11 +173,14 @@ def test_grade_toy_records_the_det_checks_mode_that_ran():
                 gt.main()
                 assert captured["toy_runs_args"][-1]["det_checks"] == want, captured["toy_runs_args"][-1]
                 assert captured["graded_with"][-1] == want
+            assert len(list((scratch / "toy_runs").iterdir())) == 2
+            after = set(toy_runs.iterdir()) if toy_runs.is_dir() else set()
+            assert after == before, f"grade_toy wrote into judge/scratch/toy_runs: {sorted(after - before)}"
         finally:
             sys.argv = argv
             os.environ.clear()
             os.environ.update(environ)
-            for run_log in (Path(tmp) / "scratch" / "toy_runs").glob("*/run.log"):
+            for run_log in (scratch / "toy_runs").glob("*/run.log"):
                 remove_log_file(str(run_log))
 
 
