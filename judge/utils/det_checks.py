@@ -465,7 +465,8 @@ def _reap_libreoffice(workdir: Path) -> list[int]:
     workdir, so the match can only hit this grading's processes."""
     marker = str(Path(workdir) / "_lo_profiles") + os.sep
     try:
-        out = subprocess.run(["ps", "-Ao", "pid=,pgid=,command="], capture_output=True,
+        # -ww: full command lines (BSD and procps), so the profile path is always visible
+        out = subprocess.run(["ps", "-ww", "-Ao", "pid=,pgid=,command="], capture_output=True,
                              text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return []
