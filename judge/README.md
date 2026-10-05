@@ -587,8 +587,12 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   measurable: `scored_results.accuracy_engine.checks["<Category>/<name>"]`
   carries `engine`, the Python `decision`, `llm_decision`, `agreed`, `live`,
   `counted`, `check_no`, `n_mistakes` and the check's `stats` (see Artefacts for
-  what is shortened there). A check the LLM never recorded is inserted under its
-  rubric number.
+  what is shortened there). A live check the LLM never recorded (even after the
+  forced rounds) is inserted from Python under its rubric number, so the recorded
+  total scores Python's verdict; but the LLM's output for that category is still
+  incomplete, so the category is a hard parse failure and the grading is written
+  with `failed = true` (`failed_reason` "Parse failed for categories: ...") -
+  kept on purpose: the LLM output is malformed, and Python does not repair it.
 - **Recorded only**: No formula errors (22) and Negatives in parentheses (65)
   (the "v3 bucket"; detchecks marks both `Check.live = False`) run and are
   recorded the same way with `engine: "llm"`, `live: false` and
@@ -675,6 +679,17 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   took the LibreOffice attempts 388 / 2121 from ~107 / 106 KB of
   `scored_results` to ~50 / 55 KB (v12: ~20 KB); Excel-saved 1375 stays ~47 KB.
   A compact copy in `_metadata.json`.
+- **Whole workbook**: Python always grades the whole delivered workbook, even
+  when `--ignore-sheets` / `--attempt-sheet-name-filter` narrow the LLM's view
+  (the maintainer's whole-workbook rule): those flags reach the LLM's evidence
+  only, never `run_det_checks`.
+- **Versions**: `scripts/export_good_attempts.py` and the coverage / plan code
+  (`report_grading_coverage.py`, `generate_judge_plan.py`) match the exact
+  `judge_version`, so after the bump to 13 every existing v12 grading shows as
+  another version (not counted, re-planned) until it is regraded. Rows graded
+  with `--det-checks llm` or `off` are also stamped 13; only
+  `scored_results.det_checks.mode` (mirrored in
+  `accuracy_engine.det_checks_mode`) tells them apart from `harness` rows.
 - Not changed: the paper scripts still read `judge_version >= 12`
   (`MIN_JUDGE_VERSION`) and `pass_rule.DETERMINISTIC_CHECKS` lists Final
   calculation accuracy only, so a cohort mixing v12 and v13 rows mixes LLM and
