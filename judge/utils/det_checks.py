@@ -1,0 +1,678 @@
+"""Deterministic rubric checks in the judge (judge v13).
+
+`detchecks` (judge/detchecks/, API in detchecks/docs/reader.md) grades rubric_9 checks in
+Python from the DELIVERED workbook. This module is the only place the judge calls it:
+
+    run = run_det_checks(task_folder, rubric_path=..., weights_path=..., mode=None)
+    harness_verdicts = merge_harness_verdicts(answer_check_verdicts, run.harness_verdicts)
+    single_pass_judge_case(..., harness_verdicts=harness_verdicts, det_checks=run.for_judge())
+
+What runs
+  project_configs.yaml det_checks.live           the Python verdict replaces the LLM's at scoring
+  project_configs.yaml det_checks.recorded_only  the Python verdict is recorded beside the LLM's,
+                                                 and the LLM's counts
+  Both are rubric numbers. Each number is pinned to its (category, name) in DET_CHECK_NAMES and
+  checked against the loaded rubric and the detchecks registry; any mismatch refuses to grade
+  (numbering drift must never move a verdict onto the wrong check). A configured live check
+  must also be live in detchecks (Check.live). A check is graded only when the task's
+  rubric-suitability gate leaves it applicable (retired checks never are) and the effective
+  weights score it: the same gate judge._apply_harness_verdicts applies.
+
+Representation (the judge's harness_verdicts format, key "<Category>/<check name>")
+  live           engine "harness", decision, summary, mistakes, fallback_reason None,
+                 family "det_checks", live True, check_no, n_mistakes, stats
+  recorded only  the same with engine "llm", live False and fallback_reason = detchecks'
+                 LIVE_NOTE ("recorded only; the LLM verdict stands at scoring")
+  `engine` keeps its one meaning for every reader: "harness" = this verdict may replace the
+  LLM's; "llm" = the LLM's verdict stands (here with the Python decision recorded beside it).
+  judge._apply_harness_verdicts records decision, llm_decision and `agreed` for both kinds and
+  overlays engine "harness" entries only.
+
+The switch (--det-checks on every driver; default from det_checks.enabled: true -> harness)
+  harness  live Python verdicts count in the recorded total (judge v13 default)
+  llm      everything runs and is recorded; the LLM's verdicts count (shadow run;
+           scored_results.accuracy_engine.total_score_harness still shows the v13 total)
+  off      nothing runs; scored_results.det_checks says so
+  --accuracy-check keeps deciding the answer check (Final calculation accuracy) on its own.
+
+No fallback (maintainer, 2026-10-02)
+  A check that cannot grade the file raises detchecks' GradingError; run_det_checks writes the
+  failure to det_checks.json and raises DetChecksError naming every failing check by title and
+  the file. The drivers call it BEFORE the LLM, so the attempt fails the way the formula-cache
+  refusal does (grade_from_db logs FAILED, no DB row, the batch continues) with no API spend.
+  Nothing here ever turns a failure into an LLM verdict. This holds in `llm` mode too: when the
+  checks run, they run loudly.
+
+Values (detchecks/docs/recalc.md)
+  Structure and styles always come from task_folder/ai_attempt.xlsx, the delivered file (never
+  temp_recalculated/). Formula values: an Excel-saved file's own caches (any size); any other
+  writer's file is recalculated by LibreOffice (paths.libreoffice_path) into task_folder/
+  det_checks_recalc/, which grade_from_db.prune_workbook_copies removes with the other
+  workbook copies. Excel recalculation is OFF (det_checks.excel_recalc); cells LibreOffice
+  cannot compute are used as displayed. LibreOffice never runs on a file larger than
+  det_checks.libreoffice_max_mb (10 MB; maintainer 2026-10-04, memory): such a file fails the
+  value checks, so the grading stops before the LLM call ("not graded: too large"). Any
+  LibreOffice process left on this grading's private profile is killed when the checks return
+  or raise (_reap_libreoffice).
+
+Task metadata
+  delivered_filename       from the _attempt_origin.json sidecar (original_filename); without
+                           it File extension (.xlsx) (77) raises: the staged name is not the
+                           delivered one.
+  requires_external_links  always False (maintainer: no task requires external links).
+
+Artefacts
+  task_folder/det_checks.json  everything (config, gate, task_meta, full verdicts, or the
+                               failure); judge._finalize_case copies it into the output dir
+  scored_results.det_checks    compact block (status, mode, per-check engine/decision/live)
+"""
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+import math
+import os
+import signal
+import subprocess
+import time
+from pathlib import Path
+
+from detchecks.errors import GradingError
+
+try:
+    from .logger import logger
+    from .misc_utils import current_benchmark, load_env_var
+    from . import rubric_suitability, workbook_properties
+except ImportError:  # imported as a bare module (utils/ on sys.path)
+    from logger import logger
+    from misc_utils import current_benchmark, load_env_var
+    import rubric_suitability
+    import workbook_properties
+
+FAMILY = "det_checks"
+MODES = ("harness", "llm", "off")
+ATTEMPT_FILENAME = "ai_attempt.xlsx"
+ARTEFACT_FILENAME = "det_checks.json"
+RECALC_DIRNAME = "det_checks_recalc"
+
+# The name each rubric number must carry (rubric_9 flat numbering, as in
+# rubric_suitability.RETIRED_CHECK_NAMES). The config lists decide what runs and what counts;
+# a pin only permits it. A number missing here, or whose rubric position or detchecks key
+# carries another name, refuses to grade.
+DET_CHECK_NAMES = {
+    22: ("Error Checks", "No formula errors"),
+    29: ("Error Checks", "Clean Name Manager"),
+    47: ("Formatting", "No bright-yellow highlighting"),
+    49: ("Formatting", "Black font for calculations"),
+    50: ("Formatting", "Green font for cross-sheet links"),
+    51: ("Formatting", "Red font for external links"),
+    61: ("Formatting", "Consistent zoom level"),
+    62: ("Formatting", "Active cell reset to A1 on all sheets"),
+    65: ("Formatting", "Negatives in parentheses"),
+    66: ("Formatting", "Zeros as dashes"),
+    69: ("Formatting", "Sufficient column widths"),
+    70: ("Formatting", "Reasonable column widths"),
+    73: ("Formatting", "Reasonable row heights"),
+    74: ("Formatting", "No merged cells"),
+    77: ("Formatting", "File extension (.xlsx)"),
+    80: ("Formulas", "Avoid volatile functions"),
+    87: ("Formulas", "Avoid whole-column references"),
+    92: ("Potential Dangers", "No hidden sheets"),
+    93: ("Potential Dangers", "No hidden rows/columns"),
+    94: ("Potential Dangers", "No white-on-white hiding"),
+    95: ("Potential Dangers", "No external links"),
+}
+_NUMBER_BY_KEY = {f"{cat}/{name}": no for no, (cat, name) in DET_CHECK_NAMES.items()}
+_FILE_EXTENSION_CHECK = 77
+
+
+class DetChecksError(GradingError):
+    """The deterministic checks could not grade the delivered workbook. The grading must
+    fail here, before the LLM (no fallback). Carries GradingError's check/path/failures/
+    verdicts; the message names every failing check by title and the file."""
+
+
+class DetChecksConfigError(Exception):
+    """project_configs.yaml det_checks does not match the rubric or the detchecks registry."""
+
+
+@dataclasses.dataclass(frozen=True)
+class DetChecksSettings:
+    enabled: bool
+    live: tuple
+    recorded_only: tuple
+    excel_recalc: bool
+    libreoffice_path: str
+    libreoffice_timeout_s: float
+    libreoffice_max_mb: float
+
+
+@dataclasses.dataclass
+class DetChecksRun:
+    """What run_det_checks returns: the entries to merge into harness_verdicts, the compact
+    block for scored_results.det_checks, and the artefact written into the task folder."""
+    mode: str
+    harness_verdicts: dict
+    summary: dict
+    artefact_path: Path | None = None
+
+    def for_judge(self) -> dict:
+        """The `det_checks` argument of judge.single_pass_judge_case / _finalize_case."""
+        return {
+            "mode": self.mode,
+            "summary": self.summary,
+            "artefact": str(self.artefact_path) if self.artefact_path else None,
+        }
+
+
+# --------------------------------------------------------------------------- config
+def label(number: int) -> str:
+    """The maintainer's naming convention: 'No hidden sheets (92)'."""
+    pin = DET_CHECK_NAMES.get(int(number))
+    return f"{pin[1]} ({number})" if pin else f"check {number}"
+
+
+def label_for_key(key: str) -> str:
+    no = _NUMBER_BY_KEY.get(key)
+    return label(no) if no is not None else key
+
+
+def _as_bool(value) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _numbers(env_key: str) -> tuple:
+    raw = str(load_env_var(env_key, default="") or "").strip()
+    if not raw or raw.lower() in ("none", "null", "[]"):
+        return ()
+    out = []
+    for tok in raw.replace(";", ",").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if not tok.isdigit():
+            raise DetChecksConfigError(f"{env_key}: {tok!r} is not a check number")
+        out.append(int(tok))
+    if len(set(out)) != len(out):
+        raise DetChecksConfigError(f"{env_key}: a check number is listed twice ({raw!r})")
+    return tuple(out)
+
+
+def load_settings() -> DetChecksSettings:
+    """det_checks.* from project_configs.yaml (env BIZBENCHJUDGE_DET_CHECKS_*); the
+    LibreOffice binary is the judge's own paths.libreoffice_path."""
+    settings = _read_settings()
+    if not settings.libreoffice_max_mb > 0 or not settings.libreoffice_timeout_s > 0:
+        raise DetChecksConfigError(
+            f"det_checks.libreoffice_max_mb ({settings.libreoffice_max_mb}) and "
+            f"det_checks.libreoffice_timeout_seconds ({settings.libreoffice_timeout_s}) must be positive")
+    return settings
+
+
+def _read_settings() -> DetChecksSettings:
+    return DetChecksSettings(
+        enabled=_as_bool(load_env_var("DET_CHECKS_ENABLED", default="false")),
+        live=_numbers("DET_CHECKS_LIVE"),
+        recorded_only=_numbers("DET_CHECKS_RECORDED_ONLY"),
+        excel_recalc=_as_bool(load_env_var("DET_CHECKS_EXCEL_RECALC", default="false")),
+        libreoffice_path=str(load_env_var(
+            "PATHS_LIBREOFFICE_PATH",
+            default="/Applications/LibreOffice.app/Contents/MacOS/soffice")),
+        libreoffice_timeout_s=float(load_env_var("DET_CHECKS_LIBREOFFICE_TIMEOUT_SECONDS", default=600)),
+        libreoffice_max_mb=float(load_env_var("DET_CHECKS_LIBREOFFICE_MAX_MB", default=10)),
+    )
+
+
+def resolve_mode(cli_value: str | None = None, settings: DetChecksSettings | None = None) -> str:
+    """--det-checks value, else the config default (enabled -> harness, disabled -> off)."""
+    if cli_value is not None:
+        if cli_value not in MODES:
+            raise ValueError(f"--det-checks must be one of {MODES}, got {cli_value!r}")
+        return cli_value
+    settings = settings or load_settings()
+    return "harness" if settings.enabled else "off"
+
+
+def add_det_checks_arg(parser) -> None:
+    """--det-checks harness|llm|off (judge v13). Shared by every single-pass driver."""
+    parser.add_argument(
+        "--det-checks",
+        dest="det_checks",
+        choices=list(MODES),
+        default=None,
+        help=(
+            "(Single-pass) Deterministic rubric checks (utils/det_checks.py): 'harness' = the "
+            "Python verdicts of the live checks replace the LLM's in the recorded total (judge "
+            "v13); 'llm' = they run and are recorded beside the LLM's, which count (shadow); "
+            "'off' = they do not run. Default: project_configs.yaml det_checks.enabled "
+            "(true -> harness). A check that cannot grade the file fails the attempt before "
+            "the LLM call in both 'harness' and 'llm' (no fallback)."
+        ),
+    )
+
+
+def configured_checks(settings: DetChecksSettings, rubric: dict) -> dict:
+    """{number: live?} for the configured checks, validated against the pins, the loaded
+    rubric and the detchecks registry. Positions beyond the rubric (v1's 17-check rubric_8)
+    are dropped: those checks do not exist there. Raises DetChecksConfigError."""
+    from detchecks.checks import REGISTRY
+
+    overlap = sorted(set(settings.live) & set(settings.recorded_only))
+    if overlap:
+        raise DetChecksConfigError(
+            f"det_checks: {[label(n) for n in overlap]} listed as both live and recorded_only")
+    flat = [(cat, c["name"]) for cat, checks in rubric.items() for c in checks]
+    plan = {}
+    for no in list(settings.live) + list(settings.recorded_only):
+        live = no in settings.live
+        pin = DET_CHECK_NAMES.get(no)
+        if pin is None:
+            raise DetChecksConfigError(
+                f"det_checks names check {no}, which has no entry in DET_CHECK_NAMES "
+                f"(utils/det_checks.py) - add the (category, name) pin first")
+        cls = REGISTRY.get(no)
+        if cls is None:
+            raise DetChecksConfigError(f"det_checks names {label(no)}, which detchecks does not implement")
+        if cls.key != f"{pin[0]}/{pin[1]}":
+            raise DetChecksConfigError(
+                f"{label(no)} is pinned to {pin!r} but detchecks registers {cls.key!r} under {no} - refusing to grade")
+        if no > len(flat):
+            continue
+        if flat[no - 1] != pin:
+            raise DetChecksConfigError(
+                f"check {no} is pinned to {pin!r} but the loaded rubric has {flat[no - 1]!r} at that "
+                f"position - numbering drift; refusing to grade")
+        if live and not getattr(cls, "live", True):
+            raise DetChecksConfigError(
+                f"det_checks.live lists {label(no)}, but detchecks marks it not live (Check.live = False); "
+                f"move it to det_checks.recorded_only or change the check")
+        plan[no] = live
+    return plan
+
+
+def startup_check(rubric_path, mode: str | None = None) -> str:
+    """Validate det_checks against the run's rubric once, before a driver grades anything,
+    and log what will run. Returns the resolved mode; raises DetChecksConfigError, so a bad
+    config stops the run before any download or API call (rather than failing every
+    attempt one by one)."""
+    settings = load_settings()
+    mode = resolve_mode(mode, settings)
+    if mode == "off":
+        logger.info("det_checks: off - the LLM decides every check (judge v13 rows without Python verdicts)")
+        return mode
+    rubric = json.loads(Path(rubric_path).read_text(encoding="utf-8"))
+    plan = configured_checks(settings, rubric)
+    logger.info(
+        f"det_checks: mode={mode}; live: {[label(n) for n, live in sorted(plan.items()) if live]}; "
+        f"recorded only: {[label(n) for n, live in sorted(plan.items()) if not live]}; "
+        f"LibreOffice {settings.libreoffice_path} (files up to {settings.libreoffice_max_mb:g} MB, "
+        f"{settings.libreoffice_timeout_s:.0f} s); Excel recalculation "
+        f"{'ON' if settings.excel_recalc else 'off'}")
+    return mode
+
+
+# --------------------------------------------------------------------------- gate
+def _judge_rubric(task_folder: Path, rubric_path) -> tuple[dict, Path]:
+    """The rubric the judge itself will load: a task folder's own rubric.json wins over the
+    configured one (excel_utils.copy_support_files -> output_dir/rubric.json)."""
+    local = Path(task_folder) / "rubric.json"
+    src = local if local.exists() else Path(rubric_path)
+    return json.loads(src.read_text(encoding="utf-8")), src
+
+
+def scored_checks(task_folder, rubric: dict, weights: dict, benchmark) -> tuple[set, dict]:
+    """{(category, name)} the judge scores for this task, and the suitability provenance:
+    the applicable checks after rubric_suitability.load_for_case (annotation + retired
+    checks; the same call single_pass_judge_case makes) that the effective weights still
+    score. Raises SuitabilityError exactly where the judge would."""
+    suit = rubric_suitability.load_for_case(Path(task_folder), rubric, benchmark)
+    if suit is None:
+        applicable = {(cat, c["name"]) for cat, checks in rubric.items() for c in checks}
+        effective = weights
+        provenance = {"gated": False}
+        if rubric_suitability.skip_requested():
+            provenance["skipped_via_env"] = True
+    else:
+        applicable = {(cat, n) for cat, names in suit["applicable"].items() for n in names}
+        effective = rubric_suitability.build_effective_weights(weights, suit["excluded"])
+        p = suit.get("provenance") or {}
+        provenance = {k: p.get(k) for k in ("gated", "s3_key", "annotator", "excluded_count",
+                                             "retired_checks", "skipped_via_env") if k in p}
+    weighted = {
+        (cat, e["name"])
+        for cat, entries in (effective or {}).items()
+        if cat != "CategoryWeights" and isinstance(entries, list)
+        for e in entries
+        if isinstance(e, dict) and "name" in e
+    }
+    return applicable & weighted, provenance
+
+
+# --------------------------------------------------------------------------- helpers
+def merge_harness_verdicts(base: dict | None, det: dict | None) -> dict:
+    """The answer check's entries plus the deterministic family's. Keys are disjoint by
+    construction (Accuracy/* and Rounding/* vs the detchecks keys); an overlap is a bug."""
+    merged = dict(base or {})
+    overlap = sorted(set(merged) & set(det or {}))
+    if overlap:
+        raise ValueError(f"harness_verdicts: answer-check and deterministic-check keys overlap: {overlap}")
+    merged.update(det or {})
+    return merged
+
+
+def json_safe(obj):
+    """A copy of `obj` made of JSON-native values only: scores.json is dumped without
+    default= and scored_results goes into a JSONB column (no NaN, no tuples or sets as keys,
+    no str subclasses such as detchecks' ExcelError)."""
+    if obj is None or isinstance(obj, bool):
+        return obj
+    if isinstance(obj, int):
+        return int(obj)
+    if isinstance(obj, float):
+        return float(obj) if math.isfinite(obj) else str(obj)
+    if isinstance(obj, str):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, (set, frozenset)):
+        items = [json_safe(v) for v in obj]
+        try:
+            return sorted(items)
+        except TypeError:
+            return sorted(items, key=repr)
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return json_safe(dataclasses.asdict(obj))
+    if isinstance(obj, os.PathLike):
+        return os.fspath(obj)
+    if isinstance(obj, (bytes, bytearray)):
+        return bytes(obj).decode("utf-8", "replace")
+    return str(obj)
+
+
+_CODE_SHA = None
+
+
+def code_sha() -> str:
+    """Fingerprint of the grading code (detchecks api/core/checks), recorded per grading."""
+    global _CODE_SHA
+    if _CODE_SHA is None:
+        import detchecks
+
+        root = Path(detchecks.__file__).resolve().parent
+        h = hashlib.sha256()
+        for p in sorted(root.rglob("*.py")):
+            rel = p.relative_to(root).as_posix()
+            if rel.startswith(("tests/", "tools/")):
+                continue
+            h.update(rel.encode())
+            h.update(b"\0")
+            h.update(p.read_bytes())
+            h.update(b"\0")
+        _CODE_SHA = h.hexdigest()[:16]
+    return _CODE_SHA
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def _write_artefact(path: Path, record: dict) -> None:
+    try:
+        path.write_text(json.dumps(json_safe(record), indent=1, allow_nan=False), encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"  [det_checks] could not write {path}: {e}")
+
+
+def _size_guarded_libreoffice(limit_mb: float):
+    """The recalculation pipeline's LibreOffice step (RecalcPolicy.lo_runner) behind the size
+    limit (det_checks.libreoffice_max_mb; maintainer 2026-10-04: no LibreOffice run on a file over
+    10 MB, memory). Above it the step raises GradingError, so the value checks fail and the
+    grading stops loudly before the LLM call, like the formula-cache refusal. It only fires
+    when LibreOffice is actually needed: an Excel-saved file of any size is read from its own
+    caches and never gets here."""
+
+    def _run(src, out_dir, policy):
+        size = os.path.getsize(src)
+        if size > limit_mb * 1_000_000:
+            raise GradingError(
+                f"{src} is {size / 1_000_000:.1f} MB, over det_checks.libreoffice_max_mb "
+                f"({limit_mb:g} MB): a file not saved by Excel needs a LibreOffice recalculation "
+                f"for its formula values, which is not run on files this large (memory) - "
+                f"not graded: too large")
+        from detchecks.core import recalc as det_recalc   # looked up per call (tests swap it)
+
+        return det_recalc.libreoffice_recalc(src, out_dir, policy)
+
+    return _run
+
+
+def _reap_libreoffice(workdir: Path) -> list[int]:
+    """Kill any LibreOffice process still running on this grading's private profile.
+
+    detchecks' libreoffice_recalc starts soffice in its own session and kills that group on
+    its timeout; this sweep also covers every other way out (an exception, an interrupt), so a
+    large conversion never outlives its grading. The profile lives under this attempt's own
+    workdir, so the match can only hit this grading's processes."""
+    marker = str(Path(workdir) / "_lo_profiles") + os.sep
+    try:
+        out = subprocess.run(["ps", "-Ao", "pid=,pgid=,command="], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    killed = []
+    own_pgid = os.getpgrp()
+    for line in out.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        pid, pgid, cmd = int(parts[0]), int(parts[1]), parts[2]
+        if marker not in cmd or pid == os.getpid():
+            continue
+        try:
+            if pgid != own_pgid:
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            continue
+    if killed:
+        logger.warning(f"  [det_checks] killed leftover LibreOffice process(es) {killed} on {marker}")
+    return killed
+
+
+def _delivered_text(delivered) -> str:
+    return f"delivered as {delivered!r}" if delivered else "delivered file name unknown"
+
+
+def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Path,
+                     selected: list, settings: DetChecksSettings) -> str:
+    failures = dict(getattr(e, "failures", None) or {})
+    head = (f"deterministic checks could not grade {attempt} ({_delivered_text(delivered)}): "
+            f"{len(failures) or 'one or more'} of {len(selected)} check(s) failed; no fallback "
+            f"(judge v13), the grading stops before the LLM call")
+    lines = [head]
+    for key, msg in failures.items():
+        lines.append(f"  - {label_for_key(key)}: {msg}")
+    if not failures:
+        lines.append(f"  - {e}")
+    key77 = "/".join(DET_CHECK_NAMES[_FILE_EXTENSION_CHECK])
+    if delivered is None and key77 in failures:
+        lines.append(
+            f"  (no {workbook_properties.ORIGIN_FILENAME} with 'original_filename' in {task_folder}: "
+            f"the delivered file name is unknown, so {label(_FILE_EXTENSION_CHECK)} cannot be graded)")
+    if any("LibreOffice" in str(m) for m in (list(failures.values()) or [e])):
+        lines.append(
+            f"  (LibreOffice binary: {settings.libreoffice_path}, from project_configs.yaml "
+            f"paths.libreoffice_path; timeout {settings.libreoffice_timeout_s:.0f} s, "
+            f"det_checks.libreoffice_timeout_seconds; size limit {settings.libreoffice_max_mb:g} MB, "
+            f"det_checks.libreoffice_max_mb)")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- run
+_UNSET = object()
+
+
+def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None = None,
+                   benchmark=_UNSET) -> DetChecksRun:
+    """Grade the applicable configured checks on task_folder/ai_attempt.xlsx (module doc).
+
+    Returns a DetChecksRun; raises DetChecksError (no fallback) when a check cannot grade the
+    file, DetChecksConfigError on a config/rubric/registry mismatch, and SuitabilityError where
+    the judge itself would. Writes task_folder/det_checks.json in every case."""
+    t0 = time.perf_counter()
+    task_folder = Path(task_folder)
+    settings = load_settings()
+    mode = resolve_mode(mode, settings)
+    attempt = task_folder / ATTEMPT_FILENAME
+    artefact = task_folder / ARTEFACT_FILENAME
+    if mode == "off":
+        summary = {"status": "off", "mode": "off"}
+        _write_artefact(artefact, {**summary, "note": "det_checks off: the LLM decides every check"})
+        logger.info("  [det_checks] off: nothing graded, the LLM decides every check")
+        return DetChecksRun("off", {}, summary, artefact)
+
+    from detchecks import api as det_api
+    from detchecks.core.recalc import RecalcPolicy
+
+    rubric, rubric_src = _judge_rubric(task_folder, rubric_path)
+    plan = configured_checks(settings, rubric)
+    weights = json.loads(Path(weights_path).read_text(encoding="utf-8"))
+    if benchmark is _UNSET:
+        benchmark = current_benchmark(required=False)
+    scored, suitability = scored_checks(task_folder, rubric, weights, benchmark)
+    selected = [no for no in sorted(plan) if DET_CHECK_NAMES[no] in scored]
+    not_applicable = [no for no in sorted(plan) if no not in selected]
+
+    origin = workbook_properties.load_origin(task_folder)
+    delivered = (origin or {}).get("original_filename") or None
+    task_meta = {"requires_external_links": False}
+    if delivered:
+        task_meta["delivered_filename"] = delivered
+    workdir = task_folder / RECALC_DIRNAME
+    policy = RecalcPolicy(
+        workdir=str(workdir),
+        libreoffice_path=settings.libreoffice_path,
+        lo_timeout_s=settings.libreoffice_timeout_s,
+        excel_allowed=settings.excel_recalc,
+        lo_runner=_size_guarded_libreoffice(settings.libreoffice_max_mb),
+    )
+    record = {
+        "status": None,
+        "mode": mode,
+        "code_sha": code_sha(),
+        "file": {
+            "path": str(attempt),
+            "bytes": attempt.stat().st_size if attempt.exists() else None,
+            "sha256": _file_sha256(attempt),
+            "delivered_filename": delivered,
+            "origin_sidecar": origin is not None,
+        },
+        "config": {
+            "live": list(settings.live),
+            "recorded_only": list(settings.recorded_only),
+            "excel_recalc": settings.excel_recalc,
+            "libreoffice_path": settings.libreoffice_path,
+            "libreoffice_timeout_s": settings.libreoffice_timeout_s,
+            "libreoffice_max_mb": settings.libreoffice_max_mb,
+            "workdir": str(workdir),
+        },
+        "rubric": str(rubric_src),
+        "suitability": suitability,
+        "task_meta": task_meta,
+        "graded": selected,
+        "not_applicable": not_applicable,
+    }
+    base_summary = {"mode": mode, "code_sha": record["code_sha"], "delivered_filename": delivered,
+                    "graded": selected, "not_applicable": not_applicable, "artefact": ARTEFACT_FILENAME}
+
+    if not selected:
+        record["status"] = "no_applicable_checks"
+        record["seconds"] = round(time.perf_counter() - t0, 3)
+        _write_artefact(artefact, record)
+        logger.info(f"  [det_checks] mode={mode}: no configured check is applicable for this task "
+                    f"({len(not_applicable)} not applicable)")
+        summary = {"status": "no_applicable_checks", **base_summary, "checks": {},
+                   "seconds": record["seconds"]}
+        return DetChecksRun(mode, {}, json_safe(summary), artefact)
+
+    logger.info(f"  [det_checks] mode={mode}: grading {len(selected)} check(s) on {attempt.name} "
+                f"({_delivered_text(delivered)}); not applicable: {[label(n) for n in not_applicable] or 'none'}")
+    try:
+        verdicts = det_api.grade(str(attempt), checks=selected, task_meta=task_meta, recalc=policy)
+        missing = sorted(set("/".join(DET_CHECK_NAMES[n]) for n in selected) - set(verdicts))
+        if missing:
+            raise GradingError(f"detchecks returned no verdict for {missing} on {attempt}",
+                               path=str(attempt), failures={k: "no verdict returned" for k in missing})
+    except GradingError as e:
+        record["status"] = "error"
+        record["error"] = str(e)
+        record["failures"] = dict(e.failures or {})
+        record["finished_verdicts"] = dict(e.verdicts or {})
+        record["seconds"] = round(time.perf_counter() - t0, 3)
+        _write_artefact(artefact, record)
+        msg = _failure_message(e, attempt, delivered, task_folder, selected, settings)
+        logger.error(f"  [det_checks] {msg}")
+        raise DetChecksError(msg, check=e.check, path=str(attempt), failures=e.failures,
+                             verdicts=e.verdicts) from e
+    except Exception as e:  # noqa: BLE001 - anything else is just as loud, with the artefact written
+        record["status"] = "error"
+        record["error"] = f"{type(e).__name__}: {e}"
+        record["seconds"] = round(time.perf_counter() - t0, 3)
+        _write_artefact(artefact, record)
+        msg = (f"deterministic checks could not grade {attempt} ({_delivered_text(delivered)}): "
+               f"{type(e).__name__}: {e}; no fallback (judge v13), the grading stops before the LLM call")
+        logger.error(f"  [det_checks] {msg}")
+        raise DetChecksError(msg, path=str(attempt)) from e
+    finally:
+        _reap_libreoffice(workdir)
+
+    harness_verdicts, checks_block, values = {}, {}, None
+    for no in selected:
+        key = "/".join(DET_CHECK_NAMES[no])
+        v = verdicts[key]
+        live = plan[no] and bool(v.get("live", True))
+        stats = json_safe(v.get("stats") or {})
+        mistakes = json_safe(list(v.get("mistakes") or []))
+        entry = {
+            "engine": "harness" if live else "llm",
+            "decision": v["decision"],
+            "summary": str(v.get("summary") or ""),
+            "mistakes": mistakes,
+            "fallback_reason": None if live else (v.get("live_note") or det_api.LIVE_NOTE),
+            "family": FAMILY,
+            "live": live,
+            "check_no": no,
+            "n_mistakes": stats.get("n_mistakes", len(mistakes)),
+            "stats": stats,
+        }
+        harness_verdicts[key] = entry
+        checks_block[key] = {"check_no": no, "engine": entry["engine"], "decision": entry["decision"],
+                             "live": live, "n_mistakes": entry["n_mistakes"]}
+        if values is None and isinstance(stats.get("values"), dict):
+            sv = stats["values"]
+            values = {"source": sv.get("source"), "writer": sv.get("writer"),
+                      "n_gaps": sv.get("n_gaps"), "timings": sv.get("timings")}
+
+    seconds = round(time.perf_counter() - t0, 3)
+    record.update(status="ok", seconds=seconds, values=values, verdicts=verdicts)
+    _write_artefact(artefact, record)
+    summary = json_safe({"status": "ok", **base_summary, "values": values, "checks": checks_block,
+                         "seconds": seconds})
+    fails = [label(e["check_no"]) + ("" if e["live"] else " [recorded only]")
+             for e in harness_verdicts.values() if e["decision"] == "fail"]
+    logger.info(f"  [det_checks] {len(selected)} graded in {seconds:.1f} s "
+                f"(values: {(values or {}).get('source') or 'not needed'}); "
+                f"fail: {fails or 'none'}")
+    return DetChecksRun(mode, harness_verdicts, summary, artefact)

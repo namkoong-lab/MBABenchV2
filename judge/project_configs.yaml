@@ -14,7 +14,7 @@ project:
 
 paths:
   scratch_path: "scratch"   # relative to judge/
-  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation
+  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation and det_checks (judge v13)
 
 miscs:
   logger_name: "bizbench_judge"
@@ -186,3 +186,50 @@ single_pass:
   # a mistake for the harness's Final-calculation-accuracy verdict. Recorded
   # per grading in scored_results.accuracy_engine.
   hardcoded_counts: true
+
+# Deterministic rubric checks (judge v13; utils/det_checks.py runs the
+# graders in judge/detchecks/, documented in detchecks/docs/). Python grades
+# these checks from the DELIVERED workbook before the LLM runs; the LLM still
+# grades every check, blind to Python, and both verdicts are recorded
+# (scored_results.accuracy_engine.checks, det_checks.json). Numbers are
+# rubric_9 positions, each pinned to its (category, name) in
+# utils/det_checks.DET_CHECK_NAMES: a number whose pin, rubric position or
+# detchecks key disagree refuses to grade. Only checks the task's
+# suitability annotation leaves applicable are graded (never a retired one).
+# No fallback: a check that cannot grade the file fails the grading before
+# the LLM call. No unresolved cell warnings (23) and Automatic calculation
+# mode (100) stay with the LLM (not built).
+det_checks:
+  # true: every single-pass driver runs them (= --det-checks harness);
+  # false: off unless --det-checks harness|llm is passed.
+  enabled: true
+  # The Python verdict replaces the LLM's at scoring (maintainer, 2026-10-04):
+  #   29 Clean Name Manager, 47 No bright-yellow highlighting,
+  #   49 Black font for calculations, 50 Green font for cross-sheet links,
+  #   51 Red font for external links, 61 Consistent zoom level,
+  #   62 Active cell reset to A1 on all sheets, 66 Zeros as dashes,
+  #   69 Sufficient column widths, 70 Reasonable column widths,
+  #   73 Reasonable row heights, 74 No merged cells,
+  #   77 File extension (.xlsx), 80 Avoid volatile functions,
+  #   87 Avoid whole-column references, 92 No hidden sheets,
+  #   93 No hidden rows/columns, 94 No white-on-white hiding,
+  #   95 No external links
+  live: "29,47,49,50,51,61,62,66,69,70,73,74,77,80,87,92,93,94,95"
+  # Python runs and is recorded; the LLM's verdict counts (the "v3 bucket";
+  # detchecks marks both Check.live = False, so neither can be listed live):
+  #   22 No formula errors, 65 Negatives in parentheses
+  recorded_only: "22,65"
+  # Formula values of a file not saved by Excel come from a LibreOffice
+  # recalculation of the delivered file (paths.libreoffice_path; the copy
+  # goes to <task folder>/det_checks_recalc/, pruned with the other workbook
+  # copies). Excel recalculation stays OFF (maintainer 2026-10-04: Mac Excel
+  # asks for file access on every file); cells LibreOffice cannot compute
+  # are used as displayed.
+  excel_recalc: false
+  libreoffice_timeout_seconds: 600
+  # LibreOffice never recalculates a delivered file larger than this
+  # (MB = 1,000,000 bytes; maintainer 2026-10-04: memory). Such a file, when it
+  # was not saved by Excel and a value check applies, fails the grading
+  # before the LLM call ("not graded: too large"), like the formula-cache
+  # refusal. Excel-saved files of any size are read from their own caches.
+  libreoffice_max_mb: 10
