@@ -665,8 +665,8 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
     t0 = time.perf_counter()
     task_folder = Path(task_folder)
     artefact = task_folder / ARTEFACT_FILENAME
-    ctx = {"stage": "config", "record": {"status": None, "mode": mode, "file": {"path": str(task_folder / ATTEMPT_FILENAME)}},
-           "written": False}
+    ctx = {"stage": "config", "written": False,
+           "record": {"status": None, "mode": mode, "file": {"path": str(task_folder / ATTEMPT_FILENAME)}}}
     try:
         return _run_det_checks(task_folder, artefact, rubric_path, weights_path, mode, benchmark, t0, ctx)
     except BaseException as e:

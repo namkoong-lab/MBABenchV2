@@ -614,9 +614,8 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   check's score-neutral `try` - so a file they refuse (one over the
   LibreOffice size limit, say) never reaches the answer check's own
   LibreOffice recalculation, and the attempt fails the way the formula-cache
-  refusal does: `grade_from_db` logs
-  `FAILED`, returns `success: False`, writes no DB row and the batch continues,
-  with no API spend. `det_checks.json` is written in every case and stays in
+  refusal does: `grade_from_db` logs `FAILED`, returns `success: False`, writes
+  no DB row and the batch continues, with no API spend. `det_checks.json` is written in every case and stays in
   the task folder: status `error` with the failures, or - when a config error,
   a rubric drift (named by title and rubric file) or a suitability refusal
   stops the run first - with the stage and the error. `judge.py --single-pass`
@@ -640,9 +639,9 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   it when the grader dies, SIGKILL included; SIGTERM / SIGHUP to the grader
   kill it first and the grader then dies of the signal as before; a timeout or
   an exception kills its whole process tree, and the attempt's private profiles
-  are swept when the checks return or raise. Cost: no API spend; the Python pass took ~3 s median
-  (38 s worst) per attempt in the 374-file sanity run, plus the LibreOffice run
-  (seconds to minutes) for a file not saved by Excel.
+  are swept when the checks return or raise. Cost: no API spend; the Python
+  pass took ~3 s median (38 s worst) per attempt in the 374-file sanity run,
+  plus the LibreOffice run (seconds to minutes) for a file not saved by Excel.
 - **Task metadata**: File extension (.xlsx) (77) judges the delivered file name
   from the `_attempt_origin.json` sidecar (`original_filename`); without it the
   check raises, so a local folder needs the sidecar. A malformed sidecar (not
@@ -702,16 +701,23 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   calculation accuracy only, so a cohort mixing v12 and v13 rows mixes LLM and
   Python verdicts on these checks.
   Tests: `test_det_checks.py` (the adapter on openpyxl workbooks: live and
-  recorded-only verdicts, the gate, the delivered name, JSON safety, the
-  LibreOffice policy and size limit, the scoring switches),
-  `test_det_checks_single_pass.py` (`grade_single_attempt` end to end on a real
-  Excel-saved attempt with a stub LLM, all three switch values, the failure
-  path that stops before the LLM call, and an oversized non-Excel attempt that
-  stops before the answer check with no LibreOffice run; the end-to-end case is
-  reported SKIPPED - by pytest and by the script runner, never counted as passed
-  - where the corpus attempt is absent, `DETCHECKS_E2E_ATTEMPT` points it at
-  another Excel-saved file under 1 MB; the judge's log folders go to the test's
-  temporary folder, not `judge/scratch/judge_cache/`).
+  recorded-only verdicts, the gate, the delivered name and malformed sidecars,
+  `det_checks.json` in every case, JSON safety, the LibreOffice policy and size
+  limit, `det_checks_recalc/` removed, the reaper on encoded profile URLs, SIGTERM
+  and SIGKILL to a grading whose LibreOffice hangs, `code_sha`, the DB payload,
+  the scoring switches), `test_det_checks_single_pass.py` (`grade_single_attempt`
+  end to end on a real Excel-saved attempt with a stub LLM, all three switch
+  values, the failure path that stops before the LLM call, and an oversized
+  non-Excel attempt that stops before the answer check with no LibreOffice run;
+  where the corpus attempt is absent the end-to-end case is reported SKIPPED by
+  pytest and by the script runner, never counted as passed, and
+  `DETCHECKS_E2E_ATTEMPT` points it at another Excel-saved file under 1 MB; the
+  judge's log folders go to the test's temporary folder, not
+  `judge/scratch/judge_cache/`), `test_det_checks_reports.py` (the two reports
+  and `grade_toy`'s recorded mode) and `detchecks/tests/test_recalc_libreoffice.py`
+  (the real LibreOffice on a 3-cell file in a folder named with a space, `%41`,
+  `%` and `é`; stand-in soffice processes for the watchdog, the timeout and
+  SIGTERM / SIGKILL to the grader; run it through `heavy_run.py`).
 
 ### Latest-prompt guard (2026-09-10)
 
@@ -806,5 +812,7 @@ python tests_offline/test_single_pass.py
 python tests_offline/test_oversized_range.py
 python tests_offline/test_det_checks.py               # judge v13 adapter + scoring switches
 python tests_offline/test_det_checks_single_pass.py   # judge v13 end to end, stub LLM
+python tests_offline/test_det_checks_reports.py       # judge v13 reports, grade_toy's recorded mode
 for t in detchecks/tests/test_*.py; do python -m detchecks.tests.$(basename $t .py); done
+# (test_recalc_libreoffice starts LibreOffice once: on the shared grading Mac, run through heavy_run.py)
 ```
