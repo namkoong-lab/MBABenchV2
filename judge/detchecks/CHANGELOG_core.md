@@ -1,5 +1,41 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-05 — every attempt graded: fixed defaults instead of GradingError
+
+Source: Patrick, 2026-10-05: "For production runs, every attempt must be graded." Where a check could not decide it
+now decides by a fixed default, recorded in the verdict's `stats.defaults.<kind>` (`count`, `rule`, first 10
+`examples`; present only when used; `checks/base.py`: `Check.note_default`, `DEFAULT_RULES`). Internal errors
+(bugs), a missing LibreOffice binary and config errors still raise; LibreOffice failures still retry and are
+listed for re-run.
+
+| kind | default | checks |
+|---|---|---|
+| `unresolved_colour` | an unresolvable colour is Excel's default for its slot: font automatic (black), fill none (`_fills.known_paint`) | 47 (no more readings fork), 49 / 50 / 51 (`colour_rules.style_colour`), 94 (font, fill, runs, [ColorN], CF font / fill, colour-scale stops) |
+| `unverified_number_format` | numfmt certain=False: the engine's best rendering (`classify(..., best=True)` in 65 / 66) | 65, 66 (also a showZeros=0 zero under a conditional-section format), 69, 70, 94 (also a number-format tag over rich-text runs) |
+| `table_style_visible` | a cell whose visibility depends on a table style: visible | 94 |
+| `unwritten_array_member` | array / spill members not written in the file: skipped | 65, 66 |
+| `untrusted_value` | a formula value still untrusted: skipped for that check | 22, 65, 66, 69, 70, 73, 94 |
+| `delivered_name_unknown` | no / a malformed delivered name: the format is judged from the content (zip without VBA = .xlsx, with = .xlsm, OLE2 = .xls, .xlsb zip = .xlsb); the adapter passes `task_meta.delivered_filename_problem` | 77 |
+| `unparsable_formula` | formula text that cannot be parsed or read (a shared child without its master; a table the workbook does not define): skipped | 22 (implicit-intersection test only), 29, 49 / 50 / 51, 80 / 87 / 95 (`_fscan.safe_classify` / `safe_uses`) |
+
+`core/lo_guard.py`: the wait for the machine-wide LibreOffice lock is capped (`max_lock_wait_s` 3 h,
+`RecalcPolicy.lo_max_lock_wait_s`, judge `det_checks.libreoffice_max_lock_wait_minutes` 180), then
+`LibreOfficeUnavailable` (retry later).
+
+Still raising (kept loud, not covered by the defaults; see each check doc): unreadable / corrupt files and XML,
+non-SpreadsheetML input for checks other than 77, number formats that cannot be read at all (65, 66, 69, 70, 94),
+defined names with an unknown scope (29, 49, 50, 51, 80, 87), Clean Name Manager (29)'s gate (VBA, ActiveX, Power
+Query, macro names, run-time text references), computed INDIRECT addresses in green cells (49), undecidable zoom
+(61) / cursor (62) / sheet state (92) from malformed sheet views, 77 on a known name with unverifiable content, 80's
+'NAME (' spellings and unplaced stamp references, 95's unreadable externalLink parts and Power Query, a
+corrupt shared-string index in 47, the buffer limits of 69 / 73.
+
+Tests: `test_lock_wait_is_capped`, `test_47_unresolvable_fill_colours`, `test_94_unresolvable_colours`, the colour
+tests (49 / 50 / 51), `test_unparsable_formulas_are_skipped_2026_10_05` (80 / 87 / 95), 29's malformed-definition
+tests, the untrusted-value / unverified-format / array-member tests of 22, 65, 66, 69, 70, 73 and 94 (each now
+asserts the decided verdict and its `stats.defaults` record), `test_77_staged_name_without_delivered_name_raises`,
+and in tests_offline `test_task_meta_file_extension` / `test_malformed_origin_sidecar_fails_loudly`.
+
 ## 2026-10-05 — every attempt is graded (no size limit, memory guard); conditional formats never stop a grading
 
 Source: Patrick's production decision of 2026-10-05: "For production runs, every attempt must be graded.
