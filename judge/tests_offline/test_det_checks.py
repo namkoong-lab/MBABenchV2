@@ -11,10 +11,10 @@ folders, and the one LibreOffice call the recalculation pipeline would make for 
 openpyxl-written file is replaced by a fake that copies the file (the toys hold constants
 only, so the copy carries the same values) and records the policy it was given.
 """
+import atexit
 import contextlib
 import copy
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -540,8 +540,12 @@ def test_apply_harness_verdicts_with_deterministic_entries():
     assert prov[FA]["engine"] == "harness" and prov[FA]["n_match"] == 75 and "family" not in prov[FA]
 
 
+_FINALIZE_ROOT = tempfile.mkdtemp(prefix="detchecks_finalize_")
+atexit.register(shutil.rmtree, _FINALIZE_ROOT, True)
+
+
 def _finalize(llm, hv, accuracy_engine, det_checks):
-    out = Path(tempfile.mkdtemp(prefix="detchecks_finalize_"))
+    out = Path(tempfile.mkdtemp(dir=_FINALIZE_ROOT))
     log = out / "cache.log"
     log.write_text("")
     tt = {"evaluations": {}, "total_message_size": 0, "total_message_size_with_images": 0, "total_tokens": 0,
