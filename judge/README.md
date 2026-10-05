@@ -665,6 +665,13 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   `counted` whether its Python verdict is in the recorded total. The DB drivers
   refuse to start when the `det_checks` config does not match the rubric
   (`startup_check`), before any download.
+- **Reports**: `operation_scripts/report_accuracy_engine.py` prints each row's
+  recorded total beside the LLM and harness totals and spells out `mixed`
+  (e.g. "mixed: answer check llm, det checks harness": one family counted, the
+  other did not, so the recorded total is neither). `grade_toy` records the
+  det-checks mode that ran in `toy_runs.args.det_checks` (its default is still
+  the config's, `harness`), and `report_toy_reliability.py --show-misses` prints
+  Python's summary, marked "by Python", when the toy's verdict was Python's.
 - **Artefacts**: `det_checks.json` in the bundle (config, gate, task metadata,
   the full verdicts with the recalculation plan, `code_sha` = a fingerprint of
   the grading code: `detchecks/__init__.py`, `api.py`, `errors.py`, `core/` and

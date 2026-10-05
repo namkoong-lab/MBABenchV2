@@ -329,7 +329,9 @@ def main():
     rubric = load_rubric(rubric_path)
     flat = flatten(rubric)
     rubric_sha = sha256_file(rubric_path)
-    gfd.det_checks_mod.startup_check(rubric_path, args.det_checks)   # judge v13: refuse a bad det_checks config
+    # judge v13: refuse a bad det_checks config, and record the mode that actually runs (None meant
+    # "the config default" and landed in toy_runs.args as null)
+    args.det_checks = gfd.det_checks_mod.startup_check(rubric_path, args.det_checks)
     if args.full_rubric:
         os.environ["JUDGE_SKIP_SUITABILITY"] = "1"
 
@@ -346,7 +348,7 @@ def main():
     logger.info(f"Grader: {args.model} -> {identity}")
     logger.info(f"Rubric {rubric_path} sha {rubric_sha[:12]}; template {template_path}; guidance {guidance_path}")
     logger.info(f"Mode: {'FULL RUBRIC' if args.full_rubric else 'TARGETED (one check per grading)'}; "
-                f"S3 artifacts -> s3://{S3_BUCKET}/{TOY_GRADING_PREFIX}/{run_id}/")
+                f"det checks: {args.det_checks}; S3 artifacts -> s3://{S3_BUCKET}/{TOY_GRADING_PREFIX}/{run_id}/")
 
     conn = None if (args.no_db_write and args.manifest) else gfd.get_db_connection()
     toys = toys_from_manifest(args.manifest, flat, args.checks) if args.manifest else toys_from_db(conn, args.checks)
