@@ -47,8 +47,9 @@ Values (detchecks/docs/recalc.md)
   Structure and styles always come from task_folder/ai_attempt.xlsx, the delivered file (never
   temp_recalculated/). Formula values: an Excel-saved file's own caches (any size); any other
   writer's file is recalculated by LibreOffice (paths.libreoffice_path) into task_folder/
-  det_checks_recalc/, which grade_from_db.prune_workbook_copies removes with the other
-  workbook copies. Excel recalculation is OFF (det_checks.excel_recalc); cells LibreOffice
+  det_checks_recalc/ (the copy and the private profiles), which run_det_checks deletes itself
+  as soon as the checks return or raise, in every driver (_remove_recalc_dir; det_checks.json
+  stays). Excel recalculation is OFF (det_checks.excel_recalc); cells LibreOffice
   cannot compute are used as displayed. LibreOffice never runs on a file larger than
   det_checks.libreoffice_max_mb (10 MB; maintainer 2026-10-04, memory): such a file fails the
   value checks, so the grading stops before the LLM call ("not graded: too large").
@@ -77,6 +78,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -478,6 +480,18 @@ def _reap_libreoffice(workdir: Path) -> list[int]:
     return killed
 
 
+def _remove_recalc_dir(workdir: Path) -> None:
+    """Delete this grading's det_checks_recalc/ (LibreOffice copies, profiles) once the checks
+    have returned or raised: every driver gets it (grade_with_orchestration never called
+    grade_from_db.prune_workbook_copies). det_checks.json lives in the task folder and stays."""
+    workdir = Path(workdir)
+    if workdir.name != RECALC_DIRNAME or not workdir.exists():
+        return
+    shutil.rmtree(workdir, ignore_errors=True)
+    if workdir.exists():
+        logger.warning(f"  [det_checks] could not remove {workdir}")
+
+
 def _install_termination_reaper() -> None:
     """detchecks' SIGTERM / SIGHUP handler (kill this process's LibreOffice runs, then die of the
     signal as before). Main thread only (Python's rule): startup_check runs there in every DB
@@ -634,6 +648,7 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
         raise DetChecksError(msg, path=str(attempt)) from e
     finally:
         _reap_libreoffice(workdir)
+        _remove_recalc_dir(workdir)
 
     harness_verdicts, checks_block, values = {}, {}, None
     for no in selected:

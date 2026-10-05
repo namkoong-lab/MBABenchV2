@@ -356,6 +356,53 @@ def test_recalc_reads_the_delivered_file_with_the_configured_policy():
         assert Path(c["out_dir"]).is_relative_to(folder / D.RECALC_DIRNAME)
 
 
+def test_recalc_dir_is_removed_when_the_checks_finish():
+    """det_checks_recalc/ (LibreOffice copy + profiles) goes as soon as run_det_checks returns or
+    raises, whatever the driver (grade_with_orchestration never pruned it); det_checks.json stays."""
+    with tempfile.TemporaryDirectory() as tmp, fake_libreoffice() as calls:
+        ok = make_task(Path(tmp), negative=True)
+        run(ok)
+        assert len(calls) == 1 and Path(calls[0]["out_dir"]).is_relative_to(ok / D.RECALC_DIRNAME)
+        assert not (ok / D.RECALC_DIRNAME).exists(), list((ok / D.RECALC_DIRNAME).rglob("*"))
+        assert strict_json((ok / D.ARTEFACT_FILENAME).read_text())["status"] == "ok"
+    original = det_recalc.libreoffice_recalc
+
+    def _copy_then_fail(src, out_dir, policy):                 # a copy on disk, then a failure
+        original_out = os.path.join(out_dir, "ai_attempt.xlsx")
+        os.makedirs(out_dir, exist_ok=True)
+        shutil.copy(src, original_out)
+        raise det_recalc.GradingError("LibreOffice produced no usable copy (test)")
+
+    def _boom(path, *, checks, task_meta, recalc):            # anything else, after the workdir exists
+        os.makedirs(os.path.join(recalc.workdir, "_lo_profiles", "lo_x"), exist_ok=True)
+        raise RuntimeError("engine bug (test)")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        bad = make_task(Path(tmp), negative=True)
+        det_recalc.libreoffice_recalc = _copy_then_fail
+        try:
+            try:
+                run(bad)
+            except D.DetChecksError as e:
+                assert "no usable copy" in str(e)
+            else:
+                raise AssertionError("no DetChecksError")
+        finally:
+            det_recalc.libreoffice_recalc = original
+        assert not (bad / D.RECALC_DIRNAME).exists()
+        assert strict_json((bad / D.ARTEFACT_FILENAME).read_text())["status"] == "error"
+        crash = make_task(Path(tmp))
+        with patched_grade(_boom):
+            try:
+                run(crash)
+            except D.DetChecksError as e:
+                assert "engine bug" in str(e)
+            else:
+                raise AssertionError("no DetChecksError")
+        assert not (crash / D.RECALC_DIRNAME).exists()
+        assert (crash / D.ARTEFACT_FILENAME).exists() and (crash / "ai_attempt.xlsx").exists()
+
+
 def test_missing_libreoffice_fails_loudly_without_launching_anything():
     with tempfile.TemporaryDirectory() as tmp:
         folder = make_task(Path(tmp), negative=True)

@@ -615,7 +615,9 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   Excel-saved file's own caches, otherwise from a LibreOffice recalculation of
   the delivered file (`paths.libreoffice_path`, private profile, threaded
   calculation off, `det_checks.libreoffice_timeout_seconds` 600) written to
-  `<task folder>/det_checks_recalc/` and deleted by `prune_workbook_copies`.
+  `<task folder>/det_checks_recalc/`, which `run_det_checks` deletes itself
+  (copy and profiles) as soon as the checks return or raise, in every driver
+  (`grade_with_orchestration` never prunes); `det_checks.json` stays.
   Excel recalculation is off (`det_checks.excel_recalc: false`); cells
   LibreOffice cannot compute are used as displayed. LibreOffice never runs on a
   file over `det_checks.libreoffice_max_mb` (10 MB, memory): such a file, when it

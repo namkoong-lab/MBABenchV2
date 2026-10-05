@@ -1089,8 +1089,9 @@ def prune_workbook_copies(result):
     paths inside the attempt's own task folder are touched, so the shared CSV
     caches are never affected. Returns bytes freed.
 
-    Judge v13: also the deterministic checks' LibreOffice recalculation copy
-    (det_checks_recalc/); det_checks.json stays with the logs.
+    Judge v13: also det_checks_recalc/, which utils.det_checks.run_det_checks
+    already deletes itself when the checks finish (a no-op then; kept as a net);
+    det_checks.json stays with the logs.
     """
     task_folder = Path(result["task_folder"]).resolve()
     output_dir = Path(result.get("output_dir") or task_folder / "judge_results")
