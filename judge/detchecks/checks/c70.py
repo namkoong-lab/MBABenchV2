@@ -486,7 +486,9 @@ class C70(Check):
                 raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.fmt_err}")
             r = N.render(v, sty.code, value_type=("d" if kind == "date" else None), date1904=self.date1904)
             if not r.certain:
-                return None, f"display of {v!r} under number format {sty.code!r} is not verified"
+                # Patrick 2026-10-05 (every attempt graded): the engine's best rendering is measured
+                self.note_default("unverified_number_format", f"{location(cell.sheet, cell.ref)} = {v!r} under "
+                                                              f"{sty.code!r} measured as {r.text!r}")
             return ("" if r.is_blank else r.text), None
         if kind == "bool":
             return ("TRUE" if v else "FALSE"), None
@@ -739,26 +741,24 @@ class C70(Check):
         for c, d in cols.items():
             W = d["W"]
             need, _ex, u = d[cap]
-            tests, open_ = [], []
+            tests = []
             if W > cap and s["regardless"]:
                 tests.append("A")
             elif W > cap and W > EXCESS_FACTOR * need:
-                (open_ if u else tests).append("A")
+                tests.append("A")
             g = d["group"]
             if g is not None and (s["ext"] or g[2] == "judge") and not (s["judge_skip"] and rec["judge_skip"]):
                 if need < s["share"] * W:
-                    (open_ if u else tests).append("B")
+                    tests.append("B")
             if tests:
                 fails.append(("col", c, tuple(tests)))
-            elif open_:
-                for x in u[:3]:
-                    if x[0] == "more":
-                        und.append((name, index_to_col(c), f"{x[1]} more unmeasurable cell(s) (untrusted formula "
-                                                           f"values / unverified number formats) in the column"))
-                    else:
-                        why = x[2] if len(x) > 2 and x[2] else "formula value untrusted"
-                        und.append((name, make_ref(x[0], x[1]), f"{why}; column {index_to_col(c)} "
-                                                                f"(test {'/'.join(open_)}) depends on it"))
+            # untrusted formula values in a judged column are skipped (Patrick 2026-10-05: every attempt graded)
+            for x in u:
+                if x[0] == "more":
+                    und.append((name, index_to_col(c), f"{x[1]} more untrusted formula value(s) in the column", x[1]))
+                else:
+                    why = x[2] if len(x) > 2 and x[2] else "formula value untrusted"
+                    und.append((name, make_ref(x[0], x[1]), f"{why}; skipped in column {index_to_col(c)}", 1))
         for a, b, W in empties:
             if W > cap:
                 fails.append(("empty", a, b))
@@ -798,19 +798,14 @@ class C70(Check):
         for rec, fails in default_fails:
             for kind in self._add_mistakes(rec, fails):
                 tests_failed.add(kind)
-        failed = self.mistakes.total > 0
-        if undecided and not (failed and UNTRUSTED_ONLY_IF_VERDICT_NEEDS):
-            sheet, ref, why = undecided[0]
-            prov = getattr(self.wb, "provenance", None)
-            src = (f"writer={prov.writer}, value_path={'given' if prov and prov.value_path else 'none'}"
-                   if prov else "no provenance")
-            raise GradingError(f"{self.key}: cannot decide {sheet}!{ref}: {why} ({src}); {len(undecided)} cell(s) "
-                               f"undecided in all and nothing else fails, so the verdict depends on them (no fallback)")
+        for sheet, ref, why, n in undecided:
+            # Patrick 2026-10-05 (every attempt graded): skipped, never raised
+            self.note_default("untrusted_value", f"{location(sheet, ref)}: {why}", n)
         switches = {}
         for k, e in evals.items():
             if k == "default":
                 continue
-            switches[k] = "fail" if e["fails"] else ("undecided" if e["undecided"] else "pass")
+            switches[k] = "fail" if e["fails"] else "pass"
         stats = dict(self.counts)
         stats.update({
             "normal_font": f"{self.normal_face} {self.normal_size:g}", "normal_font_known": self.normal_known,
@@ -819,8 +814,8 @@ class C70(Check):
             "outlier_tags": tags[:MAX_LISTED], "n_outlier_tags": len(tags),
             "n_outlier_tags_unequal": sum(1 for t in tags if t["kind"] == "ext"),
             "outlier_band_columns": band[:MAX_LISTED], "n_outlier_band_columns": len(band),
-            "undecided_cells": len(undecided),
-            "undecided_examples": [{"sheet": a, "cell": b, "why": c} for a, b, c in undecided[:MAX_UNDECIDED_LISTED]],
+            "undecided_cells": sum(x[3] for x in undecided),
+            "undecided_examples": [{"sheet": a, "cell": b, "why": c} for a, b, c, _n in undecided[:MAX_UNDECIDED_LISTED]],
             "unknown_faces": self.unknown_faces, "switches": switches,
             "brief_fails": evals["default"]["brief_fails"],
             "per_sheet": per_sheet,
@@ -831,8 +826,8 @@ class C70(Check):
         })
         und_note = ""
         if undecided:
-            und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values or unverified "
-                        f"number formats); the verdict does not depend on them (see stats).")
+            und_note = (f" {sum(x[3] for x in undecided)} untrusted formula value(s) in judged columns were skipped "
+                        f"(stats.defaults).")
         return self.verdict(
             f"No excessive column width: no visible column is over {WIDTH_CAP_CHARS:g} characters and more than "
             f"{EXCESS_FACTOR:g}x its content, and no WIDE OUTLIER column is more than twice its content "

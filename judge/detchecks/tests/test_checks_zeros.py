@@ -192,6 +192,20 @@ def run(path):
     return Engine(path, [C66()]).run()[C66.key]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -464,7 +478,7 @@ def test_values_read_only_where_needed():
     d = st.xf('#,##0;(#,##0);\\-')
     v = run(book([("S", sheet([c("A1", d, 0, f="B1*0"), c("B1", 0, 4), c("C1", d, None, f="B1")]))], st, app=app))
     assert v["decision"] == "pass" and v["stats"]["formula_values_read"] == 0
-    raises(lambda: run(book([("S", sheet([c("A1", 0, 0, f="B1*0"), c("B1", 0, 4)]))], st, app=app)),
+    graded("untrusted_value", lambda: run(book([("S", sheet([c("A1", 0, 0, f="B1*0"), c("B1", 0, 4)]))], st, app=app)),
            "untrusted", "S!A1")
     # constants are always readable
     assert locs(run(book([("S", sheet([c("A1", 0, 0)]))], st, app=app))) == ["S!A1"]
@@ -553,11 +567,11 @@ def test_untrusted_values_needed_only_after_the_tail():
     cells = [c("A1", 0, "Label"), c("B1", g, 0, f="D1*0"), c("D1", 0, 4)]
     assert run(book([("S", sheet(cells, tail=tail))], st, app=APP_OPX))["decision"] == "pass"
     # controls: the tail does not rescue the cell -> GradingError naming it (no fallback)
-    raises(lambda: run(book([("S", sheet(f0 + [c("A3", g, 0, f="B1*0")], tail=tail))], st, app=APP_OPX)),
+    graded("untrusted_value", lambda: run(book([("S", sheet(f0 + [c("A3", g, 0, f="B1*0")], tail=tail))], st, app=APP_OPX)),
            "untrusted", "S!A1")
     tail_gt = cf_main("A1:A5", ("cellIs", dx, "greaterThan", ["100"], ""))
-    raises(lambda: run(book([("S", sheet(f0, tail=tail_gt))], st, app=APP_OPX)), "untrusted", "S!A1", "'General'")
-    raises(lambda: run(book([("S", sheet(f0))], st, app=APP_OPX)), "untrusted", "S!A1")
+    graded("untrusted_value", lambda: run(book([("S", sheet(f0, tail=tail_gt))], st, app=APP_OPX)), "untrusted", "S!A1", "'General'")
+    graded("untrusted_value", lambda: run(book([("S", sheet(f0))], st, app=APP_OPX)), "untrusted", "S!A1")
     # a dash format still needs no value at all
     d = st.xf('#,##0;(#,##0);\\-')
     v = run(book([("S", sheet([c("A1", d, 0, f="B1*0"), c("B1", 0, 4)]))], st, app=APP_OPX))
@@ -573,9 +587,9 @@ def test_untrusted_values_beyond_buffer_second_pass():
         v = run(book([("S", sheet(rescued, tail=tail))], st, app=APP_OPX))
         assert v["decision"] == "pass" and v["stats"]["deferred_second_pass_sheets"] == ["S"], v
         bad = rescued + [c("D4", 0, 0, f="C1*0")]
-        raises(lambda: run(book([("S", sheet(bad, tail=tail))], st, app=APP_OPX)), "untrusted", "S!D4")
+        graded("untrusted_value", lambda: run(book([("S", sheet(bad, tail=tail))], st, app=APP_OPX)), "untrusted", "S!D4")
         bad = rescued + [c("D1", 0, 0, f="C1*0")]      # within the buffer: raised at sheet end
-        raises(lambda: run(book([("S", sheet(bad, tail=tail))], st, app=APP_OPX)), "untrusted", "S!D1")
+        graded("untrusted_value", lambda: run(book([("S", sheet(bad, tail=tail))], st, app=APP_OPX)), "untrusted", "S!D1")
 
 
 def test_hidden_zeros_are_their_own_class():
@@ -634,7 +648,7 @@ def test_array_members_missing_from_the_file():
     st = Styles()
     d = st.xf('#,##0;(#,##0);\\-')
     anchor = f'<c r="A1"><f t="array" ref="A1:C1">B9:D9*1</f><v>5</v></c>'
-    raises(lambda: run(book([("S", f'<sheetData><row r="1">{anchor}</row></sheetData>')], st)),
+    graded("unwritten_array_member", lambda: run(book([("S", f'<sheetData><row r="1">{anchor}</row></sheetData>')], st)),
            "S!A1:C1", "2 member cell(s) not written in the file", "'General'")
     # the members' column style shows a zero as a dash -> no value needed
     cols = f'<cols><col min="2" max="3" width="9" style="{d}"/></cols>'
@@ -646,7 +660,7 @@ def test_array_members_missing_from_the_file():
     assert v["decision"] == "pass", v
     # two rows: row 2 has no custom style and the columns are General -> its members may show '0'
     anchor2 = anchor.replace('ref="A1:C1"', 'ref="A1:C2"')
-    raises(lambda: run(book([("S", f'<sheetData>{row}{anchor2}</row><row r="2"/></sheetData>')], st)),
+    graded("unwritten_array_member", lambda: run(book([("S", f'<sheetData>{row}{anchor2}</row><row r="2"/></sheetData>')], st)),
            "S!A1:C2", "5 member cell(s)")
     # all members written: nothing missing
     full = (f'<sheetData><row r="1">{anchor}<c r="B1"><v>1</v></c><c r="C1"><v>2</v></c></row></sheetData>')
@@ -657,7 +671,7 @@ def test_array_members_missing_from_the_file():
     assert v["decision"] == "pass", v
     # a dynamic-array anchor (cm=) with its spill members missing
     dyn = '<c r="A1" cm="1"><f t="array" ref="A1:A3">SEQUENCE(3)</f><v>1</v></c>'
-    raises(lambda: run(book([("S", f'<sheetData><row r="1">{dyn}</row></sheetData>')], st)),
+    graded("unwritten_array_member", lambda: run(book([("S", f'<sheetData><row r="1">{dyn}</row></sheetData>')], st)),
            "S!A1:A3", "2 member cell(s)")
 
 
@@ -673,7 +687,7 @@ def test_excel_2026_10_03_show_zeros_off_zero_section():
     v = run(book([("S", sheet(cells, head=HEAD_SZ))], st))
     assert locs(v) == ["S!A1", "S!A2", "S!A6"] or sorted(locs(v)) == ["S!A1", "S!A2", "S!A6"], locs(v)
     cond = st.xf('[>0]0;[<0]-0;0')
-    raises(lambda: run(book([("S", sheet([c("A1", cond, 0)], head=HEAD_SZ))], st)), "showZeros=0", "S!A1")
+    graded("unverified_number_format", lambda: run(book([("S", sheet([c("A1", cond, 0)], head=HEAD_SZ))], st)), "showZeros=0", "S!A1")
     assert run(book([("S", sheet([c("A1", cond, 0)]))], st))["decision"] == "fail"      # normal sheet: '0'
 
 
@@ -767,7 +781,7 @@ def test_review2_show_zeros_off_under_cf_format():
     assert run(book([("S", sheet(f0, head=HEAD_SZ, tail=eq0(dx_dash)))], st, app=APP_OPX))["decision"] == "pass"
     # ... but with a base format that prints the zero, the value is needed and refused (not a CF matter)
     f3 = [c("A1", three, 0, f="B1*0"), c("B1", 0, 4)]
-    raises(lambda: run(book([("S", sheet(f3, head=HEAD_SZ, tail=eq0(dx_digit)))], st, app=APP_OPX)), "S!A1")
+    graded("untrusted_value", lambda: run(book([("S", sheet(f3, head=HEAD_SZ, tail=eq0(dx_digit)))], st, app=APP_OPX)), "S!A1")
     # a non-zero value under the CF format is not a zero: pass
     assert run(book([("S", sheet([c("A1", 0, 5)], head=HEAD_SZ, tail=eq0(dx_digit)))], st))["decision"] == "pass"
 
@@ -791,7 +805,7 @@ def test_review2_mixed_date_codes():
         assert classify(0.0, x)[0] == DIGIT, x
     assert N.parse_format("General").verified
     assert not hasattr(c66, "mixed_date_section")
-    raises(lambda: one("0 bps"), "S!A1", "'0 bps'", "not verified")
+    graded("unverified_number_format", lambda: one("0 bps"), "S!A1", "'0 bps'", "not verified")
     assert one("0 bps", value=25)["decision"] == "pass"                 # not a zero: never judged
     assert one("0 bps", value="x")["decision"] == "pass"                # text: not numeric
     assert one("h:mm:ss.000")["stats"]["zero_cells_by_display"] == {"base_datetime": 1}

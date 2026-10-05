@@ -344,26 +344,25 @@ def test_task_meta_file_extension():
         assert r.summary["delivered_filename"] == "Deliverable.xls"
         ok = run(make_task(root, origin="Model.XLSX"))
         assert ok.harness_verdicts[key(77)]["decision"] == "pass"
-        # no sidecar: File extension (.xlsx) (77) raises, loudly, naming the check and the file
+        # no sidecar: File extension (.xlsx) (77) judges the format from the content (maintainer 2026-10-05:
+        # every attempt graded; it raised until then) and records why
         lost = make_task(root, origin=None)
-        try:
-            run(lost)
-        except D.DetChecksError as err:
-            msg = str(err)
-            assert "File extension (.xlsx) (77)" in msg and str(lost / "ai_attempt.xlsx") in msg
-            assert workbook_properties.ORIGIN_FILENAME in msg and "before the LLM call" in msg
-            assert set(err.failures) == {key(77)} and isinstance(err, det_api.GradingError)
-        else:
-            raise AssertionError("missing delivered filename did not raise")
+        r = run(lost)
+        e = r.harness_verdicts[key(77)]
+        assert e["decision"] == "pass" and e["stats"]["delivered_name_unknown"] == "missing", e["stats"]
+        assert e["stats"]["delivered_filename"] is None and e["stats"]["judged_from_content_as"] == ".xlsx"
+        d = e["stats"]["defaults"]["delivered_name_unknown"]
+        assert d["count"] == 1 and "judged from its content as .xlsx" in d["examples"][0], d
         art = strict_json((lost / D.ARTEFACT_FILENAME).read_text())
-        assert art["status"] == "error" and key(77) in art["failures"]
-        assert art["task_meta"] == {"requires_external_links": False} and art["file"]["origin_problem"] == "missing"
+        assert art["status"] == "ok" and art["file"]["origin_problem"] == "missing"
+        assert art["task_meta"] == {"requires_external_links": False, "delivered_filename_problem": "missing"}
 
 
 def test_malformed_origin_sidecar_fails_loudly():
-    """A _attempt_origin.json that is not JSON, not an object, or has no usable 'original_filename'
-    fails File extension (.xlsx) (77) as MALFORMED (not missing), naming the sidecar file, with
-    det_checks.json written (before: a JSON list crashed with AttributeError, no artefact)."""
+    """A _attempt_origin.json that is not JSON, not an object, or has no usable 'original_filename' is
+    recorded as MALFORMED (not missing), with det_checks.json written; File extension (.xlsx) (77) then
+    judges the format from the file's content (maintainer 2026-10-05: every attempt graded; until then
+    it raised, naming the sidecar)."""
     bad = {"not JSON": "{not json", "a JSON list": '["Model.xlsx"]', "a number name": '{"original_filename": 123}',
            "an empty name": '{"original_filename": ""}', "no name": '{"source": "s3://x"}'}
     with tempfile.TemporaryDirectory() as tmp, fake_libreoffice():
@@ -372,17 +371,11 @@ def test_malformed_origin_sidecar_fails_loudly():
             folder = make_task(root, origin=None)
             sidecar = folder / workbook_properties.ORIGIN_FILENAME
             sidecar.write_text(raw)
-            try:
-                run(folder)
-            except D.DetChecksError as err:
-                msg = str(err)
-                assert set(err.failures) == {key(77)}, (what, err.failures)
-                assert "File extension (.xlsx) (77)" in msg and f"{sidecar} is malformed" in msg, (what, msg)
-                assert "missing" not in msg.split(str(sidecar))[1].split(")")[0], (what, msg)
-            else:
-                raise AssertionError(f"{what}: no DetChecksError")
+            r = run(folder)
+            e = r.harness_verdicts[key(77)]
+            assert e["decision"] == "pass" and e["stats"]["delivered_name_unknown"].startswith("malformed"), (what, e)
             art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
-            assert art["status"] == "error" and art["stage"] == "grade" and key(77) in art["failures"], what
+            assert art["status"] == "ok", what
             assert art["file"]["origin_problem"].startswith("malformed") and art["file"]["origin_sidecar"] is False
         # File extension (.xlsx) (77) gated out for the task: nothing needs the delivered name (recorded)
         folder = make_task(root, origin=None)
@@ -450,6 +443,9 @@ def test_recalc_reads_the_delivered_file_with_the_configured_policy():
         assert p.excel_allowed is False and p.lo_timeout_s == 600
         # the memory guard of 2026-10-05 from det_checks.libreoffice_*
         assert (p.lo_retries, p.lo_min_free_pct, p.lo_max_wait_s, p.lo_lock_path) == (3, 25.0, 3600.0, None)
+        # the lock wait is capped (det_checks.libreoffice_max_lock_wait_minutes 180; maintainer 2026-10-05)
+        assert p.lo_max_lock_wait_s == 3 * 3600.0 and p.guard_settings().max_lock_wait_s == 3 * 3600.0
+        assert D.load_settings().guard_settings().max_lock_wait_s == 3 * 3600.0
         assert p.lo_log is D._lo_log
         assert Path(p.workdir) == folder / D.RECALC_DIRNAME
         assert Path(c["out_dir"]).is_relative_to(folder / D.RECALC_DIRNAME)

@@ -13,6 +13,9 @@ recalculation (core/recalc.libreoffice_recalc), the answer check's recalculation
      process-wide threading lock, so worker threads of one driver queue too.  The lock is held for
      the whole run; a waiting grader logs who holds it.  flock is released by the kernel when the
      holder dies, and the lock file descriptor is never inherited by LibreOffice (O_CLOEXEC).
+     The wait for the lock is capped at `max_lock_wait_s` (3 hours; Patrick 2026-10-05: every
+     attempt graded - one stuck file cannot stall a run indefinitely): after that the run fails
+     loudly - LibreOfficeUnavailable (retry_later), like the other LibreOffice failures.
   2. Memory first.  Holding the lock, wait until the machine's free memory (macOS
      `memory_pressure -Q`, "System-wide memory free percentage"; Linux /proc/meminfo MemAvailable /
      MemTotal) is at least `min_free_pct`, logging while it waits.  After `max_wait_s` the run fails
@@ -66,6 +69,8 @@ class GuardSettings:
     lock_path: Optional[str] = None      # None / "": default_lock_path()
     min_free_pct: float = 25.0           # free memory (%) required before LibreOffice starts; 0 = no wait
     max_wait_s: float = 3600.0           # longest wait for that memory, then LibreOfficeUnavailable
+    max_lock_wait_s: float = 3 * 3600.0  # longest wait for the machine-wide lock, then LibreOfficeUnavailable
+                                         # (Patrick 2026-10-05: every attempt graded - a stuck file cannot stall a run)
     retries: int = 3                     # extra tries after a failed run, the timeout doubled each time
     poll_s: float = 15.0                 # memory re-read interval while waiting
     log_every_s: float = 60.0            # a waiting grader logs at most this often
@@ -86,6 +91,8 @@ class GuardSettings:
             out.append(f"min_free_pct must be in [0, 100), got {self.min_free_pct!r}")
         if not float(self.max_wait_s) >= 0:
             out.append(f"max_wait_s must be >= 0, got {self.max_wait_s!r}")
+        if not float(self.max_lock_wait_s) >= 0:
+            out.append(f"max_lock_wait_s must be >= 0, got {self.max_lock_wait_s!r}")
         if not float(self.poll_s) > 0:
             out.append(f"poll_s must be > 0, got {self.poll_s!r}")
         return out
@@ -186,17 +193,34 @@ def _holder(path: str) -> str:
 
 class machine_lock:
     """Context manager: hold the machine-wide LibreOffice lock (module doc, point 1).  Re-entrant within a
-    thread.  `waited_s` is the time spent waiting for it."""
+    thread.  `waited_s` is the time spent waiting for it.  max_wait_s: the longest wait for the lock (the
+    process-wide lock and the lock file together) before LibreOfficeUnavailable (retry_later); None = no
+    limit.  clock / sleep: test hooks (fakes) for that wait."""
 
     def __init__(self, path: Optional[str] = None, *, what: str = "run LibreOffice", log: Optional[Callable] = None,
-                 log_every_s: float = 60.0):
+                 log_every_s: float = 60.0, max_wait_s: Optional[float] = None,
+                 clock: Optional[Callable[[], float]] = None, sleep: Optional[Callable[[float], None]] = None):
         self.path = path or default_lock_path()
         self.what = what
         self.log = log or _stderr_log
         self.log_every_s = log_every_s
+        self.max_wait_s = max_wait_s
+        self.clock = clock or time.monotonic
+        self.sleep = sleep or time.sleep
         self.waited_s = 0.0
         self._fd = None
         self._nested = False
+
+    def _give_up(self, t0: float, held_by: str):
+        """LibreOfficeUnavailable once the lock has been waited for longer than max_wait_s (Patrick 2026-10-05:
+        every attempt graded - a stuck LibreOffice run elsewhere cannot stall this grading indefinitely)."""
+        waited = self.clock() - t0
+        if self.max_wait_s is None or waited < self.max_wait_s:
+            return
+        raise LibreOfficeUnavailable(
+            f"LibreOffice was not started to {self.what}: the machine-wide LibreOffice lock {self.path} stayed busy "
+            f"({held_by}) for {waited / 60:.0f} min, longer than the maximum wait of {self.max_wait_s / 60:g} min - "
+            f"not graded now; re-run this attempt later")
 
     def __enter__(self):
         depth = getattr(_HELD, "depth", 0)
@@ -204,12 +228,22 @@ class machine_lock:
             _HELD.depth = depth + 1
             self._nested = True
             return self
-        t0 = time.monotonic()
+        t0 = self.clock()
         if not _PROCESS_LOCK.acquire(blocking=False):
             self.log(f"waiting for the LibreOffice lock to {self.what}: another grading thread of this process "
                      f"is running LibreOffice")
-            while not _PROCESS_LOCK.acquire(timeout=self.log_every_s):
-                self.log(f"still waiting for the LibreOffice lock to {self.what} ({time.monotonic() - t0:.0f} s)")
+            if self.max_wait_s is None:
+                while not _PROCESS_LOCK.acquire(timeout=self.log_every_s):
+                    self.log(f"still waiting for the LibreOffice lock to {self.what} ({self.clock() - t0:.0f} s)")
+            else:
+                logged_at = self.clock()
+                while not _PROCESS_LOCK.acquire(blocking=False):
+                    self._give_up(t0, "another grading thread of this process")
+                    now = self.clock()
+                    if now - logged_at >= self.log_every_s:
+                        self.log(f"still waiting for the LibreOffice lock to {self.what} ({now - t0:.0f} s)")
+                        logged_at = now
+                    self.sleep(FLOCK_POLL_S)
         try:
             self._fd = self._open()
             if fcntl is not None:
@@ -219,19 +253,25 @@ class machine_lock:
                         fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         break
                     except OSError:
-                        now = time.monotonic()
+                        now = self.clock()
+                        if self.max_wait_s is not None and now - t0 >= self.max_wait_s:
+                            self._give_up(t0, f"held by {_holder(self.path)}")
                         if logged_at is None or now - logged_at >= self.log_every_s:
-                            self.log(f"waiting for the machine-wide LibreOffice lock {self.path} to {self.what} "
-                                     f"(held by {_holder(self.path)}; waited {now - t0:.0f} s)")
-                            logged_at = now
-                        time.sleep(FLOCK_POLL_S)
+                            held_by = _holder(self.path)
+                            # the holder writes who it is just after taking the lock: give it a moment before
+                            # the first log line says "another process"
+                            if not (logged_at is None and held_by == "another process" and now - t0 < 1.0):
+                                self.log(f"waiting for the machine-wide LibreOffice lock {self.path} to {self.what} "
+                                         f"(held by {held_by}; waited {now - t0:.0f} s)")
+                                logged_at = now
+                        self.sleep(FLOCK_POLL_S)
             self._mark()
         except BaseException:
             self._close()
             _PROCESS_LOCK.release()
             raise
         _HELD.depth = 1
-        self.waited_s = time.monotonic() - t0
+        self.waited_s = self.clock() - t0
         return self
 
     def _open(self) -> int:
@@ -296,7 +336,8 @@ def run_guarded(run_once: Callable[[float], object], *, timeout_s: float, settin
     """run_once(timeout) under the guard (module doc): for each try - the first with `timeout_s`, each retry
     with twice the previous timeout - take the machine-wide lock, wait for memory, run.  Returns run_once's
     result.  A try fails when run_once raises an Exception (KeyboardInterrupt / SystemExit pass straight
-    through).  Raises LibreOfficeUnavailable when the memory wait times out or every try failed."""
+    through).  Raises LibreOfficeUnavailable when the lock wait (max_lock_wait_s) or the memory wait times out,
+    or every try failed."""
     s = settings or GuardSettings()
     bad = s.problems()
     if bad:
@@ -306,7 +347,8 @@ def run_guarded(run_once: Callable[[float], object], *, timeout_s: float, settin
     errors = []
     for k in range(tries):
         t = float(timeout_s) * (2 ** k)
-        with machine_lock(s.lock(), what=what, log=log, log_every_s=s.log_every_s):
+        with machine_lock(s.lock(), what=what, log=log, log_every_s=s.log_every_s, max_wait_s=s.max_lock_wait_s,
+                          clock=s.clock, sleep=s.sleep):
             wait_for_memory(s, what=what, log=log)
             t0 = time.monotonic()
             try:

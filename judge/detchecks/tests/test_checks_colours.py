@@ -161,6 +161,20 @@ def locs(v):
     return [m["location"] for m in v["mistakes"]]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -349,12 +363,14 @@ def test_49_pass_and_contract():
 
 
 def test_49_no_fallback():
-    # an unresolvable font colour on a formula cell raises (never assumed black)
+    # an unresolvable font colour on a formula cell: read as automatic (black) (Patrick 2026-10-05: every
+    # attempt graded; it raised until then), recorded in stats.defaults
     p = book("49_badtheme.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "B1*2")])), None)])
-    raises(lambda: run(p, 49), "cannot be resolved")
-    for n in (50, 51):                   # an own-sheet calculation: its colour cannot fail 50 or 51
+    for n in (49, 50, 51):               # an own-sheet calculation in black passes all three
         v = run(p, n)
         assert v["decision"] == "pass" and v["stats"]["font_families"]["unresolved"] == 1, v
+        d = v["stats"]["defaults"]["unresolved_colour"]
+        assert d["count"] == 1 and "'Calc'!A1" in d["examples"][0] and "automatic (black)" in d["examples"][0], d
     # green formula whose INDIRECT address is computed (not one cell's content): cannot be decided -> raise
     p = book("49_indirect.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "INDIRECT(A20&B20)*2")])), None),
                                   ("Inputs", sheet(), None)])
@@ -366,7 +382,7 @@ def test_49_no_fallback():
     # malformed formula text: raises only where the decision needs the class (green), not on black
     # cells, and not on blue ones (blue is wrong in every class: the cell fails)
     p = book("49_malformed.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "SUM(C16:C22")])), None)])
-    raises(lambda: run(p, 49))
+    graded("unparsable_formula", lambda: run(p, 49))
     p = book("49_malformed_black.xlsx", [("Calc", sheet((1, [c("A1", BLACK, "SUM(C16:C22")])), None)])
     assert run(p, 49)["decision"] == "pass"
 
@@ -522,19 +538,21 @@ def test_bare_table_name():
 
 
 def test_unresolved_colour_raises_only_where_needed():
-    """Finding raise-where-class-cannot-matter (a): 50 / 51 need a cell's colour only when the
-    cell is a pointer / reads another workbook."""
+    """An unresolvable font colour is read as automatic (black) (Patrick 2026-10-05: every attempt graded;
+    until then 49 / 50 / 51 raised where the cell's class made the colour decide): a black calculation passes
+    49, a black pointer fails 50, a black external link fails 51 - each recorded in stats.defaults."""
     data = sheet((1, [c("A1", BADTHEME, "SUM(B2:B9)"), c("B1", BLACK, "Inputs!B5"), c("C1", IDX12, "C2*2")]))
     p = book("unres_own.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
-    raises(lambda: run(p, 49), "cannot be resolved")
+    v = run(p, 49)                                              # A1 read as black passes; C1 (indexed 12) fails
+    assert locs(v) == ["Calc!C1"] and v["stats"]["defaults"]["unresolved_colour"]["count"] == 1, v["stats"]
     assert locs(run(p, 50)) == ["Calc!B1"]                      # B1: a real black pointer
-    v = run(p, 51)
-    assert v["decision"] == "pass" and v["stats"]["unresolved_colour_cells_not_needing_it"] == 0, v["stats"]
+    assert run(p, 51)["decision"] == "pass"
     p = book("unres_ptr.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "Inputs!B5")])), None), ("Inputs", sheet(), None)])
-    raises(lambda: run(p, 50), "cannot be resolved")
+    v = run(p, 50)
+    assert locs(v) == ["Calc!A1"] and "black" in v["mistakes"][0]["description"], v
     assert run(p, 51)["decision"] == "pass"
     p = book("unres_ext.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "[1]Prices!A1*2")])), None)], ext_links=1)
-    raises(lambda: run(p, 51), "cannot be resolved")
+    assert locs(run(p, 51)) == ["Calc!A1"]
     assert run(p, 50)["decision"] == "pass"
 
 
@@ -593,9 +611,9 @@ def test_49_colour_wrong_in_every_class_needs_no_class():
     # since 2026-10-03 a non-black pointer / external is not 49's business, so a grey formula that
     # might be one ('[' could be a workbook reference) needs its class: unclassifiable -> raise
     p = book("49_grey_unknown_table.xlsx", [("Calc", sheet((1, [c("A1", GREY50, "SUM(Nope[Col])")])), None)])
-    raises(lambda: run(p, 49), "table 'Nope' is not defined")
+    graded("unparsable_formula", lambda: run(p, 49), "table 'Nope' is not defined")
     p = book("49_green_unknown_table.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "SUM(Nope[Col])")])), None)])
-    raises(lambda: run(p, 49), "table 'Nope' is not defined")
+    graded("unparsable_formula", lambda: run(p, 49), "table 'Nope' is not defined")
 
 
 def test_indirect_addresses():
@@ -721,9 +739,9 @@ def test_pointers_judged_only_by_50():
     # an unresolvable font colour on a pointer does not matter to 49 (it does to 50)
     p = book("pointer_bad_colour.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "Inputs!B5")])), None), ("Inputs", sheet(), None)])
     assert run(p, 49)["decision"] == "pass"
-    raises(lambda: run(p, 50), "cannot be resolved")
+    assert locs(run(p, 50)) == ["Calc!A1"]                                 # read as black (Patrick 2026-10-05)
     p = book("own_bad_colour.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "B5*2")])), None), ("Inputs", sheet(), None)])
-    raises(lambda: run(p, 49), "cannot be resolved")
+    assert run(p, 49)["decision"] == "pass"
 
 
 def test_light_text_on_dark_fill_no_exemption():
@@ -846,10 +864,13 @@ def test_unresolvable_colours_2026_10_04():
         for s_, why in ((1, "custom <indexedColors> entry 14"), (2, "6 or 8 hex digits"), (3, 'tint="2"'),
                         (4, "64 and 65")):
             p = book(f"unres26_{s_}.xlsx", [("Calc", sheet((1, [c("A1", s_, "1+1")])), None)])
-            raises(lambda: run(p, 49), "cannot be resolved", why)      # an OWN formula: its colour decides 49
+            v = run(p, 49)                                             # read as automatic (black): passes 49
+            assert v["decision"] == "pass" and why in v["stats"]["defaults"]["unresolved_colour"]["examples"][0], v
             assert run(p, 50)["decision"] == "pass" and run(p, 51)["decision"] == "pass"
         p = book("unres26_ptr.xlsx", [("Calc", sheet((1, [c("A1", 1, "Inputs!B5")])), None), ("Inputs", sheet(), None)])
-        raises(lambda: run(p, 50), "cannot be resolved", "custom <indexedColors> entry 14")
+        v = run(p, 50)                                                 # a black pointer fails 50
+        assert locs(v) == ["Calc!A1"] and "custom <indexedColors> entry 14" in \
+            v["stats"]["defaults"]["unresolved_colour"]["examples"][0], v
         assert run(p, 49)["decision"] == "pass"                        # a pointer is not 49's business
         p = book("unres26_valid.xlsx", [("Calc", sheet((1, [c("A1", 5, "1+1")])), None)])
         v = run(p, 49)

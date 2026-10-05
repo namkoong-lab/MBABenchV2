@@ -708,10 +708,14 @@ class C73(Check):
         for dfr in rec.deferred:
             d, m, px, span = dfr
             cell = d[6]
-            if trusted_only and not cell.value_trusted:
-                left.append(dfr)
+            if not cell.value_trusted:
+                if trusted_only:
+                    left.append(dfr)
+                    continue
+                # Patrick 2026-10-05 (every attempt graded): an untrusted value is skipped (it needs nothing)
+                self.note_default("untrusted_value", f"{location(cell.sheet, d[7])} (source={cell.value_source})")
                 continue
-            v = self.require_value(cell)              # raises when untrusted (no fallback)
+            v = self.require_value(cell)
             self._values_read.add((cell.sheet, d[7]))
             text = self._text_of(v, d[4])
             if text == "":
@@ -742,7 +746,7 @@ class C73(Check):
             return                                   # the rest stay undecided (stats); nothing raised
         for c in open_rows:
             if c.status == "values":
-                self._settle_with_values(c, trusted_only=False)     # raises on the first untrusted value
+                self._settle_with_values(c, trusted_only=False)     # untrusted values skipped (recorded)
 
     # ------------------------------------------------------------------ verdict
     def finish(self) -> dict:

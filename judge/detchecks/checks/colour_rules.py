@@ -108,6 +108,8 @@ RED_HUE_HIGH = 340.0          # FF0000, C00000, C0504D, 9C0006, 800000; not FF66
 RED_MIN_S = 0.50
 RED_MIN_V = 0.35
 
+DEFAULT_FONT_ARGB = "FF000000"   # an unresolvable font colour reads as automatic = black (Patrick 2026-10-05)
+
 OWN, CROSS, POINTER, EXTERNAL = "own", "cross", "pointer", "external"
 CLASSES = (OWN, CROSS, POINTER, EXTERNAL)
 UNCLASSIFIED = "unclassified"     # 49 only: colour wrong in every class, class could not be worked out
@@ -956,7 +958,6 @@ class ColourCheck(Check):
     needs_cells = True
     sheet_kinds = ("worksheet", "macrosheet", "dialogsheet")
     safe_family = "black"          # cells in this family can never fail the check
-    colour_always_matters = False  # True: an unresolvable font colour raises whatever the class
 
     def start(self, wb):
         super().start(wb)
@@ -971,7 +972,6 @@ class ColourCheck(Check):
         self.n_empty_markers = 0
         self.n_textless_arrays = 0
         self.n_classified = 0
-        self.n_unresolved_colour_skipped = 0
         self.fam_counts = {"black": 0, "green": 0, "red": 0, "other": 0, "unresolved": 0}
         self.class_counts = {c: 0 for c in CLASSES + (UNCLASSIFIED,)}
         self.bad_counts: dict = {}
@@ -984,22 +984,20 @@ class ColourCheck(Check):
         self._hyper: dict = {}         # memo: formula text -> is_hyperlink_formula
 
     def style_colour(self, s: int, where: str) -> tuple:
-        """(argb, family) of a style's font, or (None, None) when the colour cannot be resolved
-        (never assumed black; colour_error() says why)."""
+        """(argb, family) of a style's font.  A colour the core cannot resolve (styles.UnknownColour) is read as
+        Excel's default for a font colour, automatic = black (Patrick 2026-10-05: every attempt graded;
+        recorded by cell() in stats.defaults.unresolved_colour)."""
         hit = self._fam_cache.get(s)
         if hit is None:
             font = self.st.font(s)
             argb = self.st.resolve(font.color, "font")
             if is_unknown(argb):
-                hit = (None, None, f"{self.key}: font colour {font.color.describe()} of style {s} "
-                                   f"(first used at {where}) cannot be resolved ({argb.why})")
+                hit = (DEFAULT_FONT_ARGB, "black", f"font colour {font.color.describe()} of style {s} cannot be "
+                                                   f"resolved ({argb.why}): read as automatic (black)")
             else:
                 hit = (argb, family(argb), None)
             self._fam_cache[s] = hit
         return hit[0], hit[1]
-
-    def colour_error(self, s: int, where: str) -> GradingError:
-        return GradingError(self._fam_cache[s][2] + f"; it decides {where}")
 
     def sheet_start(self, head):
         self.sheets_seen += 1
@@ -1029,7 +1027,12 @@ class ColourCheck(Check):
             self._shared[f.si] = (f.text, cell.row, cell.col)
         where = f"'{own}'!{cell.ref}"
         argb, fam = self.style_colour(cell.s, where)
-        self.fam_counts[fam or "unresolved"] += 1
+        defaulted = self._fam_cache[cell.s][2]
+        if defaulted:
+            self.fam_counts["unresolved"] += 1
+            self.note_default("unresolved_colour", f"{where}: {defaulted}")
+        else:
+            self.fam_counts[fam] += 1
         if fam == self.safe_family:
             return
         # the formula that decides the class
@@ -1046,26 +1049,29 @@ class ColourCheck(Check):
         elif f.kind == "shared" and not f.text:                           # shared child: the master's class
             child = True
             info = self._shared.get(f.si)
-            text = info[0] if info is not None else cell.formula_text      # no master: formula_text raises
+            if info is not None:
+                text = info[0]
+            else:
+                try:
+                    text = cell.formula_text                               # no master: formula_text raises
+                except GradingError as e:
+                    # Patrick 2026-10-05 (every attempt graded): a formula text that cannot be read is skipped
+                    self.note_default("unparsable_formula", f"{where}: {e}")
+                    return
             fkey = ("si", f.si)
         else:
             text, fkey, info = f.text, ("cell", cell.row, cell.col), (f.text, cell.row, cell.col)
         if text is not None and self._is_hyperlink(text):
             self.n_hyperlink += 1                  # navigation link: any colour (ruling 2026-10-03)
             return
-        if fam is None and self.colour_always_matters:
-            raise self.colour_error(cell.s, where)
         if text is None:
             cls = Cls(DATA_TABLE_CLASS)
         else:
             if not self.prefilter(text, fam, own):
                 return
             cls = self._classify_cell(text, child, cell, fam)
-        if fam is None:
-            if self.colour_matters(cls):
-                raise self.colour_error(cell.s, where)
-            self.n_unresolved_colour_skipped += 1
-            return
+            if cls is None:
+                return                              # unparsable: skipped (recorded)
         self.n_classified += 1
         self.class_counts[cls.kind] += 1
         self._child = child
@@ -1089,7 +1095,11 @@ class ColourCheck(Check):
                 self._hyper[text] = hit
         return hit
 
-    def _classify_cell(self, text: str, child: bool, cell, fam: str) -> Cls:
+    def _classify_cell(self, text: str, child: bool, cell, fam: str) -> Optional[Cls]:
+        """The cell's class; None when it is needed but the formula cannot be read - malformed text, or a
+        structured reference / bare table name whose table the workbook does not define (Excel cannot parse
+        such a formula either) or whose table parts cannot be read: the cell is skipped (Patrick 2026-10-05:
+        every attempt graded; stats.defaults.unparsable_formula)."""
         sheets = self.sheets_needed(fam, text)
         try:
             cls = self.clf.classify(text, self._sheet, sheets_needed=sheets)
@@ -1100,7 +1110,8 @@ class ColourCheck(Check):
             return cls
         except GradingError as e:
             if self.class_needed(fam, text):
-                raise
+                self.note_default("unparsable_formula", f"'{self._sheet}'!{cell.ref}: {e}")
+                return None
             return Cls(UNCLASSIFIED, note=str(e))
 
     # -- subclass API
@@ -1118,11 +1129,6 @@ class ColourCheck(Check):
         formula reads, only on whether it reads another workbook (51): a structured reference
         or bare table name whose table is not defined or whose table parts cannot be read then
         gives Cls.sheets_unknown (kind UNCLASSIFIED, never EXTERNAL) instead of raising."""
-        return True
-
-    def colour_matters(self, cls: Cls) -> bool:
-        """Whether the font colour decides this cell, given its class (used when the colour
-        cannot be resolved: then the check raises only if it matters)."""
         return True
 
     def judge(self, cls: Cls, fam: str, argb: str, cell):
@@ -1196,7 +1202,6 @@ class ColourCheck(Check):
                 "textless_array_cells_ignored": self.n_textless_arrays,
                 "font_families": dict(self.fam_counts),
                 "hyperlink_cells_ignored": self.n_hyperlink,
-                "unresolved_colour_cells_not_needing_it": self.n_unresolved_colour_skipped,
                 "cells_classified": self.n_classified,
                 "classified_by_class": dict(self.class_counts),
                 "offending_cells": sum(self.bad_counts.values()),

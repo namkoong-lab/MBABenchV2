@@ -4,6 +4,7 @@ This is the reference for writing a deterministic check. You should not need to 
 
 ## 0. Ground rules
 
+- **Every attempt graded (Patrick 2026-10-05).** Where a check cannot decide (an unresolvable colour, an unverified number format, a table style, an unwritten array member, an untrusted value, an unknown delivered name, unparsable formula text) it decides by a fixed default (`checks/base.py` `DEFAULT_RULES`) and records each use with `self.note_default(kind, example)` in `stats.defaults.<kind>` (`count`, `rule`, `examples`). Bugs, a missing LibreOffice binary and config errors still raise.
 - **No fallback.** If a check cannot grade a file, it raises `detchecks.errors.GradingError` with a clear message. Examples: an unreadable format, a value it needs that is missing or untrusted, an internal error. A check never quietly passes, fails, or defers to the LLM. The engine turns any other exception inside a check into a `GradingError` that names the check and the file.
 - **Whole delivered workbook.** Every sheet counts, including tabs inherited from the starting file and hidden sheets. There is no starting-file diff.
 - **Streaming only.** Check code never calls `openpyxl.load_workbook`. The engine streams each sheet once, and checks see it through hooks. Buffer candidates, not every cell; some toys have 10 million cells.

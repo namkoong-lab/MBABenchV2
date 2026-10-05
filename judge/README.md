@@ -676,7 +676,8 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   - one LibreOffice at a time on the machine, across all grading processes and
     worker threads: an exclusive lock on `det_checks.libreoffice_lock_path`
     (null = `/tmp/mbabench_libreoffice.lock`, the system temp dir; a waiting
-    grader logs who holds it; the kernel releases it when a grader dies);
+    grader logs who holds it; the kernel releases it when a grader dies), waited for at most
+    `det_checks.libreoffice_max_lock_wait_minutes` (180), so one stuck file cannot stall a run;
   - holding the lock, wait until `det_checks.libreoffice_min_free_pct` (25) of
     the machine's memory is free (macOS `memory_pressure`, Linux
     `/proc/meminfo`), logging while it waits, for at most
@@ -695,6 +696,13 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   `run_summary.json`). The answer check stays score-neutral for every other
   error, but never swallows this one (it would read uncomputed answers as
   unanswered).
+- **Every attempt graded: defaults instead of "cannot decide"** (the maintainer, 2026-10-05):
+  an unresolvable colour is Excel's default for its slot (font black, fill none); an unverified
+  number format is graded by its best rendering; a table-style-dependent cell in No white-on-white
+  hiding (94) is visible; unwritten array members and untrusted formula values are skipped; an
+  unknown delivered name makes File extension (.xlsx) (77) judge the format from the content;
+  unparsable formula text is skipped. Each use is in the verdict's `stats.defaults` (count +
+  examples); the list of paths that still raise is in `detchecks/CHANGELOG_core.md`.
 - **Conditional formats never stop a grading** (the maintainer, 2026-10-05):
   Negatives in parentheses (65), Zeros as dashes (66), Sufficient column widths
   (69) and No white-on-white hiding (94) evaluate conditional-format rules with
@@ -714,12 +722,11 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   check's `stats.cf_assumptions` (count + examples). Corpus attempt 2924
   (`Cover!D4`, rule `LEFT($D$4,4)="FAIL"`) is now graded.
 - **Task metadata**: File extension (.xlsx) (77) judges the delivered file name
-  from the `_attempt_origin.json` sidecar (`original_filename`); without it the
-  check raises, so a local folder needs the sidecar. A malformed sidecar (not
-  JSON, a JSON value that is not an object, no non-empty `original_filename`)
-  raises the same way, the error naming the file as malformed; where File
-  extension (.xlsx) (77) is not graded for the task, nothing depends on the
-  sidecar and the problem is only recorded. No external links (95) runs
+  from the `_attempt_origin.json` sidecar (`original_filename`). Without it, or
+  with a malformed sidecar (not JSON, a JSON value that is not an object, no
+  non-empty `original_filename`), it judges the format from the file's content
+  (maintainer 2026-10-05: every attempt graded; recorded as
+  `delivered_name_unknown` with why, `missing` or `malformed: ...`). No external links (95) runs
   with `requires_external_links: false` (no task requires them).
 - **Switches**: `--det-checks harness|llm|off` on `grade_from_db`,
   `grade_with_orchestration`, `grade_toy` and `judge.py --single-pass`; the
@@ -875,8 +882,8 @@ JUDGE_SKIP_SUITABILITY=1 python judge/main_scripts/judge.py \
   openpyxl without a recalculation step have none — run with
   `--run-calculation` or recalculate them yourself.
 - The deterministic checks (judge v13) grade the folder before the LLM:
-  `_attempt_origin.json` must name the delivered file (File extension (.xlsx)
-  (77) fails the run without it), LibreOffice must be installed for workbooks
+  `_attempt_origin.json` should name the delivered file (without it File extension
+  (.xlsx) (77) judges the format from the content), LibreOffice must be installed for workbooks
   not saved by Excel (any size; one LibreOffice at a time, started when memory
   is free), an attempt delivered as a legacy .xls is graded only with
   `--run-calculation` (as in v12), and `--det-checks llm` / `off` keeps the

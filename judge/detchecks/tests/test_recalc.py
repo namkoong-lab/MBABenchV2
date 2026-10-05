@@ -206,7 +206,8 @@ def test_no_recalc_policy_keeps_old_behaviour():
     """Without a RecalcPolicy the engine grades from the file's caches under the trust policy
     (openpyxl caches untrusted -> GradingError), exactly as before."""
     p = book([("S", sheet([c("A1", 0, f="1/0")]))], app=APP_OPX, excel=False)
-    raises(lambda: grade(p, checks=[22]), "untrusted")
+    v = grade(p, checks=[22])                     # skipped since Patrick 2026-10-05 (every attempt graded)
+    assert next(iter(v.values()))["stats"]["defaults"]["untrusted_value"]["count"] >= 1, v
     assert isinstance(R.excel_available(), bool)
 
 

@@ -66,7 +66,7 @@ from ..errors import GradingError
 from ._cfeval import (UNKNOWN, Unevaluable, cellis_fires, cf_env, expression_fires, is_unevaluable, literal,
                       prefetch, preset_style)
 from ._cftext import text_rule_fires
-from ._fills import dxf_fill_paints
+from ._fills import DEFAULT_FONT, dxf_fill_paints, known_paint, paint_unknowns
 from .base import Check
 
 # ---------------------------------------------------------------------------- tunables
@@ -293,8 +293,10 @@ def _rule_text(rule) -> str:
 
 # ---------------------------------------------------------------------------- formatting model
 class _Style:
-    """Per style index: font colour, background candidates, number format, risk flags."""
-    __slots__ = ("font", "bgs", "bg_desc", "fmt", "colour_conceal", "fmt_risky", "risky", "no_own_fill", "direct_font")
+    """Per style index: font colour, background candidates, number format, risk flags; defaulted = why an
+    unresolvable colour of the style was read as Excel's default (None: none was)."""
+    __slots__ = ("font", "bgs", "bg_desc", "fmt", "colour_conceal", "fmt_risky", "risky", "no_own_fill", "direct_font",
+                 "defaulted")
 
 
 def _bg_of_paint(p) -> tuple[list, str]:
@@ -339,6 +341,7 @@ class C94(Check):
         super().start(wb)
         self.st = wb.styles
         self.palette = list(self.st.indexed_palette) if self.st.custom_indexed else None
+        self._tags_defaulted: set = set()       # [ColorN] tags read as black (recorded once each)
         self._styles: dict = {}
         self._fmt_cache: dict = {}
         self.rich_idx = self._rich_coloured_sst()
@@ -401,26 +404,49 @@ class C94(Check):
         return v
 
     def _tag_rgb(self, tag):
-        """RRGGBB of a number-format colour tag ([Red], [Color10] ...), None when it names no colour, an
-        UnknownColour for a [ColorN] whose custom <indexedColors> entry is not a colour."""
+        """RRGGBB of a number-format colour tag ([Red], [Color10] ...), None when it names no colour.  A [ColorN]
+        whose custom <indexedColors> entry is not a colour is read as Excel's default for a font colour,
+        automatic = black (Patrick 2026-10-05: every attempt graded; recorded once per tag)."""
         if tag and self.st.unknown_indexed:
             m = re.match(r"^colou?r\s*(\d{1,2})$", tag.strip(), re.I)
             if m and 1 <= int(m.group(1)) <= 56 and (int(m.group(1)) + 7) in self.st.unknown_indexed:
-                return self.st.indexed_colour(int(m.group(1)) + 7)
+                c = self.st.indexed_colour(int(m.group(1)) + 7)
+                if is_unknown(c):
+                    if tag not in self._tags_defaulted:
+                        self._tags_defaulted.add(tag)
+                        self.note_default("unresolved_colour", f"number-format colour tag [{tag}]: {c} read as "
+                                                               f"automatic (black)")
+                    return DEFAULT_FONT[-6:]
+                return c
         return N.color_tag_rgb(tag, self.palette)
+
+    def _known(self, c, why: list, what: str):
+        """An unresolvable font colour read as automatic (black), the reason appended to `why`."""
+        if is_unknown(c):
+            why.append(f"{what} {c} read as automatic (black)")
+            return DEFAULT_FONT[-6:]
+        return _hex6(c)
 
     def _style(self, s: int) -> _Style:
         x = self._styles.get(s)
         if x is None:
             x = _Style()
-            x.font = _hex6(self.st.font_color(s))
-            x.bgs, x.bg_desc = _bg_of_paint(self.st.cell_fill(s))
+            why = []
+            # Patrick 2026-10-05 (every attempt graded): an unresolvable colour is read as Excel's default for its
+            # slot - the font colour as automatic (black), the fill as none (recorded per cell in cell())
+            x.font = self._known(self.st.font_color(s), why, "font colour")
+            raw_fill = self.st.cell_fill(s)
+            fill = known_paint(raw_fill)
+            if fill is not raw_fill:
+                why.append(f"fill colour {', '.join(str(k) for k in paint_unknowns(raw_fill))} read as no fill")
+            x.defaulted = "; ".join(why) or None
+            x.bgs, x.bg_desc = _bg_of_paint(fill)
             x.bgs = tuple(x.bgs)
             x.fmt = N.resolve_format(self.st.num_fmt_id(s), self.st.num_fmts)
             x.colour_conceal = conceals(x.font, x.bgs)        # None: an unresolvable colour decides
             x.fmt_risky = self._fmt_risky(x.fmt, x.bgs)
             x.risky = x.colour_conceal is not False or x.fmt_risky
-            x.no_own_fill = self.st.cell_fill(s).effective is None
+            x.no_own_fill = fill.effective is None
             x.direct_font = self.st.xf(s).font_id != self.st.xf(0).font_id
             self._styles[s] = x
         return x
@@ -473,18 +499,22 @@ class C94(Check):
 
     def _runs_colours(self, cell, base_font) -> Optional[list]:
         """Colours of the visible rich-text runs (None for plain cells).  A run without its own
-        colour shows the cell's font colour; an unresolvable run colour stays an UnknownColour."""
+        colour shows the cell's font colour; an unresolvable run colour is read as automatic (black)
+        (Patrick 2026-10-05: every attempt graded; recorded)."""
         runs = cell.rich_runs
         if not runs:
             return None
         out = []
+        why = []
         for run in runs:
             if not (run.text or "").strip():
                 continue
             if run.font is not None and run.font.color is not None:
-                out.append(_hex6(self.st.resolve(run.font.color, "font")))
+                out.append(self._known(self.st.resolve(run.font.color, "font"), why, "rich-text run colour"))
             else:
                 out.append(base_font)
+        if why:
+            self.note_default("unresolved_colour", f"{location(cell.sheet, cell.ref)}: {'; '.join(why)}")
         return out or None
 
     def _is_rich(self, cell) -> bool:
@@ -504,7 +534,7 @@ class C94(Check):
         where both outcomes are possible."""
         r = N.render(value, fmt, custom_formats=self.st.num_fmts, value_type=vt,
                      date1904=self.wb.date1904, indexed_palette=self.palette)
-        return {r.is_blank} if r.certain else {True, False}
+        return {r.is_blank}          # an unverified code too: the engine's best rendering (Patrick 2026-10-05)
 
     def _decide(self, cell, value, st: _Style, runs, effects, cf_note: Optional[str] = None) -> Optional[str]:
         """Why the populated cell is concealed, or None when it is visible.  effects: alternative
@@ -573,26 +603,31 @@ class C94(Check):
                 alts.append(("conditional-format font", [cf_font]))
                 if runs:                         # CF font over rich-text runs: unverified
                     alts.append(primary)
-            elif not r.certain:
-                # Excel's reading of this format is unverified (numfmt certain=False): the font or any of the
-                # format's colour tags may show
-                alts.append(primary)
-                for sec in N.parse_format(fmt).sections:
-                    t_ = self._tag_rgb(sec.color) if sec.color is not None else None
-                    if t_:
-                        alts.append(("number-format colour", [t_]))
             elif tag is not None:
+                # (an unverified code included: the engine's best rendering, the tag of the section it used)
                 alts.append(("number-format colour", [tag]))
-                if runs:                         # number-format colour vs rich-text runs: unverified
-                    alts.append(primary)
+                if runs and count:
+                    # number-format colour vs rich-text runs is not verified: the engine's best rendering, the
+                    # tag applies as on a plain cell (Patrick 2026-10-05: every attempt graded)
+                    self.note_default("unverified_number_format", f"{location(cell.sheet, cell.ref)}: number-format "
+                                                                  f"colour over rich-text runs, the tag applies")
             else:
                 alts.append(primary)
+            if not r.certain and count:
+                # Excel's reading of this format is unverified (numfmt certain=False): the engine's best rendering
+                # (Patrick 2026-10-05: every attempt graded)
+                self.note_default("unverified_number_format", f"{location(cell.sheet, cell.ref)} = {value!r} under "
+                                                              f"{fmt!r}: graded as rendered ({r.text!r})")
             if zero_hidden_by_sheet is not None:
                 # showZeros=0 and the format has no zero section: the sheet option hides the zero
                 # (not counted, SHOW_ZEROS_OFF_COUNTS); None = unmeasured (conditional format)
                 hz = N.zero_hidden_by_show_zeros_off(fmt) if zero_hidden_by_sheet else False
                 if hz is None:
-                    outcomes.setdefault(False, None)
+                    # unmeasured (a format with conditional sections): the engine's best rendering, the format's
+                    # own display, is judged as usual (Patrick 2026-10-05: every attempt graded)
+                    if count:
+                        self.note_default("unverified_number_format", f"{location(cell.sheet, cell.ref)}: zero under "
+                                                                      f"{fmt!r} on a showZeros=0 sheet judged as shown")
                 elif hz:
                     if count:
                         self.n_zero_hidden_by_sheet += 1
@@ -657,15 +692,12 @@ class C94(Check):
         self.und_cells, self.und_reasons = array("q"), {}
 
     def _value(self, cell):
-        """The cell's value, or _UNDECIDED (recorded) when it is an untrusted formula result."""
+        """The cell's value, or _UNDECIDED when it is an untrusted formula result: the cell is skipped
+        (Patrick 2026-10-05: every attempt graded; stats.defaults.untrusted_value)."""
         if cell.is_formula_result:
             self.n_values_read += 1
             if not cell.value_trusted:
-                prov = getattr(self.wb, "provenance", None)
-                why = (f"writer={prov.writer}, value_path={'given' if prov and prov.value_path else 'none'}"
-                       if prov else "no provenance")
-                self._undecided(cell, f"needs the value of {cell.sheet}!{cell.ref} (source={cell.value_source}) "
-                                      f"but it is untrusted ({why})")
+                self.note_default("untrusted_value", f"{location(cell.sheet, cell.ref)} (source={cell.value_source})")
                 return _UNDECIDED
             return cell.value
         return cell.value
@@ -709,6 +741,8 @@ class C94(Check):
         s = cell.s
         st = self._styles.get(s) or self._style(s)
         self.styles_seen.add(s)
+        if st.defaulted:
+            self.note_default("unresolved_colour", f"{location(cell.sheet, cell.ref)}: {st.defaulted}")
         rich = (cell.t == "s" or cell.t == "inlineStr") and self._is_rich(cell)
         if rich:
             self.has_rich = True
@@ -742,8 +776,10 @@ class C94(Check):
                 order += 1
                 prio = rule.priority if rule.priority is not None else 10 ** 9
                 if rule.type == "colorScale":
-                    # a built-in format: the fill it paints never hides text (CF_BUILTIN_VISIBLE)
-                    cols = tuple(_hex6(self.st.resolve(c, "fill") or "FFFFFFFF") for c in rule.colors)
+                    # a built-in format: the fill it paints never hides text (CF_BUILTIN_VISIBLE); an unresolvable
+                    # stop colour is read as no fill, the white sheet (Patrick 2026-10-05: every attempt graded)
+                    cols = tuple(WHITE if is_unknown(x) else x[-6:]
+                                 for x in (self.st.resolve(c, "fill") or "FFFFFFFF" for c in rule.colors))
                     if cols:
                         out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], cols, anchor, "a colour scale"))
                     continue
@@ -759,9 +795,20 @@ class C94(Check):
                         out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], None, anchor, None))
                     continue
                 font = None
+                why = []
                 if d.font is not None and d.font.color is not None:
-                    font = _hex6(self.st.resolve(d.font.color, "font"))      # may be an UnknownColour
+                    # an unresolvable dxf font colour: automatic (black) (Patrick 2026-10-05: every attempt graded)
+                    font = self._known(self.st.resolve(d.font.color, "font"), why, "conditional-format font colour")
                 cols, together = dxf_fill_paints(self.st, d.fill)
+                if any(is_unknown(x) for x in cols):
+                    # an unresolvable dxf fill colour: no fill (a gradient drops that stop) - the cell's own fill shows
+                    why.append(f"conditional-format fill colour {', '.join(str(x) for x in cols if is_unknown(x))} "
+                               f"read as no fill")
+                    cols = [x for x in cols if not is_unknown(x)] if together else []
+                if why:
+                    self.note_default("unresolved_colour", f"conditional format on "
+                                                           f"{location(sheet, ','.join(cf.sqref.split()))}: "
+                                                           f"{'; '.join(why)}")
                 if not cols:
                     fills = [(None, None)]
                 elif together:
@@ -1043,17 +1090,18 @@ class C94(Check):
                     any(conceals(col, (DARK_TABLE_PROXY,)) is not False for col in (runs or [st.font])):
                 for (r1, c1, r2, c2), style, tname in self.table_boxes:
                     if r1 <= cell.row <= r2 and c1 <= cell.col <= c2 and _DARK_TABLE_RX.match(style):
-                        self._undecided(cell, f"{cell.sheet}!{cell.ref} has dark, directly formatted text and no fill "
-                                              f"of its own in table '{tname}' styled {style!r}; table-style fills are "
-                                              f"not resolved, so whether Excel shows it on a dark band is unknown")
+                        # table-style fills are not resolved: assumed visible (Patrick 2026-10-05: every attempt
+                        # graded)
+                        self.note_default("table_style_visible", f"{location(cell.sheet, cell.ref)}: dark, directly "
+                                                                 f"formatted text in table '{tname}' styled {style!r}")
                         return
             return
         if "contrast" in desc:
             for (r1, c1, r2, c2), style, tname in self.table_boxes:
                 if r1 <= cell.row <= r2 and c1 <= cell.col <= c2:
-                    self._undecided(cell, f"{cell.sheet}!{cell.ref} looks concealed ({desc}) but lies in table "
-                                          f"'{tname}' styled {style!r}; table-style colours are not resolved, so what "
-                                          f"Excel shows is unknown")
+                    # table-style colours are not resolved: assumed visible (Patrick 2026-10-05: every attempt graded)
+                    self.note_default("table_style_visible", f"{location(cell.sheet, cell.ref)} looks concealed "
+                                                             f"({desc}) but lies in table '{tname}' styled {style!r}")
                     return
         self.hits[desc].append((cell.row, cell.col))
         self.examples.setdefault(desc, f"{location(cell.sheet, cell.ref)} = {value!r}"[:120])

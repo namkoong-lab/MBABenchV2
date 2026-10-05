@@ -211,7 +211,12 @@ class C80(FormulaScanCheck):
         flagged = []
         for i, dn in enumerate(wb.defined_names):
             self.site = name_location(dn)
-            vol, spaced = self._scan(dn.text)
+            try:
+                vol, spaced = self._scan(dn.text)
+            except F.FormulaError as e:
+                # Patrick 2026-10-05 (every attempt graded): an unparsable definition is skipped
+                self.note_default("unparsable_formula", f"{self.site}: {e}")
+                continue
             if vol or spaced:
                 flagged.append(i)
                 self._name_items.append((i, dn, (vol or spaced, short(dn.text, 100), not vol)))
@@ -242,7 +247,7 @@ class C80(FormulaScanCheck):
         st = stamp_function(text)
         if st:
             self.n_formula_texts += 1
-            return (STAMP, st), self.uses_of(text, cell.sheet)
+            return (STAMP, st), self.safe_uses(text, cell.sheet)
         return super()._classify_cell_text(text, cell)
 
     def record(self, cell, result):
@@ -349,6 +354,15 @@ class C80(FormulaScanCheck):
             f"while deciding whether a TODAY()/NOW() stamp is referenced")
 
     def _targets(self, text: str, own: str, cell_rc=None):
+        """_targets_of(), or no target when the formula text cannot be parsed: skipped (Patrick 2026-10-05: every
+        attempt graded; stats.defaults.unparsable_formula)."""
+        try:
+            return self._targets_of(text, own, cell_rc)
+        except F.FormulaError as e:
+            self.note_default("unparsable_formula", f"{self.site or own}: {e}")
+            return []
+
+    def _targets_of(self, text: str, own: str, cell_rc=None):
         """[(sheets, op, fixed_bounds)] for the reference operands of `text` that point at a
         sheet holding a stamp candidate.  fixed_bounds is set for table references.  A
         reference that cannot be placed is deferred (_unplaced), never guessed."""
@@ -447,6 +461,12 @@ class C80(FormulaScanCheck):
         return sheets.pop(), _Box(parts, o.raw)
 
     def _builtin_cands(self, text, sheet):
+        try:
+            return self._builtin_cands_of(text, sheet)
+        except F.FormulaError:
+            return []                       # unparsable: skipped (recorded by _targets / classify)
+
+    def _builtin_cands_of(self, text, sheet):
         """Stamp candidates inside a built-in name (Print_Area, Print_Titles, _FilterDatabase)
         that `text` uses: a formula that reads Print_Area reads the stamp."""
         if not STAMP_IGNORES_BUILTIN_NAMES or not text or not self._cands:
@@ -563,8 +583,8 @@ class C80(FormulaScanCheck):
         elif f.kind == "shared":
             m = self._sp.get(f.si)
             if m is None:
-                raise GradingError(f"{self.key}: shared formula si={f.si} at '{cell.sheet}'!{cell.ref} has no "
-                                   f"master formula before it")
+                # no master before it: skipped (Patrick 2026-10-05: every attempt graded; recorded in pass 1)
+                return
             tg, mr, mc, bi = m
             if tg:
                 self._test(tg, where, cell.row - mr, cell.col - mc)

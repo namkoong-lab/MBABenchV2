@@ -38,9 +38,6 @@ class C50(ColourCheck):
     def prefilter(self, text, fam, own) -> bool:
         return self.clf.may_be_pointer(text)
 
-    def colour_matters(self, cls) -> bool:
-        return cls.kind == POINTER or bool(cls.unsure and cls.pure_name)
-
     def judge(self, cls, fam: str, argb: str, cell) -> Optional[str]:
         if cls.unsure and cls.pure_name:
             raise GradingError(f"{self.key}: '{cell.sheet}'!{cell.ref} is a {fam} formula that is only a "

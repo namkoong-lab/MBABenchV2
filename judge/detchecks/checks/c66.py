@@ -168,10 +168,11 @@ def pure_dash(text: str, fill: Optional[str], code: str) -> bool:
     return fill is not None and fill in DASH_CHARS
 
 
-def classify(value: float, code: str, date1904: bool = False) -> tuple[str, str]:
-    """(display class, rendered text) of a numeric value under a format code."""
+def classify(value: float, code: str, date1904: bool = False, best: bool = False) -> tuple[str, str]:
+    """(display class, rendered text) of a numeric value under a format code.  best=True: the engine's best
+    rendering even where Excel's reading is not verified (Patrick 2026-10-05: every attempt graded)."""
     r = N.render(value, code, date1904=date1904)
-    if not r.certain:
+    if not r.certain and not best:
         # includes a section mixing digit placeholders with unquoted date letters ('0 bps', '0 days',
         # '#,##0 d'; review 66-S3): the core marks such codes unverified (numfmt.mixed_date_letters)
         return UNCERTAIN, r.text
@@ -398,6 +399,10 @@ class C66(Check):
         known without a formula-value read that could raise (stats)."""
         if cell.is_formula_result:
             if read:
+                if not cell.value_trusted:
+                    # Patrick 2026-10-05 (every attempt graded): an untrusted value is skipped for this check
+                    self.note_default("untrusted_value", f"{location(cell.sheet, cell.ref)} (source={cell.value_source})")
+                    return None
                 self.n_values_read += 1
                 v = self.require_value(cell)
             elif cell.t == "n" and cell.value_trusted:
@@ -430,7 +435,7 @@ class C66(Check):
             return
         if cell.is_formula_result and not cell.value_trusted and not DISPLAYED_ZERO_COUNTS:
             # the value is needed unless the tail (a merge, a conditional format) makes any zero
-            # here pass: decide at sheet_end, raise there if it is still needed
+            # here pass: decide at sheet_end; skipped (recorded) there if it is still needed
             self.n_deferred += 1
             if len(self.deferred) < MAX_DEFERRED:
                 self.deferred.append((cell.row, cell.col, cell.s, cell.value_source))
@@ -621,17 +626,27 @@ class C66(Check):
         res = settled
         if why:
             self._assume(sheet, ref, v, "; ".join(why), decisive)
-        unc = [x for x in res if x[0] == UNCERTAIN]
-        if unc:
-            raise GradingError(f"{self.key}: {sheet}!{ref} holds {v!r}; how Excel displays it under "
-                               + ("conditional-format " if unc[0][3] else "")
-                               + f"number format {unc[0][2]!r}"
-                               + ("" if self.show_zeros_on else " on a sheet with showZeros=0")
-                               + " is not verified, so the check cannot tell whether it shows a dash")
+        if any(x[0] == UNCERTAIN for x in res):
+            # Patrick 2026-10-05 (every attempt graded): the engine's best rendering - the format's own display (on
+            # a showZeros=0 sheet hidden only where that is measured: a base format without a zero section)
+            res = [self._best(v, x) if x[0] == UNCERTAIN else x for x in res]
+            self.note_default("unverified_number_format", f"{location(sheet, ref)} = {v!r} under {res[0][2]!r}"
+                                                          + ("" if self.show_zeros_on else " (showZeros=0 sheet)")
+                                                          + f" graded as {res[0][1].strip()!r}")
         bad = [x for x in res if fails(x[0])]
         if bad:
             return (True,) + bad[0]
         return (False,) + res[0]
+
+    def _best(self, v: float, x: tuple) -> tuple:
+        """An UNCERTAIN outcome (class, text, code, via_cf) replaced by the engine's best rendering of its code."""
+        code = x[2]
+        cls, text = classify(v, code, self.date1904, best=True)
+        if v == 0 and not self.show_zeros_on and cls in (DIGIT, TEXT) and not x[3]:
+            h = _hide(cls, code)
+            if h == HIDDEN:
+                cls, text = HIDDEN, ""
+        return (cls, text, code, x[3])
 
     def _assume(self, sheet: str, ref: str, v, why: str, decisive: bool):
         """Record a cell graded under a conditional-format assumption (stats.cf_assumptions)."""
@@ -683,30 +698,16 @@ class C66(Check):
         return any(r1 <= r <= r2 and (r, c) != (r1, c1) for r1, r2, c1 in items)
 
     # -------------------------------------------------------------- untrusted values
-    def _untrusted_error(self, sheet: str, r: int, c: int, s: int, source: str) -> GradingError:
-        prov = getattr(self.wb, "provenance", None)
-        why = (f"writer={prov.writer}, value_path={'given' if prov and prov.value_path else 'none'}"
-               if prov else "no provenance")
-        st = self._style(s)
-        fmt = (f"its number format cannot be read: {st.err}" if st.err is not None else
-               f"number format {st.code!r} shows a zero as {st.ztext.strip()!r}")
-        return GradingError(f"{self.key}: needs the value of {sheet}!{make_ref(r, c)} (source={source}) but it is "
-                            f"untrusted ({why}); a zero there would not pass ({fmt})")
-
     def _check_untrusted(self, sheet, r, c, s, source, rules, merges, index):
-        """Raise for an untrusted formula value unless any zero there would pass anyway."""
+        """An untrusted formula value: skipped (Patrick 2026-10-05: every attempt graded), recorded in
+        stats.defaults.untrusted_value when a zero there could have failed."""
         if merges and self._hidden_by_merge(merges, r, c):
             return
         ids = self._cover(rules, r, c, index) if rules else ()
         if self._zero_could_fail(self._style(s), rules, ids, (r, c)):
-            raise self._untrusted_error(sheet, r, c, s, source)
+            self.note_default("untrusted_value", f"{location(sheet, make_ref(r, c))} (source={source})")
 
     def _check_deferred(self, sheet, rules, merges):
-        if not self.deferred:
-            return
-        if not rules and not merges:              # nothing in the tail can make a zero there pass
-            r, c, s, src = self.deferred[0]
-            raise self._untrusted_error(sheet, r, c, s, src)
         index: dict = {}
         for r, c, s, src in self.deferred:
             self._check_untrusted(sheet, r, c, s, src, rules, merges, index)
@@ -743,21 +744,18 @@ class C66(Check):
             self.n_absent_members += absent
             rng = range_to_str(r1, c1, r2, c2)
             if not top_left:
-                raise GradingError(f"{self.key}: {head.name}!{rng} is an array formula range anchored at {anchor}, "
-                                   f"not at its top-left cell, with {absent} member cell(s) not written in the file; "
-                                   f"the check cannot tell how Excel displays them")
+                # Patrick 2026-10-05 (every attempt graded): members not written in the file are skipped
+                self.note_default("unwritten_array_member", f"{head.name}!{rng} (anchor {anchor}, not its top-left "
+                                                            f"cell): {absent} member(s) skipped", absent)
+                continue
             ids = self._cover_box(rules, r1, c1, r2, c2) if rules else ()
             # rows / columns that can hold a missing member (the anchor itself is written)
             rr1 = r1 + 1 if c1 == c2 else r1
             cc1 = c1 + 1 if r1 == r2 else c1
-            for s in sorted(self._absent_styles(head, rr1, cc1, r2, c2)):
-                st = self._style(s)
-                if self._zero_could_fail(st, rules, ids, None):
-                    raise GradingError(
-                        f"{self.key}: {head.name}!{rng} is an array formula range (anchor {anchor}) with {absent} "
-                        f"member cell(s) not written in the file; Excel shows their computed values under number "
-                        f"format {st.code!r} (a zero would show {st.ztext.strip()!r}), and their values are not "
-                        f"available (no cell in the file; a value copy is not read for missing cells)")
+            if any(self._zero_could_fail(self._style(s), rules, ids, None) for s in sorted(self._absent_styles(head, rr1, cc1, r2, c2))):
+                # their values are not available (no cell in the file): skipped (Patrick 2026-10-05)
+                self.note_default("unwritten_array_member", f"{head.name}!{rng} (anchor {anchor}): {absent} "
+                                                            f"member(s) not written in the file skipped", absent)
 
     # -------------------------------------------------------------- sheet end
     def sheet_end(self, head, tail):

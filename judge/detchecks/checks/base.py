@@ -28,6 +28,28 @@ from ..errors import GradingError
 MAX_MISTAKES = 25
 SEVERITIES = ("major", "minor")
 
+# Patrick 2026-10-05: "For production runs, every attempt must be graded."  Where a check used to raise
+# because it could not decide, it now decides by one of these fixed defaults and records every use in
+# stats["defaults"][kind] = {"count", "rule", "examples"} (Check.note_default; present only when used).
+# Internal errors (bugs), a missing LibreOffice binary and config errors still raise.
+EVERY_ATTEMPT_GRADED = "Patrick 2026-10-05: every attempt graded"
+DEFAULT_RULES = {
+    "unresolved_colour": "an unresolvable colour (invalid rgb, theme / indexed index outside the palette, invalid "
+                         "tint) is read as Excel's default for its slot: a font colour as automatic (black), a "
+                         "fill as none",
+    "unverified_number_format": "a number format whose display Excel's reading of is not verified (numfmt "
+                                "certain=False, e.g. unquoted '0 days') is graded by the engine's best rendering",
+    "table_style_visible": "a cell whose visibility depends on a table style the reader cannot resolve is "
+                           "assumed visible",
+    "unwritten_array_member": "members of an array / spill range that are not written in the file are skipped",
+    "untrusted_value": "a formula value that is still untrusted (no Excel cache and no usable recalculation "
+                       "value) is skipped for this check",
+    "delivered_name_unknown": "the delivered file name is unknown (no or a malformed _attempt_origin.json): the "
+                              "format is judged from the file's content",
+    "unparsable_formula": "formula text this check cannot parse (or read) is skipped for this check",
+}
+MAX_DEFAULT_EXAMPLES = 10
+
 
 class Mistakes:
     """Capped mistake collector: keeps the first `cap` entries, counts all."""
@@ -116,6 +138,7 @@ class Check:
         self.mistakes = Mistakes(self.max_mistakes)
         self.stats: dict = {}
         self._second_pass: dict[str, Optional[set]] = {}
+        self._defaults: dict[str, dict] = {}
 
     # ------------------------------------------------------------------ hooks
     def start(self, wb) -> None:
@@ -188,8 +211,26 @@ class Check:
                               severity)
         return len(rects)
 
+    def note_default(self, kind: str, example: str = "", n: int = 1) -> None:
+        """Record that something was graded under one of the every-attempt-graded defaults (DEFAULT_RULES,
+        Patrick 2026-10-05): stats["defaults"][kind] counts it and keeps the first examples."""
+        rec = self._defaults.get(kind)
+        if rec is None:
+            rec = self._defaults[kind] = {"count": 0, "rule": f"{EVERY_ATTEMPT_GRADED}: {DEFAULT_RULES[kind]}",
+                                          "examples": []}
+        rec["count"] += n
+        if example and len(rec["examples"]) < MAX_DEFAULT_EXAMPLES:
+            rec["examples"].append(example[:300])
+
+    def defaults_used(self, kind: Optional[str] = None) -> int:
+        """How many times a default (one kind, or any) was used so far."""
+        if kind is not None:
+            return self._defaults.get(kind, {}).get("count", 0)
+        return sum(r["count"] for r in self._defaults.values())
+
     def require_value(self, cell):
-        """cell.value, or GradingError when it is an untrusted formula result (no fallback)."""
+        """cell.value, or GradingError when it is an untrusted formula result (no fallback).  Checks call it
+        only for trusted values: an untrusted one is skipped by default (DEFAULT_RULES['untrusted_value'])."""
         if not cell.value_trusted:
             prov = getattr(self.wb, "provenance", None)
             why = (f"writer={prov.writer}, value_path={'given' if prov and prov.value_path else 'none'}"
@@ -203,6 +244,9 @@ class Check:
         replaced by the total number of mistakes (plain replace, not str.format)."""
         st = dict(self.stats)
         st.update(stats or {})
+        if self._defaults:
+            st["defaults"] = {k: {"count": v["count"], "rule": v["rule"], "examples": list(v["examples"])}
+                              for k, v in sorted(self._defaults.items())}
         if self.mistakes.total == 0:
             summary = pass_summary
         else:

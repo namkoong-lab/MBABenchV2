@@ -147,6 +147,22 @@ class FormulaScanCheck(Check):
     def other_formula(self, cell, f) -> None:
         """Data-table anchors and empty <f/> markers (no text)."""
 
+    def safe_classify(self, text: str, sheet: Optional[str]):
+        """classify(), or None when the formula text cannot be parsed: skipped for this check (Patrick
+        2026-10-05: every attempt graded; stats.defaults.unparsable_formula)."""
+        try:
+            return self.classify(text, sheet)
+        except F.FormulaError as e:
+            self.note_default("unparsable_formula", f"{self.site}: {e}")
+            return None
+
+    def safe_uses(self, text: str, sheet: Optional[str]) -> frozenset:
+        """uses_of(), or nothing when the text cannot be parsed (recorded by safe_classify)."""
+        try:
+            return self.uses_of(text, sheet)
+        except F.FormulaError:
+            return EMPTY
+
     def record(self, cell, result) -> None:
         """Default: remember a finding of a formula cell for this sheet's grouping.  Memory:
         positions are kept compactly per key ({row: [cols]}); a cell's detail only for the
@@ -203,11 +219,13 @@ class FormulaScanCheck(Check):
             if f.kind == "shared":
                 self._masters[f.si] = res
         elif f.kind == "shared":
-            try:
-                res = self._masters[f.si]
-            except KeyError:
-                raise GradingError(f"{self.key}: shared formula si={f.si} at '{cell.sheet}'!{cell.ref} has no "
-                                   f"master formula before it") from None
+            res = self._masters.get(f.si)
+            if res is None:
+                # no master before it: its formula text cannot be read - skipped (Patrick 2026-10-05: every
+                # attempt graded)
+                self.note_default("unparsable_formula", f"'{cell.sheet}'!{cell.ref}: shared formula si={f.si} has "
+                                                        f"no master formula before it")
+                return
         else:
             self.other_formula(cell, f)
             return
@@ -222,7 +240,7 @@ class FormulaScanCheck(Check):
     def _classify_cell_text(self, text: str, cell):
         self.n_formula_texts += 1
         self.site = f"{cell.sheet}!{cell.ref}"
-        return self.classify(text, cell.sheet), self.uses_of(text, cell.sheet)
+        return self.safe_classify(text, cell.sheet), self.safe_uses(text, cell.sheet)
 
     def sheet_end(self, head, tail):
         name = head.name
@@ -239,7 +257,7 @@ class FormulaScanCheck(Check):
         if self._uses_on:
             for g in tail.sparkline_groups:
                 for t in g.formulas:
-                    u = self.uses_of(t, name)
+                    u = self.safe_uses(t, name)
                     if u:
                         self._tally(u, f"sparkline on '{name}'")
 
@@ -251,8 +269,8 @@ class FormulaScanCheck(Check):
         keys, bad = [], []
         self.site = f"{what} on {sqref_location(sheet, sqref)}"
         for t in texts:
-            r = self.classify(t, sheet)
-            u = self.uses_of(t, sheet)
+            r = self.safe_classify(t, sheet)
+            u = self.safe_uses(t, sheet)
             if u:
                 self._tally(u, f"{what.lower()} on {sqref_location(sheet, sqref)}")
             if r is not None:
@@ -343,7 +361,11 @@ class FormulaScanCheck(Check):
                 if not any(x in low for x in idents):
                     continue
                 acc = set()
-                for u in F.names_used_by(parse_text(tn.text), tn.scope, tab, sheet_names=self.sheet_names):
+                try:
+                    tf = parse_text(tn.text)
+                except F.FormulaError:
+                    continue                      # an unparsable definition reaches nothing (Patrick 2026-10-05)
+                for u in F.names_used_by(tf, tn.scope, tab, sheet_names=self.sheet_names):
                     acc |= reach.get(id(u), set())
                 cur = reach.setdefault(id(tn), set())
                 if acc - cur:
@@ -403,21 +425,21 @@ class FormulaScanCheck(Check):
             return
         for ch in self.wb.charts:
             for t in ch.formulas:
-                u = self.uses_of(t, ch.sheet)
+                u = self.safe_uses(t, ch.sheet)
                 if u:
                     self._tally(u, f"chart {ch.part}")
         for dr in self.wb.drawings:
             for t in dr.textlinks:
-                u = self.uses_of(t, dr.sheet)
+                u = self.safe_uses(t, dr.sheet)
                 if u:
                     self._tally(u, f"shape text link on '{dr.sheet}'")
         for sheet, part, attr, t in ctrl_formulas(self.wb):
-            u = self.uses_of(t, sheet)
+            u = self.safe_uses(t, sheet)
             if u:
                 self._tally(u, f"form control on '{sheet}' ({attr})")
         for pc in self.wb.pivot_caches:
             if pc.source_name and not pc.source_target:
-                u = self.uses_of(pc.source_name, pc.source_sheet)
+                u = self.safe_uses(pc.source_name, pc.source_sheet)
                 if u:
                     self._tally(u, f"pivot cache {pc.part}")
 

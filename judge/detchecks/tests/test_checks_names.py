@@ -150,6 +150,13 @@ def expect(v, decision, locations=None):
         assert locs(v) == locations, (locations, locs(v), [m["description"] for m in v["mistakes"]])
 
 
+def skipped(v, decision, locations=None):
+    """Patrick 2026-10-05 (every attempt graded): unparsable formula text is skipped and recorded."""
+    expect(v, decision, locations)
+    assert v["stats"]["defaults"]["unparsable_formula"]["count"] >= 1, v["stats"]
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -423,7 +430,7 @@ def test_gates():
     raises(lambda: run(one("g7.xlsx", [c("A1", "1")], [("Macro1", "S!$A$1", {"function": "1", "xlm": "1"})])),
            "macro name")
     # malformed formula text raises only when the check needs to parse it
-    raises(lambda: run(one("g8.xlsx", [c("A1", "SUM(Rate")], nm)), "cannot parse")
+    skipped(run(one("g8.xlsx", [c("A1", "SUM(Rate")], nm)), "fail", ["Name Manager: Rate"])   # skipped since 2026-10-05
     expect(run(one("g9.xlsx", [c("A1", "SUM(C16:C22"), c("A2", "Rate")], nm)), "pass", [])
 
 
@@ -617,28 +624,28 @@ def test_rereview_hidden_malformed_definition():
     # spells no relevant name: never parsed
     expect(run(one("hm2.xlsx", [c("A1", "Rate*2")], [rate, ("Helper", "Zzz+(", {"hidden": "1"})])), "pass", [])
     # Rate otherwise unused: the helper may be its only user -> raise, naming the parse problem
-    raises(lambda: run(one("hm3.xlsx", [c("A1", "1")], [rate, hid])), "Rate", "cannot parse", "Helper")
+    skipped(run(one("hm3.xlsx", [c("A1", "1")], [rate, hid])), "fail", ["Name Manager: Rate"])   # helper skipped
     # a visible name the helper does not spell is graded normally beside it
     expect(run(one("hm4.xlsx", [c("A1", "Rate")], [rate, hid, ("Other", "S!$B$2", None)])), "fail",
            ["Name Manager: Other"])
     # a built-in with malformed text spelling an unused name raises too
-    raises(lambda: run(one("hm5.xlsx", [c("A1", "1")], [rate, ("_xlnm.Print_Area", "Rate:(", {"localSheetId": "0"})])),
-           "Rate", "cannot parse")
-    # malformed hidden text mentioning INDIRECT may produce any name: raise when one looks unused
-    raises(lambda: run(one("hm6.xlsx", [c("A1", "1")], [("Other", "S!$B$2", None),
-                                                        ("Helper", "INDIRECT(A1", {"hidden": "1"})])),
-           "Other", "run time")
+    skipped(run(one("hm5.xlsx", [c("A1", "1")], [rate, ("_xlnm.Print_Area", "Rate:(", {"localSheetId": "0"})])),
+            "fail", ["Name Manager: Rate"])
+    # malformed hidden text mentioning INDIRECT: skipped, it produces no name (Patrick 2026-10-05; it raised before)
+    skipped(run(one("hm6.xlsx", [c("A1", "1")], [("Other", "S!$B$2", None),
+                                                 ("Helper", "INDIRECT(A1", {"hidden": "1"})])),
+            "fail", ["Name Manager: Other"])
     expect(run(one("hm6b.xlsx", [c("A1", "Other")], [("Other", "S!$B$2", None),
                                                      ("Helper", "INDIRECT(A1", {"hidden": "1"})])), "pass", [])
     # a counted name's malformed definition still raises at once (broken or not cannot be told)
-    raises(lambda: run(one("hm7.xlsx", [c("A1", "Rate")], [("Rate", "S!$B$1+(", None)])), "cannot parse")
+    skipped(run(one("hm7.xlsx", [c("A1", "Rate")], [("Rate", "S!$B$1+(", None)])), "pass", [])      # not graded
     # hidden names not consumers: an unused malformed helper is irrelevant, a used one is not
     import detchecks.checks.c29 as C
     old = C.HIDDEN_AND_BUILTIN_NAMES_USE
     try:
         C.HIDDEN_AND_BUILTIN_NAMES_USE = False
         expect(run(one("hm8.xlsx", [c("A1", "1")], [rate, hid])), "fail", ["Name Manager: Rate"])
-        raises(lambda: run(one("hm9.xlsx", [c("A1", "Helper")], [rate, hid])), "Rate", "cannot parse")
+        skipped(run(one("hm9.xlsx", [c("A1", "Helper")], [rate, hid])), "fail", ["Name Manager: Rate"])
     finally:
         C.HIDDEN_AND_BUILTIN_NAMES_USE = old
 

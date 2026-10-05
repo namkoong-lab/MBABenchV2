@@ -268,6 +268,76 @@ def test_lock_threads_and_reentrancy():
         assert held.waited_s < 1.0
 
 
+def test_lock_wait_is_capped():
+    """Patrick 2026-10-05 (every attempt graded): the wait for the machine-wide lock is capped
+    (max_lock_wait_s, default 3 hours); then LibreOfficeUnavailable (retry_later), LibreOffice never
+    started.  Fakes: the lock file held through another descriptor, a thread holding the lock, a fake clock."""
+    import fcntl
+    assert G.GuardSettings().max_lock_wait_s == 3 * 3600.0
+    assert G.GuardSettings(max_lock_wait_s=-1).problems()
+    lock = os.path.join(tmpdir(), "l.lock")
+    calls = []
+    # (1) another process holds the lock file (a second open file description of it): the default 3-hour cap,
+    #     reached on the fake clock
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o666)
+    os.write(fd, b"pid 4242 on elsewhere to recalculate stuck.xlsx\n")
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        s, clock = settings(lock, min_free_pct=0)
+        logs = []
+        try:
+            G.run_guarded(lambda t: calls.append(t), timeout_s=60, settings=s, what="recalculate a.xlsx",
+                          log=logs.append)
+        except LibreOfficeUnavailable as e:
+            assert e.retry_later and isinstance(e, GradingError)
+            msg = str(e)
+            assert "lock" in msg and "180 min" in msg and "held by pid 4242 on elsewhere" in msg, msg
+            assert "re-run this attempt later" in msg and "not graded now" in msg, msg
+        else:
+            raise AssertionError("no LibreOfficeUnavailable after the maximum lock wait")
+        assert calls == [] and 3 * 3600.0 <= clock.t < 3 * 3600.0 + 1, clock.t
+        assert any("held by pid 4242" in m for m in logs) and len(logs) < 200, len(logs)     # logged once a minute
+        # a shorter configured cap, with real time
+        s2 = G.GuardSettings(lock_path=lock, min_free_pct=0, max_lock_wait_s=0.6, retries=0)
+        t0 = time.monotonic()
+        try:
+            G.run_guarded(lambda t: calls.append(t), timeout_s=60, settings=s2, what="x", log=lambda m: None)
+        except LibreOfficeUnavailable:
+            assert 0.5 <= time.monotonic() - t0 < 5, time.monotonic() - t0
+        else:
+            raise AssertionError("no LibreOfficeUnavailable after a 0.6 s lock wait")
+        assert calls == []
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    # (2) another grading thread of this process holds the lock: the same cap on the process-wide lock
+    held, release = threading.Event(), threading.Event()
+
+    def holder():
+        with G.machine_lock(lock, what="hold", log=lambda m: None):
+            held.set()
+            release.wait(30)
+
+    th = threading.Thread(target=holder)
+    th.start()
+    try:
+        assert held.wait(10)
+        s3, clock3 = settings(lock, min_free_pct=0, max_lock_wait_s=600)
+        try:
+            G.run_guarded(lambda t: calls.append(t), timeout_s=60, settings=s3, what="y", log=lambda m: None)
+        except LibreOfficeUnavailable as e:
+            assert e.retry_later and "another grading thread of this process" in str(e) and "10 min" in str(e), e
+        else:
+            raise AssertionError("no LibreOfficeUnavailable while another thread holds the lock")
+        assert calls == [] and 600 <= clock3.t < 601, clock3.t
+    finally:
+        release.set()
+        th.join(timeout=30)
+    # (3) once the lock is free a capped wait takes it at once, and the run goes ahead
+    s4, _ = settings(lock, min_free_pct=0, max_lock_wait_s=1)
+    assert G.run_guarded(lambda t: "copy.xlsx", timeout_s=60, settings=s4, what="z", log=lambda m: None) == "copy.xlsx"
+
+
 def test_lock_file_is_not_inherited():
     """LibreOffice (a child) must never keep the lock: the descriptor is close-on-exec."""
     lock = os.path.join(tmpdir(), "l.lock")
@@ -280,7 +350,7 @@ def test_lock_file_is_not_inherited():
 
 TESTS = [test_defaults_and_validation, test_memory_wait_low_then_ok, test_memory_wait_exceeded_fails_loudly,
          test_retry_with_doubled_timeouts, test_memory_wait_before_every_try, test_lock_serialises_two_processes,
-         test_lock_threads_and_reentrancy, test_lock_file_is_not_inherited]
+         test_lock_threads_and_reentrancy, test_lock_wait_is_capped, test_lock_file_is_not_inherited]
 
 
 def _cleanup():

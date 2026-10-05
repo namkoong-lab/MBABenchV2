@@ -74,7 +74,7 @@ class C95(FormulaScanCheck):
         flagged = []
         for i, dn in enumerate(wb.defined_names):
             self.site = name_location(dn)
-            r = self.classify(dn.text, None)
+            r = self.safe_classify(dn.text, None)
             if r is not None:
                 flagged.append(i)
                 self._name_items.append((i, dn, r))
