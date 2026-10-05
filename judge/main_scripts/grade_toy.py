@@ -297,6 +297,10 @@ def main():
     ap.add_argument("--full-rubric", action="store_true", help="grade all 132 checks (JUDGE_SKIP_SUITABILITY=1) instead of the target only")
     ap.add_argument("--manifest", help="read toys from this manifest JSON instead of judge_reliability.toy_tasks")
     ap.add_argument("--accuracy-check", default="harness", choices=["harness", "llm"])
+    # judge v13 deterministic checks (utils/det_checks.py). With "harness" (the config default)
+    # the toy's target check, when it is one of them, is decided by Python and `verdict` below
+    # reports it; "llm" keeps the LLM's verdict counting (Python still recorded).
+    gfd.add_det_checks_arg(ap)
     ap.add_argument("--run-calculation", action="store_true")
     ap.add_argument("--max-tool-rounds", type=int, default=None)
     ap.add_argument("--max-forced-rounds", type=int, default=None)
@@ -325,6 +329,9 @@ def main():
     rubric = load_rubric(rubric_path)
     flat = flatten(rubric)
     rubric_sha = sha256_file(rubric_path)
+    # judge v13: refuse a bad det_checks config, and record the mode that actually runs (None meant
+    # "the config default" and landed in toy_runs.args as null)
+    args.det_checks = gfd.det_checks_mod.startup_check(rubric_path, args.det_checks)
     if args.full_rubric:
         os.environ["JUDGE_SKIP_SUITABILITY"] = "1"
 
@@ -341,7 +348,7 @@ def main():
     logger.info(f"Grader: {args.model} -> {identity}")
     logger.info(f"Rubric {rubric_path} sha {rubric_sha[:12]}; template {template_path}; guidance {guidance_path}")
     logger.info(f"Mode: {'FULL RUBRIC' if args.full_rubric else 'TARGETED (one check per grading)'}; "
-                f"S3 artifacts -> s3://{S3_BUCKET}/{TOY_GRADING_PREFIX}/{run_id}/")
+                f"det checks: {args.det_checks}; S3 artifacts -> s3://{S3_BUCKET}/{TOY_GRADING_PREFIX}/{run_id}/")
 
     conn = None if (args.no_db_write and args.manifest) else gfd.get_db_connection()
     toys = toys_from_manifest(args.manifest, flat, args.checks) if args.manifest else toys_from_db(conn, args.checks)
@@ -379,6 +386,7 @@ def main():
     suitability_dir = scratch_run_dir / "suitability"; suitability_dir.mkdir(exist_ok=True)
 
     run_cost, n_ok, n_bad, n_correct = 0.0, 0, 0, 0
+    retry_later = []      # LibreOffice could not run (memory / every retry failed): re-run these later
     for i, (repeat_no, toy, variant) in enumerate(plan, 1):
         check_no = toy["check_no"]; cat, name = flat[check_no]
         if args.max_cost_usd is not None and run_cost >= args.max_cost_usd:
@@ -401,7 +409,7 @@ def main():
                 agentic=True, single_pass=True, max_tool_rounds=max_tool_rounds,
                 no_s3_upload=args.no_s3_upload or args.stage_only, reasoning_effort=args.reasoning_effort,
                 suitability_source_path=suit_path, accuracy_check=args.accuracy_check,
-                max_forced_rounds=args.max_forced_rounds,
+                max_forced_rounds=args.max_forced_rounds, det_checks=args.det_checks,
             )
         if args.stage_only:
             logger.info(f"  staged: {result.get('task_folder')} (no LLM call)"); continue
@@ -413,6 +421,8 @@ def main():
             n_ok += 1; n_correct += int(ok)
         else:
             n_bad += 1
+            if result.get("retry_later"):
+                retry_later.append(f"check {check_no} {toy[f'name_{variant}']} ({variant}, repeat {repeat_no})")
         logger.info(f"  -> verdict={verdict['verdict']} expected={variant} {'OK' if ok else 'MISS'}  "
                     f"cost=${result.get('cost') or 0:.3f}  run=${run_cost:.2f}  {result.get('raw_files_path') or ''}")
         if write_db:
@@ -438,6 +448,10 @@ def main():
             c.commit()
         _, conn = _with_reconnect(conn, _finish)
     logger.info(f"\nRun {run_id}: {n_ok} graded ({n_correct} correct), {n_bad} failed, ${run_cost:.2f}")
+    if retry_later:
+        logger.warning(f"LIBREOFFICE: {len(retry_later)} toy grading(s) NOT graded because LibreOffice could not run "
+                       f"(memory, or every retry crashed / timed out) - re-run them when the machine has memory to "
+                       f"spare: {'; '.join(retry_later)}")
 
 
 if __name__ == "__main__":

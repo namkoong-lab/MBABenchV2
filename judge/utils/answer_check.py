@@ -65,6 +65,8 @@ from typing import Any, Optional
 import openpyxl
 from openpyxl.utils import get_column_letter
 
+from detchecks.errors import LibreOfficeUnavailable
+
 try:
     from . import answer_rules as rules
     from .logger import logger
@@ -459,28 +461,49 @@ def _uncached_count(wb_f, wb_v, targets) -> int:
     return n
 
 
+RECALC_TIMEOUT_S = 300   # the first try's timeout; doubled on every retry (det_checks.libreoffice_retries)
+
+
 def _recalculate_copy(xlsx_path: Path, outdir: Path) -> Path:
-    soffice = load_env_var("PATHS_LIBREOFFICE_PATH", required=True)
-    # Own throwaway profile per call: parallel graders share the default one
-    # otherwise (see excel_utils.recalculate_xlsx).
-    profile_dir = tempfile.mkdtemp(prefix="judge_lo_profile_")
+    """LibreOffice re-save of xlsx_path into outdir, under the machine-wide memory guard (maintainer
+    2026-10-05; utils.det_checks.run_libreoffice: one LibreOffice at a time, started only when memory is
+    free, a failed run retried with the timeout doubled). Raises LibreOfficeUnavailable (retry_later)
+    when that is exhausted: the grading fails loudly and the attempt is re-run later."""
     try:
-        subprocess.run(
-            [soffice, f"-env:UserInstallation={Path(profile_dir).as_uri()}",
-             "--headless", "--calc", "--convert-to", "xlsx",
-             "--outdir", str(outdir), str(xlsx_path)],
-            check=True, capture_output=True, timeout=300,
-        )
-    finally:
-        shutil.rmtree(profile_dir, ignore_errors=True)
+        from .det_checks import run_libreoffice
+    except ImportError:  # imported as a bare module (utils/ on sys.path)
+        from det_checks import run_libreoffice
+
+    soffice = load_env_var("PATHS_LIBREOFFICE_PATH", required=True)
     out = outdir / xlsx_path.name
-    if not out.exists():
-        raise FileNotFoundError(f"LibreOffice produced no output for {xlsx_path}")
-    return out
+
+    def _once(timeout_s: float) -> Path:
+        # Own throwaway profile per call: parallel graders share the default one
+        # otherwise (see excel_utils.recalculate_xlsx).
+        profile_dir = tempfile.mkdtemp(prefix="judge_lo_profile_")
+        try:
+            if out.exists():
+                out.unlink()
+            subprocess.run(
+                [soffice, f"-env:UserInstallation={Path(profile_dir).as_uri()}",
+                 "--headless", "--calc", "--convert-to", "xlsx",
+                 "--outdir", str(outdir), str(xlsx_path)],
+                check=True, capture_output=True, timeout=timeout_s,
+            )
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
+        if not out.exists():
+            raise FileNotFoundError(f"LibreOffice produced no output for {xlsx_path}")
+        return out
+
+    return run_libreoffice(_once, timeout_s=RECALC_TIMEOUT_S, what=f"recalculate {xlsx_path.name} (answer check)")
 
 
 def _recalc_reload(xlsx_path: Path, wb_v, side: str):
-    """Recalculate through LibreOffice and return (values_wb, used, error)."""
+    """Recalculate through LibreOffice and return (values_wb, used, error). Best effort, EXCEPT when
+    LibreOffice could not run at all (LibreOfficeUnavailable: memory wait timed out or every retry
+    failed; maintainer 2026-10-05): that is raised, so the grading fails loudly and the attempt is
+    re-run later - never an answer check that reads the uncomputed answers as unanswered."""
     logger.info(f"  [answer_check] {side} {xlsx_path.name}: answer cells lack cached "
                 f"values — recalculating via LibreOffice")
     tmpdir = Path(tempfile.mkdtemp(prefix="answer_check_recalc_"))
@@ -488,6 +511,8 @@ def _recalc_reload(xlsx_path: Path, wb_v, side: str):
         recalced = _recalculate_copy(xlsx_path, tmpdir)
         wb_v.close()
         return openpyxl.load_workbook(str(recalced), data_only=True), True, None
+    except LibreOfficeUnavailable:
+        raise
     except Exception as e:  # noqa: BLE001 — best-effort
         logger.warning(f"  [answer_check] recalc failed: {e}")
         return wb_v, False, str(e)
@@ -779,6 +804,10 @@ def run_answer_check(attempt_xlsx, solution_xlsx, output_json_path=None,
                 if golden.recalc_error or attempt.recalc_error:
                     result["recalc_error"] = golden.recalc_error or attempt.recalc_error
         result["harness_verdicts"] = harness_verdicts(result, hardcoded_counts)
+    except LibreOfficeUnavailable:
+        # the one exception: LibreOffice could not run now (memory / every retry failed;
+        # maintainer 2026-10-05) - the grading fails loudly and the attempt is re-run later
+        raise
     except Exception as e:  # noqa: BLE001 — deliberately never blocks grading
         logger.warning(f"  [answer_check] unexpected failure: {e}")
         result = {"status": "error", "error": str(e)}

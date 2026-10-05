@@ -15,11 +15,19 @@ local run folders that were not written to the DB (smoke tests).
     python operation_scripts/report_accuracy_engine.py --local scratch/grade_runs/20260902_1530*
 
 Read-only. One row per grading:
-  grading id | task | attempt | grader (effort) | harness | LLM | agree | answers | total LLM | total harness | in DB
+  grading id | task | attempt | grader (effort) | harness | LLM | agree | answers | total LLM | total harness |
+  recorded total | in DB
 "harness"/"LLM" are the pass/fail decisions on `Accuracy / Final calculation
 accuracy`; "answers" is matched/total Questions-sheet answers; the two totals
-are the 0-100 grades under each engine; "in DB" says which engine's total the
-row's total_score is.
+are the 0-100 grades under each engine; "recorded total" is the row's own
+total_score (what the DB holds); "in DB" says whose verdicts it uses:
+  harness  every measured Python verdict counted (= total harness)
+  llm      none did (= total LLM)
+  mixed    one family counted and the other did not (judge v13: the answer
+           check follows --accuracy-check, the deterministic checks
+           --det-checks); the row names each family's switch, e.g.
+           "mixed: answer check harness, det checks llm", and the recorded
+           total is neither of the two totals.
 """
 
 import argparse
@@ -34,6 +42,18 @@ sys.path.insert(0, str(_judge_root))
 from utils.misc_utils import add_benchmark_arg, get_db_url, load_project_configs  # noqa: E402
 
 FA = "Accuracy/Final calculation accuracy"
+LEGEND = ("in DB: harness = every measured Python verdict counted (recorded total = total harness); "
+          "llm = none did (= total LLM); mixed = one family counted, the other did not (answer check: "
+          "--accuracy-check, deterministic checks: --det-checks), so the recorded total is neither.")
+
+
+def _in_db(eng: dict) -> str:
+    """Whose verdicts the recorded total uses; 'mixed' names each family's switch."""
+    eff = eng.get("effective") or "-"
+    if eff != "mixed":
+        return eff
+    acc, det = eng.get("mode") or "?", eng.get("det_checks_mode") or "?"
+    return f"mixed: answer check {acc}, det checks {det}"
 
 
 def _row_from_scored(gid, attempt_id, grader, effort, scored, in_db=True, task_id=None):
@@ -55,8 +75,8 @@ def _row_from_scored(gid, attempt_id, grader, effort, scored, in_db=True, task_i
         "answers": f"{n_m}/{n_q}" if n_q is not None else "-",
         "total_llm": eng.get("total_score_llm"),
         "total_harness": eng.get("total_score_harness"),
-        "in_db": (eng.get("effective") or "-") if in_db else "not written",
         "total": scored.get("total_score"),
+        "in_db": _in_db(eng) if in_db else f"not written ({_in_db(eng)})",
     }
 
 
@@ -70,9 +90,9 @@ def _fmt(v):
 
 def _print(rows):
     cols = ["id", "task", "attempt", "grader", "harness", "llm", "agree", "answers",
-            "total_llm", "total_harness", "in_db"]
+            "total_llm", "total_harness", "total", "in_db"]
     heads = ["grading id", "task", "attempt", "grader (effort)", "harness", "LLM", "agree", "answers",
-             "total LLM", "total harness", "in DB"]
+             "total LLM", "total harness", "recorded total", "in DB"]
     widths = [max(len(h), *(len(_fmt(r[c])) for r in rows)) if rows else len(h)
               for c, h in zip(cols, heads)]
     print(" | ".join(h.ljust(w) for h, w in zip(heads, widths)))
@@ -84,6 +104,7 @@ def _print(rows):
         disagree = sum(1 for r in rows if r["agree"] == "NO")
         print(f"\n{len(rows)} grading(s): harness and LLM agree on {agree}, disagree on {disagree}, "
               f"harness could not measure {len(rows) - agree - disagree}.")
+        print(LEGEND)
 
 
 def from_db(args):

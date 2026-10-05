@@ -66,6 +66,8 @@ from utils.prompt_utils import (
 )
 from utils.trajectory import TrajectoryRecorder
 from utils.answer_check import run_answer_check, summary_block
+from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, run_det_checks
+from detchecks.errors import LibreOfficeUnavailable
 
 ### Obtain constants
 load_project_configs()
@@ -1659,6 +1661,13 @@ def _apply_harness_verdicts(all_responses, harness_verdicts, weights_data):
     Returns (overlaid_responses, provenance) where provenance maps each
     harness-addressable check to {engine, decision, fallback_reason,
     llm_decision, agreed, ...stats}.
+
+    Two producers feed it: the answer check (utils/answer_check.py) and,
+    from judge v13, the deterministic rubric checks (utils/det_checks.py,
+    entries carry family "det_checks", live, check_no, n_mistakes, stats).
+    A recorded-only deterministic verdict arrives as engine "llm" WITH a
+    Python decision: it is recorded (decision, llm_decision, agreed) and
+    never overlaid.
     """
     import copy as _copy
 
@@ -1690,9 +1699,18 @@ def _apply_harness_verdicts(all_responses, harness_verdicts, weights_data):
         for stat in ("n_questions", "n_match", "n_mismatch", "n_missing",
                      "n_unlocated", "n_answered", "n_hardcoded", "n_unrounded",
                      "rounding_directive", "fraction_correct",
-                     "rules_fired", "flags", "hardcoded_counts", "rules_version"):
+                     "rules_fired", "flags", "hardcoded_counts", "rules_version",
+                     # judge v13 deterministic checks (utils/det_checks.py)
+                     "family", "live", "check_no", "n_mistakes", "stats"):
             if stat in hv:
                 prov[stat] = hv[stat]
+        # Agreement wherever the harness has a decision, overlaid or not
+        # (judge v13: recorded-only deterministic verdicts are compared too).
+        if hv.get("decision") is not None:
+            prov["agreed"] = (
+                (llm_item or {}).get("decision") == hv.get("decision")
+                if llm_item else None
+            )
         if hv.get("engine") != "harness":
             provenance[key] = prov
             continue
@@ -1706,12 +1724,11 @@ def _apply_harness_verdicts(all_responses, harness_verdicts, weights_data):
             prov["fallback_reason"] = "category judgement unparseable"
             provenance[key] = prov
             continue
-        prov["agreed"] = (
-            (llm_item or {}).get("decision") == hv.get("decision")
-            if llm_item else None
-        )
         new_item = {
-            "check": (llm_item or {}).get("check"),
+            # The LLM's own check id; for a check it never recorded, the
+            # rubric number the producer supplies (deterministic checks).
+            "check": (llm_item or {}).get("check")
+            or (str(hv["check_no"]) if hv.get("check_no") is not None else None),
             "name": name,
             "decision": hv["decision"],
             "summary": hv.get("summary", ""),
@@ -1760,6 +1777,7 @@ def _finalize_case(
     formula_cache_provenance=None,
     harness_verdicts=None,
     accuracy_engine="llm",
+    det_checks=None,
 ):
     """Shared finalization: save judgement, calculate scores, write metadata.
 
@@ -1770,6 +1788,18 @@ def _finalize_case(
     `accuracy_engine` ("harness" | "llm") picks which one is THE score
     (total_score, criteria_scores) that lands in the DB row. So the
     harness-vs-LLM comparison never needs a second grading run.
+
+    Judge v13: `harness_verdicts` also carries the deterministic rubric
+    checks (entries with family "det_checks", utils/det_checks.py) and
+    `det_checks` is that run's {"mode", "summary", "artefact"}. Each family
+    has its own switch: `accuracy_engine` decides the answer check's
+    verdicts, det_checks["mode"] ("harness" | "llm" | "off") the
+    deterministic family's. total_score_harness still overlays every live
+    measured verdict; the recorded total overlays only the families whose
+    switch is "harness" — accuracy_engine.effective is "harness" (all
+    counted), "llm" (none) or "mixed" (some), and each check's provenance
+    says `counted`. scored_results.det_checks carries the run's summary and
+    det_checks.json is copied into output_dir.
     """
     output_dir = Path(output_dir)
 
@@ -1811,6 +1841,16 @@ def _finalize_case(
         json.dump(all_responses, f, indent=2)
     logger.info(f"  AI judgement saved to: {ai_judgement_path}")
 
+    # Judge v13: the deterministic checks' full record rides with the bundle.
+    det_mode = (det_checks or {}).get("mode") or "harness"
+    det_artefact = (det_checks or {}).get("artefact")
+    if det_artefact and Path(det_artefact).exists():
+        try:
+            if Path(det_artefact).resolve() != (output_dir / "det_checks.json").resolve():
+                shutil.copy(str(det_artefact), str(output_dir / "det_checks.json"))
+        except OSError as e:
+            logger.warning(f"  [det_checks] could not copy artefact: {e}")
+
     # Calculate scores
     score_results = None
     if weights_data:
@@ -1826,26 +1866,53 @@ def _finalize_case(
             "total_score_llm": score_results_llm["total_score"],
             "total_score_harness": None,
         }
+        if det_checks is not None:
+            engine_block["det_checks_mode"] = det_mode
+        # Which switch governs which producer (family): the answer check
+        # follows --accuracy-check, the deterministic checks --det-checks.
+        family_modes = {"answer_check": accuracy_engine, "det_checks": det_mode}
         if harness_verdicts:
             harness_responses, applied = _apply_harness_verdicts(
                 all_responses, harness_verdicts, weights_data
             )
             engine_block["checks"] = applied
-            if any(v["engine"] == "harness" for v in applied.values()):
+            overlaid = [k for k, v in applied.items() if v["engine"] == "harness"]
+            counted = [
+                k for k in overlaid
+                if family_modes.get(applied[k].get("family") or "answer_check") == "harness"
+            ]
+            for k, v in applied.items():
+                v["counted"] = k in counted
+            if overlaid:
                 score_results_harness = calculate_scores(
                     harness_responses, weights_data, max_mistakes=RUBRIC_MAX_MISTAKES
                 )
                 engine_block["total_score_harness"] = score_results_harness["total_score"]
                 with open(output_dir / "ai_judgement_harness.json", "w", encoding="utf-8") as f:
                     json.dump(harness_responses, f, indent=2)
-                if accuracy_engine == "harness":
+                if counted and len(counted) == len(overlaid):
                     score_results = score_results_harness
                     engine_block["effective"] = "harness"
+                elif counted:
+                    # Only some families count: score the LLM judgement with
+                    # just their verdicts overlaid.
+                    effective_responses, _ = _apply_harness_verdicts(
+                        all_responses,
+                        {k: harness_verdicts[k] for k in counted},
+                        weights_data,
+                    )
+                    score_results = calculate_scores(
+                        effective_responses, weights_data, max_mistakes=RUBRIC_MAX_MISTAKES
+                    )
+                    engine_block["effective"] = "mixed"
                 logger.info(
-                    f"  Accuracy engine: mode={accuracy_engine} -> effective="
-                    f"{engine_block['effective']}; total llm="
-                    f"{score_results_llm['total_score']:.2f} harness="
-                    f"{score_results_harness['total_score']:.2f}"
+                    f"  Accuracy engine: mode={accuracy_engine}"
+                    + (f", det_checks={det_mode}" if det_checks is not None else "")
+                    + f" -> effective={engine_block['effective']} "
+                    f"({len(counted)} of {len(overlaid)} harness verdict(s) counted); "
+                    f"total llm={score_results_llm['total_score']:.2f} harness="
+                    f"{score_results_harness['total_score']:.2f} recorded="
+                    f"{score_results['total_score']:.2f}"
                 )
             elif accuracy_engine == "harness":
                 logger.info(
@@ -1853,6 +1920,8 @@ def _finalize_case(
                     "— LLM verdicts stand (reasons in scored_results.accuracy_engine)"
                 )
         score_results["accuracy_engine"] = engine_block
+        if det_checks is not None:
+            score_results["det_checks"] = det_checks.get("summary")
         if suitability_provenance is not None:
             # Phase A provenance rides inside scored_results (and scores.json)
             # so every grading records exactly which checks were gated out.
@@ -1925,6 +1994,13 @@ def _finalize_case(
         metadata_dict["rubric_suitability"] = suitability_provenance
     if formula_cache_provenance is not None:
         metadata_dict["formula_cache"] = formula_cache_provenance
+    if det_checks is not None:
+        _det_summary = det_checks.get("summary") or {}
+        metadata_dict["det_checks"] = {
+            k: _det_summary.get(k)
+            for k in ("status", "mode", "code_sha", "graded", "not_applicable", "values")
+            if k in _det_summary
+        }
 
     if metadata_path.exists():
         try:
@@ -4206,6 +4282,7 @@ def single_pass_judge_case(
     harness_verdicts: dict | None = None,
     accuracy_engine: str = "llm",
     max_forced_rounds: int | None = None,
+    det_checks: dict | None = None,
 ):
     """Judge v4 experiment: ONE conversation over every applicable check.
 
@@ -4213,6 +4290,12 @@ def single_pass_judge_case(
     config's single_pass.max_forced_rounds). Smoke tests set it low together
     with max_tool_rounds — the config loader overwrites env vars, so the env
     override the README implies does not work; this parameter does.
+
+    `det_checks` (judge v13): utils.det_checks.DetChecksRun.for_judge() of
+    the deterministic checks the caller ran BEFORE this call; their verdicts
+    are already in `harness_verdicts`. Passed through to _finalize_case
+    (mode switch, scored_results.det_checks, det_checks.json). The LLM never
+    sees either.
 
     Sibling of agentic_judge_case (which is not modified): same tools, same
     suitability gating, same guidance notes, same scoring — the only design
@@ -5175,6 +5258,7 @@ def single_pass_judge_case(
         formula_cache_provenance=prep.get("formula_cache_provenance"),
         harness_verdicts=harness_verdicts,
         accuracy_engine=accuracy_engine,
+        det_checks=det_checks,
     )
 
 
@@ -5242,11 +5326,29 @@ def main(args):
     client = get_client(identity)
 
     if single_pass:
-        # Harness answer check first (judge v6+): deterministic Questions-sheet
+        # Deterministic rubric checks (judge v13) first, before the answer
+        # check and the judge, and NOT score-neutral: a check that cannot
+        # grade the delivered workbook raises DetChecksError here (no
+        # fallback, no API call, and no answer-check LibreOffice run). Every
+        # LibreOffice run goes through the machine-wide memory guard; when it
+        # cannot run now the error carries retry_later (re-run later).
+        # A local folder needs the _attempt_origin.json sidecar for File
+        # extension (.xlsx) (77). A legacy .xls delivery is graded only with
+        # --run-calculation, on LibreOffice's .xlsx conversion, as in v12.
+        # Same wiring as grade_from_db.grade_single_attempt.
+        task_folder = Path(args.folder_to_grade)
+        det_run = run_det_checks(
+            task_folder,
+            rubric_path=rubric_path,
+            weights_path=rubric_weight_path,
+            mode=args.det_checks,
+            run_calculation=args.run_calculation,
+        )
+
+        # Harness answer check (judge v6+): deterministic Questions-sheet
         # comparison whose verdicts the judge can adopt for the Accuracy checks
         # (--accuracy-check harness). Score-neutral on failure: the LLM's own
-        # verdicts then stand. Same wiring as grade_from_db.grade_single_attempt.
-        task_folder = Path(args.folder_to_grade)
+        # verdicts then stand.
         harness_verdicts = {}
         try:
             solution_xlsx = find_golden_solution_file(task_folder)
@@ -5261,8 +5363,13 @@ def main(args):
             )
             logger.info(f"  [answer_check] {summary_block(ac_result)}")
             harness_verdicts = ac_result.get("harness_verdicts") or {}
+        except LibreOfficeUnavailable:
+            # LibreOffice could not run now (machine-wide guard exhausted;
+            # maintainer 2026-10-05): fail loudly, re-run later
+            raise
         except Exception as e:  # noqa: BLE001 — score-neutral by design
             logger.warning(f"  [answer_check] skipped on error: {e}")
+        harness_verdicts = merge_harness_verdicts(harness_verdicts, det_run.harness_verdicts)
 
         single_pass_judge_case(
             task_folder=args.folder_to_grade,
@@ -5281,6 +5388,7 @@ def main(args):
             reasoning_effort=args.reasoning_effort,
             harness_verdicts=harness_verdicts,
             accuracy_engine=args.accuracy_check,
+            det_checks=det_run.for_judge(),
         )
     elif args.agentic:
         agentic_judge_case(
@@ -5432,6 +5540,7 @@ if __name__ == "__main__":
             "always recorded in scores.json."
         ),
     )
+    add_det_checks_arg(parser)
     parser.add_argument(
         "--carry-over-context",
         action="store_true",

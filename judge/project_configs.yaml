@@ -14,7 +14,7 @@ project:
 
 paths:
   scratch_path: "scratch"   # relative to judge/
-  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation
+  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation and det_checks (judge v13)
 
 miscs:
   logger_name: "bizbench_judge"
@@ -177,7 +177,21 @@ single_pass:
   # typed for the sense check is an outside comparison wherever it sits and
   # judgment is basis enough, 88 went from 2 to 11 fails of 12 under the jv11
   # note). Prompt version and template unchanged.
-  version: 12
+  # 13 (2026-10-04, deterministic rubric checks; utils/det_checks.py over
+  # judge/detchecks/): Python grades the delivered workbook BEFORE the LLM
+  # and its verdict replaces the LLM's at scoring for the 19 checks in
+  # det_checks.live; No formula errors (22) and Negatives in parentheses (65)
+  # are recorded beside the LLM's verdict, which counts. No fallback: a check
+  # that cannot grade the file fails the grading before any API call. Files
+  # not saved by Excel are recalculated by LibreOffice for the value checks,
+  # whatever their size (2026-10-05: every attempt is graded; memory is
+  # protected by the det_checks.libreoffice_* guard below; Excel
+  # recalculation off). --det-checks harness|llm|off on every
+  # single-pass driver (default: det_checks.enabled). The LLM still grades
+  # every check, blind to Python; prompt, evidence and CSV caches unchanged.
+  # Existing gradings are not re-scored: rows graded under 13 are not
+  # comparable with version 12 rows.
+  version: 13
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500
@@ -186,3 +200,75 @@ single_pass:
   # a mistake for the harness's Final-calculation-accuracy verdict. Recorded
   # per grading in scored_results.accuracy_engine.
   hardcoded_counts: true
+
+# Deterministic rubric checks (judge v13; utils/det_checks.py runs the
+# graders in judge/detchecks/, documented in detchecks/docs/). Python grades
+# these checks from the DELIVERED workbook before the LLM runs; the LLM still
+# grades every check, blind to Python, and both verdicts are recorded
+# (scored_results.accuracy_engine.checks, det_checks.json). Numbers are
+# rubric_9 positions, each pinned to its (category, name) in
+# utils/det_checks.DET_CHECK_NAMES: a number whose pin, rubric position or
+# detchecks key disagree refuses to grade. Only checks the task's
+# suitability annotation leaves applicable are graded (never a retired one).
+# No fallback: a check that cannot grade the file fails the grading before
+# the LLM call. No unresolved cell warnings (23) and Automatic calculation
+# mode (100) stay with the LLM (not built).
+det_checks:
+  # true: every single-pass driver runs them (= --det-checks harness);
+  # false: off unless --det-checks harness|llm is passed.
+  enabled: true
+  # The Python verdict replaces the LLM's at scoring (maintainer, 2026-10-04):
+  #   29 Clean Name Manager, 47 No bright-yellow highlighting,
+  #   49 Black font for calculations, 50 Green font for cross-sheet links,
+  #   51 Red font for external links, 61 Consistent zoom level,
+  #   62 Active cell reset to A1 on all sheets, 66 Zeros as dashes,
+  #   69 Sufficient column widths, 70 Reasonable column widths,
+  #   73 Reasonable row heights, 74 No merged cells,
+  #   77 File extension (.xlsx), 80 Avoid volatile functions,
+  #   87 Avoid whole-column references, 92 No hidden sheets,
+  #   93 No hidden rows/columns, 94 No white-on-white hiding,
+  #   95 No external links
+  live: "29,47,49,50,51,61,62,66,69,70,73,74,77,80,87,92,93,94,95"
+  # Python runs and is recorded; the LLM's verdict counts (the "v3 bucket";
+  # detchecks marks both Check.live = False, so neither can be listed live):
+  #   22 No formula errors, 65 Negatives in parentheses
+  recorded_only: "22,65"
+  # Formula values of a file not saved by Excel come from a LibreOffice
+  # recalculation of the delivered file (paths.libreoffice_path; the copy
+  # goes to <task folder>/det_checks_recalc/, deleted by the adapter as soon
+  # as the checks finish). Excel recalculation stays OFF (maintainer
+  # 2026-10-04: Mac Excel asks for file access on every file); cells
+  # LibreOffice cannot compute are used as displayed.
+  excel_recalc: false
+  # Timeout of the first LibreOffice try; doubled on every retry.
+  libreoffice_timeout_seconds: 600
+  # Size limit: 0 (or null) = NO LIMIT - production grades every attempt,
+  # whatever its size (maintainer 2026-10-05). A positive value (MB =
+  # 1,000,000 bytes) is for TEST RUNS only: a larger file not saved by Excel
+  # then fails the grading before the LLM call ("not graded: too large").
+  libreoffice_max_mb: 0
+  # Memory safety instead of a size cap (maintainer 2026-10-05;
+  # detchecks/core/lo_guard.py). It covers EVERY LibreOffice run of a
+  # grading: the det-checks recalculation, the answer check's
+  # recalculation and --run-calculation.
+  #  - One LibreOffice at a time on the machine, across all grading
+  #    processes and worker threads: an exclusive lock on this file
+  #    (null / "" = /tmp/mbabench_libreoffice.lock).
+  libreoffice_lock_path: null
+  #  - Wait at most this long for that lock (maintainer 2026-10-05: every
+  #    attempt graded - one stuck file cannot stall a run); then the attempt
+  #    fails loudly and is listed for re-run, as below.
+  libreoffice_max_lock_wait_minutes: 180
+  #  - Before each run, holding the lock, wait until at least this much of
+  #    the machine's memory is free (macOS memory_pressure, Linux
+  #    /proc/meminfo), logging while it waits ...
+  libreoffice_min_free_pct: 25
+  #  - ... for at most this long; then the attempt fails loudly (no DB row,
+  #    logged FAILED, the batch continues) and the run's end summary lists
+  #    it to be re-run when the machine has memory to spare.
+  libreoffice_max_wait_minutes: 60
+  #  - A run that fails (crash, no copy, timeout) is retried this many
+  #    times, the timeout doubled each time, waiting for the lock and for
+  #    memory again before each try; only after the last retry does the
+  #    grading fail loudly (listed for re-run, as above).
+  libreoffice_retries: 3

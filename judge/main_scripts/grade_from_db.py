@@ -35,6 +35,9 @@ import psycopg2
 import psycopg2.extras
 from utils import repo_config, rubric_suitability, workbook_properties
 from utils.answer_check import run_answer_check, summary_block
+from utils import det_checks as det_checks_mod
+from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, retry_later_ids, retry_later_report, run_det_checks
+from detchecks.errors import LibreOfficeUnavailable
 from utils.excel_utils import find_golden_solution_file
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
@@ -688,12 +691,21 @@ def grade_single_attempt(
     suitability_source_path=None,
     accuracy_check="harness",
     max_forced_rounds=None,
+    det_checks=None,
 ):
     """Grade a single attempt. Returns a result dict.
 
     `accuracy_check` ("harness" | "llm"): which engine's verdict on the
     harness-decidable Accuracy checks lands in the recorded total. Both are
     always recorded (scored_results.accuracy_engine); single-pass only.
+
+    `det_checks` ("harness" | "llm" | "off"; None = project_configs.yaml
+    det_checks.enabled): the deterministic rubric checks of judge v13
+    (utils/det_checks.py), single-pass only. They grade the delivered
+    ai_attempt.xlsx first - BEFORE the answer check and the judge - and are
+    not score-neutral: a check that cannot grade it fails this attempt
+    (success False, logged FAILED, no DB row) before any LLM spend, like the
+    formula-cache refusal.
     """
     attempt_id = attempt["attempt_id"]
     task_name = attempt["task_name"] or f"task_{attempt['task_id']}"
@@ -751,37 +763,73 @@ def grade_single_attempt(
             )
         )
     )
-    # Harness answer check (judge v6) runs BEFORE the judge: it only needs the
-    # two workbooks, and its verdicts are handed to the single-pass scoring
-    # layer. The artifact is written into the task folder now and copied into
-    # the grading's output_dir after the judge returns (so S3 carries it).
-    # Failures never block grading — the judge's own verdicts then stand.
     ac_result = None
     ac_artifact = task_folder / "answer_check.json"
     try:
-        solution_xlsx = find_golden_solution_file(Path(task_folder))
-        hardcoded_counts = str(
-            load_env_var("SINGLE_PASS_HARDCODED_COUNTS", default="true")
-        ).strip().lower() in ("1", "true", "yes")
-        ac_result = run_answer_check(
-            Path(task_folder) / "ai_attempt.xlsx",
-            solution_xlsx,
-            output_json_path=ac_artifact,
-            hardcoded_counts=hardcoded_counts,
-        )
-        logger.info(f"  [answer_check] {summary_block(ac_result)}")
-    except Exception as e:  # noqa: BLE001 — score-neutral by design
-        logger.warning(f"  [answer_check] skipped on error: {e}")
-        ac_result = {"status": "error", "error": str(e), "harness_verdicts": {}}
-    harness_verdicts = ac_result.get("harness_verdicts") or {}
+        # Deterministic rubric checks (judge v13, utils/det_checks.py) FIRST,
+        # before the answer check and the judge, and NOT score-neutral: no
+        # fallback. A DetChecksError lands in the except below exactly like
+        # the formula-cache refusal (FAILED, success False, no DB row, the
+        # batch continues), before any API spend and before the answer
+        # check opens the workbook. Every attempt is graded whatever its size
+        # (maintainer 2026-10-05); LibreOffice runs under the machine-wide
+        # memory guard, and when it cannot run now (memory, every retry
+        # failed) the error carries retry_later: the attempt is listed at the
+        # end of the run to be re-run when the machine has memory to spare.
+        # They read the delivered ai_attempt.xlsx, so they must run before
+        # prune_workbook_copies. A delivery in the legacy .xls format is
+        # graded as v12 grades it (maintainer 2026-10-05): with
+        # --run-calculation on LibreOffice's .xlsx conversion (File extension
+        # (.xlsx) (77) on the delivered file); without it the grading fails.
+        det_run = None
+        if single_pass:
+            det_run = run_det_checks(
+                task_folder,
+                rubric_path=rubric_path,
+                weights_path=rubric_weight_path,
+                mode=det_checks,
+                run_calculation=run_calculation,
+            )
 
-    try:
+        # Harness answer check (judge v6), also BEFORE the judge: it only
+        # needs the two workbooks, and its verdicts are handed to the
+        # single-pass scoring layer. The artifact is written into the task
+        # folder now and copied into the grading's output_dir after the judge
+        # returns (so S3 carries it). Failures never block grading — the
+        # judge's own verdicts then stand.
+        try:
+            solution_xlsx = find_golden_solution_file(Path(task_folder))
+            hardcoded_counts = str(
+                load_env_var("SINGLE_PASS_HARDCODED_COUNTS", default="true")
+            ).strip().lower() in ("1", "true", "yes")
+            ac_result = run_answer_check(
+                Path(task_folder) / "ai_attempt.xlsx",
+                solution_xlsx,
+                output_json_path=ac_artifact,
+                hardcoded_counts=hardcoded_counts,
+            )
+            logger.info(f"  [answer_check] {summary_block(ac_result)}")
+        except LibreOfficeUnavailable:
+            # LibreOffice could not run now (machine-wide guard exhausted;
+            # maintainer 2026-10-05): fail loudly, re-run later - never an
+            # answer check that reads uncomputed answers as unanswered
+            raise
+        except Exception as e:  # noqa: BLE001 — score-neutral by design
+            logger.warning(f"  [answer_check] skipped on error: {e}")
+            ac_result = {"status": "error", "error": str(e), "harness_verdicts": {}}
+        harness_verdicts = ac_result.get("harness_verdicts") or {}
+        if det_run is not None:
+            harness_verdicts = merge_harness_verdicts(
+                harness_verdicts, det_run.harness_verdicts
+            )
+
         # Step 2: Run judge
         if single_pass:
             logger.info("[Judge] Running single_pass_judge_case...")
             result = single_pass_judge_case(
                 harness_verdicts=harness_verdicts,
                 accuracy_engine=accuracy_check,
+                det_checks=det_run.for_judge(),
                 max_forced_rounds=max_forced_rounds,
                 task_folder=str(task_folder),
                 client=client,
@@ -1015,13 +1063,18 @@ def grade_single_attempt(
 
     except Exception as e:
         elapsed = time.time() - start_time
-        logger.error(f"  FAILED: {e}")
+        # retry_later: LibreOffice could not run now (memory wait timed out or
+        # every retry failed; maintainer 2026-10-05) - listed at the end of the
+        # run, to be re-run when the machine has memory to spare
+        retry_later = bool(getattr(e, "retry_later", False))
+        logger.error(f"  FAILED{' (LibreOffice could not run - re-run later)' if retry_later else ''}: {e}")
         traceback.print_exc()
         return {
             "attempt_id": attempt_id,
             "task_id": attempt["task_id"],
             "success": False,
             "error": str(e),
+            "retry_later": retry_later,
             "traceback": traceback.format_exc(),
             "task_folder": str(task_folder),
             "elapsed_seconds": round(elapsed, 2),
@@ -1059,6 +1112,10 @@ def prune_workbook_copies(result):
     bundle itself is in S3. Scores, logs, and judge conversations stay. Only
     paths inside the attempt's own task folder are touched, so the shared CSV
     caches are never affected. Returns bytes freed.
+
+    Judge v13: also det_checks_recalc/, which utils.det_checks.run_det_checks
+    already deletes itself when the checks finish (a no-op then; kept as a net);
+    det_checks.json stays with the logs.
     """
     task_folder = Path(result["task_folder"]).resolve()
     output_dir = Path(result.get("output_dir") or task_folder / "judge_results")
@@ -1069,6 +1126,7 @@ def prune_workbook_copies(result):
         task_folder / "ai_attempt.xlsx",
         task_folder / "solution",
         task_folder / "starting",
+        task_folder / det_checks_mod.RECALC_DIRNAME,
     ]
     if output_dir.is_dir():
         targets += [
@@ -1305,6 +1363,10 @@ def main(args):
     # Refuse to start if rubric, check_order and judge mode don't all belong
     # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
+    # ...or if the deterministic checks' config does not match the rubric
+    # (judge v13; single-pass only).
+    if single_pass:
+        det_checks_mod.startup_check(rubric_path, args.det_checks)
 
     scratch_base = str(
         relative_path_from_project_root(
@@ -1571,6 +1633,7 @@ def main(args):
                 suitability_source_path=suitability_src,
                 accuracy_check=args.accuracy_check,
                 max_forced_rounds=args.max_forced_rounds,
+                det_checks=args.det_checks,
             )
             results.append(result)
 
@@ -1722,6 +1785,9 @@ def main(args):
             "total_attempts": len(attempts),
             "successful": sum(1 for r in results if r["success"]),
             "failed": sum(1 for r in results if not r["success"]),
+            # LibreOffice could not run for these (memory / every retry failed):
+            # not graded, no DB row - re-run them when memory is free
+            "retry_later_attempt_ids": retry_later_ids(results),
             "results": results,
         }
         summary_path = scratch_run_dir / "run_summary.json"
@@ -1735,6 +1801,8 @@ def main(args):
         logger.info(f"  Total: {len(results)}")
         logger.info(f"  Successful: {summary['successful']}")
         logger.info(f"  Failed: {summary['failed']}")
+        for line in retry_later_report(results):
+            logger.warning(f"  {line}")
         total_cost = sum(r.get("cost", 0) for r in results if r["success"])
         logger.info(f"  Total cost: ${total_cost:.6f}")
         logger.info(f"  Run directory: {scratch_run_dir}")
@@ -1743,7 +1811,7 @@ def main(args):
 
         for r in results:
             if not r["success"]:
-                status = "FAILED"
+                status = "FAILED - LibreOffice, re-run later" if r.get("retry_later") else "FAILED"
             elif r.get("hard_parse_failures") or r.get("missing_scores"):
                 status = "PARSE_FAILED"
             elif r.get("has_scoring_warnings"):
@@ -1783,6 +1851,9 @@ def main(args):
             if r.get("error"):
                 parts.append(r["error"])
             logger.info(" | ".join(parts))
+        # repeated last, so the operator cannot miss it
+        for line in retry_later_report(results):
+            logger.warning(line)
 
     finally:
         conn.close()
@@ -1973,6 +2044,7 @@ Examples:
         ),
     )
     add_accuracy_check_arg(parser)
+    add_det_checks_arg(parser)
 
     # Execution modes
     parser.add_argument(

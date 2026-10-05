@@ -351,11 +351,14 @@ class GradeOrchestrator:
         single_pass=False,
         accuracy_check="harness",
         max_forced_rounds=None,
+        det_checks=None,
     ):
         self.workers = workers
         self.single_pass = single_pass
         self.accuracy_check = accuracy_check
         self.max_forced_rounds = max_forced_rounds
+        # judge v13 deterministic checks: harness | llm | off (None = config)
+        self.det_checks = det_checks
         self.model = model
         self.rubric_path = rubric_path
         self.template_path = template_path
@@ -687,6 +690,7 @@ class GradeOrchestrator:
                 suitability_source_path=suitability_src,
                 accuracy_check=self.accuracy_check,
                 max_forced_rounds=self.max_forced_rounds,
+                det_checks=self.det_checks,
             )
         except Exception as e:
             logger.error(f"  [attempt {attempt_id}] grade_single_attempt raised: {e}")
@@ -696,6 +700,7 @@ class GradeOrchestrator:
                 "task_id": task_id,
                 "success": False,
                 "error": f"uncaught: {e}",
+                "retry_later": bool(getattr(e, "retry_later", False)),
                 "traceback": traceback.format_exc(),
             }
 
@@ -734,7 +739,8 @@ class GradeOrchestrator:
             total = self._total
             elapsed = time.monotonic() - self._start_time
 
-        status = "OK" if result.get("success") else "FAILED"
+        status = "OK" if result.get("success") else (
+            "FAILED (LibreOffice could not run - re-run later)" if result.get("retry_later") else "FAILED")
         # Warm-up gate: skip ETA until we've cleared at least one full pool
         # cycle so the estimate isn't dominated by cold-cache outliers.
         if completed >= max(3, self.workers) and elapsed > 0:
@@ -796,6 +802,9 @@ def write_run_summary(
         "total_attempts": len(attempts),
         "successful": sum(1 for r in results if r.get("success")),
         "failed": sum(1 for r in results if not r.get("success")),
+        # LibreOffice could not run for these (memory / every retry failed;
+        # maintainer 2026-10-05): not graded, no DB row - re-run them later
+        "retry_later_attempt_ids": _gfd.retry_later_ids(results),
         "results": results,
     }
     summary_path = Path(scratch_run_dir) / "run_summary.json"
@@ -1072,6 +1081,7 @@ def main():
         ),
     )
     _gfd.add_accuracy_check_arg(parser)
+    _gfd.add_det_checks_arg(parser)
 
     # Execution modes
     parser.add_argument("--dry-run", action="store_true")
@@ -1139,6 +1149,10 @@ def main():
     # Refuse to start if rubric, check_order and judge mode don't all belong
     # to the selected benchmark (v1 vs v2).
     validate_benchmark_coherence(rubric_path, args.agentic, args.no_agentic)
+    # ...or if the deterministic checks' config does not match the rubric
+    # (judge v13; single-pass only).
+    if single_pass:
+        _gfd.det_checks_mod.startup_check(rubric_path, args.det_checks)
 
     # uuid suffix (2026-09): two orchestrator processes launched in the same
     # second used to share one grade_runs/<id> tree and destroy each other's
@@ -1265,6 +1279,7 @@ def main():
         single_pass=single_pass,
         accuracy_check=args.accuracy_check,
         max_forced_rounds=args.max_forced_rounds,
+        det_checks=args.det_checks,
     )
 
     orch.run(hydrated)
@@ -1294,8 +1309,11 @@ def main():
         logger.info(f"  Scores matrix: {matrix_path}")
     logger.info("=" * 60)
 
+    for line in _gfd.retry_later_report(orch.results):
+        logger.warning(f"  {line}")
     for r in orch.results:
-        status = "OK" if r.get("success") else "FAILED"
+        status = "OK" if r.get("success") else (
+            "FAILED - LibreOffice, re-run later" if r.get("retry_later") else "FAILED")
         parts = [f"  attempt {r.get('attempt_id')}: [{status}]"]
         if r.get("scores"):
             s = r["scores"]
@@ -1309,6 +1327,9 @@ def main():
         if r.get("error"):
             parts.append(r["error"])
         logger.info(" | ".join(parts))
+    # repeated last, so the operator cannot miss it
+    for line in _gfd.retry_later_report(orch.results):
+        logger.warning(line)
 
     # Close the run.log handler so the file is flushed before we read it back.
     remove_log_file(run_log_path)
