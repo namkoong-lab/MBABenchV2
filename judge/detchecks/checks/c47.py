@@ -567,10 +567,11 @@ class C47(Check):
 
     def sheet_start(self, head):
         keys = []
-        for ci in head.cols:
+        # column styles through the shared <col> reading (later entry wins where entries overlap)
+        for lo, hi, ci in head.col_segments():
             if ci.style is not None:
                 keys += [(k, f"the column style of "
-                              f"{location(head.name, f'{index_to_col(ci.min)}:{index_to_col(min(ci.max, 16384))}')}")
+                              f"{location(head.name, f'{index_to_col(lo)}:{index_to_col(hi)}')}")
                          for k in self._style_keys(ci.style)]
         for k, where in keys:
             self._admit((k,), where)
@@ -716,13 +717,14 @@ class C47(Check):
         self.row_buf: list = []
         self.row_flag = False
         self.row_styles: list = []            # (r, colour)
-        # column styles
-        for ci in head.cols:
+        # column styles: the shared <col> reading (core.sheet.paint_cols, SheetHead.col_segments) - where
+        # entries overlap the later one wins on the columns it covers, so an overridden style never paints
+        for lo, hi, ci in head.col_segments():
             if ci.style is None:
                 continue
             col = self._bright(ci.style)
             if col:
-                self.col_hits.append((head.name, ci.min, min(ci.max, 16384), col))
+                self.col_hits.append((head.name, lo, hi, col))
                 self.colours.add(col)
         if self.default_bright:
             self.default_hits.append(head.name)

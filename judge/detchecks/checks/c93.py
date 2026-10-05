@@ -255,10 +255,10 @@ class C93(Check):
         col_flagged = set()
         near_zero_cols = []
         covered = [False] * (MAX_COL + 1)
-        for ci in head.cols:
-            lo, hi = max(1, ci.min), min(MAX_COL, ci.max)
-            if lo > hi:
-                continue
+        # the shared reading of <col> entries (core.sheet.paint_cols): where entries overlap the later
+        # one - by min, then file order - wins on the columns it covers, as a whole (a later visible
+        # entry clears an earlier hidden one); before 2026-10-04 this loop only ever added reasons
+        for lo, hi, ci in head.col_segments():
             own = ci.width is not None
             zero = (ci.width <= ZERO_COL_WIDTH_CH) if own else default_zero_cols
             if own and not zero and ci.width < NEAR_ZERO_COL_CH and len(near_zero_cols) < 50:

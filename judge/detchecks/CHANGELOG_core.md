@@ -1,5 +1,30 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-04 — No hidden rows/columns (93) and No bright-yellow highlighting (47) read `<col>` the shared way
+
+Source: follow-ups of the overlapping-`<col>` core fix (below) and the judge v13 review. No hidden rows/columns
+(93) walked the raw entries and only ever added reasons, so a later visible `<col>` never cleared an earlier hidden
+one (`C:XFD hidden` + `D:D visible` failed as `C:XFD`), although 93.md said "the later entry wins"; No bright-yellow
+highlighting (47) took its column-style hits (and the column styles it admits for unknown-colour readings) from the
+raw entries, so an overridden yellow style still painted.
+
+### checks
+- 93: the column loop walks `head.col_segments()` (core.sheet.paint_cols: the later entry - by `min`, then file
+  order - wins on the columns it covers, as a whole: hidden flag, width, outline level, collapsed mark).
+- 47: column-style hits and the admitted column styles come from `head.col_segments()`; a hit's range is the
+  segment's (an entry split by a later one gives one hit per remaining part).
+- Only Negatives in parentheses (65) and Zeros as dashes (66) still read `cols` directly (styles of missing array
+  members; reader.md section 7).
+
+### tests
+- `test_93_overlapping_cols_later_entry_wins` (rowscols) and `test_47_overlapping_col_styles_later_entry_wins`
+  (fills); both fail on the previous code.
+
+### Corpus effect (2026-10-04, one guarded job before / after, 47 and 93 only: neither needs values, no LibreOffice)
+- 374 files: 347 graded, 27 not graded (over 10 MB and not saved by Excel); before and after: 47 pass 347, 93 pass
+  347; **0 changes** in decisions, mistakes (location and description) or the kept stats (`col_style_hits`,
+  `row_style_hits`, `bright_cells`, hidden / zero-width / default-zero-width columns, exempt groups).
+
 ## 2026-10-04 — the LibreOffice step: encoded paths; a conversion never outlives its grading (judge v13 reviews)
 
 Source: the two judge v13 reviews (ops: LibreOffice aborts on a task folder with a space, task 28

@@ -767,6 +767,32 @@ def test_73_overlapping_cols_later_entry_wins():
     assert v["decision"] == "pass", v["mistakes"]
 
 
+def test_93_overlapping_cols_later_entry_wins():
+    """Overlapping <col> entries through the shared reading (SheetHead.col_segments): the later entry
+    - by min, then file order - wins on the columns it covers, as a whole, so a later VISIBLE entry
+    clears an earlier hidden one (93.md said so; until 2026-10-04 the loop only ever added reasons).
+    Before: C:XFD hidden + D:D visible failed as one run C:XFD; E hidden + E visible (same min, file
+    order) failed at E."""
+    rows = data_rows(1, 3)
+    cols = '<col min="3" max="16384" width="9" hidden="1"/><col min="4" max="4" width="12" customWidth="1"/>'
+    v = run(book([("S", ws(rows, cols=cols))]), C93)
+    assert v["decision"] == "fail" and locs(v) == ["S!C:C", "S!E:XFD"], locs(v)
+    assert v["stats"]["hidden_cols"] == 16384 - 3, v["stats"]
+    # the file lists the wider entry later (the reader sorts by min: D:D still wins on D)
+    cols_rev = '<col min="4" max="4" width="12" customWidth="1"/><col min="3" max="16384" width="9" hidden="1"/>'
+    assert locs(run(book([("S", ws(rows, cols=cols_rev))]), C93)) == ["S!C:C", "S!E:XFD"]
+    # same min: file order decides - a hidden entry overridden by a later visible one hides nothing
+    same = '<col min="5" max="5" width="9" hidden="1"/><col min="5" max="5" width="9" customWidth="1"/>'
+    v = run(book([("S", ws(rows, cols=same))]), C93)
+    assert v["decision"] == "pass", v["mistakes"]
+    # ... and the other way round it hides E
+    v = run(book([("S", ws(rows, cols='<col min="5" max="5" width="9"/><col min="5" max="5" width="9" hidden="1"/>'))]), C93)
+    assert v["decision"] == "fail" and locs(v) == ["S!E:E"]
+    # a later zero-width entry inside a visible range still hides its columns (later wins)
+    v = run(book([("S", ws(rows, cols='<col min="1" max="10" width="9"/><col min="3" max="3" width="0" customWidth="1"/>'))]), C93)
+    assert v["decision"] == "fail" and locs(v) == ["S!C:C"] and "zero column width" in v["mistakes"][0]["description"]
+
+
 TESTS = [test_93_collapsed_members, test_93_hidden_row_flag_and_zero_height,
          test_93_collapsed_group_passes_ungrouped_fails, test_93_partial_and_nested_groups, test_93_columns,
          test_93_sheet_defaults_hidden_sheets_and_variants, test_93_mistake_cap,
@@ -775,7 +801,8 @@ TESTS = [test_93_collapsed_members, test_93_hidden_row_flag_and_zero_height,
          test_73_formula_values_only_where_needed, test_73_values_after_anchors_untrusted_only_if_needed,
          test_73_rich_runs_indent_cap_and_labels,
          test_73_excel_2026_10_03_non_custom_heights_ignored, test_73_instructions_title_with_lost_font_fails,
-         test_73_vertical_merge_whole_block, test_73_overlapping_cols_later_entry_wins]
+         test_73_vertical_merge_whole_block, test_73_overlapping_cols_later_entry_wins,
+         test_93_overlapping_cols_later_entry_wins]
 
 
 def main() -> int:

@@ -429,8 +429,10 @@ does (no toy has overlapping entries), and on every corpus file "later in file o
 widths. Before 2026-10-04 `col_info` returned None - the sheet default - for every column an earlier
 range covers after a later entry that starts inside it (`C:XFD 18` + `D:D 3`: F onwards read 8.43);
 that hit 130 corpus files, through Sufficient column widths (69) and Reasonable row heights (73).
-Checks that read `cols` directly (47 column styles, 65 / 66 missing array members, 93 hidden
-columns) apply their own reading.
+No bright-yellow highlighting (47) (column styles) and No hidden rows/columns (93) (hidden columns)
+use this shared reading too (2026-10-04). Only Negatives in parentheses (65) and Zeros as dashes (66)
+still read `cols` directly, for the styles of array members missing from the file (every entry's
+style that touches the range).
 
 `SheetView` fields:
 - Window and zoom: `workbook_view_id`, `tab_selected`, `zoom_scale` (as stored; None means absent), `zoom_scale_normal`, `zoom_scale_page_layout_view`, `zoom_scale_sheet_layout_view`, `view` (`normal` / `pageBreakPreview` / `pageLayout`), `top_left_cell`

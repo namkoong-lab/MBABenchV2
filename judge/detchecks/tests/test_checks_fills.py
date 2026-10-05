@@ -1252,6 +1252,31 @@ def _cfx(sqref, dxf, op="greaterThan", f="0", prio=1):
             f'operator="{op}"><formula>{escape(f)}</formula></cfRule></conditionalFormatting>')
 
 
+def test_47_overlapping_col_styles_later_entry_wins():
+    """Column styles through the shared <col> reading (SheetHead.col_segments, later entry wins): a
+    bright-yellow column style overridden by a later entry paints only the columns it still covers;
+    fully overridden, it paints nothing.  Before 2026-10-04 47 read the raw entries (C:H yellow + E:E
+    plain failed as C:H; a yellow E:E overridden by a later plain E:E failed at E)."""
+    st = Styles()
+    yb = st.xf(fill=st.fill("FFFF00"))
+    plain = st.xf()
+    xml = (f'<cols><col min="3" max="8" width="9" style="{yb}"/><col min="5" max="5" width="9" style="{plain}"/></cols>'
+           + sheet([c("A1", 0, 1.0)]))
+    v = run(book(tmp("colover.xlsx"), [("S", xml)], st), C47)
+    assert v["decision"] == "fail" and locs(v) == ["S!C:D", "S!F:H"], locs(v)
+    assert v["stats"]["col_style_hits"] == 2
+    xml = (f'<cols><col min="5" max="5" width="9" style="{yb}"/><col min="5" max="5" width="9" style="{plain}"/></cols>'
+           + sheet([c("A1", 0, 1.0)]))
+    v = run(book(tmp("colover2.xlsx"), [("S", xml)], st), C47)
+    assert v["decision"] == "pass" and v["stats"]["col_style_hits"] == 0, locs(v)
+    # an unresolvable fill colour on an overridden column style is never examined (no fork, no raise)
+    unk = st.xf(fill=st.fill(fg_attr='rgb="FFGGFF00"'))
+    xml = (f'<cols><col min="3" max="3" width="9" style="{unk}"/><col min="3" max="3" width="9" style="{plain}"/></cols>'
+           + sheet([c("A1", 0, 1.0)]))
+    v = run(book(tmp("colover3.xlsx"), [("S", xml)], st), C47)
+    assert v["decision"] == "pass" and "unresolved_fill_colours" not in v["stats"], v["stats"]
+
+
 def test_47_unresolvable_fill_colours():
     """Finding 47-R2-08 (2026-10-04): an unresolvable fill colour (rgb FFGGFF00, theme index 20 ...) used to read
     as 'no fill' and pass silently.  47 now grades every reading of it (no fill / bright yellow / another
@@ -1395,7 +1420,8 @@ TESTS = [test_47_colour_band, test_47_legend_classifier, test_47_own_fill_pale_a
          test_47_rereview_back_reference_defines_nothing, test_47_rereview_section_header_is_not_a_colour_key,
          test_47_rereview_wip_vocabulary, test_47_rereview_classifier_phrasings,
          test_47_rereview_unreadable_text_decisive_only_with_yellow, test_47_rereview_merged_swatch,
-         test_47_unresolvable_fill_colours, test_94_unresolvable_colours, test_94_unverified_number_format]
+         test_47_unresolvable_fill_colours, test_94_unresolvable_colours, test_94_unverified_number_format,
+         test_47_overlapping_col_styles_later_entry_wins]
 
 
 def main() -> int:
