@@ -74,12 +74,12 @@ Values (detchecks/docs/recalc.md)
   private profiles (raw or URL form) when the checks return or raise.
 
 Task metadata
-  delivered_filename       from the _attempt_origin.json sidecar (original_filename); without
-                           it File extension (.xlsx) (77) raises: the staged name is not the
-                           delivered one. A malformed sidecar (read_origin: not JSON, not an
-                           object, no non-empty original_filename) raises the same way, named
-                           as malformed; when File extension (.xlsx) (77) is not graded it is
-                           only recorded.
+  delivered_filename       from the _attempt_origin.json sidecar (original_filename). Without
+                           it, or with a malformed sidecar (read_origin: not JSON, not an object,
+                           no non-empty original_filename), File extension (.xlsx) (77) judges
+                           the format from the file's content (maintainer 2026-10-05: every
+                           attempt graded; task_meta delivered_filename_problem says why, and
+                           the verdict's stats.defaults records it).
   requires_external_links  always False (maintainer: no task requires external links).
 
 Artefacts
@@ -733,8 +733,8 @@ def _origin_note(task_folder: Path, problem: str | None) -> str:
         why = f"no {workbook_properties.ORIGIN_FILENAME} in {task_folder}"
     else:
         why = f"{sidecar} is {problem}"
-    return (f"({why}: the delivered file name is unknown, so {label(_FILE_EXTENSION_CHECK)} cannot be "
-            f"graded)")
+    return (f"({why}: the delivered file name is unknown, so {label(_FILE_EXTENSION_CHECK)} judges the format "
+            f"from the file's content - maintainer 2026-10-05: every attempt graded)")
 
 
 def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Path,
@@ -824,6 +824,8 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
     task_meta = {"requires_external_links": False}
     if delivered:
         task_meta["delivered_filename"] = delivered
+    elif origin_problem:                    # 77 then judges the format from the content (maintainer 2026-10-05)
+        task_meta["delivered_filename_problem"] = origin_problem
     if origin_problem and _FILE_EXTENSION_CHECK in selected:
         logger.warning(f"  [det_checks] {_origin_note(task_folder, origin_problem)}")
     elif origin_problem and origin_problem != "missing":

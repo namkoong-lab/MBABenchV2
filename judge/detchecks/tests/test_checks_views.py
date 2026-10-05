@@ -824,21 +824,45 @@ def test_77_delivered_filename_from_task_meta():
     assert v["decision"] == "fail" and locs(v) == ["Model.xls"], v
     other = book(tmp("Model_delivered.xlsx"), [S("A", "")])
     assert run(other, 77, {"delivered_filename": None})["stats"]["filename_source"] == "file_name"
-    raises(staged, 77, "non-empty file name", {"delivered_filename": ""})
-    raises(staged, 77, "non-empty file name", {"delivered_filename": 7})
+    # a malformed delivered name: the format is judged from the content (Patrick 2026-10-05: every attempt graded)
+    for bad in ("", 7, "folder/"):
+        v = run(staged, 77, {"delivered_filename": bad})
+        assert v["decision"] == "pass" and v["stats"]["delivered_name_unknown"].startswith("malformed"), v
+        assert v["stats"]["defaults"]["delivered_name_unknown"]["count"] == 1, v["stats"]
 
 
 def test_77_staged_name_without_delivered_name_raises():
-    # review 2026-10-03 (77-staged-name-fallback): production stages every delivery as
-    # ai_attempt.xlsx; grading that name would be a guess (a real .xlsm with VBA would fail)
+    # review 2026-10-03 (77-staged-name-fallback): production stages every delivery as ai_attempt.xlsx, whose
+    # own name is not the delivered one.  Patrick 2026-10-05 (every attempt graded): without a delivered name the
+    # format is judged from the file's content (a zip workbook without a VBA project = .xlsx, with a real one =
+    # .xlsm, OLE2 = .xls) and recorded in stats.defaults (it raised until then)
     staged = book(tmp("ai_attempt.xlsx"), [S("A", "")], main_ct="xlsm", vba="ole2")
-    raises(staged, 77, "staging name")
-    raises(staged, 77, "staging name", {"delivered_filename": None})
-    msg = raises(staged, 77, "'original_filename'", {"original_filename": "Model.xlsm"})   # sidecar key named
-    assert "delivered_filename" in msg, msg
+    for meta in (None, {"delivered_filename": None}, {"delivered_filename_problem": "missing"}):
+        v = run(staged, 77, meta)
+        assert v["decision"] == "pass" and v["stats"]["judged_from_content_as"] == ".xlsm", v
+        assert v["stats"]["delivered_filename"] is None and v["stats"]["delivered_name_unknown"].startswith("missing")
+        d = v["stats"]["defaults"]["delivered_name_unknown"]
+        assert d["count"] == 1 and "judged from its content as .xlsm" in d["examples"][0], d
+    v = run(staged, 77, {"original_filename": "Model.xlsm"})              # the sidecar key is named in the record
+    assert v["decision"] == "pass" and "'original_filename'" in v["stats"]["delivered_name_unknown"], v
     os.makedirs(tmp("upper"), exist_ok=True)              # own folder: the file system may ignore case
     upper = book(os.path.join(tmp("upper"), "AI_ATTEMPT.XLSX"), [S("A", "")])
-    raises(upper, 77, "staging name")
+    v = run(upper, 77, {"delivered_filename_problem": "malformed: a JSON list, not an object"})
+    assert v["decision"] == "pass" and v["stats"]["judged_from_content_as"] == ".xlsx", v
+    assert v["stats"]["delivered_name_unknown"] == "malformed: a JSON list, not an object", v
+    # judged from the content: a macro-enabled package without macros, legacy .xls bytes, a damaged zip fail
+    os.makedirs(tmp("c1"), exist_ok=True)
+    nomacro = book(os.path.join(tmp("c1"), "ai_attempt.xlsx"), [S("A", "")], main_ct="xlsm")
+    v = run(nomacro, 77)
+    assert v["decision"] == "fail" and v["stats"]["judged_from_content_as"] == ".xlsx", v
+    os.makedirs(tmp("c2"), exist_ok=True)
+    xls = raw(os.path.join(tmp("c2"), "ai_attempt.xlsx"), OLE2_MAGIC + b"\xff" * 100)
+    v = run(xls, 77)
+    assert v["decision"] == "fail" and v["stats"]["judged_from_content_as"] == ".xls", v
+    os.makedirs(tmp("c3"), exist_ok=True)
+    junk = raw(os.path.join(tmp("c3"), "ai_attempt.xlsx"), b"PK\x03\x04 not really a zip")
+    v = run(junk, 77)
+    assert v["decision"] == "fail" and v["stats"]["judged_from_content_as"] is None, v
     v = run(staged, 77, {"delivered_filename": "Model.xlsm"})
     assert v["decision"] == "pass" and v["stats"]["filename_source"] == "task_meta.delivered_filename", v
 

@@ -48,6 +48,7 @@ from .base import Check
 ALLOWED = (".xlsx", ".xlsm")
 OLE2_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")
 TASK_META_KEY = "delivered_filename"
+PROBLEM_META_KEY = "delivered_filename_problem"   # why the caller has no delivered name (e.g. "missing", "malformed: ...")
 SIDECAR_KEY = "original_filename"     # the key production's _attempt_origin.json uses (named in the error only)
 STAGED_FILE_NAMES = ("ai_attempt.xlsx",)   # grade_from_db stages every delivery under this name
 DIALOG_SHEET_POLICY = "error"         # Excel 5.0 dialog sheet as the only macro-like part: "error" (GradingError,
@@ -63,23 +64,24 @@ KIND_LABEL = {
 }
 
 
-def delivered_name(wb) -> tuple[str, str]:
-    """(original delivered file name, where it came from)."""
+def delivered_name(wb) -> tuple:
+    """(original delivered file name, where it came from) - or (None, why) when the delivered name is unknown: a
+    malformed task_meta name, or the staging name without a delivered name (Patrick 2026-10-05: every attempt
+    graded - the format is then judged from the file's content, C77.finish)."""
     meta = getattr(wb, "task_meta", None) or {}
     if TASK_META_KEY in meta and meta[TASK_META_KEY] is not None:
         v = meta[TASK_META_KEY]
         if not isinstance(v, str) or not v.strip():
-            raise GradingError(f"task_meta[{TASK_META_KEY!r}] must be a non-empty file name, got {v!r}")
+            return None, f"malformed: task_meta[{TASK_META_KEY!r}] is {v!r}, not a file name"
         name = v.strip().replace("\\", "/").rsplit("/", 1)[-1]
         if not name:
-            raise GradingError(f"task_meta[{TASK_META_KEY!r}]={v!r} names a folder, not a file")
+            return None, f"malformed: task_meta[{TASK_META_KEY!r}]={v!r} names a folder, not a file"
         return name, f"task_meta.{TASK_META_KEY}"
     if wb.file_name.lower() in STAGED_FILE_NAMES:
-        hint = (f" (task_meta has {SIDECAR_KEY!r}={meta[SIDECAR_KEY]!r}; the caller must pass it as "
-                f"{TASK_META_KEY!r})" if SIDECAR_KEY in meta else "")
-        raise GradingError(f"'{wb.file_name}' is the grading pipeline's staging name, not the delivered file "
-                           f"name, and task_meta[{TASK_META_KEY!r}] is not given{hint}; the delivered "
-                           f"extension is unknown")
+        why = str(meta.get(PROBLEM_META_KEY) or "missing")
+        if SIDECAR_KEY in meta:
+            why += f" (task_meta has {SIDECAR_KEY!r} but not {TASK_META_KEY!r})"
+        return None, why
     return wb.file_name, "file_name"
 
 
@@ -268,17 +270,44 @@ class C77(Check):
                           f"so its type (.xlsx or .xlsm) is not declared")
         return kind, KIND_LABEL[kind]
 
+    def _content_extension(self, kind, macros: bool) -> str:
+        """The extension the file's content implies when the delivered name is unknown (Patrick 2026-10-05): '' when
+        the content is no Excel workbook (an empty or damaged file, a zip that is not a workbook)."""
+        wb = self.wb
+        if wb.container == "ole2":
+            return ".xls"                              # OLE2 = .xls (an encrypted package is OLE2 too)
+        if kind in ("xlsb", "xltx", "xltm", "xlam", "ods", "csv"):
+            return "." + kind
+        if wb.container == "zip" and wb.format != "corrupt" and kind in ("xlsx", "xlsm", None) and wb.main_part:
+            return ".xlsm" if macros else ".xlsx"
+        return ""
+
     # ------------------------------------------------------------------ verdict
     def finish(self) -> dict:
         wb = self.wb
         if wb is None:
             raise GradingError(f"{self.key}: no workbook")
         name, source = delivered_name(wb)
-        ext = extension_of(name)
         kind, what = self._content()
         facts = self._macro_facts()
         macros = bool(facts["macro_parts"])
-        stats = {"delivered_filename": name, "filename_source": source, "staged_file_name": wb.file_name,
+        unknown = None
+        if name is None:
+            # Patrick 2026-10-05 (every attempt graded): the delivered name is unknown (no or a malformed
+            # _attempt_origin.json) - the format is judged from the file's content: a zip workbook without a VBA
+            # project = .xlsx, with a real one = .xlsm, OLE2 = .xls, an .xlsb zip = .xlsb
+            unknown = source
+            ext = self._content_extension(kind, macros)
+            if kind is None and ext in ALLOWED:
+                kind = ext[1:]                         # a workbook package that does not declare its type
+            name = f"{wb.file_name} (delivered name unknown)"
+            source = f"content (delivered name unknown: {unknown})"
+            self.note_default("delivered_name_unknown", f"{wb.file_name}: {unknown}; judged from its content as "
+                                                        f"{ext or 'no Excel workbook'}")
+        else:
+            ext = extension_of(name)
+        stats = {"delivered_filename": None if unknown else name, "filename_source": source,
+                 "staged_file_name": wb.file_name,
                  "extension": ext, "container": wb.container, "reader_format": wb.format,
                  "package_kind": kind, "package": what, "main_part": wb.main_part,
                  "main_content_type": wb.main_content_type, "has_macros": macros, **facts,
@@ -290,6 +319,12 @@ class C77(Check):
             self.add_mistake(name, desc, severity="major")
             return self.verdict("unreachable", desc, stats)
 
+        if unknown is not None:
+            stats["delivered_name_unknown"] = unknown
+            stats["judged_from_content_as"] = ext or None
+            if ext not in ALLOWED:
+                return fail(f"Delivered file name unknown ({unknown}); judged from its content, the file is {what}: "
+                            f"not a standard .xlsx workbook (or .xlsm with macros).")
         if ext not in ALLOWED:
             shown = ext or "no extension"
             return fail(f"Delivered as '{name}' ({shown}): not a standard .xlsx workbook (or .xlsm with macros). "
