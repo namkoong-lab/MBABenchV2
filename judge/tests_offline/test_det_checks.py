@@ -455,6 +455,26 @@ def test_recalc_reads_the_delivered_file_with_the_configured_policy():
         assert Path(c["out_dir"]).is_relative_to(folder / D.RECALC_DIRNAME)
 
 
+def test_run_calculation_changes_nothing_for_xlsx_deliveries():
+    """--run-calculation reaches run_det_checks for a legacy .xls delivery only (tests_offline/
+    test_det_checks_xls.py): an .xlsx is graded the same with and without it - the delivered file goes to
+    the same LibreOffice step, the same verdicts, no xls_conversion record, no stats.graded_on."""
+    with tempfile.TemporaryDirectory() as tmp, fake_libreoffice() as calls:
+        root = Path(tmp)
+        out = {}
+        for rc in (False, True):
+            folder = make_task(root, hidden=True, negative=True)
+            assert not D.legacy_xls(folder / "ai_attempt.xlsx")
+            r = run(folder, run_calculation=rc)
+            art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
+            assert "xls_conversion" not in art and "xls_conversion" not in r.summary
+            assert not any("graded_on" in e["stats"] for e in r.harness_verdicts.values())
+            assert Path(calls[-1]["src"]) == folder / "ai_attempt.xlsx"
+            out[rc] = ({k: (e["decision"], e["summary"], e["mistakes"]) for k, e in r.harness_verdicts.items()},
+                       sorted(r.summary), sorted(art))
+        assert len(calls) == 2 and out[False] == out[True]
+
+
 def test_recalc_dir_is_removed_when_the_checks_finish():
     """det_checks_recalc/ (LibreOffice copy + profiles) goes as soon as run_det_checks returns or
     raises, whatever the driver (grade_with_orchestration never pruned it); det_checks.json stays."""

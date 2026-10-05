@@ -486,6 +486,8 @@ def test_call_sites_are_wired_before_the_llm():
         "... which never swallows LibreOffice being unavailable (maintainer 2026-10-05)"
     assert '"retry_later": retry_later' in gsa and "retry_later_report(results)" in gfd_src
     assert "merge_harness_verdicts(" in gsa[i_ac:i_judge] and "det_checks=det_run.for_judge()" in gsa
+    # --run-calculation reaches the checks (a legacy .xls delivery: graded on LibreOffice's conversion, as in v12)
+    assert "run_calculation=run_calculation," in gsa[i_det:i_ac], "run_det_checks must get --run-calculation"
     assert "det_checks=args.det_checks" in gfd_src and "add_det_checks_arg(parser)" in gfd_src
     prune = gfd_src.split("def prune_workbook_copies")[1].split("\ndef ")[0]
     assert "RECALC_DIRNAME" in prune
@@ -493,6 +495,7 @@ def test_call_sites_are_wired_before_the_llm():
     main = judge_src.split("def main(args)")[1]
     j_det, j_ac, j_judge = main.index("run_det_checks("), main.index("run_answer_check("), main.index("single_pass_judge_case(")
     assert j_det < j_ac < j_judge and "det_checks=det_run.for_judge()" in main
+    assert "run_calculation=args.run_calculation," in main[j_det:j_ac], "run_det_checks must get --run-calculation"
     assert "add_det_checks_arg(parser)" in judge_src
     orch = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
     assert "det_checks=self.det_checks" in orch and "add_det_checks_arg(parser)" in orch

@@ -2,7 +2,8 @@
 
 Where a check's formula VALUES come from. Built 2026-10-04 from Patrick's design (handoff.md,
 "Recalculation design"). Structure and styles always come from the delivered file; a copy supplies
-values only.
+values only. (The judge's one exception: a legacy .xls delivery graded with `--run-calculation` is
+graded on LibreOffice's .xlsx conversion, as judge v12 grades it - "Legacy .xls deliveries" below.)
 
 ```python
 from detchecks.api import grade
@@ -69,6 +70,38 @@ The watchdog, the termination handler, the timeout tree-kill and the profile swe
 and apply to every try.  Tests: `tests/test_lo_guard.py` (lock across two processes and threads, the
 memory wait, the maximum wait, the retries) and `tests/test_recalc_libreoffice.py` (a stand-in soffice
 that crashes twice then converts; one that always fails; two grader processes sharing the lock).
+
+## Legacy .xls deliveries (the judge's adapter, `utils/det_checks.py`; Patrick 2026-10-05)
+
+"Just keep doing whatever v12 did or does."  The judge stages the first .xlsx / .xlsm / .xls delivery as
+`ai_attempt.xlsx` without converting it; `grade()` refuses .xls bytes for every check but File extension
+(.xlsx) (77) (`Package.is_spreadsheetml` is False).  judge v12 fails such an attempt without
+`--run-calculation` (openpyxl cannot open it) and with it grades LibreOffice's re-saved .xlsx copy.  The
+adapter does the same - nothing here in `core/` changes:
+
+- `legacy_xls(path)`: the bytes are an OLE2 compound file (`Package.open`: format `xls`, not an encrypted
+  package) whose directory lists a `Workbook` (BIFF8) or `Book` (BIFF5) stream, whatever the name.  Any
+  other file - every zip package, an OLE2 file without a workbook stream or with an unreadable directory -
+  is graded (or refused) as before.
+- with `--run-calculation` (`run_det_checks(..., run_calculation=True)`): the pipeline's own LibreOffice
+  step (`RecalcPolicy.lo_runner`, i.e. `libreoffice_recalc` under the memory guard, private profile and
+  watchdog; the judge's test-run size limit applies) converts the delivered file to
+  `<workdir>/xls_converted/ai_attempt.xlsx` (`--convert-to xlsx`; LibreOffice detects the format from the
+  content, the .xlsx name does not matter).  `grade()` then grades that copy for every check but 77, with a
+  policy whose `lo_runner` returns the copy itself: `ensure_values` sees a LibreOffice-written file, takes
+  the values from the copy (no second LibreOffice run), runs the gap scan and uses the gaps as displayed
+  exactly as for any LibreOffice copy.  The values are LibreOffice's own: LibreOffice recalculates every
+  formula of an .xls it loads, whatever `OOXMLRecalcMode` says (verified 2026-10-05 with LibreOffice
+  25.8.7: an .xls whose BIFF FORMULA record caches a stale 999 for `=B1-B2` converts to 95).  77 grades the
+  delivered file with the delivered name, and fails.  Recorded: `det_checks.json` `xls_conversion` (copy
+  path, bytes, sha256, `conversion_s`, which checks graded which file), `stats.graded_on`
+  (`libreoffice_xlsx_conversion` / `delivered_file`) on every verdict, and in `stats["values"]` a note and
+  `timings.libreoffice_s` = the conversion's time.  The copy is deleted with `det_checks_recalc/`.  A failed
+  conversion fails the checks graded on the copy (`retry_later` when LibreOffice could not run now).
+- without `--run-calculation`: `grade()` runs on the delivered file as before and every check but 77 fails
+  loudly; the error adds that an .xls delivery is graded only with `--run-calculation`.
+
+Tests: `tests_offline/test_det_checks_xls.py` (the real LibreOffice; run it through `heavy_run.py`).
 
 ## Gap classification (`classify_lo_error`)
 

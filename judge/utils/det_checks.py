@@ -46,8 +46,9 @@ No fallback (maintainer, 2026-10-02)
   checks run, they run loudly.
 
 Values (detchecks/docs/recalc.md)
-  Structure and styles always come from task_folder/ai_attempt.xlsx, the delivered file (never
-  temp_recalculated/). Formula values: an Excel-saved file's own caches (any size); any other
+  Structure and styles come from task_folder/ai_attempt.xlsx, the delivered file (never
+  temp_recalculated/; a legacy .xls delivery is the one exception, below). Formula values: an
+  Excel-saved file's own caches (any size); any other
   writer's file is recalculated by LibreOffice (paths.libreoffice_path) into task_folder/
   det_checks_recalc/ (the copy and the private profiles), which run_det_checks deletes itself
   as soon as the checks return or raise, in every driver (_remove_recalc_dir; det_checks.json
@@ -72,6 +73,30 @@ Values (detchecks/docs/recalc.md)
   kills it before the grader dies of the signal; and _reap_libreoffice sweeps this grading's
   private profiles (raw or URL form) when the checks return or raise.
 
+Legacy .xls deliveries (maintainer 2026-10-05: "just keep doing whatever v12 did or does")
+  grade_from_db stages the first .xlsx / .xlsm / .xls delivery as ai_attempt.xlsx without
+  converting it. legacy_xls() tells from the bytes (as detchecks.core.package classifies them,
+  whatever the name) that the staged file is a legacy binary Excel workbook: an OLE2 compound
+  file holding a Workbook / Book stream. Then, as in judge v12:
+  - with --run-calculation (run_det_checks(..., run_calculation=True); v12 grades LibreOffice's
+    re-saved copy): LibreOffice converts it to .xlsx through the pipeline's own LibreOffice step
+    (the memory guard, private profile, watchdog and reaper above; a test-run size limit applies)
+    into det_checks_recalc/xls_converted/ai_attempt.xlsx, and every check except File extension
+    (.xlsx) (77) grades that copy: structure, styles and values. LibreOffice recalculates every
+    formula of an .xls it loads, so the copy's values are LibreOffice's own; the recalculation
+    pipeline takes them from the copy (no second LibreOffice run; gaps as usual). File extension
+    (.xlsx) (77) grades the delivered file and its delivered name, and fails. Recorded in
+    det_checks.json "xls_conversion", scored_results.det_checks.xls_conversion and each verdict's
+    stats.graded_on ("libreoffice_xlsx_conversion" / "delivered_file"). The copy goes with
+    det_checks_recalc/. The judge's own --run-calculation re-save (temp_recalculated/, after the
+    checks and the answer check, v12's code) converts the file again; the checks never read it.
+  - without --run-calculation: unchanged, the checks other than File extension (.xlsx) (77) cannot
+    read .xls bytes, so the grading fails loudly before the LLM call (the error says to re-run
+    with --run-calculation; det_checks.json "xls_conversion" says why); v12 fails too (openpyxl
+    cannot open the file).
+  .xlsx / .xlsm deliveries, an encrypted package, an OLE2 file without a workbook stream (or with
+  an unreadable directory) and .xlsb (never staged) are graded exactly as before.
+
 Task metadata
   delivered_filename       from the _attempt_origin.json sidecar (original_filename); without
                            it File extension (.xlsx) (77) raises: the staged name is not the
@@ -88,8 +113,9 @@ Artefacts
                                drift or a suitability refusal stops the run;
                                judge._finalize_case copies it into the output dir
   scored_results.det_checks    compact block (status, mode, per-check engine / decision / live /
-                               n_mistakes / summary capped at DB_SUMMARY_CAP characters) and the
-                               recalculation block `values` ONCE (no local value_path)
+                               n_mistakes / summary capped at DB_SUMMARY_CAP characters), the
+                               recalculation block `values` ONCE (no local value_path) and, for a
+                               legacy .xls delivery only, `xls_conversion`
   stats in harness_verdicts    -> scored_results.accuracy_engine.checks[key].stats: a value check's
                                stats.values is the reference {"ref": "det_checks.values"}; in the
                                DB payload every list longer than DB_LIST_CAP keeps its first
@@ -123,6 +149,11 @@ MODES = ("harness", "llm", "off")
 ATTEMPT_FILENAME = "ai_attempt.xlsx"
 ARTEFACT_FILENAME = "det_checks.json"
 RECALC_DIRNAME = "det_checks_recalc"
+# A legacy .xls delivery graded with --run-calculation (module doc): LibreOffice's .xlsx conversion goes to
+# det_checks_recalc/xls_converted/, and every verdict's stats.graded_on says which file it graded.
+XLS_COPY_DIRNAME = "xls_converted"
+GRADED_ON_COPY = "libreoffice_xlsx_conversion"
+GRADED_ON_DELIVERED = "delivered_file"
 
 # The name each rubric number must carry (rubric_9 flat numbering, as in
 # rubric_suitability.RETIRED_CHECK_NAMES). The config lists decide what runs and what counts;
@@ -695,6 +726,122 @@ def _install_termination_reaper() -> None:
     det_recalc.install_termination_reaper()
 
 
+# --------------------------------------------------------------------------- legacy .xls deliveries
+XLS_NOT_CONVERTED_NOTE = ("a legacy .xls delivery is graded only with --run-calculation, on LibreOffice's .xlsx "
+                          "conversion, as judge v12 grades it; without --run-calculation judge v12 fails too")
+XLS_VALUES_NOTE = ("values from LibreOffice's .xlsx conversion of the delivered legacy .xls (LibreOffice recalculates "
+                   "every formula of an .xls it loads); libreoffice_s is the conversion, no second LibreOffice run")
+
+
+def legacy_xls(path) -> bool:
+    """True when `path` holds a legacy binary Excel workbook (.xls): an OLE2 compound file whose directory
+    lists a Workbook (BIFF8) or Book (BIFF5) stream - told from the bytes as detchecks.core.package
+    classifies a file, never from the name (every delivery is staged as ai_attempt.xlsx). False for a zip
+    package (.xlsx, .xlsm, ...), an encrypted package (OLE2 EncryptedPackage), an OLE2 file without a
+    workbook stream or whose directory cannot be read, and a missing file: those are graded (or refused)
+    exactly as before."""
+    from detchecks.core.package import OLE2_MAGIC, Package
+
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(len(OLE2_MAGIC)) != OLE2_MAGIC:
+                return False
+        pkg = Package.open(str(path))
+    except (OSError, GradingError):
+        return False
+    try:
+        return pkg.format == "xls" and any(s.lower() in ("workbook", "book") for s in pkg.ole_streams or ())
+    finally:
+        pkg.close()
+
+
+def _converted_copy_runner(copy: Path):
+    """RecalcPolicy.lo_runner for grading LibreOffice's .xlsx conversion of a delivered .xls: LibreOffice
+    recalculated every formula while converting it (it recalculates any .xls it loads), so the
+    recalculation pipeline takes the values from the copy itself instead of starting LibreOffice again.
+    Asked for any other file, it raises (an internal error, loud)."""
+
+    def _run(src, out_dir, policy):
+        if Path(src).resolve() != copy.resolve():
+            raise GradingError(f"internal: the recalculation pipeline asked to recalculate {src}, not the converted "
+                               f"copy {copy}")
+        return str(copy)
+
+    return _run
+
+
+def _grade_xls_conversion(attempt: Path, selected: list, task_meta: dict, policy, block: dict) -> dict:
+    """Grade a delivered legacy .xls as judge v12 does with --run-calculation (module doc): File extension
+    (.xlsx) (77) on the delivered file; every other selected check on LibreOffice's .xlsx conversion, made
+    by the pipeline's own LibreOffice step (policy.lo_runner: the memory guard, retries, watchdog and the
+    test-run size limit) into <workdir>/xls_converted/, values from that copy. Fills `block`
+    (det_checks.json "xls_conversion"). Returns the verdicts; both parts always run, then one GradingError
+    names every check that could not grade (retry_later when LibreOffice could not run now)."""
+    from detchecks import api as det_api
+
+    def key(no):
+        return "/".join(DET_CHECK_NAMES[no])
+
+    on_delivered = [n for n in selected if n == _FILE_EXTENSION_CHECK]
+    on_copy = [n for n in selected if n != _FILE_EXTENSION_CHECK]
+    verdicts, failures = {}, {}
+    retry_later = False
+    if on_delivered:
+        try:
+            verdicts.update(det_api.grade(str(attempt), checks=on_delivered, task_meta=task_meta))
+        except GradingError as e:
+            failures.update(e.failures or {key(n): str(e) for n in on_delivered})
+            verdicts.update(e.verdicts or {})
+            retry_later = retry_later or e.retry_later
+    copy = None
+    if on_copy:
+        t0 = time.perf_counter()
+        try:
+            copy = Path(policy.lo_runner(str(attempt), str(Path(policy.workdir) / XLS_COPY_DIRNAME), policy))
+        except GradingError as e:             # LibreOffice failed or could not run now, or the test-run size limit
+            msg = f"no .xlsx conversion of the delivered legacy .xls {attempt}: {e}"
+            failures.update({key(n): msg for n in on_copy})
+            retry_later = retry_later or e.retry_later
+        else:
+            block.update(converted=True, copy=str(copy), copy_bytes=copy.stat().st_size,
+                         copy_sha256=_file_sha256(copy), conversion_s=round(time.perf_counter() - t0, 2))
+            logger.info(f"  [det_checks] legacy .xls converted to .xlsx by LibreOffice in {block['conversion_s']} s: "
+                        f"{len(on_copy)} check(s) grade that copy ({copy})")
+            reuse = dataclasses.replace(policy, lo_runner=_converted_copy_runner(copy))
+            try:
+                verdicts.update(det_api.grade(str(copy), checks=on_copy, task_meta=task_meta, recalc=reuse))
+            except GradingError as e:
+                failures.update(e.failures or {key(n): str(e) for n in on_copy})
+                verdicts.update(e.verdicts or {})
+                retry_later = retry_later or e.retry_later
+    for no in selected:                       # which file each verdict graded (a failed run's finished ones too)
+        stats = (verdicts.get(key(no)) or {}).get("stats")
+        if isinstance(stats, dict):
+            stats["graded_on"] = GRADED_ON_DELIVERED if no == _FILE_EXTENSION_CHECK else GRADED_ON_COPY
+            values = stats.get("values")
+            if copy is not None and isinstance(values, dict) and XLS_VALUES_NOTE not in (values.get("notes") or []):
+                values["notes"] = list(values.get("notes") or []) + [XLS_VALUES_NOTE]
+                values["timings"] = {**(values.get("timings") or {}), "libreoffice_s": block["conversion_s"]}
+    if failures:
+        where = f"LibreOffice's .xlsx conversion {copy}" if copy is not None else "no .xlsx conversion"
+        raise GradingError("\n".join([f"{len(failures)} check(s) could not grade the delivered legacy .xls {attempt} "
+                                      f"({where}): {', '.join(failures)}"] + [f"  - {m}" for m in failures.values()]),
+                           check=next(iter(failures)), path=str(attempt), failures=failures, verdicts=verdicts,
+                           retry_later=retry_later)
+    return verdicts
+
+
+def _xls_note(block: dict | None) -> str | None:
+    """The line a failure message adds for a legacy .xls delivery (None for any other file)."""
+    if not block:
+        return None
+    if not block.get("run_calculation"):
+        return (f"(the delivered workbook is a legacy binary .xls, staged as {ATTEMPT_FILENAME}: "
+                f"{XLS_NOT_CONVERTED_NOTE} - re-run with --run-calculation)")
+    return (f"(the delivered workbook is a legacy binary .xls: graded with --run-calculation on LibreOffice's .xlsx "
+            f"conversion, {label(_FILE_EXTENSION_CHECK)} on the delivered file)")
+
+
 def _delivered_text(delivered) -> str:
     return f"delivered as {delivered!r}" if delivered else "delivered file name unknown"
 
@@ -732,7 +879,8 @@ def _origin_note(task_folder: Path, problem: str | None) -> str:
 
 
 def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Path,
-                     selected: list, settings: DetChecksSettings, origin_problem: str | None = None) -> str:
+                     selected: list, settings: DetChecksSettings, origin_problem: str | None = None,
+                     xls_block: dict | None = None) -> str:
     failures = dict(getattr(e, "failures", None) or {})
     head = (f"deterministic checks could not grade {attempt} ({_delivered_text(delivered)}): "
             f"{len(failures) or 'one or more'} of {len(selected)} check(s) failed; no fallback "
@@ -745,6 +893,8 @@ def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Pat
     key77 = "/".join(DET_CHECK_NAMES[_FILE_EXTENSION_CHECK])
     if delivered is None and key77 in failures:
         lines.append("  " + _origin_note(task_folder, origin_problem or "missing"))
+    if _xls_note(xls_block):
+        lines.append("  " + _xls_note(xls_block))
     if any("LibreOffice" in str(m) for m in (list(failures.values()) or [e])):
         lines.append(
             f"  (LibreOffice binary: {settings.libreoffice_path}, from project_configs.yaml "
@@ -762,8 +912,12 @@ _UNSET = object()
 
 
 def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None = None,
-                   benchmark=_UNSET) -> DetChecksRun:
+                   benchmark=_UNSET, run_calculation: bool = False) -> DetChecksRun:
     """Grade the applicable configured checks on task_folder/ai_attempt.xlsx (module doc).
+
+    run_calculation: the driver's --run-calculation. It matters for a legacy .xls delivery only, which
+    is then graded on LibreOffice's .xlsx conversion as judge v12 grades it (module doc, "Legacy .xls
+    deliveries"); without it such a delivery fails loudly, as in v12. Nothing else depends on it.
 
     Returns a DetChecksRun; raises DetChecksError (no fallback) when a check cannot grade the
     file, DetChecksConfigError on a config/rubric/registry mismatch, and SuitabilityError where
@@ -776,7 +930,8 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
     ctx = {"stage": "config", "written": False,
            "record": {"status": None, "mode": mode, "file": {"path": str(task_folder / ATTEMPT_FILENAME)}}}
     try:
-        return _run_det_checks(task_folder, artefact, rubric_path, weights_path, mode, benchmark, t0, ctx)
+        return _run_det_checks(task_folder, artefact, rubric_path, weights_path, mode, benchmark, t0, ctx,
+                               bool(run_calculation))
     except BaseException as e:
         if not ctx["written"]:              # the grade stage writes its own, fuller record
             rec = dict(ctx["record"])
@@ -787,7 +942,7 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
 
 
 def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path, mode, benchmark, t0,
-                    ctx: dict) -> DetChecksRun:
+                    ctx: dict, run_calculation: bool = False) -> DetChecksRun:
     settings = load_settings()
     mode = resolve_mode(mode, settings)
     ctx["record"]["mode"] = mode
@@ -886,8 +1041,29 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
     logger.info(f"  [det_checks] mode={mode}: grading {len(selected)} check(s) on {attempt.name} "
                 f"({_delivered_text(delivered)}); not applicable: {[label(n) for n in not_applicable] or 'none'}")
     _install_termination_reaper()
+    xls_block = None                          # det_checks.json "xls_conversion": a legacy .xls delivery only
     try:
-        verdicts = det_api.grade(str(attempt), checks=selected, task_meta=task_meta, recalc=policy)
+        if legacy_xls(attempt):
+            xls_block = {"delivered_format": "xls", "run_calculation": run_calculation, "converted": False}
+            record["xls_conversion"] = xls_block
+            if run_calculation:
+                on_copy = [n for n in selected if n != _FILE_EXTENSION_CHECK]
+                xls_block.update(converted_by="libreoffice", graded_on_copy=on_copy,
+                                 graded_on_delivered=[n for n in selected if n == _FILE_EXTENSION_CHECK])
+                if not on_copy:
+                    xls_block["note"] = (f"only {label(_FILE_EXTENSION_CHECK)} is graded for this task, on the "
+                                         f"delivered file: nothing to convert")
+                logger.info(f"  [det_checks] the delivered workbook is a legacy binary .xls: with --run-calculation "
+                            f"it is graded, as judge v12 does, on LibreOffice's .xlsx conversion "
+                            f"({label(_FILE_EXTENSION_CHECK)} on the delivered file)")
+            else:
+                xls_block["note"] = XLS_NOT_CONVERTED_NOTE
+                logger.warning(f"  [det_checks] the delivered workbook is a legacy binary .xls and this run has no "
+                               f"--run-calculation: {XLS_NOT_CONVERTED_NOTE}")
+        if xls_block and run_calculation:
+            verdicts = _grade_xls_conversion(attempt, selected, task_meta, policy, xls_block)
+        else:
+            verdicts = det_api.grade(str(attempt), checks=selected, task_meta=task_meta, recalc=policy)
         missing = sorted(set("/".join(DET_CHECK_NAMES[n]) for n in selected) - set(verdicts))
         if missing:
             raise GradingError(f"detchecks returned no verdict for {missing} on {attempt}",
@@ -902,7 +1078,7 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
         record["seconds"] = round(time.perf_counter() - t0, 3)
         _write_artefact(artefact, record)
         ctx["written"] = True
-        msg = _failure_message(e, attempt, delivered, task_folder, selected, settings, origin_problem)
+        msg = _failure_message(e, attempt, delivered, task_folder, selected, settings, origin_problem, xls_block)
         logger.error(f"  [det_checks] {msg}")
         raise DetChecksError(msg, check=e.check, path=str(attempt), failures=e.failures,
                              verdicts=e.verdicts, retry_later=bool(getattr(e, "retry_later", False))) from e
@@ -951,11 +1127,17 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
     record.update(status="ok", seconds=seconds, values=values, verdicts=verdicts)
     _write_artefact(artefact, record)
     ctx["written"] = True
-    summary = json_safe({"status": "ok", **base_summary, "values": _db_values(values), "checks": checks_block,
-                         "db_list_cap": DB_LIST_CAP, "seconds": seconds})
+    summary = {"status": "ok", **base_summary, "values": _db_values(values), "checks": checks_block,
+               "db_list_cap": DB_LIST_CAP, "seconds": seconds}
+    if xls_block:                             # compact: no local copy path (deleted with det_checks_recalc/)
+        summary["xls_conversion"] = {k: xls_block[k] for k in ("delivered_format", "run_calculation", "converted",
+                                                               "converted_by", "graded_on_delivered", "conversion_s")
+                                     if k in xls_block}
+    summary = json_safe(summary)
     fails = [label(e["check_no"]) + ("" if e["live"] else " [recorded only]")
              for e in harness_verdicts.values() if e["decision"] == "fail"]
-    logger.info(f"  [det_checks] {len(selected)} graded in {seconds:.1f} s "
+    graded_on = " on LibreOffice's .xlsx conversion of the delivered .xls" if (xls_block or {}).get("converted") else ""
+    logger.info(f"  [det_checks] {len(selected)} graded{graded_on} in {seconds:.1f} s "
                 f"(values: {(values or {}).get('source') or 'not needed'}); "
                 f"fail: {fails or 'none'}")
     return DetChecksRun(mode, harness_verdicts, summary, artefact)

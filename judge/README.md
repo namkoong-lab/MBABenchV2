@@ -620,7 +620,8 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   stops the run first - with the stage and the error. `judge.py --single-pass`
   raises.
 - **Recalculation**: structure and styles come from the delivered
-  `ai_attempt.xlsx` (never `temp_recalculated/`); formula values from an
+  `ai_attempt.xlsx` (never `temp_recalculated/`; a legacy .xls delivery is the
+  one exception, below); formula values from an
   Excel-saved file's own caches, otherwise from a LibreOffice recalculation of
   the delivered file (`paths.libreoffice_path`, private profile, threaded
   calculation off, `det_checks.libreoffice_timeout_seconds` 600) written to
@@ -638,6 +639,32 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   are swept when the checks return or raise. Cost: no API spend; the Python
   pass took ~3 s median (38 s worst) per attempt in the 374-file sanity run,
   plus the LibreOffice run (seconds to minutes) for a file not saved by Excel.
+- **Legacy .xls deliveries** (the maintainer's decision of 2026-10-05: "just
+  keep doing whatever v12 did or does"): `grade_from_db` stages the first
+  .xlsx / .xlsm / .xls delivery as `ai_attempt.xlsx` without converting it
+  (.xlsb is never staged). When the staged bytes are a legacy binary Excel
+  workbook (an OLE2 compound file with a Workbook / Book stream:
+  `utils/det_checks.legacy_xls`, from the content, whatever the name):
+  - with `--run-calculation` (v12 grades LibreOffice's re-saved copy):
+    LibreOffice converts it to .xlsx through the checks' own LibreOffice step
+    (memory guard, private profile, watchdog) into
+    `det_checks_recalc/xls_converted/`, and every check except File extension
+    (.xlsx) (77) grades that copy: structure, styles and values (LibreOffice
+    recalculates every formula of an .xls it loads; the values are taken from
+    the copy, no second LibreOffice run). File extension (.xlsx) (77) grades
+    the delivered file and its delivered name, and fails. `det_checks.json`
+    (`xls_conversion`: the copy, its size and hash, the conversion time, which
+    checks graded which file), `scored_results.det_checks.xls_conversion` and
+    each check's `stats.graded_on` (`libreoffice_xlsx_conversion` /
+    `delivered_file`) record it; the copy goes with `det_checks_recalc/`. The
+    judge's own `--run-calculation` re-save (`temp_recalculated/`, after the
+    checks and the answer check) converts the file a second time, as in v12;
+    the checks never read it.
+  - without `--run-calculation`: the checks other than File extension (.xlsx)
+    (77) cannot read .xls bytes, so the grading fails loudly before the LLM
+    (`FAILED`, no DB row; the error says to re-run with `--run-calculation`);
+    v12 fails too (openpyxl cannot open the file).
+  Every .xlsx / .xlsm delivery is graded exactly as before.
 - **Every attempt is graded, whatever its size** (the maintainer's decision of
   2026-10-05): `det_checks.libreoffice_max_mb` is `0` = no limit in production
   (a positive value is a test-run setting: a larger file not saved by Excel then
@@ -769,9 +796,18 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   `%` and `é`; stand-in soffice processes for the watchdog, the timeout,
   SIGTERM / SIGKILL to the grader, a retry after two crashes, every try failing,
   and two graders sharing the lock; run it through `heavy_run.py`),
-  `detchecks/tests/test_lo_guard.py` (the lock across two processes and
-  threads, the memory wait - low then enough, and the maximum wait - the
-  retries with doubled timeouts) and `detchecks/tests/test_cfeval.py` (every
+  `test_det_checks_xls.py` (a legacy .xls delivery with the real LibreOffice,
+  skipped where it is absent; run it through `heavy_run.py`: with
+  `run_calculation` one conversion, every check but File extension (.xlsx)
+  (77) graded on the copy with LibreOffice's values - a stale cached result in
+  the .xls is recalculated - 77 failing on the delivered file, the records,
+  nothing left behind; without it a loud failure and no LibreOffice run; an
+  OLE2 file without a workbook stream never converted; `grade_single_attempt`
+  end to end with a stub LLM in both modes, the checks' conversion before the
+  judge's own re-save), `detchecks/tests/test_lo_guard.py` (the lock across
+  two processes and threads, the memory wait - low then enough, and the
+  maximum wait - the retries with doubled timeouts) and
+  `detchecks/tests/test_cfeval.py` (every
   operator, function and rule type, cross-sheet and relative references,
   attempt 2924's rule, built-in formats, unevaluable rules: visible in No
   white-on-white hiding (94), off and recorded in the others).
@@ -842,7 +878,8 @@ JUDGE_SKIP_SUITABILITY=1 python judge/main_scripts/judge.py \
   `_attempt_origin.json` must name the delivered file (File extension (.xlsx)
   (77) fails the run without it), LibreOffice must be installed for workbooks
   not saved by Excel (any size; one LibreOffice at a time, started when memory
-  is free), and `--det-checks llm` / `off` keeps the
+  is free), an attempt delivered as a legacy .xls is graded only with
+  `--run-calculation` (as in v12), and `--det-checks llm` / `off` keeps the
   LLM's verdicts counting / skips them.
 
 Results land in `<folder>/judge_results/`: extracted CSVs,
@@ -871,6 +908,7 @@ python tests_offline/test_oversized_range.py
 python tests_offline/test_det_checks.py               # judge v13 adapter + scoring switches
 python tests_offline/test_det_checks_single_pass.py   # judge v13 end to end, stub LLM
 python tests_offline/test_det_checks_reports.py       # judge v13 reports, grade_toy's recorded mode
+python tests_offline/test_det_checks_xls.py           # judge v13 legacy .xls deliveries (real LibreOffice: heavy_run.py)
 for t in detchecks/tests/test_*.py; do python -m detchecks.tests.$(basename $t .py); done
 # (test_recalc_libreoffice starts LibreOffice once: on the shared grading Mac, run through heavy_run.py;
 #  test_lo_guard and test_cfeval need no LibreOffice)

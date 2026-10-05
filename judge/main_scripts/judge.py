@@ -5333,14 +5333,16 @@ def main(args):
         # LibreOffice run goes through the machine-wide memory guard; when it
         # cannot run now the error carries retry_later (re-run later).
         # A local folder needs the _attempt_origin.json sidecar for File
-        # extension (.xlsx) (77). Same wiring as
-        # grade_from_db.grade_single_attempt.
+        # extension (.xlsx) (77). A legacy .xls delivery is graded only with
+        # --run-calculation, on LibreOffice's .xlsx conversion, as in v12.
+        # Same wiring as grade_from_db.grade_single_attempt.
         task_folder = Path(args.folder_to_grade)
         det_run = run_det_checks(
             task_folder,
             rubric_path=rubric_path,
             weights_path=rubric_weight_path,
             mode=args.det_checks,
+            run_calculation=args.run_calculation,
         )
 
         # Harness answer check (judge v6+): deterministic Questions-sheet

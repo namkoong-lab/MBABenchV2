@@ -777,7 +777,10 @@ def grade_single_attempt(
         # failed) the error carries retry_later: the attempt is listed at the
         # end of the run to be re-run when the machine has memory to spare.
         # They read the delivered ai_attempt.xlsx, so they must run before
-        # prune_workbook_copies.
+        # prune_workbook_copies. A delivery in the legacy .xls format is
+        # graded as v12 grades it (maintainer 2026-10-05): with
+        # --run-calculation on LibreOffice's .xlsx conversion (File extension
+        # (.xlsx) (77) on the delivered file); without it the grading fails.
         det_run = None
         if single_pass:
             det_run = run_det_checks(
@@ -785,6 +788,7 @@ def grade_single_attempt(
                 rubric_path=rubric_path,
                 weights_path=rubric_weight_path,
                 mode=det_checks,
+                run_calculation=run_calculation,
             )
 
         # Harness answer check (judge v6), also BEFORE the judge: it only
