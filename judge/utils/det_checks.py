@@ -58,7 +58,8 @@ Values (detchecks/docs/recalc.md)
   need LibreOffice: "not graded: too large"). Memory safety instead (detchecks/core/lo_guard.py),
   for EVERY LibreOffice run of a grading - this pipeline, the answer check's recalculation and
   --run-calculation (run_libreoffice below): one LibreOffice at a time on the machine
-  (det_checks.libreoffice_lock_path, default /tmp/mbabench_libreoffice.lock), started only once
+  (det_checks.libreoffice_lock_path, default /tmp/mbabench_libreoffice.lock, waited for at most
+  det_checks.libreoffice_max_lock_wait_minutes), started only once
   det_checks.libreoffice_min_free_pct of memory is free (waiting at most
   det_checks.libreoffice_max_wait_minutes), a failed run (crash, no copy, timeout) retried
   det_checks.libreoffice_retries times with the timeout doubled. When that is exhausted the grading
@@ -178,6 +179,7 @@ class DetChecksSettings:
     libreoffice_min_free_pct: float = 25.0
     libreoffice_max_wait_s: float = 3600.0
     libreoffice_lock_path: str = ""          # "" = detchecks.core.lo_guard.default_lock_path()
+    libreoffice_max_lock_wait_s: float = 3 * 3600.0   # longest wait for the lock (maintainer 2026-10-05)
 
     def size_limited(self) -> bool:
         return self.libreoffice_max_mb > 0
@@ -192,12 +194,14 @@ class DetChecksSettings:
         return lo_guard.GuardSettings(lock_path=self.libreoffice_lock_path or None,
                                       min_free_pct=self.libreoffice_min_free_pct,
                                       max_wait_s=self.libreoffice_max_wait_s,
+                                      max_lock_wait_s=self.libreoffice_max_lock_wait_s,
                                       retries=self.libreoffice_retries)
 
     def guard_text(self) -> str:
         from detchecks.core import lo_guard
 
-        return (f"one LibreOffice at a time (lock {self.libreoffice_lock_path or lo_guard.default_lock_path()}), "
+        return (f"one LibreOffice at a time (lock {self.libreoffice_lock_path or lo_guard.default_lock_path()}, "
+                f"waited for at most {self.libreoffice_max_lock_wait_s / 60:g} min), "
                 f"started at >= {self.libreoffice_min_free_pct:g}% free memory (waiting at most "
                 f"{self.libreoffice_max_wait_s / 60:g} min), {self.libreoffice_retries} retries with the timeout "
                 f"doubled")
@@ -302,6 +306,7 @@ def _read_settings() -> DetChecksSettings:
         libreoffice_min_free_pct=_config_number("DET_CHECKS_LIBREOFFICE_MIN_FREE_PCT", 25),
         libreoffice_max_wait_s=60.0 * _config_number("DET_CHECKS_LIBREOFFICE_MAX_WAIT_MINUTES", 60),
         libreoffice_lock_path=str(load_env_var("DET_CHECKS_LIBREOFFICE_LOCK_PATH", default="") or "").strip(),
+        libreoffice_max_lock_wait_s=60.0 * _config_number("DET_CHECKS_LIBREOFFICE_MAX_LOCK_WAIT_MINUTES", 180),
     )
 
 
@@ -649,7 +654,8 @@ def retry_later_report(results) -> list:
     if not ids:
         return []
     return [f"LIBREOFFICE: {len(ids)} attempt(s) NOT graded because LibreOffice could not run (the machine did "
-            f"not have the memory within det_checks.libreoffice_max_wait_minutes, or every retry crashed / timed "
+            f"not have the memory within det_checks.libreoffice_max_wait_minutes, the LibreOffice lock stayed busy longer "
+            f"than det_checks.libreoffice_max_lock_wait_minutes, or every retry crashed / timed "
             f"out) - no DB row was written.",
             f"  Re-run them when the machine has memory to spare: --attempt-ids "
             f"{' '.join(str(i) for i in ids)}"]
@@ -752,7 +758,7 @@ def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Pat
             f"det_checks.libreoffice_timeout_seconds; {settings.size_text()}, det_checks.libreoffice_max_mb; "
             f"{settings.guard_text()}, det_checks.libreoffice_*)")
     if getattr(e, "retry_later", False):
-        lines.append("  RETRY LATER: LibreOffice could not run now (memory, or every retry crashed / timed out); "
+        lines.append("  RETRY LATER: LibreOffice could not run now (memory, the lock, or every retry crashed / timed out); "
                      "this attempt is not graded - re-run it when the machine has memory to spare")
     return "\n".join(lines)
 
@@ -833,6 +839,7 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
         lo_retries=settings.libreoffice_retries,
         lo_min_free_pct=settings.libreoffice_min_free_pct,
         lo_max_wait_s=settings.libreoffice_max_wait_s,
+        lo_max_lock_wait_s=settings.libreoffice_max_lock_wait_s,
         lo_lock_path=settings.libreoffice_lock_path or None,
         lo_log=_lo_log,
     )
@@ -859,6 +866,7 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
             "libreoffice_min_free_pct": settings.libreoffice_min_free_pct,
             "libreoffice_max_wait_s": settings.libreoffice_max_wait_s,
             "libreoffice_lock_path": policy.guard_settings().lock(),
+            "libreoffice_max_lock_wait_s": settings.libreoffice_max_lock_wait_s,
             "workdir": str(workdir),
         },
         "rubric": str(rubric_src),

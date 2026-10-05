@@ -159,6 +159,8 @@ class RecalcPolicy:
     lo_retries: int = 3
     lo_min_free_pct: float = 25.0
     lo_max_wait_s: float = 3600.0
+    lo_max_lock_wait_s: float = 3 * 3600.0   # longest wait for the machine-wide lock, then LibreOfficeUnavailable
+                                             # (retry later; Patrick 2026-10-05: every attempt graded)
     lo_lock_path: Optional[str] = None  # None: lo_guard.default_lock_path() (/tmp/mbabench_libreoffice.lock)
     lo_log: Optional[Callable] = None   # where the guard logs its waits and retries (None: stderr)
     # test hooks (fakes): callables (src_path, out_dir, policy) -> path of the copy
@@ -169,8 +171,8 @@ class RecalcPolicy:
 
     def guard_settings(self) -> lo_guard.GuardSettings:
         return lo_guard.GuardSettings(lock_path=self.lo_lock_path, min_free_pct=self.lo_min_free_pct,
-                                      max_wait_s=self.lo_max_wait_s, retries=self.lo_retries,
-                                      memory_reader=self.lo_memory_reader)
+                                      max_wait_s=self.lo_max_wait_s, max_lock_wait_s=self.lo_max_lock_wait_s,
+                                      retries=self.lo_retries, memory_reader=self.lo_memory_reader)
 
 
 @dataclass

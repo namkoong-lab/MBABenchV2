@@ -255,6 +255,10 @@ det_checks:
   #    processes and worker threads: an exclusive lock on this file
   #    (null / "" = /tmp/mbabench_libreoffice.lock).
   libreoffice_lock_path: null
+  #  - Wait at most this long for that lock (maintainer 2026-10-05: every
+  #    attempt graded - one stuck file cannot stall a run); then the attempt
+  #    fails loudly and is listed for re-run, as below.
+  libreoffice_max_lock_wait_minutes: 180
   #  - Before each run, holding the lock, wait until at least this much of
   #    the machine's memory is free (macOS memory_pressure, Linux
   #    /proc/meminfo), logging while it waits ...

@@ -649,7 +649,8 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   - one LibreOffice at a time on the machine, across all grading processes and
     worker threads: an exclusive lock on `det_checks.libreoffice_lock_path`
     (null = `/tmp/mbabench_libreoffice.lock`, the system temp dir; a waiting
-    grader logs who holds it; the kernel releases it when a grader dies);
+    grader logs who holds it; the kernel releases it when a grader dies), waited for at most
+    `det_checks.libreoffice_max_lock_wait_minutes` (180), so one stuck file cannot stall a run;
   - holding the lock, wait until `det_checks.libreoffice_min_free_pct` (25) of
     the machine's memory is free (macOS `memory_pressure`, Linux
     `/proc/meminfo`), logging while it waits, for at most

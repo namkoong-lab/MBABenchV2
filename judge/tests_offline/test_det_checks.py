@@ -450,6 +450,9 @@ def test_recalc_reads_the_delivered_file_with_the_configured_policy():
         assert p.excel_allowed is False and p.lo_timeout_s == 600
         # the memory guard of 2026-10-05 from det_checks.libreoffice_*
         assert (p.lo_retries, p.lo_min_free_pct, p.lo_max_wait_s, p.lo_lock_path) == (3, 25.0, 3600.0, None)
+        # the lock wait is capped (det_checks.libreoffice_max_lock_wait_minutes 180; maintainer 2026-10-05)
+        assert p.lo_max_lock_wait_s == 3 * 3600.0 and p.guard_settings().max_lock_wait_s == 3 * 3600.0
+        assert D.load_settings().guard_settings().max_lock_wait_s == 3 * 3600.0
         assert p.lo_log is D._lo_log
         assert Path(p.workdir) == folder / D.RECALC_DIRNAME
         assert Path(c["out_dir"]).is_relative_to(folder / D.RECALC_DIRNAME)
