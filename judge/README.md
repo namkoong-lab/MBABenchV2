@@ -29,8 +29,9 @@ bypasses, for one-off experiments only).
 ## Install
 
 From the repo root, `./setup.sh` (uv workspace; installs `excel_judge`
-editable and the `config` module). LibreOffice is only needed for
-`--run-calculation`.
+editable and the `config` module). LibreOffice is needed for
+`--run-calculation` and, from judge v13, for the deterministic checks on
+attempts not saved by Excel (`paths.libreoffice_path`).
 
 ## Grade attempts from the database
 
@@ -560,6 +561,106 @@ each; twelve rows exist under 11, so everything lands here.
   twelve attempts 99 flipped (7.2%), 53 of them on checks no judge change
   touched (3.8%) — 99 (6 of 12), 76 (5), 26 and 115 (4 each).
 
+### judge v13 — single-pass 13 / template_8 (2026-10-04)
+
+Rows record `judge_version` 13 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 12 rows. Cut for the deterministic rubric checks
+(the maintainer's rulings of 2026-10-02/04): Python grades the delivered workbook
+before the LLM runs and decides 19 checks at scoring. Existing gradings are not
+re-scored, so v12 rows keep the LLM's verdicts on those checks.
+
+- **Python-decided checks** (`utils/det_checks.py` runs the graders in
+  `judge/detchecks/`, documented in `detchecks/docs/`): Clean Name Manager (29),
+  No bright-yellow highlighting (47), Black font for calculations (49), Green
+  font for cross-sheet links (50), Red font for external links (51), Consistent
+  zoom level (61), Active cell reset to A1 on all sheets (62), Zeros as dashes
+  (66), Sufficient column widths (69), Reasonable column widths (70), Reasonable
+  row heights (73), No merged cells (74), File extension (.xlsx) (77), Avoid
+  volatile functions (80), Avoid whole-column references (87), No hidden sheets
+  (92), No hidden rows/columns (93), No white-on-white hiding (94), No external
+  links (95). Their verdicts join `harness_verdicts` beside the answer check's
+  (`family: "det_checks"`) and are overlaid at the scoring layer exactly like
+  Final calculation accuracy since v6: the LLM's verdict stays on the item as
+  `llm_*` in `ai_judgement_harness.json`, and `ai_judgement.json` stays the pure
+  LLM judgement. The LLM still grades every check, blind to Python (prompt,
+  evidence and CSV caches `*_csv_cache_v9` unchanged), so agreement stays
+  measurable: `scored_results.accuracy_engine.checks["<Category>/<name>"]`
+  carries `engine`, the Python `decision`, `llm_decision`, `agreed`, `live`,
+  `counted`, `check_no`, `n_mistakes` and the check's `stats`. A check the LLM
+  never recorded is inserted under its rubric number.
+- **Recorded only**: No formula errors (22) and Negatives in parentheses (65)
+  (the "v3 bucket"; detchecks marks both `Check.live = False`) run and are
+  recorded the same way with `engine: "llm"`, `live: false` and
+  `fallback_reason: "recorded only; the LLM verdict stands at scoring"`, so the
+  LLM's verdict counts. No unresolved cell warnings (23) and Automatic
+  calculation mode (100) stay LLM-only (not built).
+- **Which checks run**: `det_checks.live` / `det_checks.recorded_only` in
+  `project_configs.yaml`, rubric numbers pinned by name in
+  `utils/det_checks.DET_CHECK_NAMES` and checked against the rubric and the
+  detchecks registry like `judge.retired_checks` (a mismatch refuses to grade),
+  then gated per task exactly as the LLM is: rubric suitability (retired checks
+  never run) and the effective weights. Red font for external links (51) is
+  not applicable to any task today, so it is configured live but graded nowhere
+  yet.
+- **No fallback**: a check that cannot grade the file raises
+  (`detchecks.errors.GradingError`, re-raised as `utils.det_checks.DetChecksError`
+  naming every failing check by title and the file). The checks run after the
+  answer check, outside its score-neutral `try` and before the LLM, so the
+  attempt fails the way the formula-cache refusal does: `grade_from_db` logs
+  `FAILED`, returns `success: False`, writes no DB row and the batch continues,
+  with no API spend. `det_checks.json` (status `error`, the failures) stays in
+  the task folder. `judge.py --single-pass` raises.
+- **Recalculation**: structure and styles come from the delivered
+  `ai_attempt.xlsx` (never `temp_recalculated/`); formula values from an
+  Excel-saved file's own caches, otherwise from a LibreOffice recalculation of
+  the delivered file (`paths.libreoffice_path`, private profile, threaded
+  calculation off, `det_checks.libreoffice_timeout_seconds` 600) written to
+  `<task folder>/det_checks_recalc/` and deleted by `prune_workbook_copies`.
+  Excel recalculation is off (`det_checks.excel_recalc: false`); cells
+  LibreOffice cannot compute are used as displayed. LibreOffice never runs on a
+  file over `det_checks.libreoffice_max_mb` (10 MB, memory): such a file, when it
+  was not saved by Excel and a value check applies, fails the grading before the
+  LLM call ("not graded: too large"). Excel-saved files of any size are graded.
+  A LibreOffice process left on the attempt's private profile is killed when the
+  checks return or raise. Cost: no API spend; the Python pass took ~3 s median
+  (38 s worst) per attempt in the 374-file sanity run, plus the LibreOffice run
+  (seconds to minutes) for a file not saved by Excel.
+- **Task metadata**: File extension (.xlsx) (77) judges the delivered file name
+  from the `_attempt_origin.json` sidecar (`original_filename`); without it the
+  check raises, so a local folder needs the sidecar. No external links (95) runs
+  with `requires_external_links: false` (no task requires them).
+- **Switches**: `--det-checks harness|llm|off` on `grade_from_db`,
+  `grade_with_orchestration`, `grade_toy` and `judge.py --single-pass`; the
+  default comes from `det_checks.enabled` (true = `harness`). `harness`: the
+  live verdicts count. `llm`: everything runs and is recorded, the LLM's
+  verdicts count (a shadow run; `total_score_harness` still shows the v13
+  total). `off`: nothing runs. A check that cannot grade fails the attempt in
+  `harness` and `llm` alike. `--accuracy-check` keeps deciding the answer check
+  alone. `accuracy_engine.effective` is `harness` when every measured live
+  verdict counted (`total_score == total_score_harness`), `llm` when none did
+  (`total_score == total_score_llm`) and `mixed` when only one family did;
+  `accuracy_engine.det_checks_mode` records the switch and each check's
+  `counted` whether its Python verdict is in the recorded total. The DB drivers
+  refuse to start when the `det_checks` config does not match the rubric
+  (`startup_check`), before any download.
+- **Artefacts**: `det_checks.json` in the bundle (config, gate, task metadata,
+  the full verdicts with the recalculation plan, `code_sha` = a fingerprint of
+  the grading code) and `scored_results.det_checks` (status, mode, graded and
+  not-applicable numbers, per-check engine / decision / live / n_mistakes); a
+  compact copy in `_metadata.json`.
+- Not changed: the paper scripts still read `judge_version >= 12`
+  (`MIN_JUDGE_VERSION`) and `pass_rule.DETERMINISTIC_CHECKS` lists Final
+  calculation accuracy only, so a cohort mixing v12 and v13 rows mixes LLM and
+  Python verdicts on these checks.
+  Tests: `test_det_checks.py` (the adapter on openpyxl workbooks: live and
+  recorded-only verdicts, the gate, the delivered name, JSON safety, the
+  LibreOffice policy and size limit, the scoring switches),
+  `test_det_checks_single_pass.py` (`grade_single_attempt` end to end on a real
+  Excel-saved attempt with a stub LLM, all three switch values, and the
+  failure path that stops before the LLM call; the end-to-end case is skipped
+  where the corpus attempt is absent, `DETCHECKS_E2E_ATTEMPT` points it at
+  another Excel-saved file under 1 MB).
+
 ### Latest-prompt guard (2026-09-10)
 
 Both DB drivers refuse to spend on superseded agent prompts. For `--benchmark
@@ -581,6 +682,7 @@ local mode. Assemble one folder per attempt:
 ```text
 <folder>/
   ai_attempt.xlsx                   # the agent's workbook, renamed
+  _attempt_origin.json              # {"original_filename": "<name as delivered>"}
   solution/<golden>.xlsx            # your golden solution
   starting/starting_workbook.xlsx   # optional: what the agent was given
   context.pdf | context.txt         # optional: case text
@@ -621,10 +723,15 @@ JUDGE_SKIP_SUITABILITY=1 python judge/main_scripts/judge.py \
 - Attempt workbooks must carry cached formula values. Workbooks saved by
   openpyxl without a recalculation step have none — run with
   `--run-calculation` or recalculate them yourself.
+- The deterministic checks (judge v13) grade the folder before the LLM:
+  `_attempt_origin.json` must name the delivered file (File extension (.xlsx)
+  (77) fails the run without it), LibreOffice must be installed for workbooks
+  not saved by Excel (at most 10 MB), and `--det-checks llm` / `off` keeps the
+  LLM's verdicts counting / skips them.
 
 Results land in `<folder>/judge_results/`: extracted CSVs,
 `ai_judgement.json`, `scores.json` (0–100 total and per-category),
-`answer_check.json`, and the run log.
+`det_checks.json`, and the run log (`answer_check.json` stays in the folder).
 
 ## Operation scripts
 
@@ -645,4 +752,7 @@ python tests_offline/test_rubric9_consistency.py
 python tests_offline/test_formula_cache.py
 python tests_offline/test_single_pass.py
 python tests_offline/test_oversized_range.py
+python tests_offline/test_det_checks.py               # judge v13 adapter + scoring switches
+python tests_offline/test_det_checks_single_pass.py   # judge v13 end to end, stub LLM
+for t in detchecks/tests/test_*.py; do python -m detchecks.tests.$(basename $t .py); done
 ```
