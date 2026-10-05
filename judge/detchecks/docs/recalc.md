@@ -29,6 +29,27 @@ Cache: `workdir/<sha256 of the delivered file>/{libreoffice,excel}/<name>.xlsx` 
 file is recalculated once per pipeline run (a LibreOffice copy with gaps is kept and reused when
 Excel becomes available). Default workdir `detchecks/out/recalc_cache/`.
 
+## The LibreOffice process (`libreoffice_recalc`, `core/lo_watchdog.py`; 2026-10-04 review fixes)
+
+- **Paths are encoded file URLs** (`file_url` = `Path(abspath).as_uri()`): the profile
+  (`-env:UserInstallation=`), `--outdir` and the source. A raw `file://` + path with a space made
+  LibreOffice abort (exit -6, task 28 "FruitJuice_3-Statement-Model - v2"); a `%41` in the profile URL
+  or in a plain `--outdir` path is decoded by LibreOffice, so the profile and the copy went to a
+  folder named with `A` next to the task folder and the run "produced no copy". Verified with the
+  real LibreOffice 25.8 on folders with a space, `%`, `%41`, `%25` and `é` (profile used, stale cached
+  value recalculated, nothing written outside the folder).
+- **A conversion never outlives its grading**: soffice runs in the grader's process group (no new
+  session), so a signal to the grader's group (Ctrl-C, `heavy_run.py`'s group kill) reaches it; it runs
+  under `core/lo_watchdog.py` (`python -I -S lo_watchdog.py <grader pid> 0.5 -- soffice ...`), which
+  passes soffice's exit code through and, when the grader disappears (SIGKILL, a crash: anything that
+  runs no clean-up) or the watchdog itself gets SIGTERM / SIGINT / SIGHUP, kills soffice and everything
+  below it; `install_termination_reaper` (main thread, only where the signal still had its default
+  action) makes SIGTERM / SIGHUP kill this process's running conversions before the process dies of the
+  signal as before; a timeout or any exception (KeyboardInterrupt too) kills the run's whole tree
+  (`lo_watchdog.kill_tree`: SIGSTOP the tree until no new child appears, then SIGKILL), and every run
+  ends with a sweep of its private profile (`reap_profiles`, raw path or file URL in a command line).
+  The profile folder is private to one grading, so other jobs' LibreOffice is never touched.
+
 ## Gap classification (`classify_lo_error`)
 
 A LibreOffice `#NAME?` / `#VALUE!` on a formula cell is a **gap** (Excel may compute it) when
@@ -106,4 +127,11 @@ pipeline `n_gaps`, `gap_functions`, `gaps` (first 25: sheet, ref, value, formula
 
 `detchecks/tests/test_recalc.py` (fake runners: cache path, LibreOffice path with and without
 gaps, genuine errors, reroute to Excel, not allowed / not available, caching, engine partial
-failure, classification table). No test launches LibreOffice or Excel.
+failure, classification table). No test there launches LibreOffice or Excel.
+
+`detchecks/tests/test_recalc_libreoffice.py`: ONE test runs the real LibreOffice on a 3-cell file in a
+folder named with a space, `%41`, `%` and `é` (skipped, reported SKIP, where LibreOffice is absent;
+run the module through `heavy_run.py`); the others use stand-in soffice scripts that keep a tagged
+child: the watchdog's normal and failing runs, the timeout tree kill, SIGTERM and SIGKILL to a stand-in
+grader (nothing survives), the watchdog alone when its parent is SIGKILLed, the handler's rules, and the
+profile sweep (URL and raw forms, never a sibling folder).

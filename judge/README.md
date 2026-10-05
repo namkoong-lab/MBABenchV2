@@ -621,8 +621,13 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   file over `det_checks.libreoffice_max_mb` (10 MB, memory): such a file, when it
   was not saved by Excel and a value check applies, fails the grading before the
   LLM call ("not graded: too large"). Excel-saved files of any size are graded.
-  A LibreOffice process left on the attempt's private profile is killed when the
-  checks return or raise. Cost: no API spend; the Python pass took ~3 s median
+  LibreOffice never outlives its grading: its paths are passed as encoded file
+  URLs (a task folder with a space or `%` works), it runs in the grader's
+  process group under a watchdog (`detchecks/core/lo_watchdog.py`) that kills
+  it when the grader dies, SIGKILL included; SIGTERM / SIGHUP to the grader
+  kill it first and the grader then dies of the signal as before; a timeout or
+  an exception kills its whole process tree, and the attempt's private profiles
+  are swept when the checks return or raise. Cost: no API spend; the Python pass took ~3 s median
   (38 s worst) per attempt in the 374-file sanity run, plus the LibreOffice run
   (seconds to minutes) for a file not saved by Excel.
 - **Task metadata**: File extension (.xlsx) (77) judges the delivered file name

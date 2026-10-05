@@ -17,6 +17,7 @@ import copy
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -458,25 +459,78 @@ def test_merge_harness_verdicts():
 
 
 def test_reaper_kills_only_this_gradings_libreoffice():
+    # a task folder named like task 28 plus '%41': soffice gets its profile as an encoded file URL
     with tempfile.TemporaryDirectory() as tmp:
-        workdir = Path(tmp) / D.RECALC_DIRNAME
+        workdir = Path(tmp) / "FruitJuice_3-Statement-Model - v2 %41__task_28" / D.RECALC_DIRNAME
         profile = workdir / "_lo_profiles" / "lo_test"
         profile.mkdir(parents=True)
         sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
-        ours = subprocess.Popen(sleeper + [f"-env:UserInstallation=file://{profile}"], start_new_session=True)
-        other = subprocess.Popen(sleeper + [f"-env:UserInstallation=file://{Path(tmp) / 'elsewhere'}"],
+        ours_url = subprocess.Popen(sleeper + [f"-env:UserInstallation={profile.as_uri()}"])
+        ours_raw = subprocess.Popen(sleeper + [f"-env:UserInstallation=file://{profile}"], start_new_session=True)
+        other = subprocess.Popen(sleeper + [f"-env:UserInstallation={(Path(tmp) / 'elsewhere' / 'lo_x').as_uri()}"],
                                  start_new_session=True)
         try:
             time.sleep(0.3)
             killed = D._reap_libreoffice(workdir)
-            assert ours.pid in killed and other.pid not in killed, killed
-            assert ours.wait(timeout=10) != 0
+            assert ours_url.pid in killed and ours_raw.pid in killed and other.pid not in killed, killed
+            assert ours_url.wait(timeout=10) != 0 and ours_raw.wait(timeout=10) != 0
             assert other.poll() is None, "an unrelated process was killed"
         finally:
-            for p in (ours, other):
+            for p in (ours_url, ours_raw, other):
                 if p.poll() is None:
                     p.kill()
                     p.wait(timeout=10)
+
+
+_STAND_IN_GRADER = r'''
+import os, sys
+sys.path.insert(0, {judge!r})
+os.chdir({judge!r})
+from utils.misc_utils import load_project_configs, project_prefix
+load_project_configs()
+os.environ[project_prefix() + "_PATHS_LIBREOFFICE_PATH"] = {soffice!r}
+from utils import det_checks as D
+D.run_det_checks({folder!r}, rubric_path={rubric!r}, weights_path={weights!r}, benchmark=None)
+'''
+
+
+def _libreoffice_dies_with_its_grader(sig):
+    """The reviewer's P20: a grading process whose LibreOffice step hangs (a stand-in soffice that
+    keeps a tagged child) gets `sig`; neither soffice nor its child may survive it (before: SIGTERM
+    left soffice re-parented to pid 1 with no timeout)."""
+    from detchecks.tests import test_recalc_libreoffice as LT
+
+    tag = LT.new_tag()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "FruitJuice - v2 %41"
+        root.mkdir()
+        folder = make_task(root, negative=True)                     # openpyxl file: value checks need LibreOffice
+        soffice = LT.fake_soffice(tmp, "hang", tag)
+        code = _STAND_IN_GRADER.format(judge=str(JUDGE), soffice=soffice, folder=str(folder),
+                                       rubric=str(RUBRIC_PATH), weights=str(WEIGHTS_PATH))
+        grader = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        marker = (folder / D.RECALC_DIRNAME / "_lo_profiles").as_uri()
+        try:
+            assert LT.wait_until(lambda: LT.procs_with(tag + "_child"), 60), "the stand-in soffice never started"
+            assert LT.procs_with(marker), "soffice not visible with its encoded profile URL"
+            grader.send_signal(sig)
+            assert grader.wait(timeout=30) == -sig
+            gone = LT.wait_until(lambda: not LT.procs_with(tag, marker), 10)
+            assert gone, f"LibreOffice outlived its grading ({sig!r}): {LT.procs_with(tag, marker)}"
+        finally:
+            if grader.poll() is None:
+                grader.kill()
+                grader.wait(timeout=10)
+            for pid, _cmd in LT.procs_with(tag, marker):
+                LT.lo_watchdog.kill_tree(pid)
+
+
+def test_libreoffice_dies_with_a_sigterm_to_the_grading():
+    _libreoffice_dies_with_its_grader(signal.SIGTERM)
+
+
+def test_libreoffice_dies_with_a_sigkill_to_the_grading():
+    _libreoffice_dies_with_its_grader(signal.SIGKILL)
 
 
 # --------------------------------------------------------------------------- scoring layer

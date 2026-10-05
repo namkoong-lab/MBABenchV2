@@ -34,12 +34,15 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Optional
 
 from ..errors import GradingError
 from . import formula as F
+from . import lo_watchdog
 from .package import Package
 from .sheet import ExcelError, SheetStream
 from .values import ValueSource, detect_provenance, make_context
@@ -216,26 +219,135 @@ _LO_REGISTRY = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def _kill_tree(proc: subprocess.Popen):
-    for sig in (signal.SIGTERM, signal.SIGKILL):
+def file_url(path: str) -> str:
+    """`path` as a percent-encoded file URL (Path.as_uri of the absolute path).  LibreOffice reads
+    its profile (-env:UserInstallation) and --outdir as URLs: a raw 'file://' + path with a space
+    aborts it (task 28 "FruitJuice_3-Statement-Model - v2"), and a '%41' in a plain --outdir path
+    is decoded, so the copy lands in another folder ('PctATask') - every path handed to soffice
+    goes through here."""
+    return Path(os.path.abspath(path)).as_uri()
+
+
+# ---- LibreOffice processes never outlive their grading ------------------------------------------
+# 1. soffice runs in the grader's process group (no new session): a signal to the grader's group
+#    (Ctrl-C, heavy_run's group kill) reaches it.
+# 2. soffice runs under core/lo_watchdog.py, which kills it (and everything it started) when the
+#    grader disappears, SIGKILL included.
+# 3. SIGTERM / SIGHUP to the grader: a handler (install_termination_reaper, main thread, only where
+#    the signal had its default action) kills this process's running conversions, then the process
+#    dies of the signal exactly as before.
+# 4. A timeout, an exception (KeyboardInterrupt too) and the end of every run kill the run's tree and
+#    sweep its private profile; utils/det_checks also sweeps a grading's whole profile folder.
+WATCHDOG_SCRIPT = os.path.join(HERE, "lo_watchdog.py")
+WATCHDOG_POLL_S = 0.5
+_ACTIVE: dict = {}        # run id -> {"profile": path, "pid": watchdog/soffice pid}: this process's conversions
+_TERM_HANDLER = {"installed": False}
+
+
+def _watchdog_cmd(cmd: list) -> list:
+    """`cmd` (soffice ...) run under the watchdog; the bare command when no Python interpreter is
+    known (then only the handler, the timeout kill and the profile sweeps apply)."""
+    if not (sys.executable and os.path.exists(WATCHDOG_SCRIPT)):
+        return cmd
+    return [sys.executable, "-I", "-S", WATCHDOG_SCRIPT, str(os.getpid()), str(WATCHDOG_POLL_S), "--"] + cmd
+
+
+def _profile_markers(path: str, subtree: bool) -> tuple:
+    """The strings a command line carries for a profile `path` (raw path and file URL).  subtree:
+    match every profile below the folder `path` (a trailing separator) instead of `path` itself."""
+    raw, url = os.path.abspath(path), file_url(path)
+    if subtree:
+        raw, url = os.path.join(raw, ""), url.rstrip("/") + "/"
+    return raw, url
+
+
+def reap_profiles(path: str, subtree: bool = True, table=None) -> list:
+    """Kill - whole process trees - every process whose command line names the LibreOffice profile
+    `path` (subtree=True: any profile below the folder `path`), raw or as a file URL.  Profiles are
+    private to one grading (workdir/_lo_profiles/lo_*), so other jobs' LibreOffice is never touched;
+    this process and its ancestors never are.  Returns the pids signalled."""
+    markers = _profile_markers(path, subtree)
+    table = lo_watchdog.process_table() if table is None else table
+    if table is None:
+        return []
+    protected = lo_watchdog.ancestors(table)
+    killed: list = []
+    for pid, _ppid, cmd in table:
+        if pid in protected or pid in killed or cmd.startswith("ps "):
+            continue
+        if any(m in cmd for m in markers):
+            killed += lo_watchdog.kill_tree(pid)
+    return sorted(set(killed))
+
+
+def kill_active_libreoffice() -> list:
+    """Kill every LibreOffice conversion this process is running (trees, then a profile sweep)."""
+    try:
+        runs = list(_ACTIVE.values())
+    except RuntimeError:                       # changed size during the copy: once more
+        runs = list(dict(_ACTIVE).values())
+    killed: list = []
+    for run in runs:
+        if run.get("pid"):
+            killed += lo_watchdog.kill_tree(run["pid"])
+    if runs:
+        table = lo_watchdog.process_table(timeout=5)
+        for run in runs:
+            killed += reap_profiles(run["profile"], subtree=False, table=table)
+    return sorted(set(killed))
+
+
+def _reap_and_die(signum, _frame):
+    try:
+        kill_active_libreoffice()
+    finally:
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+
+def install_termination_reaper() -> bool:
+    """SIGTERM / SIGHUP: kill this process's running LibreOffice conversions first, then die of the
+    signal as before.  Installed once, from the main thread only (Python's rule), and only for a
+    signal whose action is still the default (an application's own handler, or an ignored signal,
+    is left alone).  Called by libreoffice_recalc and by utils/det_checks (startup and every
+    grading), so drivers that run the checks in worker threads have it from their main thread."""
+    if _TERM_HANDLER["installed"] or threading.current_thread() is not threading.main_thread():
+        return _TERM_HANDLER["installed"]
+    for name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
         try:
-            os.killpg(proc.pid, sig)
+            if sig is not None and signal.getsignal(sig) == signal.SIG_DFL:
+                signal.signal(sig, _reap_and_die)
+        except (ValueError, OSError):
+            pass
+    _TERM_HANDLER["installed"] = True
+    return True
+
+
+def _kill_tree(proc: subprocess.Popen):
+    """Kill `proc` and every process below it (watchdog, soffice, anything soffice started)."""
+    lo_watchdog.kill_tree(proc.pid)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    for fh in (proc.stdout, proc.stderr):
+        try:
+            if fh is not None:
+                fh.close()
         except OSError:
             pass
-        try:
-            proc.wait(timeout=5)
-            return
-        except subprocess.TimeoutExpired:
-            continue
 
 
 def libreoffice_recalc(src: str, out_dir: str, policy: RecalcPolicy) -> str:
     """Recalculate `src` headless and write `<out_dir>/<stem>.xlsx`.  Private profile per run
-    (threaded calculation off, OpenCL off, recalculate always on load), one process, timeout.
-    Returns the copy's path; GradingError on timeout / failure."""
+    (threaded calculation off, OpenCL off, recalculate always on load), one process under the
+    watchdog, in the grader's process group, timeout.  Paths are passed as encoded file URLs
+    (file_url).  Returns the copy's path; GradingError on timeout / failure."""
     soffice = policy.libreoffice_path
     if not (soffice and os.path.exists(soffice)):
         raise GradingError(f"LibreOffice not found at {soffice!r} (set DETCHECKS_SOFFICE)")
+    install_termination_reaper()
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(src))[0]
     out = os.path.join(out_dir, stem + ".xlsx")
@@ -243,28 +355,37 @@ def libreoffice_recalc(src: str, out_dir: str, policy: RecalcPolicy) -> str:
         os.remove(out)
     prof_root = os.path.join(policy.workdir, "_lo_profiles")
     os.makedirs(prof_root, exist_ok=True)
-    profile = tempfile.mkdtemp(prefix="lo_", dir=prof_root)
+    profile = os.path.abspath(tempfile.mkdtemp(prefix="lo_", dir=prof_root))
+    run_id = object()
+    _ACTIVE[run_id] = {"profile": profile, "pid": None}
     try:
         os.makedirs(os.path.join(profile, "user"), exist_ok=True)
         with open(os.path.join(profile, "user", "registrymodifications.xcu"), "w") as fh:
             fh.write(_LO_REGISTRY)
-        cmd = [soffice, f"-env:UserInstallation=file://{profile}", "--headless", "--norestore", "--nologo",
-               "--nofirststartwizard", "--calc", "--convert-to", "xlsx", "--outdir", out_dir, src]
+        cmd = [soffice, f"-env:UserInstallation={file_url(profile)}", "--headless", "--norestore", "--nologo",
+               "--nofirststartwizard", "--calc", "--convert-to", "xlsx", "--outdir", file_url(out_dir),
+               file_url(src)]
         env = dict(os.environ, SAL_USE_VCLPLUGIN="svp", OMP_NUM_THREADS="1")
         t0 = time.perf_counter()
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
-                                start_new_session=True)
+        proc = subprocess.Popen(_watchdog_cmd(cmd), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=env)
+        _ACTIVE[run_id]["pid"] = proc.pid
         try:
             so, se = proc.communicate(timeout=policy.lo_timeout_s)
         except subprocess.TimeoutExpired:
             _kill_tree(proc)
             raise GradingError(f"LibreOffice recalculation of {src} timed out after {policy.lo_timeout_s:.0f} s")
+        except BaseException:                 # KeyboardInterrupt, SystemExit, ...: LibreOffice goes too
+            _kill_tree(proc)
+            raise
         secs = time.perf_counter() - t0
         if not os.path.exists(out):
             msg = (se or b"").decode("utf-8", "replace")[-400:] + (so or b"").decode("utf-8", "replace")[-200:]
             raise GradingError(f"LibreOffice produced no copy for {src} (exit {proc.returncode}; {secs:.1f} s): {msg.strip()}")
         return out
     finally:
+        _ACTIVE.pop(run_id, None)
+        reap_profiles(profile, subtree=False)  # nothing may keep running on this profile
         shutil.rmtree(profile, ignore_errors=True)
 
 

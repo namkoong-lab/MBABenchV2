@@ -1,5 +1,45 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-04 — the LibreOffice step: encoded paths; a conversion never outlives its grading (judge v13 reviews)
+
+Source: the two judge v13 reviews (ops: LibreOffice aborts on a task folder with a space, task 28
+"FruitJuice_3-Statement-Model - v2"; a '%41' sent the profile to a decoded folder; SIGTERM to the grader
+orphaned soffice, re-parented to pid 1 with no timeout - probes probe_space.py, probe_lo_paths.py, P20 of
+probe_failures.py).
+
+### core/recalc.py
+- `file_url(path)` (new): every path handed to soffice - the profile (`-env:UserInstallation`), `--outdir`
+  and the source - is `Path(abspath).as_uri()`. Before: `f"file://{profile}"` raw (a space: exit -6, no copy;
+  `%41`: profile decoded to another folder) and a plain `--outdir` path (also decoded by LibreOffice: the copy
+  went to `PctATask/...`, "produced no copy").
+- `libreoffice_recalc`: soffice runs in the grader's process group (no `start_new_session`) under
+  `core/lo_watchdog.py`; stdin is /dev/null; the run is registered in `_ACTIVE` while it runs; a timeout or any
+  exception (KeyboardInterrupt too) kills the whole tree; every run ends with `reap_profiles(profile)`.
+- `install_termination_reaper()` (new): SIGTERM / SIGHUP handler, installed once from the main thread where
+  the signal still had its default action; it kills this process's running conversions
+  (`kill_active_libreoffice`) and then the process dies of the signal exactly as before.
+- `reap_profiles(path, subtree)` (new): kills, as whole trees, the processes whose command line names a
+  profile (raw path or file URL); never this process or its ancestors. `_kill_tree` now kills by tree
+  (before: `killpg` of soffice's own session).
+
+### core/lo_watchdog.py (new)
+- The wrapper (`-I -S`, standard library only): runs soffice as its child, passes its exit code through
+  (128 + N and a stderr line when soffice died of signal N), kills soffice's whole tree when the grader is no
+  longer its parent (polled every 0.5 s) or when it gets SIGTERM / SIGINT / SIGHUP. `kill_tree` (SIGSTOP the
+  tree until no new child appears, then SIGKILL), `process_table`, `descendants`, `ancestors` are shared with
+  core/recalc.py.
+
+### tests
+- `tests/test_recalc_libreoffice.py` (new): the real LibreOffice on a 3-cell file in a folder named with a space,
+  `%41`, `%` and `é` (stale cached 999 recalculated to 95, nothing written outside, no process left); stand-in
+  soffice runs: watchdog pass-through, timeout tree kill, SIGTERM and SIGKILL to a stand-in grader, the watchdog
+  alone, the handler's rules, the profile sweep. utils/det_checks' reaper uses `reap_profiles` (test_det_checks:
+  encoded profile URL, and the reviewer's P20 at adapter level with SIGTERM and SIGKILL).
+
+### Verdict effect
+- None: only how LibreOffice is started and stopped changed; the copy's values are the same (a folder with a
+  space or `%` used to fail the grading loudly; it is now graded).
+
 ## 2026-10-04 — unresolvable colours are an explicit unknown (finding 47-R2-08)
 
 Source: second-review finding 47-R2-08 (an unresolvable fill colour read as "no fill", so No bright-yellow

@@ -51,9 +51,13 @@ Values (detchecks/docs/recalc.md)
   workbook copies. Excel recalculation is OFF (det_checks.excel_recalc); cells LibreOffice
   cannot compute are used as displayed. LibreOffice never runs on a file larger than
   det_checks.libreoffice_max_mb (10 MB; maintainer 2026-10-04, memory): such a file fails the
-  value checks, so the grading stops before the LLM call ("not graded: too large"). Any
-  LibreOffice process left on this grading's private profile is killed when the checks return
-  or raise (_reap_libreoffice).
+  value checks, so the grading stops before the LLM call ("not graded: too large").
+  LibreOffice never outlives the grading (detchecks/docs/recalc.md, "The LibreOffice process"):
+  its paths are encoded file URLs (a task folder with a space or '%'); it runs in the grader's
+  process group under a watchdog that kills it when the grader dies (SIGKILL included); a
+  SIGTERM / SIGHUP handler, installed by startup_check and run_det_checks from the main thread,
+  kills it before the grader dies of the signal; and _reap_libreoffice sweeps this grading's
+  private profiles (raw or URL form) when the checks return or raise.
 
 Task metadata
   delivered_filename       from the _attempt_origin.json sidecar (original_filename); without
@@ -73,8 +77,6 @@ import hashlib
 import json
 import math
 import os
-import signal
-import subprocess
 import time
 from pathlib import Path
 
@@ -301,6 +303,7 @@ def startup_check(rubric_path, mode: str | None = None) -> str:
     if mode == "off":
         logger.info("det_checks: off - the LLM decides every check (judge v13 rows without Python verdicts)")
         return mode
+    _install_termination_reaper()
     rubric = json.loads(Path(rubric_path).read_text(encoding="utf-8"))
     plan = configured_checks(settings, rubric)
     logger.info(
@@ -457,39 +460,31 @@ def _size_guarded_libreoffice(limit_mb: float):
 
 
 def _reap_libreoffice(workdir: Path) -> list[int]:
-    """Kill any LibreOffice process still running on this grading's private profile.
+    """Kill any LibreOffice process still running on one of this grading's private profiles.
 
-    detchecks' libreoffice_recalc starts soffice in its own session and kills that group on
-    its timeout; this sweep also covers every other way out (an exception, an interrupt), so a
-    large conversion never outlives its grading. The profile lives under this attempt's own
-    workdir, so the match can only hit this grading's processes."""
-    marker = str(Path(workdir) / "_lo_profiles") + os.sep
-    try:
-        # -ww: full command lines (BSD and procps), so the profile path is always visible
-        out = subprocess.run(["ps", "-ww", "-Ao", "pid=,pgid=,command="], capture_output=True,
-                             text=True, timeout=10).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    killed = []
-    own_pgid = os.getpgrp()
-    for line in out.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
-            continue
-        pid, pgid, cmd = int(parts[0]), int(parts[1]), parts[2]
-        if marker not in cmd or pid == os.getpid():
-            continue
-        try:
-            if pgid != own_pgid:
-                os.killpg(pgid, signal.SIGKILL)
-            else:
-                os.kill(pid, signal.SIGKILL)
-            killed.append(pid)
-        except OSError:
-            continue
+    detchecks' libreoffice_recalc already kills its run on a timeout, an exception or an
+    interrupt, runs soffice under a watchdog that kills it when the grader dies, and installs a
+    SIGTERM handler (detchecks/core/recalc.py); this sweep is the last net when the checks return
+    or raise. It matches the profile folder workdir/_lo_profiles/ in a command line as a raw
+    path or as the percent-encoded file URL soffice is given (a task folder name with a space or
+    '%'), and kills each match with everything below it. The profiles live under this attempt's
+    own workdir, so the match can only hit this grading's processes - never another job's."""
+    from detchecks.core import recalc as det_recalc
+
+    marker = Path(workdir) / "_lo_profiles"
+    killed = det_recalc.reap_profiles(str(marker))
     if killed:
-        logger.warning(f"  [det_checks] killed leftover LibreOffice process(es) {killed} on {marker}")
+        logger.warning(f"  [det_checks] killed leftover LibreOffice process(es) {killed} on {marker}{os.sep}")
     return killed
+
+
+def _install_termination_reaper() -> None:
+    """detchecks' SIGTERM / SIGHUP handler (kill this process's LibreOffice runs, then die of the
+    signal as before). Main thread only (Python's rule): startup_check runs there in every DB
+    driver before any worker starts, and judge.py grades in the main thread."""
+    from detchecks.core import recalc as det_recalc
+
+    det_recalc.install_termination_reaper()
 
 
 def _delivered_text(delivered) -> str:
@@ -610,6 +605,7 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
 
     logger.info(f"  [det_checks] mode={mode}: grading {len(selected)} check(s) on {attempt.name} "
                 f"({_delivered_text(delivered)}); not applicable: {[label(n) for n in not_applicable] or 'none'}")
+    _install_termination_reaper()
     try:
         verdicts = det_api.grade(str(attempt), checks=selected, task_meta=task_meta, recalc=policy)
         missing = sorted(set("/".join(DET_CHECK_NAMES[n]) for n in selected) - set(verdicts))
