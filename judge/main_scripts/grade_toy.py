@@ -386,6 +386,7 @@ def main():
     suitability_dir = scratch_run_dir / "suitability"; suitability_dir.mkdir(exist_ok=True)
 
     run_cost, n_ok, n_bad, n_correct = 0.0, 0, 0, 0
+    retry_later = []      # LibreOffice could not run (memory / every retry failed): re-run these later
     for i, (repeat_no, toy, variant) in enumerate(plan, 1):
         check_no = toy["check_no"]; cat, name = flat[check_no]
         if args.max_cost_usd is not None and run_cost >= args.max_cost_usd:
@@ -420,6 +421,8 @@ def main():
             n_ok += 1; n_correct += int(ok)
         else:
             n_bad += 1
+            if result.get("retry_later"):
+                retry_later.append(f"check {check_no} {toy[f'name_{variant}']} ({variant}, repeat {repeat_no})")
         logger.info(f"  -> verdict={verdict['verdict']} expected={variant} {'OK' if ok else 'MISS'}  "
                     f"cost=${result.get('cost') or 0:.3f}  run=${run_cost:.2f}  {result.get('raw_files_path') or ''}")
         if write_db:
@@ -445,6 +448,10 @@ def main():
             c.commit()
         _, conn = _with_reconnect(conn, _finish)
     logger.info(f"\nRun {run_id}: {n_ok} graded ({n_correct} correct), {n_bad} failed, ${run_cost:.2f}")
+    if retry_later:
+        logger.warning(f"LIBREOFFICE: {len(retry_later)} toy grading(s) NOT graded because LibreOffice could not run "
+                       f"(memory, or every retry crashed / timed out) - re-run them when the machine has memory to "
+                       f"spare: {'; '.join(retry_later)}")
 
 
 if __name__ == "__main__":

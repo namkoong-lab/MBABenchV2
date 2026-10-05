@@ -700,6 +700,7 @@ class GradeOrchestrator:
                 "task_id": task_id,
                 "success": False,
                 "error": f"uncaught: {e}",
+                "retry_later": bool(getattr(e, "retry_later", False)),
                 "traceback": traceback.format_exc(),
             }
 
@@ -738,7 +739,8 @@ class GradeOrchestrator:
             total = self._total
             elapsed = time.monotonic() - self._start_time
 
-        status = "OK" if result.get("success") else "FAILED"
+        status = "OK" if result.get("success") else (
+            "FAILED (LibreOffice could not run - re-run later)" if result.get("retry_later") else "FAILED")
         # Warm-up gate: skip ETA until we've cleared at least one full pool
         # cycle so the estimate isn't dominated by cold-cache outliers.
         if completed >= max(3, self.workers) and elapsed > 0:
@@ -800,6 +802,9 @@ def write_run_summary(
         "total_attempts": len(attempts),
         "successful": sum(1 for r in results if r.get("success")),
         "failed": sum(1 for r in results if not r.get("success")),
+        # LibreOffice could not run for these (memory / every retry failed;
+        # maintainer 2026-10-05): not graded, no DB row - re-run them later
+        "retry_later_attempt_ids": _gfd.retry_later_ids(results),
         "results": results,
     }
     summary_path = Path(scratch_run_dir) / "run_summary.json"
@@ -1304,8 +1309,11 @@ def main():
         logger.info(f"  Scores matrix: {matrix_path}")
     logger.info("=" * 60)
 
+    for line in _gfd.retry_later_report(orch.results):
+        logger.warning(f"  {line}")
     for r in orch.results:
-        status = "OK" if r.get("success") else "FAILED"
+        status = "OK" if r.get("success") else (
+            "FAILED - LibreOffice, re-run later" if r.get("retry_later") else "FAILED")
         parts = [f"  attempt {r.get('attempt_id')}: [{status}]"]
         if r.get("scores"):
             s = r["scores"]
@@ -1319,6 +1327,9 @@ def main():
         if r.get("error"):
             parts.append(r["error"])
         logger.info(" | ".join(parts))
+    # repeated last, so the operator cannot miss it
+    for line in _gfd.retry_later_report(orch.results):
+        logger.warning(line)
 
     # Close the run.log handler so the file is flushed before we read it back.
     remove_log_file(run_log_path)

@@ -52,9 +52,19 @@ Values (detchecks/docs/recalc.md)
   det_checks_recalc/ (the copy and the private profiles), which run_det_checks deletes itself
   as soon as the checks return or raise, in every driver (_remove_recalc_dir; det_checks.json
   stays). Excel recalculation is OFF (det_checks.excel_recalc); cells LibreOffice
-  cannot compute are used as displayed. LibreOffice never runs on a file larger than
-  det_checks.libreoffice_max_mb (10 MB; maintainer 2026-10-04, memory): such a file fails the
-  value checks, so the grading stops before the LLM call ("not graded: too large").
+  cannot compute are used as displayed.
+  Every attempt is graded, whatever its size (maintainer 2026-10-05): det_checks.libreoffice_max_mb
+  is 0 = no limit in production (a positive value, for test runs only, refuses larger files that
+  need LibreOffice: "not graded: too large"). Memory safety instead (detchecks/core/lo_guard.py),
+  for EVERY LibreOffice run of a grading - this pipeline, the answer check's recalculation and
+  --run-calculation (run_libreoffice below): one LibreOffice at a time on the machine
+  (det_checks.libreoffice_lock_path, default /tmp/mbabench_libreoffice.lock), started only once
+  det_checks.libreoffice_min_free_pct of memory is free (waiting at most
+  det_checks.libreoffice_max_wait_minutes), a failed run (crash, no copy, timeout) retried
+  det_checks.libreoffice_retries times with the timeout doubled. When that is exhausted the grading
+  fails loudly with retry_later set (DetChecksError / LibreOfficeUnavailable): FAILED, no DB row,
+  the batch continues, and the drivers list the attempt at the end of the run to be re-run when
+  the machine has memory to spare (retry_later_report).
   LibreOffice never outlives the grading (detchecks/docs/recalc.md, "The LibreOffice process"):
   its paths are encoded file URLs (a task folder with a space or '%'); it runs in the grader's
   process group under a watchdog that kills it when the grader dies (SIGKILL included); a
@@ -163,7 +173,34 @@ class DetChecksSettings:
     excel_recalc: bool
     libreoffice_path: str
     libreoffice_timeout_s: float
-    libreoffice_max_mb: float
+    libreoffice_max_mb: float = 0.0          # 0 = no size limit (production, maintainer 2026-10-05)
+    libreoffice_retries: int = 3
+    libreoffice_min_free_pct: float = 25.0
+    libreoffice_max_wait_s: float = 3600.0
+    libreoffice_lock_path: str = ""          # "" = detchecks.core.lo_guard.default_lock_path()
+
+    def size_limited(self) -> bool:
+        return self.libreoffice_max_mb > 0
+
+    def size_text(self) -> str:
+        return f"files up to {self.libreoffice_max_mb:g} MB" if self.size_limited() else "no size limit"
+
+    def guard_settings(self):
+        """The machine-wide LibreOffice guard (detchecks/core/lo_guard.py) these settings describe."""
+        from detchecks.core import lo_guard
+
+        return lo_guard.GuardSettings(lock_path=self.libreoffice_lock_path or None,
+                                      min_free_pct=self.libreoffice_min_free_pct,
+                                      max_wait_s=self.libreoffice_max_wait_s,
+                                      retries=self.libreoffice_retries)
+
+    def guard_text(self) -> str:
+        from detchecks.core import lo_guard
+
+        return (f"one LibreOffice at a time (lock {self.libreoffice_lock_path or lo_guard.default_lock_path()}), "
+                f"started at >= {self.libreoffice_min_free_pct:g}% free memory (waiting at most "
+                f"{self.libreoffice_max_wait_s / 60:g} min), {self.libreoffice_retries} retries with the timeout "
+                f"doubled")
 
 
 @dataclasses.dataclass
@@ -220,12 +257,34 @@ def _numbers(env_key: str) -> tuple:
 def load_settings() -> DetChecksSettings:
     """det_checks.* from project_configs.yaml (env BIZBENCHJUDGE_DET_CHECKS_*); the
     LibreOffice binary is the judge's own paths.libreoffice_path."""
-    settings = _read_settings()
-    if not settings.libreoffice_max_mb > 0 or not settings.libreoffice_timeout_s > 0:
-        raise DetChecksConfigError(
-            f"det_checks.libreoffice_max_mb ({settings.libreoffice_max_mb}) and "
-            f"det_checks.libreoffice_timeout_seconds ({settings.libreoffice_timeout_s}) must be positive")
+    try:
+        settings = _read_settings()
+    except ValueError as e:
+        raise DetChecksConfigError(f"det_checks: {e}") from None
+    bad = []
+    if not settings.libreoffice_timeout_s > 0:
+        bad.append(f"det_checks.libreoffice_timeout_seconds ({settings.libreoffice_timeout_s}) must be positive")
+    if not settings.libreoffice_max_mb >= 0:
+        bad.append(f"det_checks.libreoffice_max_mb ({settings.libreoffice_max_mb}) must be 0 / null (no limit) "
+                   f"or positive")
+    bad += [f"det_checks.libreoffice_* settings: {p}" for p in settings.guard_settings().problems()]
+    if bad:
+        raise DetChecksConfigError("; ".join(bad))
     return settings
+
+
+def _config_number(env_key: str, default, cast=float):
+    """A numeric det_checks value; '', 'none' and 'null' mean the default (a YAML null is not exported)."""
+    raw = load_env_var(env_key, default=default)
+    if raw is None or str(raw).strip().lower() in ("", "none", "null"):
+        raw = default
+    try:
+        value = cast(float(raw)) if cast is int and float(raw) == int(float(raw)) else cast(raw)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{env_key.lower()} is {raw!r}, not a number") from None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{env_key.lower()} is {raw!r}, not a finite number")
+    return value
 
 
 def _read_settings() -> DetChecksSettings:
@@ -237,8 +296,12 @@ def _read_settings() -> DetChecksSettings:
         libreoffice_path=str(load_env_var(
             "PATHS_LIBREOFFICE_PATH",
             default="/Applications/LibreOffice.app/Contents/MacOS/soffice")),
-        libreoffice_timeout_s=float(load_env_var("DET_CHECKS_LIBREOFFICE_TIMEOUT_SECONDS", default=600)),
-        libreoffice_max_mb=float(load_env_var("DET_CHECKS_LIBREOFFICE_MAX_MB", default=10)),
+        libreoffice_timeout_s=_config_number("DET_CHECKS_LIBREOFFICE_TIMEOUT_SECONDS", 600),
+        libreoffice_max_mb=_config_number("DET_CHECKS_LIBREOFFICE_MAX_MB", 0),
+        libreoffice_retries=_config_number("DET_CHECKS_LIBREOFFICE_RETRIES", 3, int),
+        libreoffice_min_free_pct=_config_number("DET_CHECKS_LIBREOFFICE_MIN_FREE_PCT", 25),
+        libreoffice_max_wait_s=60.0 * _config_number("DET_CHECKS_LIBREOFFICE_MAX_WAIT_MINUTES", 60),
+        libreoffice_lock_path=str(load_env_var("DET_CHECKS_LIBREOFFICE_LOCK_PATH", default="") or "").strip(),
     )
 
 
@@ -329,9 +392,12 @@ def startup_check(rubric_path, mode: str | None = None) -> str:
     logger.info(
         f"det_checks: mode={mode}; live: {[label(n) for n, live in sorted(plan.items()) if live]}; "
         f"recorded only: {[label(n) for n, live in sorted(plan.items()) if not live]}; "
-        f"LibreOffice {settings.libreoffice_path} (files up to {settings.libreoffice_max_mb:g} MB, "
-        f"{settings.libreoffice_timeout_s:.0f} s); Excel recalculation "
+        f"LibreOffice {settings.libreoffice_path} ({settings.size_text()}, first timeout "
+        f"{settings.libreoffice_timeout_s:.0f} s; {settings.guard_text()}); Excel recalculation "
         f"{'ON' if settings.excel_recalc else 'off'}")
+    if settings.size_limited():
+        logger.warning(f"det_checks: libreoffice_max_mb = {settings.libreoffice_max_mb:g} refuses larger files not "
+                       f"saved by Excel - a TEST-RUN setting; production grades every attempt (0 = no limit)")
     return mode
 
 
@@ -529,26 +595,64 @@ def _write_artefact(path: Path, record: dict) -> None:
 
 
 def _size_guarded_libreoffice(limit_mb: float):
-    """The recalculation pipeline's LibreOffice step (RecalcPolicy.lo_runner) behind the size
-    limit (det_checks.libreoffice_max_mb; maintainer 2026-10-04: no LibreOffice run on a file over
-    10 MB, memory). Above it the step raises GradingError, so the value checks fail and the
-    grading stops loudly before the LLM call, like the formula-cache refusal. It only fires
-    when LibreOffice is actually needed: an Excel-saved file of any size is read from its own
+    """The recalculation pipeline's LibreOffice step (RecalcPolicy.lo_runner). Production has no size
+    limit (limit_mb 0; maintainer 2026-10-05: every attempt is graded, whatever its size - memory is
+    protected by the guard in detchecks/core/lo_guard.py instead). A positive limit_mb
+    (det_checks.libreoffice_max_mb, test runs only) refuses a larger file with GradingError, so the value
+    checks fail and the grading stops loudly before the LLM call ("not graded: too large"). It only
+    fires when LibreOffice is actually needed: an Excel-saved file of any size is read from its own
     caches and never gets here."""
 
     def _run(src, out_dir, policy):
         size = os.path.getsize(src)
-        if size > limit_mb * 1_000_000:
+        if limit_mb and limit_mb > 0 and size > limit_mb * 1_000_000:
             raise GradingError(
                 f"{src} is {size / 1_000_000:.1f} MB, over det_checks.libreoffice_max_mb "
-                f"({limit_mb:g} MB): a file not saved by Excel needs a LibreOffice recalculation "
-                f"for its formula values, which is not run on files this large (memory) - "
-                f"not graded: too large")
+                f"({limit_mb:g} MB, a test-run setting; production uses 0 = no limit): a file not saved by "
+                f"Excel needs a LibreOffice recalculation for its formula values, which this configuration "
+                f"does not run on files this large - not graded: too large")
         from detchecks.core import recalc as det_recalc   # looked up per call (tests swap it)
 
         return det_recalc.libreoffice_recalc(src, out_dir, policy)
 
     return _run
+
+
+def _lo_log(msg: str) -> None:
+    logger.info(f"  [LibreOffice] {msg}")
+
+
+def run_libreoffice(run_once, *, timeout_s: float, what: str, settings: DetChecksSettings | None = None):
+    """run_once(timeout) - one LibreOffice run with that timeout - under the machine-wide memory guard
+    configured in det_checks.libreoffice_* (detchecks/core/lo_guard.py): the lock, the memory wait,
+    the retries with the timeout doubled. Used by every LibreOffice run of a grading outside the
+    detchecks pipeline (the answer check, --run-calculation); the pipeline itself gets the same
+    settings through its RecalcPolicy. Raises detchecks.errors.LibreOfficeUnavailable (retry_later)
+    when the memory wait times out or every try failed."""
+    from detchecks.core import lo_guard
+
+    settings = settings or load_settings()
+    return lo_guard.run_guarded(run_once, timeout_s=timeout_s, settings=settings.guard_settings(), what=what,
+                                log=_lo_log)
+
+
+def retry_later_ids(results) -> list:
+    """Attempt ids of failed gradings whose cause is the machine (retry_later: LibreOffice could not run
+    now), in result order."""
+    return [r.get("attempt_id") for r in results or [] if not r.get("success") and r.get("retry_later")]
+
+
+def retry_later_report(results) -> list:
+    """The end-of-run lines (empty when none) that list the attempts LibreOffice could not grade now, so
+    the operator re-runs them when the machine has memory to spare."""
+    ids = retry_later_ids(results)
+    if not ids:
+        return []
+    return [f"LIBREOFFICE: {len(ids)} attempt(s) NOT graded because LibreOffice could not run (the machine did "
+            f"not have the memory within det_checks.libreoffice_max_wait_minutes, or every retry crashed / timed "
+            f"out) - no DB row was written.",
+            f"  Re-run them when the machine has memory to spare: --attempt-ids "
+            f"{' '.join(str(i) for i in ids)}"]
 
 
 def _reap_libreoffice(workdir: Path) -> list[int]:
@@ -644,9 +748,12 @@ def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Pat
     if any("LibreOffice" in str(m) for m in (list(failures.values()) or [e])):
         lines.append(
             f"  (LibreOffice binary: {settings.libreoffice_path}, from project_configs.yaml "
-            f"paths.libreoffice_path; timeout {settings.libreoffice_timeout_s:.0f} s, "
-            f"det_checks.libreoffice_timeout_seconds; size limit {settings.libreoffice_max_mb:g} MB, "
-            f"det_checks.libreoffice_max_mb)")
+            f"paths.libreoffice_path; first timeout {settings.libreoffice_timeout_s:.0f} s, "
+            f"det_checks.libreoffice_timeout_seconds; {settings.size_text()}, det_checks.libreoffice_max_mb; "
+            f"{settings.guard_text()}, det_checks.libreoffice_*)")
+    if getattr(e, "retry_later", False):
+        lines.append("  RETRY LATER: LibreOffice could not run now (memory, or every retry crashed / timed out); "
+                     "this attempt is not graded - re-run it when the machine has memory to spare")
     return "\n".join(lines)
 
 
@@ -723,6 +830,11 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
         lo_timeout_s=settings.libreoffice_timeout_s,
         excel_allowed=settings.excel_recalc,
         lo_runner=_size_guarded_libreoffice(settings.libreoffice_max_mb),
+        lo_retries=settings.libreoffice_retries,
+        lo_min_free_pct=settings.libreoffice_min_free_pct,
+        lo_max_wait_s=settings.libreoffice_max_wait_s,
+        lo_lock_path=settings.libreoffice_lock_path or None,
+        lo_log=_lo_log,
     )
     record = {
         "status": None,
@@ -743,6 +855,10 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
             "libreoffice_path": settings.libreoffice_path,
             "libreoffice_timeout_s": settings.libreoffice_timeout_s,
             "libreoffice_max_mb": settings.libreoffice_max_mb,
+            "libreoffice_retries": settings.libreoffice_retries,
+            "libreoffice_min_free_pct": settings.libreoffice_min_free_pct,
+            "libreoffice_max_wait_s": settings.libreoffice_max_wait_s,
+            "libreoffice_lock_path": policy.guard_settings().lock(),
             "workdir": str(workdir),
         },
         "rubric": str(rubric_src),
@@ -782,13 +898,14 @@ def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path
         record["error"] = str(e)
         record["failures"] = dict(e.failures or {})
         record["finished_verdicts"] = dict(e.verdicts or {})
+        record["retry_later"] = bool(getattr(e, "retry_later", False))
         record["seconds"] = round(time.perf_counter() - t0, 3)
         _write_artefact(artefact, record)
         ctx["written"] = True
         msg = _failure_message(e, attempt, delivered, task_folder, selected, settings, origin_problem)
         logger.error(f"  [det_checks] {msg}")
         raise DetChecksError(msg, check=e.check, path=str(attempt), failures=e.failures,
-                             verdicts=e.verdicts) from e
+                             verdicts=e.verdicts, retry_later=bool(getattr(e, "retry_later", False))) from e
     except Exception as e:  # noqa: BLE001 - anything else is just as loud, with the artefact written
         record["status"] = "error"
         record["stage"] = "grade"

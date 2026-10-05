@@ -36,7 +36,8 @@ import psycopg2.extras
 from utils import repo_config, rubric_suitability, workbook_properties
 from utils.answer_check import run_answer_check, summary_block
 from utils import det_checks as det_checks_mod
-from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, run_det_checks
+from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, retry_later_ids, retry_later_report, run_det_checks
+from detchecks.errors import LibreOfficeUnavailable
 from utils.excel_utils import find_golden_solution_file
 from utils.judge_identity import resolve_judge_identity
 from utils.llm_utils import get_client
@@ -770,9 +771,11 @@ def grade_single_attempt(
         # fallback. A DetChecksError lands in the except below exactly like
         # the formula-cache refusal (FAILED, success False, no DB row, the
         # batch continues), before any API spend and before the answer
-        # check opens the workbook: a file not saved by Excel and over
-        # det_checks.libreoffice_max_mb is refused here with no LibreOffice
-        # run at all (the answer check recalculates through LibreOffice too).
+        # check opens the workbook. Every attempt is graded whatever its size
+        # (maintainer 2026-10-05); LibreOffice runs under the machine-wide
+        # memory guard, and when it cannot run now (memory, every retry
+        # failed) the error carries retry_later: the attempt is listed at the
+        # end of the run to be re-run when the machine has memory to spare.
         # They read the delivered ai_attempt.xlsx, so they must run before
         # prune_workbook_copies.
         det_run = None
@@ -802,6 +805,11 @@ def grade_single_attempt(
                 hardcoded_counts=hardcoded_counts,
             )
             logger.info(f"  [answer_check] {summary_block(ac_result)}")
+        except LibreOfficeUnavailable:
+            # LibreOffice could not run now (machine-wide guard exhausted;
+            # maintainer 2026-10-05): fail loudly, re-run later - never an
+            # answer check that reads uncomputed answers as unanswered
+            raise
         except Exception as e:  # noqa: BLE001 — score-neutral by design
             logger.warning(f"  [answer_check] skipped on error: {e}")
             ac_result = {"status": "error", "error": str(e), "harness_verdicts": {}}
@@ -1051,13 +1059,18 @@ def grade_single_attempt(
 
     except Exception as e:
         elapsed = time.time() - start_time
-        logger.error(f"  FAILED: {e}")
+        # retry_later: LibreOffice could not run now (memory wait timed out or
+        # every retry failed; maintainer 2026-10-05) - listed at the end of the
+        # run, to be re-run when the machine has memory to spare
+        retry_later = bool(getattr(e, "retry_later", False))
+        logger.error(f"  FAILED{' (LibreOffice could not run - re-run later)' if retry_later else ''}: {e}")
         traceback.print_exc()
         return {
             "attempt_id": attempt_id,
             "task_id": attempt["task_id"],
             "success": False,
             "error": str(e),
+            "retry_later": retry_later,
             "traceback": traceback.format_exc(),
             "task_folder": str(task_folder),
             "elapsed_seconds": round(elapsed, 2),
@@ -1768,6 +1781,9 @@ def main(args):
             "total_attempts": len(attempts),
             "successful": sum(1 for r in results if r["success"]),
             "failed": sum(1 for r in results if not r["success"]),
+            # LibreOffice could not run for these (memory / every retry failed):
+            # not graded, no DB row - re-run them when memory is free
+            "retry_later_attempt_ids": retry_later_ids(results),
             "results": results,
         }
         summary_path = scratch_run_dir / "run_summary.json"
@@ -1781,6 +1797,8 @@ def main(args):
         logger.info(f"  Total: {len(results)}")
         logger.info(f"  Successful: {summary['successful']}")
         logger.info(f"  Failed: {summary['failed']}")
+        for line in retry_later_report(results):
+            logger.warning(f"  {line}")
         total_cost = sum(r.get("cost", 0) for r in results if r["success"])
         logger.info(f"  Total cost: ${total_cost:.6f}")
         logger.info(f"  Run directory: {scratch_run_dir}")
@@ -1789,7 +1807,7 @@ def main(args):
 
         for r in results:
             if not r["success"]:
-                status = "FAILED"
+                status = "FAILED - LibreOffice, re-run later" if r.get("retry_later") else "FAILED"
             elif r.get("hard_parse_failures") or r.get("missing_scores"):
                 status = "PARSE_FAILED"
             elif r.get("has_scoring_warnings"):
@@ -1829,6 +1847,9 @@ def main(args):
             if r.get("error"):
                 parts.append(r["error"])
             logger.info(" | ".join(parts))
+        # repeated last, so the operator cannot miss it
+        for line in retry_later_report(results):
+            logger.warning(line)
 
     finally:
         conn.close()

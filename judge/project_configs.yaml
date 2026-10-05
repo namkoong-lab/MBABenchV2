@@ -183,9 +183,10 @@ single_pass:
   # det_checks.live; No formula errors (22) and Negatives in parentheses (65)
   # are recorded beside the LLM's verdict, which counts. No fallback: a check
   # that cannot grade the file fails the grading before any API call. Files
-  # not saved by Excel are recalculated by LibreOffice for the value checks
-  # (files up to det_checks.libreoffice_max_mb, 10 MB; larger ones fail;
-  # Excel recalculation off). --det-checks harness|llm|off on every
+  # not saved by Excel are recalculated by LibreOffice for the value checks,
+  # whatever their size (2026-10-05: every attempt is graded; memory is
+  # protected by the det_checks.libreoffice_* guard below; Excel
+  # recalculation off). --det-checks harness|llm|off on every
   # single-pass driver (default: det_checks.enabled). The LLM still grades
   # every check, blind to Python; prompt, evidence and CSV caches unchanged.
   # Existing gradings are not re-scored: rows graded under 13 are not
@@ -239,10 +240,31 @@ det_checks:
   # 2026-10-04: Mac Excel asks for file access on every file); cells
   # LibreOffice cannot compute are used as displayed.
   excel_recalc: false
+  # Timeout of the first LibreOffice try; doubled on every retry.
   libreoffice_timeout_seconds: 600
-  # LibreOffice never recalculates a delivered file larger than this
-  # (MB = 1,000,000 bytes; maintainer 2026-10-04: memory). Such a file, when it
-  # was not saved by Excel and a value check applies, fails the grading
-  # before the LLM call ("not graded: too large"), like the formula-cache
-  # refusal. Excel-saved files of any size are read from their own caches.
-  libreoffice_max_mb: 10
+  # Size limit: 0 (or null) = NO LIMIT - production grades every attempt,
+  # whatever its size (maintainer 2026-10-05). A positive value (MB =
+  # 1,000,000 bytes) is for TEST RUNS only: a larger file not saved by Excel
+  # then fails the grading before the LLM call ("not graded: too large").
+  libreoffice_max_mb: 0
+  # Memory safety instead of a size cap (maintainer 2026-10-05;
+  # detchecks/core/lo_guard.py). It covers EVERY LibreOffice run of a
+  # grading: the det-checks recalculation, the answer check's
+  # recalculation and --run-calculation.
+  #  - One LibreOffice at a time on the machine, across all grading
+  #    processes and worker threads: an exclusive lock on this file
+  #    (null / "" = /tmp/mbabench_libreoffice.lock).
+  libreoffice_lock_path: null
+  #  - Before each run, holding the lock, wait until at least this much of
+  #    the machine's memory is free (macOS memory_pressure, Linux
+  #    /proc/meminfo), logging while it waits ...
+  libreoffice_min_free_pct: 25
+  #  - ... for at most this long; then the attempt fails loudly (no DB row,
+  #    logged FAILED, the batch continues) and the run's end summary lists
+  #    it to be re-run when the machine has memory to spare.
+  libreoffice_max_wait_minutes: 60
+  #  - A run that fails (crash, no copy, timeout) is retried this many
+  #    times, the timeout doubled each time, waiting for the lock and for
+  #    memory again before each try; only after the last retry does the
+  #    grading fail loudly (listed for re-run, as above).
+  libreoffice_retries: 3

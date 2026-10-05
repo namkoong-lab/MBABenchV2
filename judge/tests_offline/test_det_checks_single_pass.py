@@ -377,7 +377,8 @@ def _questions_book(path: Path, answer):
 
 
 def test_oversized_non_excel_file_stops_before_any_libreoffice_run():
-    """Fix 4: a file not saved by Excel and over det_checks.libreoffice_max_mb is refused by the
+    """Fix 4 (the size limit is a TEST-RUN option since 2026-10-05: production uses 0 = no limit): a file
+    not saved by Excel and over a positive det_checks.libreoffice_max_mb is refused by the
     deterministic checks BEFORE the answer check, so neither LibreOffice runs: here the answer
     check WOULD recalculate (the attempt's answer cell is a formula without a cached value) and
     the deterministic checks would need values - both LibreOffice entry points are recorded and
@@ -414,19 +415,76 @@ def test_oversized_non_excel_file_stops_before_any_libreoffice_run():
         assert [c[0] for c in lo_calls2] == ["answer_check"], lo_calls2
 
 
+def _questions_attempt(root: Path, answer, attempt_id=991):
+    src = root / "src"
+    src.mkdir(exist_ok=True)
+    _questions_book(src / "Model_final.xlsx", answer)
+    _questions_book(src / "EasyDCF - Solution.xlsx", 1250.0)
+    _annotation(root / "annotation.json")
+    return {
+        "attempt_id": attempt_id, "task_id": 20, "task_name": "EasyDCF", "agent_model_name": "a",
+        "agent_model_type": "excel", "agent_failed": False,
+        "attempt_files": [{"name": "Model_final.xlsx", "path": str(src / "Model_final.xlsx")}],
+        "task_solution_files": [{"name": "EasyDCF - Solution.xlsx", "path": str(src / "EasyDCF - Solution.xlsx")}],
+        "task_starting_files": None,
+    }
+
+
+def test_libreoffice_unavailable_fails_before_the_llm_for_a_later_run():
+    """Maintainer 2026-10-05: no size limit; when LibreOffice cannot run (memory wait timed out, every retry
+    failed) the attempt fails loudly - success False, no DB row, no LLM call - with retry_later set, and the
+    run's end summary lists it to be re-run when the machine has memory to spare.  Both LibreOffice entry
+    points: the deterministic checks' recalculation, and (det checks off) the answer check's."""
+    from detchecks.errors import LibreOfficeUnavailable
+
+    def unavailable(*a, **k):
+        raise LibreOfficeUnavailable("LibreOffice could not recalculate Model_final.xlsx: all 4 tries failed (test) - "
+                                     "not graded now; re-run this attempt when the machine has memory to spare")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        attempt = _questions_attempt(root, "=Model!B1")                 # openpyxl: no cached value
+        orig_det, orig_ac = det_recalc.libreoffice_recalc, answer_check._recalculate_copy
+        det_recalc.libreoffice_recalc = unavailable
+        try:
+            llm = StubLLM(root / "run")
+            res = _grade(root, attempt, None, llm)
+        finally:
+            det_recalc.libreoffice_recalc = orig_det
+        assert res["success"] is False and res["retry_later"] is True and llm.calls == 0, res.get("error")
+        assert "RETRY LATER" in res["error"] and "all 4 tries failed" in res["error"], res["error"]
+        task_folder = Path(res["task_folder"])
+        assert not (task_folder / "answer_check.json").exists()
+        art = json.loads((task_folder / D.ARTEFACT_FILENAME).read_text())
+        assert art["status"] == "error" and art["retry_later"] is True
+        # the answer check's own LibreOffice run (det checks off): never swallowed either
+        answer_check._recalculate_copy = unavailable
+        try:
+            llm2 = StubLLM(root / "run2")
+            res2 = _grade(root, attempt, "off", llm2, run="run2")
+        finally:
+            answer_check._recalculate_copy = orig_ac
+        assert res2["success"] is False and res2["retry_later"] is True and llm2.calls == 0, res2.get("error")
+        lines = gfd.retry_later_report([res, res2, {"attempt_id": 5, "success": False, "error": "x"}])
+        assert len(lines) == 2 and lines[1].endswith("--attempt-ids 991 991"), lines
+
+
 def test_call_sites_are_wired_before_the_llm():
     gfd_src = (JUDGE / "main_scripts" / "grade_from_db.py").read_text()
     gsa = gfd_src.split("def grade_single_attempt")[1].split("\ndef ")[0]
     i_det, i_ac, i_judge = gsa.index("run_det_checks("), gsa.index("run_answer_check("), gsa.index("single_pass_judge_case(")
     assert i_det < i_ac < i_judge, "deterministic checks first, then the answer check, then the judge"
     big_try = gsa.rfind("\n    try:\n", 0, i_det)
-    failed = gsa.index('logger.error(f"  FAILED: {e}")')
+    failed = gsa.index('logger.error(f"  FAILED')
     first_except = gsa.index("\n    except", big_try)
     assert big_try != -1 and i_judge < first_except < failed and gsa.count("\n    except", big_try, failed) == 1, \
         "run_det_checks, the answer check and the judge must sit in the one try whose except logs FAILED"
     ac_block = gsa[i_det:i_judge]
     assert "\n        try:\n" in ac_block and "score-neutral by design" in ac_block, \
         "the answer check keeps its own score-neutral try"
+    assert "except LibreOfficeUnavailable:\n            # LibreOffice could not run now" in ac_block, \
+        "... which never swallows LibreOffice being unavailable (maintainer 2026-10-05)"
+    assert '"retry_later": retry_later' in gsa and "retry_later_report(results)" in gfd_src
     assert "merge_harness_verdicts(" in gsa[i_ac:i_judge] and "det_checks=det_run.for_judge()" in gsa
     assert "det_checks=args.det_checks" in gfd_src and "add_det_checks_arg(parser)" in gfd_src
     prune = gfd_src.split("def prune_workbook_copies")[1].split("\ndef ")[0]
@@ -438,6 +496,8 @@ def test_call_sites_are_wired_before_the_llm():
     assert "add_det_checks_arg(parser)" in judge_src
     orch = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
     assert "det_checks=self.det_checks" in orch and "add_det_checks_arg(parser)" in orch
+    assert "_gfd.retry_later_report(orch.results)" in orch and "_gfd.retry_later_ids(results)" in orch
+    assert "except LibreOfficeUnavailable:" in main.split("run_answer_check(")[1].split("single_pass_judge_case(")[0]
     assert "det_checks=args.det_checks" in orch
     toy = (JUDGE / "main_scripts" / "grade_toy.py").read_text()
     assert "det_checks=args.det_checks" in toy and "add_det_checks_arg(ap)" in toy

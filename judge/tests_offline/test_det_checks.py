@@ -9,12 +9,16 @@ heavy-job guard like any multi-workbook job).
 No DB, S3, LLM, LibreOffice or Excel: workbooks are built with openpyxl in temporary
 folders, and the one LibreOffice call the recalculation pipeline would make for an
 openpyxl-written file is replaced by a fake that copies the file (the toys hold constants
-only, so the copy carries the same values) and records the policy it was given.
+only, so the copy carries the same values) and records the policy it was given.  The memory
+guard of 2026-10-05 (no size limit; one LibreOffice at a time, memory wait, retries) is tested
+with stand-in soffice scripts through the real libreoffice_recalc, the answer check and
+--run-calculation, each with a lock file in its temporary folder (never the machine's).
 """
 import atexit
 import contextlib
 import copy
 import json
+import logging
 import os
 import shutil
 import signal
@@ -22,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 JUDGE = Path(__file__).resolve().parents[1]
@@ -37,6 +42,8 @@ import importlib.util  # noqa: E402
 
 import detchecks.api as det_api  # noqa: E402
 import detchecks.core.recalc as det_recalc  # noqa: E402
+from detchecks.core import lo_guard  # noqa: E402
+from detchecks.errors import LibreOfficeUnavailable  # noqa: E402
 from detchecks.checks import REGISTRY  # noqa: E402
 from detchecks.core.sheet import ExcelError  # noqa: E402
 from utils import det_checks as D  # noqa: E402
@@ -175,7 +182,10 @@ def test_pins_registry_rubric_weights_and_config():
     assert s.excel_recalc is False, "Excel recalculation must stay OFF (maintainer 2026-10-04)"
     assert s.libreoffice_path == os.environ[f"{project_prefix()}_PATHS_LIBREOFFICE_PATH"]
     assert s.libreoffice_timeout_s == 600
-    assert s.libreoffice_max_mb == 10, "LibreOffice size limit is 10 MB (maintainer 2026-10-04)"
+    # maintainer 2026-10-05: every attempt is graded, whatever its size - memory safety instead of a size cap
+    assert s.libreoffice_max_mb == 0 and not s.size_limited(), "production has no LibreOffice size limit"
+    assert (s.libreoffice_retries, s.libreoffice_min_free_pct, s.libreoffice_max_wait_s) == (3, 25.0, 3600.0)
+    assert s.libreoffice_lock_path == "" and s.guard_settings().lock() == lo_guard.default_lock_path()
     plan = D.configured_checks(s, RUBRIC)
     assert {n for n, live in plan.items() if live} == LIVE
     assert {n for n, live in plan.items() if not live} == RECORDED_ONLY
@@ -210,7 +220,10 @@ def test_config_errors_refuse_to_grade():
     small = {"Accuracy": RUBRIC["Accuracy"][:5]}         # a v1-sized rubric: none of the checks exists
     assert D.configured_checks(s, small) == {}
     for bad_env in ({"DET_CHECKS_LIVE": "92,x"}, {"DET_CHECKS_LIVE": "92,92"},
-                    {"DET_CHECKS_LIBREOFFICE_MAX_MB": "0"}):
+                    {"DET_CHECKS_LIBREOFFICE_MAX_MB": "-1"}, {"DET_CHECKS_LIBREOFFICE_MAX_MB": "ten"},
+                    {"DET_CHECKS_LIBREOFFICE_TIMEOUT_SECONDS": "0"}, {"DET_CHECKS_LIBREOFFICE_RETRIES": "-1"},
+                    {"DET_CHECKS_LIBREOFFICE_RETRIES": "1.5"}, {"DET_CHECKS_LIBREOFFICE_MIN_FREE_PCT": "100"},
+                    {"DET_CHECKS_LIBREOFFICE_MAX_WAIT_MINUTES": "-5"}):
         with env(**bad_env):
             try:
                 D.load_settings()
@@ -218,6 +231,11 @@ def test_config_errors_refuse_to_grade():
                 pass
             else:
                 raise AssertionError(f"bad config accepted: {bad_env}")
+    # 0 / null = no size limit; a positive limit is a test-run setting
+    for ok_env, mb in (({"DET_CHECKS_LIBREOFFICE_MAX_MB": "0"}, 0.0), ({"DET_CHECKS_LIBREOFFICE_MAX_MB": "null"}, 0.0),
+                       ({"DET_CHECKS_LIBREOFFICE_MAX_MB": "10"}, 10.0)):
+        with env(**ok_env):
+            assert D.load_settings().libreoffice_max_mb == mb
 
 
 def test_startup_check():
@@ -430,6 +448,9 @@ def test_recalc_reads_the_delivered_file_with_the_configured_policy():
         p = c["policy"]
         assert p.libreoffice_path == os.environ[f"{project_prefix()}_PATHS_LIBREOFFICE_PATH"]
         assert p.excel_allowed is False and p.lo_timeout_s == 600
+        # the memory guard of 2026-10-05 from det_checks.libreoffice_*
+        assert (p.lo_retries, p.lo_min_free_pct, p.lo_max_wait_s, p.lo_lock_path) == (3, 25.0, 3600.0, None)
+        assert p.lo_log is D._lo_log
         assert Path(p.workdir) == folder / D.RECALC_DIRNAME
         assert Path(c["out_dir"]).is_relative_to(folder / D.RECALC_DIRNAME)
 
@@ -499,7 +520,34 @@ def test_missing_libreoffice_fails_loudly_without_launching_anything():
         assert strict_json((folder / D.ARTEFACT_FILENAME).read_text())["status"] == "error"
 
 
+def test_production_config_grades_every_size():
+    """Maintainer 2026-10-05: "For production runs, every attempt must be graded. Doesn't matter what size."
+    The production config (libreoffice_max_mb 0) sends a file of any size to LibreOffice (here an 11 MB
+    file, to a stand-in LibreOffice), and startup_check says so."""
+    s = D.load_settings()
+    assert s.size_text() == "no size limit" and not s.size_limited()
+    with tempfile.TemporaryDirectory() as tmp, fake_libreoffice() as calls:
+        folder = make_task(Path(tmp), negative=True)
+        with zipfile.ZipFile(folder / "ai_attempt.xlsx", "a", compression=zipfile.ZIP_STORED) as z:
+            z.writestr("customXml/padding.bin", os.urandom(11_000_000))      # stored: the file is > 10 MB
+        assert (folder / "ai_attempt.xlsx").stat().st_size > 10_000_000
+        r = run(folder)
+        assert len(calls) == 1 and r.summary["status"] == "ok", r.summary
+    from utils.logger import logger as judge_logger
+    seen = []
+    handler = type("H", (logging.Handler,), {"emit": lambda self, rec: seen.append(rec.getMessage())})()
+    judge_logger.addHandler(handler)
+    try:
+        D.startup_check(RUBRIC_PATH)
+    finally:
+        judge_logger.removeHandler(handler)
+    line = next(m for m in seen if m.startswith("det_checks: mode="))
+    assert "no size limit" in line and "one LibreOffice at a time" in line and "25% free memory" in line, line
+
+
 def test_libreoffice_size_limit_fails_loudly_without_running_it():
+    """A positive det_checks.libreoffice_max_mb (a TEST-RUN setting since 2026-10-05) still refuses a larger
+    file not saved by Excel, before any LibreOffice run."""
     with tempfile.TemporaryDirectory() as tmp, fake_libreoffice() as calls:
         folder = make_task(Path(tmp), negative=True)
         size = (folder / "ai_attempt.xlsx").stat().st_size
@@ -518,6 +566,167 @@ def test_libreoffice_size_limit_fails_loudly_without_running_it():
         with env(DET_CHECKS_LIBREOFFICE_MAX_MB=str(size * 2 / 1_000_000)):
             run(folder)
         assert len(calls) == 1
+
+
+STAND_IN_SOFFICE = r'''#!{python}
+"""Stand-in soffice for the guard tests: --outdir and the source as file URLs or plain paths."""
+import json, os, shutil, sys, time
+from urllib.parse import unquote, urlparse
+mode = {mode!r}
+args = sys.argv[1:]
+def path(u):
+    return unquote(urlparse(u).path) if u.startswith("file:") else u
+outdir, src = path(args[args.index("--outdir") + 1]), path(args[-1])
+if mode == "fail":
+    sys.stderr.write("crash\n")
+    sys.exit(134)
+if mode == "flaky":
+    counter = os.path.abspath(sys.argv[0]) + ".count"
+    n = int(open(counter).read()) + 1 if os.path.exists(counter) else 1
+    open(counter, "w").write(str(n))
+    if n < 3:
+        sys.exit(134)
+t0 = time.time()
+if mode == "slow":
+    time.sleep(0.5)
+shutil.copy(src, os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".xlsx"))
+with open(os.path.abspath(sys.argv[0]) + ".log", "a") as fh:
+    fh.write(json.dumps([t0, time.time()]) + "\n")
+'''
+
+
+def stand_in_soffice(folder: Path, mode: str) -> str:
+    p = folder / f"soffice_{mode}"
+    p.write_text(STAND_IN_SOFFICE.format(python=sys.executable, mode=mode))
+    p.chmod(0o755)
+    return str(p)
+
+
+def guard_env(folder: Path, soffice: str, **extra):
+    """det_checks.libreoffice_* for a guard test: a lock file in the test folder, no memory wait."""
+    return env(PATHS_LIBREOFFICE_PATH=soffice, DET_CHECKS_LIBREOFFICE_LOCK_PATH=str(folder / "lo.lock"),
+               DET_CHECKS_LIBREOFFICE_MIN_FREE_PCT="0", DET_CHECKS_LIBREOFFICE_TIMEOUT_SECONDS="30", **extra)
+
+
+def test_libreoffice_retries_then_grades():
+    """A LibreOffice run that crashes is retried (det_checks.libreoffice_retries, timeout doubled): crashing
+    twice then converting, the attempt is graded (the real libreoffice_recalc with a stand-in soffice)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        folder = make_task(root, negative=True)
+        soffice = stand_in_soffice(root, "flaky")
+        with guard_env(root, soffice):
+            r = run(folder)
+        assert r.summary["status"] == "ok" and Path(soffice + ".count").read_text() == "3"
+        assert r.summary["values"]["source"] == "libreoffice"
+        art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
+        assert art["config"]["libreoffice_retries"] == 3 and art["config"]["libreoffice_lock_path"] == str(root / "lo.lock")
+
+
+def test_libreoffice_failure_fails_the_attempt_for_a_later_run():
+    """Every retry fails: the grading fails loudly (DetChecksError, no fallback) with retry_later set,
+    det_checks.json records it, and the drivers' end-of-run report lists the attempt to re-run."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        folder = make_task(root, negative=True)
+        with guard_env(root, stand_in_soffice(root, "fail"), DET_CHECKS_LIBREOFFICE_RETRIES="1"):
+            try:
+                run(folder)
+            except D.DetChecksError as e:
+                msg = str(e)
+                assert e.retry_later and "all 2 tries failed" in msg and "RETRY LATER" in msg, msg
+                assert D.label(66) in msg and key(92) not in e.failures, msg
+            else:
+                raise AssertionError("graded although LibreOffice never ran")
+        art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
+        assert art["status"] == "error" and art["retry_later"] is True
+        assert not (folder / D.RECALC_DIRNAME).exists()
+    results = [{"attempt_id": 7, "success": False, "retry_later": True, "error": "x"},
+               {"attempt_id": 8, "success": True}, {"attempt_id": 9, "success": False, "error": "other"},
+               {"attempt_id": 11, "success": False, "retry_later": True}]
+    assert D.retry_later_ids(results) == [7, 11] and D.retry_later_report(results[1:3]) == []
+    lines = D.retry_later_report(results)
+    assert "2 attempt(s) NOT graded because LibreOffice could not run" in lines[0], lines
+    assert lines[1].endswith("--attempt-ids 7 11") and "memory to spare" in lines[1], lines
+
+
+HOLDER = r'''
+import sys, time
+sys.path.insert(0, {judge!r})
+from detchecks.core import lo_guard as G
+with G.machine_lock({lock!r}, what="hold for the test"):
+    print("held", flush=True)
+    time.sleep(1.5)
+    released = time.time()
+print(released, flush=True)
+'''
+
+
+def _after_the_holder(root: Path, call) -> None:
+    """Run `call` while another process holds the machine-wide lock: LibreOffice must start only after the
+    holder released it."""
+    lock = root / "lo.lock"
+    holder = subprocess.Popen([sys.executable, "-c", HOLDER.format(judge=str(JUDGE), lock=str(lock))],
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        call()
+        released = float(holder.stdout.readline())
+    finally:
+        holder.wait(timeout=30)
+    starts = [json.loads(line)[0] for line in open(str(root / "soffice_slow") + ".log")]
+    assert starts and min(starts) >= released - 0.05, (starts, released)
+    os.remove(str(root / "soffice_slow") + ".log")
+
+
+def test_answer_check_and_run_calculation_take_the_lock():
+    """The answer check's recalculation and --run-calculation (excel_utils.recalculate_xlsx) run LibreOffice
+    under the same machine-wide guard as the det checks: while another process holds the lock, they wait."""
+    from utils import answer_check as AC
+    from utils import excel_utils as XU
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        folder = make_task(root, negative=True)
+        src = folder / "ai_attempt.xlsx"
+        with guard_env(root, stand_in_soffice(root, "slow")):
+            out = root / "ac_out"
+            out.mkdir()
+            _after_the_holder(root, lambda: AC._recalculate_copy(src, out))
+            assert (out / "ai_attempt.xlsx").exists()
+            _after_the_holder(root, lambda: XU.process_all_worksheets(str(src), root / "csv", quiet=True,
+                                                                      run_calculation=True))
+            assert (folder / "temp_recalculated" / "ai_attempt.xlsx").exists()
+
+
+def test_answer_check_never_swallows_libreoffice_unavailable():
+    """Maintainer 2026-10-05: when LibreOffice cannot run for the answer check, the grading fails loudly
+    (re-run later) - never an answer check that reads the uncomputed answers as unanswered."""
+    from utils import answer_check as AC
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        golden, attempt = root / "golden.xlsx", root / "attempt.xlsx"
+        for path, answer in ((golden, 5), (attempt, "=2+3")):           # the attempt's answer has no cached value
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Questions"
+            ws["A1"], ws["B1"] = "Questions (round to two decimals)", "Answers"
+            ws["A2"], ws["B2"] = "What is the total cash in 2030 for the model?", answer
+            wb.save(path)
+        with guard_env(root, stand_in_soffice(root, "fail"), DET_CHECKS_LIBREOFFICE_RETRIES="1"):
+            try:
+                AC.run_answer_check(attempt, golden)
+            except LibreOfficeUnavailable as e:
+                assert e.retry_later and "all 2 tries failed" in str(e) and "answer check" in str(e), e
+            else:
+                raise AssertionError("the answer check swallowed a LibreOffice failure")
+        # any other recalculation failure stays best effort (score-neutral, as before)
+        original = AC._recalculate_copy
+        AC._recalculate_copy = lambda *a: (_ for _ in ()).throw(FileNotFoundError("no output (test)"))
+        try:
+            res = AC.run_answer_check(attempt, golden)
+        finally:
+            AC._recalculate_copy = original
+        assert res.get("recalc_error") == "no output (test)", res
 
 
 def test_mode_off_runs_nothing():
@@ -700,6 +909,8 @@ os.chdir({judge!r})
 from utils.misc_utils import load_project_configs, project_prefix
 load_project_configs()
 os.environ[project_prefix() + "_PATHS_LIBREOFFICE_PATH"] = {soffice!r}
+os.environ[project_prefix() + "_DET_CHECKS_LIBREOFFICE_LOCK_PATH"] = {lock!r}     # not the machine's lock
+os.environ[project_prefix() + "_DET_CHECKS_LIBREOFFICE_MIN_FREE_PCT"] = "0"
 from utils import det_checks as D
 D.run_det_checks({folder!r}, rubric_path={rubric!r}, weights_path={weights!r}, benchmark=None)
 '''
@@ -718,7 +929,8 @@ def _libreoffice_dies_with_its_grader(sig):
         folder = make_task(root, negative=True)                     # openpyxl file: value checks need LibreOffice
         soffice = LT.fake_soffice(tmp, "hang", tag)
         code = _STAND_IN_GRADER.format(judge=str(JUDGE), soffice=soffice, folder=str(folder),
-                                       rubric=str(RUBRIC_PATH), weights=str(WEIGHTS_PATH))
+                                       rubric=str(RUBRIC_PATH), weights=str(WEIGHTS_PATH),
+                                       lock=str(Path(tmp) / "lo.lock"))
         grader = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         marker = (folder / D.RECALC_DIRNAME / "_lo_profiles").as_uri()
         try:

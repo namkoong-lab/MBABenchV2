@@ -1671,31 +1671,58 @@ def process_all_worksheets(
         profile that is in use hands its arguments to the running instance and
         can exit without converting. The timeout bounds a pathological
         workbook (a 2026-09-07 recalc ran 7 hours at 100% CPU).
+
+        Judge v13 (maintainer 2026-10-05): every LibreOffice run of a grading
+        goes through the machine-wide memory guard (utils.det_checks.
+        run_libreoffice, detchecks/core/lo_guard.py): one LibreOffice at a time
+        on the machine, started only when memory is free, a failed run retried
+        with the timeout doubled; then LibreOfficeUnavailable (retry_later) and
+        the grading fails loudly, to be re-run later.
         """
         ### Note: This function assumes LibreOffice is installed and added to PATH, or the path is provided through environment variable. Otherwise, call the function with run_calculation=False to skip recalculation step.
         import subprocess
         import tempfile
 
-        profile_dir = tempfile.mkdtemp(prefix="judge_lo_profile_")
         try:
-            subprocess.run(
-                [
-                    load_env_var("PATHS_LIBREOFFICE_PATH", required=True),
-                    f"-env:UserInstallation={Path(profile_dir).as_uri()}",
-                    "--headless",
-                    "--calc",
-                    "--convert-to",
-                    "xlsx",
-                    "--outdir",
-                    outdir,
-                    filepath,
-                ],
-                check=True,
-                cwd=os.getcwd(),
-                timeout=int(load_env_var("JUDGE_RECALC_TIMEOUT_SECONDS", default=1800)),
-            )
-        finally:
-            shutil.rmtree(profile_dir, ignore_errors=True)
+            from .det_checks import run_libreoffice
+        except ImportError:  # imported as a bare module (utils/ on sys.path)
+            from det_checks import run_libreoffice
+
+        soffice = load_env_var("PATHS_LIBREOFFICE_PATH", required=True)
+        expected = Path(outdir) / (Path(filepath).stem + ".xlsx")
+
+        def _once(timeout_s):
+            profile_dir = tempfile.mkdtemp(prefix="judge_lo_profile_")
+            try:
+                if expected.exists():
+                    expected.unlink()
+                subprocess.run(
+                    [
+                        soffice,
+                        f"-env:UserInstallation={Path(profile_dir).as_uri()}",
+                        "--headless",
+                        "--calc",
+                        "--convert-to",
+                        "xlsx",
+                        "--outdir",
+                        outdir,
+                        filepath,
+                    ],
+                    check=True,
+                    cwd=os.getcwd(),
+                    timeout=timeout_s,
+                )
+            finally:
+                shutil.rmtree(profile_dir, ignore_errors=True)
+            if not expected.exists():
+                raise FileNotFoundError(f"LibreOffice produced no output {expected} for {filepath}")
+            return expected
+
+        run_libreoffice(
+            _once,
+            timeout_s=float(load_env_var("JUDGE_RECALC_TIMEOUT_SECONDS", default=1800)),
+            what=f"recalculate {Path(filepath).name} (--run-calculation)",
+        )
 
     if run_calculation:
         # Sometimes. Excel files created by openpyxl won't calculate the cached values from the formulas. This process triggers a recalculation through Libreoffice.

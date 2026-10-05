@@ -67,6 +67,7 @@ from utils.prompt_utils import (
 from utils.trajectory import TrajectoryRecorder
 from utils.answer_check import run_answer_check, summary_block
 from utils.det_checks import add_det_checks_arg, merge_harness_verdicts, run_det_checks
+from detchecks.errors import LibreOfficeUnavailable
 
 ### Obtain constants
 load_project_configs()
@@ -5328,8 +5329,9 @@ def main(args):
         # Deterministic rubric checks (judge v13) first, before the answer
         # check and the judge, and NOT score-neutral: a check that cannot
         # grade the delivered workbook raises DetChecksError here (no
-        # fallback, no API call, and no answer-check LibreOffice run: a file
-        # over det_checks.libreoffice_max_mb not saved by Excel stops here).
+        # fallback, no API call, and no answer-check LibreOffice run). Every
+        # LibreOffice run goes through the machine-wide memory guard; when it
+        # cannot run now the error carries retry_later (re-run later).
         # A local folder needs the _attempt_origin.json sidecar for File
         # extension (.xlsx) (77). Same wiring as
         # grade_from_db.grade_single_attempt.
@@ -5359,6 +5361,10 @@ def main(args):
             )
             logger.info(f"  [answer_check] {summary_block(ac_result)}")
             harness_verdicts = ac_result.get("harness_verdicts") or {}
+        except LibreOfficeUnavailable:
+            # LibreOffice could not run now (machine-wide guard exhausted;
+            # maintainer 2026-10-05): fail loudly, re-run later
+            raise
         except Exception as e:  # noqa: BLE001 — score-neutral by design
             logger.warning(f"  [answer_check] skipped on error: {e}")
         harness_verdicts = merge_harness_verdicts(harness_verdicts, det_run.harness_verdicts)
