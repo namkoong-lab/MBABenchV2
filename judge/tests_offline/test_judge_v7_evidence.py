@@ -177,7 +177,7 @@ def test_properties_block(tmp_path):
     p = _build(tmp_path)
     wb = openpyxl.load_workbook(p)
     props = wp.extract_workbook_properties(wb, p)
-    assert props["schema"] == 3
+    assert props["schema"] == wp.SCHEMA_VERSION   # 3 when written (judge v7 tier 2); 6 since judge v12
     text = wp.render_properties_text(props, origin={"original_filename": "MyModel.xlsm"})
     assert "original filename: MyModel.xlsm" in text
     assert "VBA: no" in text
