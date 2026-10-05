@@ -19,7 +19,7 @@ import codecs
 import io
 import re
 import xml.etree.ElementTree as ET
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -245,6 +245,40 @@ class ColInfo:
     style: Optional[int] = None            # <col style> (column default style), None if absent
 
 
+def paint_cols(cols) -> list:
+    """Disjoint, sorted (lo, hi, ColInfo) segments of a sheet's <col> entries: each entry, taken in the
+    reader's order (by min, file order among equal mins - the order of SheetHead.cols), overrides the
+    earlier ones on the columns it covers, as a whole (width, hidden, style ... all come from the winning
+    entry; an entry without a width still wins and means the default width).  Columns are clamped to
+    1..16384; an entry with min > max covers nothing.  Valid files never overlap; GPT-6 tooling writes
+    e.g. F:G 9.0 followed by F:F 44.0, or C:XFD 18.0 followed by D:D 3.0 (187 corpus files).  The rule
+    'the later entry wins' is the one Reasonable column widths (70) and Reasonable row heights (73)
+    decided; no Excel measurement or toy settles what Excel itself does with overlapping entries."""
+    segs: list = []
+    ends: list = []
+    for ci in cols:
+        lo, hi = max(1, ci.min), min(MAX_COL, ci.max)
+        if lo > hi:
+            continue
+        if not segs or lo > ends[-1]:
+            segs.append((lo, hi, ci))
+            ends.append(hi)
+            continue
+        i = bisect_left(ends, lo)                 # first segment ending at or after lo
+        j = i
+        while j < len(segs) and segs[j][0] <= hi:
+            j += 1
+        repl = []
+        if i < j and segs[i][0] < lo:
+            repl.append((segs[i][0], lo - 1, segs[i][2]))
+        repl.append((lo, hi, ci))
+        if i < j and segs[j - 1][1] > hi:
+            repl.append((hi + 1, segs[j - 1][1], segs[j - 1][2]))
+        segs[i:j] = repl
+        ends[i:j] = [s[1] for s in repl]
+    return segs
+
+
 @dataclass
 class SheetPr:
     tab_color: Optional[Color] = None
@@ -266,9 +300,11 @@ class SheetHead:
     dimension: Optional[str] = None
     views: list = field(default_factory=list)          # [SheetView]
     format: SheetFormat = field(default_factory=SheetFormat)
-    cols: list = field(default_factory=list)           # [ColInfo] sorted by min
+    cols: list = field(default_factory=list)           # [ColInfo] sorted by min (file order among equal mins)
     has_sheet_data: bool = True
-    _col_starts: list = field(default_factory=list, repr=False)
+    _col_segs: Optional[list] = field(default=None, repr=False)       # paint_cols(cols), built lazily
+    _col_seg_starts: list = field(default_factory=list, repr=False)
+    _col_segs_key: tuple = field(default=(), repr=False)              # (id, len) of the cols list it was built from
 
     @property
     def name(self) -> str:
@@ -294,17 +330,42 @@ class SheetHead:
                 return v
         return self.views[0] if self.views else None
 
+    def col_segments(self) -> list:
+        """Disjoint, sorted (lo, hi, ColInfo) runs of the columns the <col> entries cover, the later
+        entry winning where entries overlap (paint_cols: reader's order = by min, file order among
+        equal mins).  Columns outside every run are at the sheet defaults."""
+        key = (id(self.cols), len(self.cols))
+        if self._col_segs is None or self._col_segs_key != key:
+            self.cols.sort(key=lambda c: c.min)
+            self._col_segs = paint_cols(self.cols)
+            self._col_seg_starts = [s[0] for s in self._col_segs]
+            self._col_segs_key = key
+        return self._col_segs
+
     def col_info(self, col: int) -> Optional[ColInfo]:
-        """The <col> entry covering a column index, or None (column at defaults)."""
+        """The <col> entry that applies to a column index, or None (column at defaults).  Where
+        entries overlap (invalid, but written by GPT-6 tooling) the later entry wins (col_segments)."""
         if not self.cols:
             return None
-        if len(self._col_starts) != len(self.cols):
-            self.cols.sort(key=lambda c: c.min)
-            self._col_starts = [c.min for c in self.cols]
-        i = bisect_right(self._col_starts, col) - 1
-        if i >= 0 and self.cols[i].min <= col <= self.cols[i].max:
-            return self.cols[i]
+        segs = self.col_segments()
+        i = bisect_right(self._col_seg_starts, col) - 1
+        if i >= 0 and col <= segs[i][1]:
+            return segs[i][2]
         return None
+
+    def col_run(self, col: int) -> tuple:
+        """(lo, hi, ColInfo or None): the maximal run of columns around `col` (1..16384) that share
+        the same applying entry (None = sheet defaults), for walking a range run by run."""
+        if not self.cols:
+            return 1, MAX_COL, None
+        segs = self.col_segments()
+        starts = self._col_seg_starts
+        i = bisect_right(starts, col) - 1
+        if i >= 0 and col <= segs[i][1]:
+            return segs[i][0], segs[i][1], segs[i][2]
+        lo = segs[i][1] + 1 if i >= 0 else 1
+        hi = starts[i + 1] - 1 if i + 1 < len(segs) else MAX_COL
+        return lo, hi, None
 
     def col_style(self, col: int) -> Optional[int]:
         ci = self.col_info(col)
@@ -867,8 +928,8 @@ def apply_top_level(el, head: SheetHead, tail: SheetTail, pkg: Package):
             head.cols.append(ColInfo(mn, mx, _f(ca.get("width")), _t(ca.get("hidden")), _t(ca.get("customWidth")),
                                      _t(ca.get("bestFit")), _i(ca.get("outlineLevel"), 0) or 0,
                                      _t(ca.get("collapsed")), _i(st) if st is not None else None))
-        head.cols.sort(key=lambda c: c.min)
-        head._col_starts = [c.min for c in head.cols]
+        head.cols.sort(key=lambda c: c.min)       # stable: file order among equal mins
+        head._col_segs = None                     # col_segments() rebuilds lazily
     elif ln == "mergeCells":
         for c in el:
             if _loc(c.tag) != "mergeCell":

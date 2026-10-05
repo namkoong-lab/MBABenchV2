@@ -1151,12 +1151,55 @@ def test_r11_edge_cases():
     assert set(e.failures) == {K92, K74} and e.check in (K92, K74) and e.path.endswith("missing.xlsx")
 
 
+def test_overlapping_cols_later_entry_wins():
+    """Overlapping <col> entries (invalid, written by GPT-6 tooling in 187 corpus files): the one shared rule
+    is that the later entry - in the reader's order, by min then file order - wins on the columns it covers,
+    as a whole (width, hidden, style).  Before the fix col_info returned None (the sheet default) for every
+    column an earlier range covers after a later entry that starts inside it (C:XFD 18 + D:D 3: F.. default)."""
+    from detchecks.core.sheet import ColInfo, SheetHead, SheetInfo, paint_cols
+    cols = ('<cols><col min="1" max="1" width="102" customWidth="1"/><col min="3" max="16384" width="18" customWidth="1" style="1"/>'
+            '<col min="4" max="4" width="3" customWidth="1"/><col min="5" max="5" width="3" hidden="1"/>'
+            '<col min="20" max="25" width="7"/><col min="20" max="20" width="44"/>'
+            '<col min="9" max="8" width="99"/></cols>')            # min > max: covers nothing
+    p = build(tmp("overlap_cols.xlsx"), [("S", None, f'{cols}<sheetData/>')])
+    pkg = Package.open(p)
+    head, _rows, _cells, _tail = load_sheet(pkg, "S")
+    w = {c: (head.col_info(c).width if head.col_info(c) else None) for c in (1, 2, 3, 4, 5, 6, 19, 20, 21, 25, 26, 16384)}
+    assert w == {1: 102.0, 2: None, 3: 18.0, 4: 3.0, 5: 3.0, 6: 18.0, 19: 18.0, 20: 44.0, 21: 7.0, 25: 7.0,
+                 26: 18.0, 16384: 18.0}, w
+    assert head.col_info(5).hidden and not head.col_info(6).hidden
+    assert head.col_style(6) == 1 and head.col_style(4) is None          # the D:D entry wins as a whole
+    segs = [(lo, hi, ci.width) for lo, hi, ci in head.col_segments()]
+    assert segs == [(1, 1, 102.0), (3, 3, 18.0), (4, 4, 3.0), (5, 5, 3.0), (6, 19, 18.0), (20, 20, 44.0),
+                    (21, 25, 7.0), (26, 16384, 18.0)], segs
+    # col_run: maximal runs for walking a range, None = sheet defaults
+    assert head.col_run(2) == (2, 2, None) and head.col_run(7)[:2] == (6, 19) and head.col_run(22)[:2] == (21, 25)
+    assert head.col_run(16384)[:2] == (26, 16384)
+    # the reader's order is by min (stable): an entry written BEFORE a wider one that starts earlier still wins
+    # where it lies inside it (file order E:E 3 then C:J 18 -> E is 3); no corpus file distinguishes this from
+    # file order (scratch/core_fixes/scan_core.py)
+    p2 = build(tmp("overlap_cols2.xlsx"), [("S", None, '<cols><col min="5" max="5" width="3"/><col min="3" max="10" width="18"/>'
+                                                     '</cols><sheetData/>')])
+    head2 = load_sheet(Package.open(p2), "S")[0]
+    assert [ci.min for ci in head2.cols] == [3, 5] and head2.col_info(5).width == 3.0 and head2.col_info(6).width == 18.0
+    # no <cols>: everything at defaults
+    h3 = SheetHead(SheetInfo(0, "X", 1, "visible", "rId1", "p", "worksheet", ""))
+    assert h3.col_info(3) is None and h3.col_run(3) == (1, 16384, None) and h3.col_segments() == []
+    # the cache follows the list: appending an entry rebuilds the runs
+    h3.cols.append(ColInfo(2, 4, 10.0))
+    assert h3.col_info(3).width == 10.0
+    h3.cols.append(ColInfo(3, 3, 1.0))
+    assert h3.col_info(3).width == 1.0 and h3.col_info(4).width == 10.0
+    assert paint_cols([ColInfo(6, 7, 9.0), ColInfo(6, 6, 44.0)])[1][:2] == (7, 7)
+
+
 TESTS = [test_refs, test_excel_tint, test_styles_and_colours, test_openpyxl_workbook, test_prefixed_package,
          test_strict_ooxml, test_formats, test_writer_detection, test_value_provenance_and_recalc,
          test_engine_contract, test_utf16_sheet, test_reference_checks, test_rubric_keys,
          test_r1_not_a_workbook, test_r2_second_pass_sheet_names, test_r3_shared_formula_expansion,
          test_r4_values_no_fallback, test_r5_writer_evidence, test_r6_failing_sheets_gate, test_r7_sparklines,
-         test_r8_cursor_memory, test_r9_silent_skips, test_r10_prolog_before_root, test_r11_edge_cases, test_values_policy_ruling_2026_10_03]
+         test_r8_cursor_memory, test_r9_silent_skips, test_r10_prolog_before_root, test_r11_edge_cases, test_values_policy_ruling_2026_10_03,
+         test_overlapping_cols_later_entry_wins]
 
 
 def main() -> int:

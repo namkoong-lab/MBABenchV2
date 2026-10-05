@@ -396,10 +396,25 @@ Valid from `sheet_start` on. Fields come from everything before `<sheetData>`.
 | `views` | `[SheetView]` |
 | `view` | the view of workbook window 0 (else the first; None if none) |
 | `format` | `SheetFormat(default_row_height, custom_height, zero_height, default_col_width, base_col_width, outline_level_row, outline_level_col, thick_top, thick_bottom)`. `zero_height` means rows are hidden unless a `<row>` says otherwise |
-| `cols` | `[ColInfo(min, max, width, hidden, custom_width, best_fit, outline_level, collapsed, style)]` sorted by `min` |
-| `col_info(c)` | the `<col>` entry covering column `c`, or None |
+| `cols` | `[ColInfo(min, max, width, hidden, custom_width, best_fit, outline_level, collapsed, style)]` sorted by `min` (file order among equal mins) |
+| `col_info(c)` | the `<col>` entry that applies to column `c`, or None (sheet defaults). **Overlapping entries: the later one wins** (below) |
 | `col_style(c)` | that entry's `style`, or None |
+| `col_segments()` | the disjoint, sorted `(lo, hi, ColInfo)` runs the entries cover, the later entry winning where they overlap (`core.sheet.paint_cols`) |
+| `col_run(c)` | `(lo, hi, ColInfo or None)`: the maximal run of columns around `c` sharing one applying entry (None = defaults), for walking a range run by run |
 | `has_sheet_data` | False for chartsheets and parts without `<sheetData>` |
+
+**Overlapping `<col>` entries** (invalid, but written by GPT-6 tooling in 187 of 374 corpus files,
+e.g. `F:G 9.0` followed by `F:F 44.0`, or `C:XFD 18` followed by `D:D 3`): one rule for every
+check (2026-10-04) - **the later entry wins** on the columns it covers, as a whole (width, hidden,
+style, ...; an entry without a width still wins and means the default width), "later" in the
+reader's order of `cols` (by `min`, then file order). It is the rule Reasonable column widths (70)
+and Reasonable row heights (73) had decided; no Excel measurement or toy settles what Excel itself
+does (no toy has overlapping entries), and on every corpus file "later in file order" gives the same
+widths. Before 2026-10-04 `col_info` returned None - the sheet default - for every column an earlier
+range covers after a later entry that starts inside it (`C:XFD 18` + `D:D 3`: F onwards read 8.43);
+that hit 130 corpus files, through Sufficient column widths (69) and Reasonable row heights (73).
+Checks that read `cols` directly (47 column styles, 65 / 66 missing array members, 93 hidden
+columns) apply their own reading.
 
 `SheetView` fields:
 - Window and zoom: `workbook_view_id`, `tab_selected`, `zoom_scale` (as stored; None means absent), `zoom_scale_normal`, `zoom_scale_page_layout_view`, `zoom_scale_sheet_layout_view`, `view` (`normal` / `pageBreakPreview` / `pageLayout`), `top_left_cell`

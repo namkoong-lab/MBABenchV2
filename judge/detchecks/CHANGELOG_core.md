@@ -1,5 +1,35 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-04 — overlapping `<col>` entries: one rule in the reader (Sufficient column widths (69), Reasonable column widths (70), Reasonable row heights (73))
+
+Source: side finding of the Reasonable column widths (70) build; the rule is the one 70 and Reasonable row
+heights (73) (73.md question 12) had decided - the later entry wins. No Excel measurement or toy settles what
+Excel does (no toy has overlapping entries; docs/excel_measurements.md has nothing on it).
+
+### core/sheet.py
+- `paint_cols(cols)` moved here from checks/c70.py (unchanged; c70 re-exports it): disjoint `(lo, hi, ColInfo)`
+  runs, each entry - in the reader's order, by `min` then file order - overriding earlier ones on the columns it
+  covers, as a whole (width, hidden, style; an entry without a width wins and means the default width).
+- `SheetHead.col_segments()` and `SheetHead.col_run(c)` (new); `col_info(c)` / `col_style(c)` follow the same
+  rule. Before: the last entry whose `min` ≤ c if it covered c, else None - the sheet default for every column an
+  earlier range covers after a later entry starting inside it (`C:XFD 18` + `D:D 3`: F onwards read 8.43).
+  Non-overlapping files read exactly as before.
+
+### checks
+- Sufficient column widths (69): `_SheetGeo.room` walks `head.col_run` (it copied the old reading);
+  `col_pixels` / `col_style` via `col_info`. Reasonable column widths (70): `head.col_segments()` instead of its
+  own `paint_cols` call (same rule). Reasonable row heights (73): unchanged code (`col_info`), now later-wins.
+
+### Corpus effect (2026-10-04; one guarded job each before / after, recalc pipeline on, Excel off)
+- 347 files graded, 27 not graded (over 10 MB and not saved by Excel, Patrick's rule of 2026-10-04: attempts 1709,
+  2279, 2496, 4091; GPT-6 1322, 1335, 1379, 1476, 1545, 1557 (10.1 MB), 1599, 1600, 1601, 1736, 1744, 1749, 1750,
+  1767, 1778, 1781, 1810, 1834, 2576, 2603, 2617, 2621, 2681).
+- 125 graded files (151 sheets) read some columns differently; 7 have content in such columns, all widened from
+  the 8.43 default (`scratch/core_fixes/overlap_effect.py`): attempts 1408 and GPT-6 1408 `Assumption!G:H`
+  (17.89), GPT-6 1329 `Assumption!G` (17.89), 2245 `Assumption!G:H` (17.89), 1331 `Questions!E` (8.89), 2004
+  `Questions!D:E` (8.89), 2479 `Assumptions!L:S` (10.22).
+- 69, 70 and 73: **0 verdict changes**, 0 changes in mistake locations, descriptions or kept stats.
+
 ## 2026-10-04 — recalculation pipeline, per-check live switch (for No formula errors (22))
 
 Source: handoff.md rulings of 2026-10-04 ("Recalculation design", "Negatives in parentheses (65)

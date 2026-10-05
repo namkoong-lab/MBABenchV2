@@ -14,7 +14,8 @@ Rule as implemented (the toys' wording; every judgement call is a module constan
   columns are skipped (No hidden rows/columns (93) owns them).  Every worksheet, dialog sheet and
   macro sheet is graded, hidden sheets included.  Overlapping <col> entries (GPT-6 tooling): a later
   entry (the reader's order: by min, then file order) overrides earlier ones on the columns it
-  covers.
+  covers - the core reader's one rule (SheetHead.col_segments / col_info, shared with Sufficient
+  column widths (69) and Reasonable row heights (73)).
 
   Content need of a column = its widest displayed content in the same characters: the text width of
   each displayed cell in the cell's own face, size and weight (c69's glyph tables, 96 dpi, per-glyph
@@ -70,12 +71,12 @@ from __future__ import annotations
 
 import math
 import re
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from typing import Optional
 
 from ..core import numfmt as N
 from ..core.refs import MAX_COL, index_to_col, location, make_ref
-from ..core.sheet import ExcelError
+from ..core.sheet import ExcelError, paint_cols  # noqa: F401  (paint_cols re-exported: tests, scratch)
 from ..errors import GradingError
 from .base import Check
 from .c69 import (CELL_MARGIN_PX, DEFAULT_FONT_PT, GLYPH_CHARS, WIDE_CHAR, _normal_font, col_px, default_col_px,
@@ -129,35 +130,6 @@ def text_px(row: tuple, text: str, ppem: float) -> int:
 
 
 # ---------------------------------------------------------------- column geometry
-def paint_cols(cols) -> list:
-    """Disjoint, sorted (lo, hi, ColInfo) segments from a sheet's <col> entries: each entry, in the
-    reader's order (by min, file order among equal mins), overrides the earlier ones on the columns it
-    covers.  (Valid files never overlap; GPT-6 tooling writes e.g. F:G 9.0 followed by F:F 44.0.)"""
-    segs: list = []
-    ends: list = []
-    for ci in cols:
-        lo, hi = max(1, ci.min), min(MAX_COL, ci.max)
-        if lo > hi:
-            continue
-        if not segs or lo > ends[-1]:
-            segs.append((lo, hi, ci))
-            ends.append(hi)
-            continue
-        i = bisect_left(ends, lo)                 # first segment ending at or after lo
-        j = i
-        while j < len(segs) and segs[j][0] <= hi:
-            j += 1
-        repl = []
-        if i < j and segs[i][0] < lo:
-            repl.append((segs[i][0], lo - 1, segs[i][2]))
-        repl.append((lo, hi, ci))
-        if i < j and segs[j - 1][1] > hi:
-            repl.append((hi + 1, segs[j - 1][1], segs[j - 1][2]))
-        segs[i:j] = repl
-        ends[i:j] = [s[1] for s in repl]
-    return segs
-
-
 class Geo:
     """Pixel widths (96 dpi) of one sheet's columns; None = hidden or zero width."""
     __slots__ = ("segs", "seg_lo", "default_px", "mdw", "cache")
@@ -520,7 +492,7 @@ class C70(Check):
     def sheet_start(self, head):
         name = head.name
         self._brief = is_instructions_sheet(name)
-        segs = paint_cols(head.cols)
+        segs = head.col_segments()               # the shared reading: the later <col> entry wins (core)
         raw = sum(min(ci.max, MAX_COL) - max(ci.min, 1) + 1 for ci in head.cols if ci.max >= ci.min)
         if raw > sum(s[1] - s[0] + 1 for s in segs):
             self.counts["sheets_with_overlapping_cols"] += 1

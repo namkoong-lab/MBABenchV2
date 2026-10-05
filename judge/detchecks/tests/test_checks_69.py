@@ -1010,6 +1010,28 @@ def test_69_review2_hidden_merge_anchor():
     assert v["decision"] == "pass", v["mistakes"]
 
 
+def test_69_overlapping_cols_later_entry_wins():
+    """Overlapping <col> entries (GPT-6 tooling: C:XFD 18 followed by D:D 3 and E:E 3): the core reader's one rule,
+    the later entry wins (SheetHead.col_info / col_run, shared with 70 and 73).  Before the fix every column after
+    E read the sheet default (8.43): F1's 123456789 showed '####' and C3's long note was cut off at G."""
+    st = Styles()
+    s0 = st.xf(numfmt=1)                      # built-in '0'
+    cols = col(3, 16384, stored(18.0)) + col(4, 4, stored(3.0)) + col(5, 5, stored(3.0))
+    rows = {1: ("", [c("D1", 123456789, s0), c("F1", 123456789, s0)])}
+    v = run(book([("S", ws(rows, cols=cols))], st))
+    assert v["decision"] == "fail" and locs(v) == ["S!D1"], v["mistakes"]       # D is 3 wide; F is 18 wide
+    # a 210-character note in C3 cut off by H3: room C..G = 80 + 3 + 3 + 80 + 80 characters (fits); with F and G
+    # at the default it would be about 745 px against the note's ~1,200 px
+    cols = col(3, 16384, stored(80.0)) + col(4, 4, stored(3.0)) + col(5, 5, stored(3.0))
+    rows = {3: ("", [c("C3", long_text(210)), c("H3", 5.0)])}
+    v = run(book([("S", ws(rows, cols=cols))], st))
+    assert v["decision"] == "pass" and not v["stats"]["text_cut_off"], (v["mistakes"], v["stats"])
+    # a later E:G entry narrows F and G too: room 80 + 3 + 3 + 3 + 3 characters, the note is cut off
+    cols_narrow = col(3, 16384, stored(80.0)) + col(4, 4, stored(3.0)) + col(5, 7, stored(3.0))
+    v = run(book([("S", ws(rows, cols=cols_narrow))], st))
+    assert v["decision"] == "fail" and locs(v) == ["S!C3"], v["mistakes"]       # room 80+3+3+3+3: cut off
+
+
 TESTS = [test_69_metrics, test_69_narrow_number_date_percent, test_69_one_digit_overflow_and_general,
          test_69_shrink_merge_hidden, test_69_text_cut_off_by_neighbours, test_69_text_alignment_directions,
          test_69_text_merges_hidden_columns_and_edges, test_69_wrapped_text_rows,
@@ -1018,7 +1040,8 @@ TESTS = [test_69_metrics, test_69_narrow_number_date_percent, test_69_one_digit_
          test_69_formula_values, test_69_conditional_formats,
          test_69_band_indent_unknown_face_negative_date, test_69_default_widths_and_grouping,
          test_69_review2_placeholder_types, test_69_review2_iso_date_general,
-         test_69_review2_not_displayed_never_undecided, test_69_review2_hidden_merge_anchor]
+         test_69_review2_not_displayed_never_undecided, test_69_review2_hidden_merge_anchor,
+         test_69_overlapping_cols_later_entry_wins]
 
 
 def main() -> int:
