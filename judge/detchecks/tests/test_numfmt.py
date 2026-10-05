@@ -474,6 +474,43 @@ def test_show_zeros_off_zero_section():
 
 
 # --------------------------------------------------------------------------- runner
+def test_mixed_date_letters_unverified():
+    """66-S3 in the core (2026-10-04): a section that mixes a number / text placeholder (0 # ? outside a
+    fractional-seconds group, General, @) with unquoted date-time letters (y m d h s, e g b, AM/PM, A/P,
+    [h] [m] [s]) makes the whole code unverified: every render under it is certain=False (Excel's reading is
+    unmeasured; openpyxl writes such codes, Excel's dialog does not).  Genuine date / time codes, scientific
+    notation and quoted / escaped units are unaffected."""
+    mixed = {"0 bps": "0 with b, s", "0 days": "0 with d, y, s", "0 yrs": "0 with y, s", "0 mths": "0 with m, h, s",
+             "#,##0 d": "#0 with d", "0.0 d": "0 with d", "? d": "? with d", "0 b": "0 with b", "0 e": "0 with e",
+             "0.0E": "0 with E", "General d": "General with d", "@ days": "@ with d, y, s", "0 AM/PM": "0 with AM/PM",
+             "[h] 0": "0 with [h]", "d.00": "0 with d", "#,##0 USD": "#0 with s, d", "0.0 km": "0 with m",
+             "0 sec": "0 with s, e", "0;0 days": "0 with d, y, s", '"x"0 hh': "0 with hh"}
+    for code, why in mixed.items():
+        f = N.parse_format(code)
+        assert not f.verified and why in (f.unverified_why or ""), (code, f.unverified_why)
+        assert N.mixed_date_letters(f.sections[-1].tokens) is not None or code == "0;0 days", code
+        for v in (0, 25, -3.5):
+            assert not R(v, code).certain, (code, v)
+        # text and logicals: shown as typed when the code has no text section, whatever Excel makes of it
+        for v in ("txt", True):
+            assert R(v, code).certain == (N.parse_format(code).text_index is None), (code, v)
+        assert R(None, code).certain and R(N.ErrorValue("#N/A"), code).certain
+    # a clean first section does not rescue the code: Excel may reject the whole code
+    assert not R(5, "0;0 days").certain and R(5, "0;0 days").text == "5"
+    assert R("abc", "0 days;@").certain is False and R("abc", "0 days").certain is True     # text section / none
+    genuine = ["h:mm:ss.000", "[h]:mm:ss.00", "mm:ss.0", "[ss].00", "[mm]:ss.0", "d-mmm-yy", 'dd-mmm-yyyy" SUP"',
+               '"FY"yyyy"E PV"', "mm/dd/yy\\E", "[h]:mm", "m/d/yyyy h:mm AM/PM", "0.00E+00", "##0.0E+0", "0.0e-0",
+               '0" bps"', '0 "days"', "0.0x", '#,##0" d"', "0\\A", '"FY"0"E"', "General", "@", "0;-0;;@",
+               "dd/mm/yyyy;@", "[$-409]mmmm d, yyyy;@", '_(* #,##0_);_(* \\(#,##0\\);_(* "-"_);_(@_)', ";;;", "",
+               '[$€-407]#,##0.00', "#,##0.00\\ [$kr-41D]"]
+    for code in genuine + list(TOY_FORMATS) + [N.builtin_format(i) for i in N.BUILTIN_FORMATS]:
+        f = N.parse_format(code)
+        assert f.verified and f.unverified_why is None, (code, f.unverified_why)
+    assert R(0, "mm:ss.0").certain and R(0.5, "h:mm:ss.000").certain and R(1234.5, "0.00E+00").certain
+    # the rendering itself is unchanged (still read as a date; only the certainty flag moves)
+    assert R(25, "0 days").kind == "date" and R(25, "#,##0 d").kind == "date"
+
+
 def main() -> int:
     tests = [(k, v) for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

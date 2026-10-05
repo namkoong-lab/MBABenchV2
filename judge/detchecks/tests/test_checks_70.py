@@ -515,10 +515,28 @@ def test_70_formula_values():
     assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0 and v["stats"]["formula_values_read"] == 0, v
 
 
+def test_70_unverified_number_format():
+    """66-S3 in the core (2026-10-04): a number under a code mixing digit placeholders with unquoted date letters
+    ('0 days') renders certain=False.  70 used to measure the engine's date reading of it; now such a cell is
+    undecided like an untrusted value: decisive only when nothing else settles the column."""
+    st = Styles()
+    days = st.xf(numfmt="0 days")
+    quoted = st.xf(numfmt='0" days"')
+    wide = col(8, 8, stored(150))
+    x = ws({1: [c("H1", 25.0, days)]}, cols=wide)
+    raises(lambda: run(book([("S", x)], st)), "cannot decide S!H1", "'0 days' is not verified")
+    # a constant that needs half the width settles the column: the unverified cell is not needed
+    v = run(book([("S", ws({1: [c("H1", 25.0, days)], 3: [c("H3", digits(80))]}, cols=wide))], st))
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v
+    # the quoted unit is verified and measured: '25 days' in a 150-character column is excessive
+    v = run(book([("S", ws({1: [c("H1", 25.0, quoted)]}, cols=wide))], st))
+    assert v["decision"] == "fail" and locs(v) == ["S!H:H"], v
+
+
 TESTS = [test_70_geometry_and_text, test_70_wide_outlier_port, test_70_judge_port_parity, test_70_cap_rule,
          test_70_empty_hidden_and_default_columns, test_70_wrapped_unwrapped_and_merged,
          test_70_rich_text_fonts_units, test_70_outlier_rule, test_70_long_unwrapped_text_is_not_a_width_problem,
-         test_70_brief_and_hidden_sheets, test_70_formula_values]
+         test_70_brief_and_hidden_sheets, test_70_formula_values, test_70_unverified_number_format]
 
 
 def main() -> int:

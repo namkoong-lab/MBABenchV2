@@ -22,6 +22,7 @@ from detchecks.api import Engine
 from detchecks.checks import REGISTRY, c66
 from detchecks.checks.c66 import (BLANK, C66, DASH, DATETIME, DIGIT, HIDDEN, NONZERO, TEXT, UNCERTAIN, UNKNOWN,
                                   classify, fails, fires, literal)
+from detchecks.core import numfmt as N
 from detchecks.core.numfmt import resolve_format
 from detchecks.core.sheet import CfRule
 from detchecks.errors import GradingError
@@ -753,17 +754,21 @@ def test_review2_mixed_date_codes():
     """66-S3: an unquoted unit word ('0 bps', '0 days', '#,##0 d') makes the engine read a date format
     and the check used to leave the zero unjudged as a date; Excel's display of such a code is
     unmeasured -> UNCERTAIN / GradingError for a zero; a non-zero under it is not judged; genuine
-    date / time formats (fractional seconds included) stay DATETIME; quoted units stay numeric."""
+    date / time formats (fractional seconds included) stay DATETIME; quoted units stay numeric.
+    Since 2026-10-04 the format engine marks such codes unverified (numfmt.mixed_date_letters, every
+    render certain=False) and 66's own workaround (c66.mixed_date_section) is gone: the same codes are
+    asserted on the core instead."""
     for x in ("0 bps", "0 days", "0 yrs", "0 mths", "#,##0 d", "0.0 d", "? d"):
         assert classify(0.0, x)[0] == UNCERTAIN, (x, classify(0.0, x))
-        assert c66.mixed_date_section(x, 0)
+        assert not N.parse_format(x).verified and not N.render(0.0, x).certain, x
     for x in ("h:mm:ss.000", "[h]:mm:ss.00", "mm:ss.0", "d-mmm-yy", 'dd-mmm-yyyy" SUP"', '"FY"yyyy"E PV"',
               "mm/dd/yy\\E", "[h]:mm", "m/d/yyyy h:mm AM/PM"):
         assert classify(0.0, x)[0] == DATETIME, (x, classify(0.0, x))
-        assert not c66.mixed_date_section(x, 0)
+        assert N.parse_format(x).verified, x
     for x in ('0" bps"', '0 "days"', "0.0x", '#,##0" d"'):
         assert classify(0.0, x)[0] == DIGIT, x
-    assert not c66.mixed_date_section("General", None)
+    assert N.parse_format("General").verified
+    assert not hasattr(c66, "mixed_date_section")
     raises(lambda: one("0 bps"), "S!A1", "'0 bps'", "not verified")
     assert one("0 bps", value=25)["decision"] == "pass"                 # not a zero: never judged
     assert one("0 bps", value="x")["decision"] == "pass"                # text: not numeric

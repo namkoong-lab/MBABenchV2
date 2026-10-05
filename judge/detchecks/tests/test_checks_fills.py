@@ -1247,6 +1247,23 @@ def test_47_rereview_merged_swatch():
     assert v["decision"] == "fail" and locs(v) == ["S!A4:B4"], locs(v)
 
 
+def test_94_unverified_number_format():
+    """Finding 66-S3 in the core: a code mixing digit placeholders with unquoted date letters ('0 days') renders
+    certain=False; 94 used to ignore that flag.  Now both blank / shown and every colour the code could show are
+    tried: undecided, raising only when nothing else is concealed."""
+    st = Styles()
+    days = st.xf(numfmt="0 days")
+    hid = st.xf(numfmt=";;;")
+    raises(lambda: run(_w94([c("A1", days, 25.0)], st, "nf1.xlsx"), C94), "cannot decide whether S!A1", "'0 days'")
+    v = run(_w94([c("A1", days, 25.0), c("B1", hid, 1.0)], st, "nf2.xlsx"), C94)
+    assert v["decision"] == "fail" and locs(v) == ["S!B1"] and v["stats"]["undecided_cells"] == 1, v["stats"]
+    # text under a code without a text section is shown as typed whatever Excel makes of the code (certain)
+    v = run(_w94([c("A1", days, "text"), c("A2", 0, 3.0)], st, "nf3.xlsx"), C94)
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v
+    v = run(_w94([c("A1", days)], st, "nf4.xlsx"), C94)                                  # empty: never judged
+    assert v["decision"] == "pass", v
+
+
 TESTS = [test_47_colour_band, test_47_legend_classifier, test_47_own_fill_pale_and_bright,
          test_47_theme_indexed_gradient, test_47_row_col_default_styles, test_47_conditional_formats,
          test_47_spill_member_needle, test_47_legend_excuses_and_wip_override, test_47_swatches,
@@ -1264,7 +1281,8 @@ TESTS = [test_47_colour_band, test_47_legend_classifier, test_47_own_fill_pale_a
          test_47_rereview_swatch_between_colour_word_and_meaning, test_47_rereview_status_word_is_not_a_legend,
          test_47_rereview_back_reference_defines_nothing, test_47_rereview_section_header_is_not_a_colour_key,
          test_47_rereview_wip_vocabulary, test_47_rereview_classifier_phrasings,
-         test_47_rereview_unreadable_text_decisive_only_with_yellow, test_47_rereview_merged_swatch]
+         test_47_rereview_unreadable_text_decisive_only_with_yellow, test_47_rereview_merged_swatch,
+         test_94_unverified_number_format]
 
 
 def main() -> int:

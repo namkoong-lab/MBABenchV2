@@ -307,10 +307,12 @@ class _Need:
         elif self.unwrapped is None or px > self.unwrapped[0]:
             self.unwrapped = (px, r, c, snippet, font)
 
-    def add_untrusted(self, r, c):
+    def add_untrusted(self, r, c, why=None):
+        """A cell whose display cannot be measured: an untrusted formula value (why None) or a number
+        rendering the format engine marks unverified (why says so)."""
         self.n_untrusted += 1
         if len(self.untrusted) < MAX_UNDECIDED_LISTED:
-            self.untrusted.append((r, c))
+            self.untrusted.append((r, c, why))
 
 
 def _filled(cell) -> bool:
@@ -476,11 +478,15 @@ class C70(Check):
         return "empty", None
 
     def _display(self, cell, sty: _Sty, kind: str, v):
-        """(text, rich runs or None) a displayed cell shows."""
+        """(text, rich runs or None) a displayed cell shows; (None, why) when the number format engine
+        marks the rendering unverified (certain=False: e.g. '0 days', unquoted date letters among digit
+        placeholders) - the cell is then undecided like an untrusted value."""
         if kind in ("number", "date"):
             if sty.fmt_err:
                 raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.fmt_err}")
             r = N.render(v, sty.code, value_type=("d" if kind == "date" else None), date1904=self.date1904)
+            if not r.certain:
+                return None, f"display of {v!r} under number format {sty.code!r} is not verified"
             return ("" if r.is_blank else r.text), None
         if kind == "bool":
             return ("TRUE" if v else "FALSE"), None
@@ -555,7 +561,9 @@ class C70(Check):
             nd.add_untrusted(cell.row, c)
         elif kind != "empty":
             text, runs = self._display(cell, sty, kind, v)
-            if text:
+            if text is None:
+                nd.add_untrusted(cell.row, c, runs)          # unverified rendering (runs holds why)
+            elif text:
                 nd.add(self._need_px(sty, text, runs), sty.wrap and kind == "text", cell.row, c, text[:60],
                        sty.font)
                 self.counts["cells_measured"] += 1
@@ -573,7 +581,7 @@ class C70(Check):
                "judge_skip": bool(JUDGE_SKIP_SHEETS.search(name)), "geo": self.geo, "wide": self._wide,
                "groups": groups, "outlier_of": outlier_of, "needs": self._needs, "used": (lo, hi),
                "hidden_rows": self._hidden_rows, "spans": [], "anchors": {}, "anchor_need": {},
-               "remeasure": set()}
+               "anchor_why": {}, "remeasure": set()}
         # merges over a judged column: covered cells need nothing and the merged content needs the span,
         # so those columns are measured again in a second pass, merges known
         if merges:
@@ -634,7 +642,10 @@ class C70(Check):
                 rec["anchor_need"][(r, c)] = None
             elif kind != "empty":
                 text, runs = self._display(cell, sty, kind, v)
-                if text:
+                if text is None:
+                    rec["anchor_need"][(r, c)] = None
+                    rec["anchor_why"][(r, c)] = runs             # unverified rendering
+                elif text:
                     rec["anchor_need"][(r, c)] = (self._need_px(sty, text, runs), sty.wrap and kind == "text",
                                                   text[:60], sty.font)
             return
@@ -643,7 +654,9 @@ class C70(Check):
             nd.add_untrusted(r, c)
         elif kind != "empty":
             text, runs = self._display(cell, sty, kind, v)
-            if text:
+            if text is None:
+                nd.add_untrusted(r, c, runs)
+            elif text:
                 nd.add(self._need_px(sty, text, runs), sty.wrap and kind == "text", r, c, text[:60], sty.font)
 
     def second_pass_end(self, head, tail):
@@ -677,7 +690,7 @@ class C70(Check):
                 continue                         # empty anchor: nothing to show
             an = rec["anchor_need"][key]
             if an is None:
-                und.append(key)
+                und.append(key + (rec["anchor_why"].get(key),))
                 continue
             t = min(an[0], cap_px) if an[1] else an[0]
             others = sum((geo.px(k) or 0) for k in range(m.c1, min(m.c2, MAX_COL) + 1) if k != c)
@@ -740,10 +753,12 @@ class C70(Check):
             elif open_:
                 for x in u[:3]:
                     if x[0] == "more":
-                        und.append((name, index_to_col(c), f"{x[1]} more untrusted formula value(s) in the column"))
+                        und.append((name, index_to_col(c), f"{x[1]} more unmeasurable cell(s) (untrusted formula "
+                                                           f"values / unverified number formats) in the column"))
                     else:
-                        und.append((name, make_ref(*x), f"formula value untrusted; column {index_to_col(c)} "
-                                                       f"(test {'/'.join(open_)}) depends on it"))
+                        why = x[2] if len(x) > 2 and x[2] else "formula value untrusted"
+                        und.append((name, make_ref(x[0], x[1]), f"{why}; column {index_to_col(c)} "
+                                                                f"(test {'/'.join(open_)}) depends on it"))
         for a, b, W in empties:
             if W > cap:
                 fails.append(("empty", a, b))
@@ -816,8 +831,8 @@ class C70(Check):
         })
         und_note = ""
         if undecided:
-            und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values); the verdict does "
-                        f"not depend on them (see stats).")
+            und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values or unverified "
+                        f"number formats); the verdict does not depend on them (see stats).")
         return self.verdict(
             f"No excessive column width: no visible column is over {WIDTH_CAP_CHARS:g} characters and more than "
             f"{EXCESS_FACTOR:g}x its content, and no WIDE OUTLIER column is more than twice its content "

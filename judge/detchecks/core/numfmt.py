@@ -41,7 +41,10 @@ Known limits (documented in docs/numfmt.md): column width is unknown here, so a 
 too wide for its column ('#####') and General's width-dependent rounding are not
 modelled; era/Buddhist year codes (e, g, b) are approximated.  Still certain=False: a
 negative number in the first section when only the SECOND section has a condition, and
-'#####' when no section applies (both unmeasured).
+'#####' when no section applies (both unmeasured); and every number under a code with a
+section that mixes placeholders (0 # ? outside fractional seconds, General, @) with unquoted
+date-time letters - '0 bps', '0 days', '#,##0 d' as openpyxl writes them (finding 66-S3,
+mixed_date_letters; text under such a code without a text section is shown as typed, certain).
 """
 from __future__ import annotations
 
@@ -235,7 +238,10 @@ class NumberFormat:
     text_index: Optional[int]     # index of the text section, or None (text shown as typed)
     general_numbers: bool         # lone '@' (or '@' only section): numbers shown as General
     has_conditions: bool
-    verified: bool = True         # False: Excel's reading of this code is unverified ('' or spaces only)
+    verified: bool = True         # False: Excel's reading of this code is unverified - a section mixes a number /
+    #                               text placeholder with unquoted date-time letters ('0 bps', '0 days', '#,##0 d':
+    #                               mixed_date_letters); renders under it are certain=False (see render)
+    unverified_why: Optional[str] = None   # why verified is False (for messages), else None
 
     @property
     def is_date(self) -> bool:
@@ -411,12 +417,55 @@ def _section_kind(toks) -> str:
     return "literal"
 
 
+_DATE_TOKEN_KINDS = frozenset({"date", "datex", "ampm", "elapsed"})
+
+
+def mixed_date_letters(toks) -> Optional[str]:
+    """Does one section mix a number / text placeholder with unquoted date-time letters?  Returns a short
+    description ('0 with d, y, s') or None.  Excel's reading of such a section is unverified (finding
+    66-S3: openpyxl writes '0 bps', '0 days', '#,##0 d' unquoted; the engine would read the unit words as
+    date codes, and what Excel shows is unmeasured), so parse_format marks the whole code unverified.
+      placeholders: the digit placeholders 0 # ? (except the 0s of a fractional-seconds group: a '.'
+                    right after a seconds code s / ss / [s] / [ss], as in 'h:mm:ss.000', 'mm:ss.0'),
+                    General, and the text placeholder @;
+      date-time letters (unquoted, unescaped, outside brackets): y m d h s (date / time codes, any case),
+                    e g b (era / Buddhist-year codes; E followed by + or - is scientific notation, not a
+                    letter), AM/PM and A/P, and the elapsed brackets [h] [m] [s].
+    A genuine date / time code (no placeholder) and a number code whose letters are quoted or escaped
+    ('0" bps"', '0\\x', '"FY"0"E"') are not mixed; an unquoted letter that is no date code ('0.0x') is a
+    literal and is not affected."""
+    letters, holders = [], []
+    prev_seconds = False
+    i, n = 0, len(toks)
+    while i < n:
+        k, v = toks[i]
+        if k == "dot" and prev_seconds and i + 1 < n and toks[i + 1] == ("digit", "0"):
+            i += 1
+            while i < n and toks[i] == ("digit", "0"):
+                i += 1                              # fractional seconds: part of the time code
+            prev_seconds = False
+            continue
+        if k in _DATE_TOKEN_KINDS:
+            letters.append(v if k != "elapsed" else f"[{v}]")
+        elif k in ("digit", "general", "at"):
+            holders.append(v)
+        prev_seconds = (k == "date" and v[:1] == "s") or (k == "elapsed" and v[:1] == "s")
+        i += 1
+    if letters and holders:
+        return f"{''.join(dict.fromkeys(holders))} with {', '.join(dict.fromkeys(letters))}"
+    return None
+
+
 @lru_cache(maxsize=4096)
 def parse_format(code: str) -> NumberFormat:
-    """Parse a format code (cached).  Raises NumFmtError on malformed codes."""
+    """Parse a format code (cached).  Raises NumFmtError on malformed codes.  A code with a section
+    that mixes placeholders with unquoted date-time letters (mixed_date_letters) parses as before but
+    is unverified (verified=False, unverified_why): numbers rendered under it are certain=False, and
+    so is text when the code has a text section (render)."""
     if code is None:
         raise NumFmtError("number format code is None")
-    verified = True                             # every code's reading is now measured (2026-10-03)
+    verified = True                             # every other code's reading is measured (2026-10-03)
+    why = None
     if code == "":
         code = "General"                        # empty formatCode: General (Excel 2026-10-03, no repair prompt)
     elif code.strip() == "":
@@ -435,6 +484,11 @@ def parse_format(code: str) -> NumberFormat:
         has_at = any(k == "at" for k, _ in toks)
         locale = tuple(v for k, v in toks if k == "locale")
         sections.append(Section(s, tuple(toks), color, cond, kind, has_at, locale))
+        mix = mixed_date_letters(toks)
+        if mix is not None and verified:
+            verified = False
+            why = (f"section {len(sections)} of {code!r} mixes placeholders and unquoted date-time letters "
+                   f"({mix}); Excel's reading of it is not verified")
     n = len(sections)
     text_index = None
     general_numbers = False
@@ -450,7 +504,7 @@ def parse_format(code: str) -> NumberFormat:
     else:
         numeric = tuple(range(n))
     has_cond = any(sections[i].condition is not None for i in numeric[:2])
-    return NumberFormat(code, tuple(sections), numeric, text_index, general_numbers, has_cond, verified)
+    return NumberFormat(code, tuple(sections), numeric, text_index, general_numbers, has_cond, verified, why)
 
 
 def _test(cond, v) -> bool:
@@ -1100,9 +1154,20 @@ def render(value, code_or_id, *, custom_formats: Optional[dict] = None, value_ty
         code = code_or_id if code_or_id is not None else "General"
     f = parse_format(code)
     r = _render_value(f, value, code, locale, value_type, date1904, indexed_palette)
-    if not f.verified and r.certain:
+    if not f.verified and r.certain and not _shown_whatever_the_code(f, r):
         r = _dc_replace(r, certain=False)
     return r
+
+
+def _shown_whatever_the_code(f: NumberFormat, r: Rendered) -> bool:
+    """Under an unverified code, displays that do not depend on how Excel reads it: an empty cell, an
+    error value (always shown unformatted, Excel 2026-10-03), and text / a logical when the code has no
+    text section (shown as typed - the numeric sections never apply to text, and a code Excel refused
+    would be General, which shows text as typed too).  Numbers, and text under a text section, are
+    certain=False."""
+    if r.kind in ("empty", "error"):
+        return True
+    return r.kind in ("text", "bool") and f.text_index is None
 
 
 def _render_value(f: NumberFormat, value, code, locale, value_type, date1904, indexed_palette) -> Rendered:

@@ -532,10 +532,12 @@ class C94(Check):
     def _blank_alternatives(self, value, fmt: str, vt) -> set:
         """Whether the format prints nothing for this value.  Every reading is measured in Excel
         since 2026-10-03 (logicals go through the text section, '' = General, spaces-only codes
-        print nothing), so this is a single outcome."""
+        print nothing), so this is a single outcome - except under a code the engine marks
+        unverified (certain=False, e.g. '0 days': unquoted date letters among digit placeholders),
+        where both outcomes are possible."""
         r = N.render(value, fmt, custom_formats=self.st.num_fmts, value_type=vt,
                      date1904=self.wb.date1904, indexed_palette=self.palette)
-        return {r.is_blank}
+        return {r.is_blank} if r.certain else {True, False}
 
     def _decide(self, cell, value, st: _Style, runs, effects) -> Optional[str]:
         """Why the populated cell is concealed, or None when it is visible.  effects: alternative
@@ -566,6 +568,14 @@ class C94(Check):
                 alts.append(("conditional-format font", [cf_font]))
                 if runs:                         # CF font over rich-text runs: unverified
                     alts.append(primary)
+            elif not r.certain:
+                # Excel's reading of this format is unverified (numfmt certain=False): the font or any of the
+                # format's colour tags may show
+                alts.append(primary)
+                for sec in N.parse_format(fmt).sections:
+                    t_ = N.color_tag_rgb(sec.color, self.palette) if sec.color is not None else None
+                    if t_:
+                        alts.append(("number-format colour", [t_]))
             elif tag is not None:
                 alts.append(("number-format colour", [tag]))
                 if runs:                         # number-format colour vs rich-text runs: unverified
@@ -590,6 +600,9 @@ class C94(Check):
                         if isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0 \
                                 and not ZERO_BLANK_COUNTS:
                             pass
+                        elif len(blanks) > 1:            # unverified format: blank is one possible reading
+                            why = N.parse_format(fmt).unverified_why or "Excel's reading of it is not verified"
+                            reasons.append(f"its number format {fmt!r} may print nothing for its value ({why})")
                         else:
                             reasons.append(f"its number format {fmt!r} prints nothing for its value")
                     if hidden:

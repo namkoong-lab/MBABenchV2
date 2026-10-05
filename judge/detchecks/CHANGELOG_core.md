@@ -1,5 +1,36 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-04 — number formats mixing placeholders with unquoted date letters are unverified (finding 66-S3)
+
+Source: review finding 66-S3 (openpyxl writes `0 bps`, `0 days`, `#,##0 d` unquoted; the engine read the unit
+words as date codes) and 66.md question 13; until now only Zeros as dashes (66) caught them, in the check.
+
+### core/numfmt.py
+- `mixed_date_letters(tokens)` (new): a section mixes a **placeholder** - `0 # ?` except the `0`s of a
+  fractional-seconds group (a `.` right after `s` / `ss` / `[s]` / `[ss]`), `General`, `@` - with an
+  **unquoted date-time letter** - `y m d h s` (any case), `e g b` (`E` before `+`/`-` is scientific), `AM/PM`,
+  `A/P`, `[h] [m] [s]`. `parse_format` then sets `NumberFormat.verified = False` and `unverified_why`.
+- `render` under an unverified code: numbers `certain=False` (whatever section they use); text and logicals only
+  when the code has a text section (without one they show as typed whatever Excel makes of the code); empty cells
+  and errors stay certain. The rendered text is unchanged.
+
+### checks
+- Zeros as dashes (66): `mixed_date_section` removed - the core covers it (`classify` returns `uncertain` on
+  `certain=False` as before). The core rule is slightly wider (an era letter beside digits, `0 b`; `General` /
+  `@` beside date letters; digits after a `.` that follows no seconds code, `d.00`).
+- No white-on-white hiding (94): honours `certain=False` (it ignored the flag): "prints nothing" and "prints
+  something", in the font colour or any colour tag of the code, are all tried; undecided where they disagree.
+- Reasonable column widths (70): an unverified number rendering is undecided like an untrusted value (it was
+  measured). This also applies to the engine's older `certain=False` cases (no section applies; a negative in the
+  first section when only the second is conditional).
+- Negatives in parentheses (65), Sufficient column widths (69): unchanged (they already treat `certain=False` as
+  uncertain).
+
+### Corpus effect (the runs described in the overlapping `<col>` entry below)
+- 0 of the 392 distinct custom codes of the corpus and toys (cellXfs and dxf `<numFmt>`) and 0 built-ins are
+  unverified (`scratch/core_fixes/codes_letters.py`); 0 verdict changes for 65, 66, 69, 70, 73 and 94; nothing
+  newly raises, so no Excel check workbook was needed.
+
 ## 2026-10-04 — overlapping `<col>` entries: one rule in the reader (Sufficient column widths (69), Reasonable column widths (70), Reasonable row heights (73))
 
 Source: side finding of the Reasonable column widths (70) build; the rule is the one 70 and Reasonable row
