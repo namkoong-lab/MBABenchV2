@@ -1,5 +1,44 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-05 — every attempt is graded (no size limit, memory guard); conditional formats never stop a grading
+
+Source: Patrick's production decision of 2026-10-05: "For production runs, every attempt must be graded.
+Doesn't matter what size."; "CONDITIONAL FORMATS never stop a grading"; "assume the built-in Excel conditional
+formats always have visible text".
+
+### core/lo_guard.py (new) and core/recalc.py
+- `lo_guard.run_guarded(run_once, timeout_s, settings)`: every LibreOffice run takes a machine-wide lock
+  (`fcntl.flock` on `/tmp/mbabench_libreoffice.lock` by default + a process-wide threading lock; re-entrant;
+  close-on-exec), waits for `min_free_pct` (25) free memory (macOS `memory_pressure -Q`, Linux `/proc/meminfo`)
+  for at most `max_wait_s` (3600), and retries a failed try `retries` (3) times with the timeout doubled; then
+  `LibreOfficeUnavailable` (new in `errors.py`, a `GradingError` with `retry_later=True`).
+- `RecalcPolicy`: `lo_retries`, `lo_min_free_pct`, `lo_max_wait_s`, `lo_lock_path`, `lo_log`,
+  `lo_memory_reader` (test hook); `guard_settings()`.  `libreoffice_recalc` = binary check + `run_guarded` over
+  `_libreoffice_once` (the former body: watchdog, private profile, encoded URLs, tree kill - unchanged).
+- `errors.GradingError.retry_later`; `api.Engine` passes it on when the recalc pipeline failed that way.
+
+### core/lookup.py (new), core/package.py, api.py
+- `CellValues` / `cell_values(wb)`: values of cells a check does not stream (conditional-format references),
+  read on demand through the grading's value source, one stream per referenced sheet; `Unavailable` for an
+  untrusted formula, an unwritten array member, a missing sheet.  The engine sets `Package.value_source`.
+
+### checks/_cfeval.py (new) and checks 47, 65, 66, 69, 94
+- One evaluator for conditional-format formulas and rule types (operators, text / IS / logical / rounding
+  functions, absolute / relative / cross-sheet references, defined names that are a constant or one cell);
+  `Unevaluable(why)` for anything else, `UNKNOWN` for what depends on an unknown position or value.
+- Policy: No white-on-white hiding (94) - built-in formats (colour scales, data bars, icon sets, Excel's preset
+  highlight styles) never hide text (`Visible`); where only conditional formatting leaves a cell open the text
+  is assumed visible.  Negatives in parentheses (65), Zeros as dashes (66), Sufficient column widths (69) - an
+  unevaluable rule is off and an unverified CF display gives way to the cell's own format.  No bright-yellow
+  highlighting (47) - an unresolvable CF fill colour is not counted.  All recorded in `stats.cf_assumptions`
+  (94 also `stats.cf_builtin_visible`); none of them raises any more for a conditional format.
+
+### tests
+- `tests/test_lo_guard.py`, `tests/test_cfeval.py` (new); `tests/test_recalc_libreoffice.py` (retry after two
+  crashes, every try failing, two graders sharing the lock); the CF tests that expected "cannot decide" in
+  `test_checks_fills.py`, `test_checks_94.py`, `test_checks_zeros.py`, `test_checks_65.py`, `test_checks_69.py`
+  now expect the decided verdict and the recorded assumption.
+
 ## 2026-10-04 — No hidden rows/columns (93) and No bright-yellow highlighting (47) read `<col>` the shared way
 
 Source: follow-ups of the overlapping-`<col>` core fix (below) and the judge v13 review. No hidden rows/columns

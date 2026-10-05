@@ -611,11 +611,10 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   (`detchecks.errors.GradingError`, re-raised as `utils.det_checks.DetChecksError`
   naming every failing check by title and the file). The checks run first in
   every driver - before the answer check and the LLM, outside the answer
-  check's score-neutral `try` - so a file they refuse (one over the
-  LibreOffice size limit, say) never reaches the answer check's own
-  LibreOffice recalculation, and the attempt fails the way the formula-cache
-  refusal does: `grade_from_db` logs `FAILED`, returns `success: False`, writes
-  no DB row and the batch continues, with no API spend. `det_checks.json` is written in every case and stays in
+  check's score-neutral `try` - so a file they refuse never reaches the answer
+  check's own LibreOffice recalculation, and the attempt fails the way the
+  formula-cache refusal does: `grade_from_db` logs `FAILED`, returns
+  `success: False`, writes no DB row and the batch continues, with no API spend. `det_checks.json` is written in every case and stays in
   the task folder: status `error` with the failures, or - when a config error,
   a rubric drift (named by title and rubric file) or a suitability refusal
   stops the run first - with the stage and the error. `judge.py --single-pass`
@@ -629,11 +628,8 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   (copy and profiles) as soon as the checks return or raise, in every driver
   (`grade_with_orchestration` never prunes); `det_checks.json` stays.
   Excel recalculation is off (`det_checks.excel_recalc: false`); cells
-  LibreOffice cannot compute are used as displayed. LibreOffice never runs on a
-  file over `det_checks.libreoffice_max_mb` (10 MB, memory): such a file, when it
-  was not saved by Excel and a value check applies, fails the grading before the
-  LLM call ("not graded: too large"). Excel-saved files of any size are graded.
-  LibreOffice never outlives its grading: its paths are passed as encoded file
+  LibreOffice cannot compute are used as displayed. LibreOffice never outlives
+  its grading: its paths are passed as encoded file
   URLs (a task folder with a space or `%` works), it runs in the grader's
   process group under a watchdog (`detchecks/core/lo_watchdog.py`) that kills
   it when the grader dies, SIGKILL included; SIGTERM / SIGHUP to the grader
@@ -642,6 +638,54 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   are swept when the checks return or raise. Cost: no API spend; the Python
   pass took ~3 s median (38 s worst) per attempt in the 374-file sanity run,
   plus the LibreOffice run (seconds to minutes) for a file not saved by Excel.
+- **Every attempt is graded, whatever its size** (the maintainer's decision of
+  2026-10-05): `det_checks.libreoffice_max_mb` is `0` = no limit in production
+  (a positive value is a test-run setting: a larger file not saved by Excel then
+  fails "not graded: too large"). Memory is protected instead, for EVERY
+  LibreOffice run of a grading - the det-checks recalculation, the answer
+  check's recalculation and `--run-calculation`
+  (`detchecks/core/lo_guard.py`, `utils/det_checks.run_libreoffice`; details in
+  `detchecks/docs/recalc.md`, "Memory safety"):
+  - one LibreOffice at a time on the machine, across all grading processes and
+    worker threads: an exclusive lock on `det_checks.libreoffice_lock_path`
+    (null = `/tmp/mbabench_libreoffice.lock`, the system temp dir; a waiting
+    grader logs who holds it; the kernel releases it when a grader dies);
+  - holding the lock, wait until `det_checks.libreoffice_min_free_pct` (25) of
+    the machine's memory is free (macOS `memory_pressure`, Linux
+    `/proc/meminfo`), logging while it waits, for at most
+    `det_checks.libreoffice_max_wait_minutes` (60);
+  - a run that fails (crash, no copy, timeout) is retried
+    `det_checks.libreoffice_retries` (3) times, the timeout doubled each time
+    (600, 1200, 2400, 4800 s for the det checks; from 300 s for the answer
+    check, from `JUDGE_RECALC_TIMEOUT_SECONDS` 1800 s for `--run-calculation`),
+    each try waiting for the lock and for memory again.
+  When the wait times out or the last retry fails, the grading fails loudly
+  (`LibreOfficeUnavailable`, `retry_later`): `FAILED`, no DB row, the batch
+  continues, `det_checks.json` records `retry_later`, and `grade_from_db` /
+  `grade_with_orchestration` / `grade_toy` list those attempts at the end of the
+  run ("LIBREOFFICE: n attempt(s) NOT graded ... Re-run them when the machine
+  has memory to spare: --attempt-ids ...", also `retry_later_attempt_ids` in
+  `run_summary.json`). The answer check stays score-neutral for every other
+  error, but never swallows this one (it would read uncomputed answers as
+  unanswered).
+- **Conditional formats never stop a grading** (the maintainer, 2026-10-05):
+  Negatives in parentheses (65), Zeros as dashes (66), Sufficient column widths
+  (69) and No white-on-white hiding (94) evaluate conditional-format rules with
+  one shared evaluator (`detchecks/checks/_cfeval.py`: cellIs with literal or
+  formula operands, text / blank / error rules, expressions - comparisons,
+  arithmetic, `&`, LEFT RIGHT MID LEN UPPER LOWER TRIM VALUE TEXT, IS* tests,
+  AND OR NOT IF, ABS ROUND and a few more - with absolute and relative
+  references to the cell itself, other cells and other sheets read through the
+  grading's value source, `detchecks/core/lookup.py`). Built-in conditional
+  formats (colour scales, data bars, icon sets, Excel's preset highlight
+  styles) never count as hiding text in No white-on-white hiding (94). A rule
+  the evaluator cannot evaluate (COUNTIF, top10, an untrusted referenced value
+  ...) never raises: No white-on-white hiding (94) assumes the text is visible,
+  the other checks grade the cell by its own formatting as if the rule were
+  off; No bright-yellow highlighting (47) does not count a conditional-format
+  fill whose colour cannot be resolved. Every such assumption is in the
+  check's `stats.cf_assumptions` (count + examples). Corpus attempt 2924
+  (`Cover!D4`, rule `LEFT($D$4,4)="FAIL"`) is now graded.
 - **Task metadata**: File extension (.xlsx) (77) judges the delivered file name
   from the `_attempt_origin.json` sidecar (`original_filename`); without it the
   check raises, so a local folder needs the sidecar. A malformed sidecar (not
@@ -702,13 +746,19 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   Python verdicts on these checks.
   Tests: `test_det_checks.py` (the adapter on openpyxl workbooks: live and
   recorded-only verdicts, the gate, the delivered name and malformed sidecars,
-  `det_checks.json` in every case, JSON safety, the LibreOffice policy and size
-  limit, `det_checks_recalc/` removed, the reaper on encoded profile URLs, SIGTERM
+  `det_checks.json` in every case, JSON safety, the LibreOffice policy, no size
+  limit in production and the test-run size limit, the memory guard - retries
+  then graded, every retry failing (retry_later, the end-of-run report), the
+  answer check and `--run-calculation` waiting for the machine-wide lock, the
+  answer check never swallowing `LibreOfficeUnavailable` - `det_checks_recalc/`
+  removed, the reaper on encoded profile URLs, SIGTERM
   and SIGKILL to a grading whose LibreOffice hangs, `code_sha`, the DB payload,
   the scoring switches), `test_det_checks_single_pass.py` (`grade_single_attempt`
   end to end on a real Excel-saved attempt with a stub LLM, all three switch
-  values, the failure path that stops before the LLM call, and an oversized
-  non-Excel attempt that stops before the answer check with no LibreOffice run;
+  values, the failure path that stops before the LLM call, LibreOffice
+  unavailable (det checks and answer check: `retry_later`, no LLM call), and an
+  oversized non-Excel attempt under a test-run size limit that stops before the
+  answer check with no LibreOffice run;
   where the corpus attempt is absent the end-to-end case is reported SKIPPED by
   pytest and by the script runner, never counted as passed, and
   `DETCHECKS_E2E_ATTEMPT` points it at another Excel-saved file under 1 MB; the
@@ -716,8 +766,15 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   `judge/scratch/judge_cache/`), `test_det_checks_reports.py` (the two reports
   and `grade_toy`'s recorded mode) and `detchecks/tests/test_recalc_libreoffice.py`
   (the real LibreOffice on a 3-cell file in a folder named with a space, `%41`,
-  `%` and `é`; stand-in soffice processes for the watchdog, the timeout and
-  SIGTERM / SIGKILL to the grader; run it through `heavy_run.py`).
+  `%` and `é`; stand-in soffice processes for the watchdog, the timeout,
+  SIGTERM / SIGKILL to the grader, a retry after two crashes, every try failing,
+  and two graders sharing the lock; run it through `heavy_run.py`),
+  `detchecks/tests/test_lo_guard.py` (the lock across two processes and
+  threads, the memory wait - low then enough, and the maximum wait - the
+  retries with doubled timeouts) and `detchecks/tests/test_cfeval.py` (every
+  operator, function and rule type, cross-sheet and relative references,
+  attempt 2924's rule, built-in formats, unevaluable rules: visible in No
+  white-on-white hiding (94), off and recorded in the others).
 
 ### Latest-prompt guard (2026-09-10)
 
@@ -784,7 +841,8 @@ JUDGE_SKIP_SUITABILITY=1 python judge/main_scripts/judge.py \
 - The deterministic checks (judge v13) grade the folder before the LLM:
   `_attempt_origin.json` must name the delivered file (File extension (.xlsx)
   (77) fails the run without it), LibreOffice must be installed for workbooks
-  not saved by Excel (at most 10 MB), and `--det-checks llm` / `off` keeps the
+  not saved by Excel (any size; one LibreOffice at a time, started when memory
+  is free), and `--det-checks llm` / `off` keeps the
   LLM's verdicts counting / skips them.
 
 Results land in `<folder>/judge_results/`: extracted CSVs,
@@ -814,5 +872,6 @@ python tests_offline/test_det_checks.py               # judge v13 adapter + scor
 python tests_offline/test_det_checks_single_pass.py   # judge v13 end to end, stub LLM
 python tests_offline/test_det_checks_reports.py       # judge v13 reports, grade_toy's recorded mode
 for t in detchecks/tests/test_*.py; do python -m detchecks.tests.$(basename $t .py); done
-# (test_recalc_libreoffice starts LibreOffice once: on the shared grading Mac, run through heavy_run.py)
+# (test_recalc_libreoffice starts LibreOffice once: on the shared grading Mac, run through heavy_run.py;
+#  test_lo_guard and test_cfeval need no LibreOffice)
 ```
