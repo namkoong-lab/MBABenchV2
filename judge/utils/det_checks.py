@@ -38,8 +38,10 @@ The switch (--det-checks on every driver; default from det_checks.enabled: true 
 No fallback (maintainer, 2026-10-02)
   A check that cannot grade the file raises detchecks' GradingError; run_det_checks writes the
   failure to det_checks.json and raises DetChecksError naming every failing check by title and
-  the file. The drivers call it BEFORE the LLM, so the attempt fails the way the formula-cache
-  refusal does (grade_from_db logs FAILED, no DB row, the batch continues) with no API spend.
+  the file. Every driver calls it FIRST - before the answer check (which recalculates through
+  LibreOffice too, so a file refused here never reaches it) and the LLM - so the attempt fails
+  the way the formula-cache refusal does (grade_from_db logs FAILED, no DB row, the batch
+  continues) with no API spend.
   Nothing here ever turns a failure into an LLM verdict. This holds in `llm` mode too: when the
   checks run, they run loudly.
 

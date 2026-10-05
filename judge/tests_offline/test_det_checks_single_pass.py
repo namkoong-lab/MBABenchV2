@@ -5,8 +5,8 @@ Run from judge/:  python tests_offline/test_det_checks_single_pass.py
 heavy-job guard like any multi-workbook job).
 
 No DB, S3, LLM, LibreOffice or Excel. grade_from_db.grade_single_attempt runs for real —
-staging (with the _attempt_origin.json sidecar), the score-neutral answer check, the
-deterministic checks, CSV extraction, the formula-cache gate, suitability gating, the
+staging (with the _attempt_origin.json sidecar), the deterministic checks, the
+score-neutral answer check, CSV extraction, the formula-cache gate, suitability gating, the
 single-pass tool loop, scoring, artefacts — and only the LLM is a stub client: it records
 every check in one round (the OPPOSITE of Python's decision on every deterministically
 graded check, so each overlay is visible) and stops in the next.
@@ -340,30 +340,87 @@ def test_grading_error_fails_before_the_llm_call():
         assert "LibreOffice not found" in err and "DetChecksError" in res["traceback"]
         art = json.loads((task_folder / D.ARTEFACT_FILENAME).read_text())
         assert art["status"] == "error" and "/".join(D.DET_CHECK_NAMES[66]) in art["failures"]
-        assert (task_folder / "answer_check.json").exists(), "the answer check ran first (score-neutral)"
+        assert not (task_folder / "answer_check.json").exists(), "the deterministic checks run before the answer check"
         assert not (task_folder / "judge_results" / "scores.json").exists()
         gfd.prune_workbook_copies(res)                       # what grade_from_db.main does on failure
         assert not (task_folder / "ai_attempt.xlsx").exists() and (task_folder / D.ARTEFACT_FILENAME).exists()
 
 
+def _questions_book(path: Path, answer):
+    """A workbook with the answer check's convention: Questions sheet, 'Question' / 'Answer' header."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Model"
+    ws["A1"], ws["B1"] = "Enterprise value", 1250.0
+    q = wb.create_sheet("Questions")
+    q["A1"], q["B1"] = "Question", "Answer"
+    q["A2"], q["B2"] = "What is the enterprise value?", answer
+    wb.save(path)
+
+
+def test_oversized_non_excel_file_stops_before_any_libreoffice_run():
+    """Fix 4: a file not saved by Excel and over det_checks.libreoffice_max_mb is refused by the
+    deterministic checks BEFORE the answer check, so neither LibreOffice runs: here the answer
+    check WOULD recalculate (the attempt's answer cell is a formula without a cached value) and
+    the deterministic checks would need values - both LibreOffice entry points are recorded and
+    must stay untouched. The grading fails loudly, the LLM is never called."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        src = root / "src"
+        src.mkdir()
+        _questions_book(src / "Model_final.xlsx", "=Model!B1")          # openpyxl: no cached value
+        _questions_book(src / "EasyDCF - Solution.xlsx", 1250.0)
+        _annotation(root / "annotation.json")
+        attempt = {
+            "attempt_id": 991, "task_id": 20, "task_name": "EasyDCF", "agent_model_name": "a",
+            "agent_model_type": "excel", "agent_failed": False,
+            "attempt_files": [{"name": "Model_final.xlsx", "path": str(src / "Model_final.xlsx")}],
+            "task_solution_files": [{"name": "EasyDCF - Solution.xlsx", "path": str(src / "EasyDCF - Solution.xlsx")}],
+            "task_starting_files": None,
+        }
+        llm = StubLLM(root / "run")
+        with env(DET_CHECKS_LIBREOFFICE_MAX_MB=0.001), no_libreoffice() as lo_calls:
+            res = _grade(root, attempt, None, llm)
+        assert res["success"] is False and llm.calls == 0
+        assert lo_calls == [], f"LibreOffice was started: {lo_calls}"
+        err = res["error"]
+        assert "not graded: too large" in err and "det_checks.libreoffice_max_mb" in err, err
+        task_folder = Path(res["task_folder"])
+        assert not (task_folder / "answer_check.json").exists(), "the answer check ran before the refusal"
+        assert json.loads((task_folder / D.ARTEFACT_FILENAME).read_text())["status"] == "error"
+        # control: with the deterministic checks off, the same attempt makes the answer check reach its
+        # LibreOffice step (recorded and refused by the stub; score-neutral) - so above, the refusal came first
+        llm2 = StubLLM(root / "run2")
+        with env(DET_CHECKS_LIBREOFFICE_MAX_MB=0.001), no_libreoffice() as lo_calls2:
+            gfd.grade_single_attempt(
+                attempt=attempt, client=llm2, rubric_path=str(RUBRIC_PATH), template_path=TEMPLATE,
+                agentic_template_path=TEMPLATE, model=MODEL, scratch_run_dir=root / "run2", agentic=True,
+                single_pass=True, max_tool_rounds=4, max_forced_rounds=1, no_s3_upload=True,
+                suitability_source_path=root / "annotation.json", accuracy_check="harness", det_checks="off")
+        assert [c[0] for c in lo_calls2] == ["answer_check"], lo_calls2
+
+
 def test_call_sites_are_wired_before_the_llm():
     gfd_src = (JUDGE / "main_scripts" / "grade_from_db.py").read_text()
     gsa = gfd_src.split("def grade_single_attempt")[1].split("\ndef ")[0]
-    i_ac, i_det, i_judge = gsa.index("run_answer_check("), gsa.index("run_det_checks("), gsa.index("single_pass_judge_case(")
-    assert i_ac < i_det < i_judge
-    between = gsa[i_ac:i_det]
-    assert "score-neutral by design" in between and "harness_verdicts = ac_result.get(" in between, \
-        "run_det_checks must sit after (outside) the answer check's score-neutral try"
-    assert gsa.rfind("try:", 0, i_det) > gsa.index("harness_verdicts = ac_result.get("), \
-        "run_det_checks must sit inside the try whose except logs FAILED"
-    assert "merge_harness_verdicts(" in gsa and "det_checks=det_run.for_judge()" in gsa
+    i_det, i_ac, i_judge = gsa.index("run_det_checks("), gsa.index("run_answer_check("), gsa.index("single_pass_judge_case(")
+    assert i_det < i_ac < i_judge, "deterministic checks first, then the answer check, then the judge"
+    big_try = gsa.rfind("\n    try:\n", 0, i_det)
+    failed = gsa.index('logger.error(f"  FAILED: {e}")')
+    first_except = gsa.index("\n    except", big_try)
+    assert big_try != -1 and i_judge < first_except < failed and gsa.count("\n    except", big_try, failed) == 1, \
+        "run_det_checks, the answer check and the judge must sit in the one try whose except logs FAILED"
+    ac_block = gsa[i_det:i_judge]
+    assert "\n        try:\n" in ac_block and "score-neutral by design" in ac_block, \
+        "the answer check keeps its own score-neutral try"
+    assert "merge_harness_verdicts(" in gsa[i_ac:i_judge] and "det_checks=det_run.for_judge()" in gsa
     assert "det_checks=args.det_checks" in gfd_src and "add_det_checks_arg(parser)" in gfd_src
     prune = gfd_src.split("def prune_workbook_copies")[1].split("\ndef ")[0]
     assert "RECALC_DIRNAME" in prune
     judge_src = (JUDGE / "main_scripts" / "judge.py").read_text()
     main = judge_src.split("def main(args)")[1]
-    j_ac, j_det, j_judge = main.index("run_answer_check("), main.index("run_det_checks("), main.index("single_pass_judge_case(")
-    assert j_ac < j_det < j_judge and "det_checks=det_run.for_judge()" in main
+    j_det, j_ac, j_judge = main.index("run_det_checks("), main.index("run_answer_check("), main.index("single_pass_judge_case(")
+    assert j_det < j_ac < j_judge and "det_checks=det_run.for_judge()" in main
     assert "add_det_checks_arg(parser)" in judge_src
     orch = (JUDGE / "main_scripts" / "grade_with_orchestration.py").read_text()
     assert "det_checks=self.det_checks" in orch and "add_det_checks_arg(parser)" in orch

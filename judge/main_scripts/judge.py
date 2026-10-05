@@ -5325,11 +5325,26 @@ def main(args):
     client = get_client(identity)
 
     if single_pass:
-        # Harness answer check first (judge v6+): deterministic Questions-sheet
+        # Deterministic rubric checks (judge v13) first, before the answer
+        # check and the judge, and NOT score-neutral: a check that cannot
+        # grade the delivered workbook raises DetChecksError here (no
+        # fallback, no API call, and no answer-check LibreOffice run: a file
+        # over det_checks.libreoffice_max_mb not saved by Excel stops here).
+        # A local folder needs the _attempt_origin.json sidecar for File
+        # extension (.xlsx) (77). Same wiring as
+        # grade_from_db.grade_single_attempt.
+        task_folder = Path(args.folder_to_grade)
+        det_run = run_det_checks(
+            task_folder,
+            rubric_path=rubric_path,
+            weights_path=rubric_weight_path,
+            mode=args.det_checks,
+        )
+
+        # Harness answer check (judge v6+): deterministic Questions-sheet
         # comparison whose verdicts the judge can adopt for the Accuracy checks
         # (--accuracy-check harness). Score-neutral on failure: the LLM's own
-        # verdicts then stand. Same wiring as grade_from_db.grade_single_attempt.
-        task_folder = Path(args.folder_to_grade)
+        # verdicts then stand.
         harness_verdicts = {}
         try:
             solution_xlsx = find_golden_solution_file(task_folder)
@@ -5346,18 +5361,6 @@ def main(args):
             harness_verdicts = ac_result.get("harness_verdicts") or {}
         except Exception as e:  # noqa: BLE001 — score-neutral by design
             logger.warning(f"  [answer_check] skipped on error: {e}")
-
-        # Deterministic rubric checks (judge v13), before the judge and NOT
-        # score-neutral: a check that cannot grade the delivered workbook
-        # raises DetChecksError here (no fallback, no API call). A local
-        # folder needs the _attempt_origin.json sidecar for File extension
-        # (.xlsx) (77). Same wiring as grade_from_db.grade_single_attempt.
-        det_run = run_det_checks(
-            task_folder,
-            rubric_path=rubric_path,
-            weights_path=rubric_weight_path,
-            mode=args.det_checks,
-        )
         harness_verdicts = merge_harness_verdicts(harness_verdicts, det_run.harness_verdicts)
 
         single_pass_judge_case(

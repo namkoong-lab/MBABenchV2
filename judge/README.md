@@ -604,9 +604,12 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   yet.
 - **No fallback**: a check that cannot grade the file raises
   (`detchecks.errors.GradingError`, re-raised as `utils.det_checks.DetChecksError`
-  naming every failing check by title and the file). The checks run after the
-  answer check, outside its score-neutral `try` and before the LLM, so the
-  attempt fails the way the formula-cache refusal does: `grade_from_db` logs
+  naming every failing check by title and the file). The checks run first in
+  every driver - before the answer check and the LLM, outside the answer
+  check's score-neutral `try` - so a file they refuse (one over the
+  LibreOffice size limit, say) never reaches the answer check's own
+  LibreOffice recalculation, and the attempt fails the way the formula-cache
+  refusal does: `grade_from_db` logs
   `FAILED`, returns `success: False`, writes no DB row and the batch continues,
   with no API spend. `det_checks.json` (status `error`, the failures) stays in
   the task folder. `judge.py --single-pass` raises.
@@ -663,8 +666,9 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   recorded-only verdicts, the gate, the delivered name, JSON safety, the
   LibreOffice policy and size limit, the scoring switches),
   `test_det_checks_single_pass.py` (`grade_single_attempt` end to end on a real
-  Excel-saved attempt with a stub LLM, all three switch values, and the
-  failure path that stops before the LLM call; the end-to-end case is skipped
+  Excel-saved attempt with a stub LLM, all three switch values, the failure
+  path that stops before the LLM call, and an oversized non-Excel attempt that
+  stops before the answer check with no LibreOffice run; the end-to-end case is skipped
   where the corpus attempt is absent, `DETCHECKS_E2E_ATTEMPT` points it at
   another Excel-saved file under 1 MB).
 

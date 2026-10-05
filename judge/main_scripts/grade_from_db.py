@@ -701,9 +701,10 @@ def grade_single_attempt(
     `det_checks` ("harness" | "llm" | "off"; None = project_configs.yaml
     det_checks.enabled): the deterministic rubric checks of judge v13
     (utils/det_checks.py), single-pass only. They grade the delivered
-    ai_attempt.xlsx BEFORE the judge and are not score-neutral: a check that
-    cannot grade it fails this attempt (success False, logged FAILED, no DB
-    row) before any LLM spend, like the formula-cache refusal.
+    ai_attempt.xlsx first - BEFORE the answer check and the judge - and are
+    not score-neutral: a check that cannot grade it fails this attempt
+    (success False, logged FAILED, no DB row) before any LLM spend, like the
+    formula-cache refusal.
     """
     attempt_id = attempt["attempt_id"]
     task_name = attempt["task_name"] or f"task_{attempt['task_id']}"
@@ -761,37 +762,19 @@ def grade_single_attempt(
             )
         )
     )
-    # Harness answer check (judge v6) runs BEFORE the judge: it only needs the
-    # two workbooks, and its verdicts are handed to the single-pass scoring
-    # layer. The artifact is written into the task folder now and copied into
-    # the grading's output_dir after the judge returns (so S3 carries it).
-    # Failures never block grading — the judge's own verdicts then stand.
     ac_result = None
     ac_artifact = task_folder / "answer_check.json"
     try:
-        solution_xlsx = find_golden_solution_file(Path(task_folder))
-        hardcoded_counts = str(
-            load_env_var("SINGLE_PASS_HARDCODED_COUNTS", default="true")
-        ).strip().lower() in ("1", "true", "yes")
-        ac_result = run_answer_check(
-            Path(task_folder) / "ai_attempt.xlsx",
-            solution_xlsx,
-            output_json_path=ac_artifact,
-            hardcoded_counts=hardcoded_counts,
-        )
-        logger.info(f"  [answer_check] {summary_block(ac_result)}")
-    except Exception as e:  # noqa: BLE001 — score-neutral by design
-        logger.warning(f"  [answer_check] skipped on error: {e}")
-        ac_result = {"status": "error", "error": str(e), "harness_verdicts": {}}
-    harness_verdicts = ac_result.get("harness_verdicts") or {}
-
-    try:
-        # Deterministic rubric checks (judge v13, utils/det_checks.py) —
-        # deliberately OUTSIDE the answer check's score-neutral try above: no
+        # Deterministic rubric checks (judge v13, utils/det_checks.py) FIRST,
+        # before the answer check and the judge, and NOT score-neutral: no
         # fallback. A DetChecksError lands in the except below exactly like
         # the formula-cache refusal (FAILED, success False, no DB row, the
-        # batch continues), before any API spend. They read the delivered
-        # ai_attempt.xlsx, so they must run before prune_workbook_copies.
+        # batch continues), before any API spend and before the answer
+        # check opens the workbook: a file not saved by Excel and over
+        # det_checks.libreoffice_max_mb is refused here with no LibreOffice
+        # run at all (the answer check recalculates through LibreOffice too).
+        # They read the delivered ai_attempt.xlsx, so they must run before
+        # prune_workbook_copies.
         det_run = None
         if single_pass:
             det_run = run_det_checks(
@@ -800,6 +783,30 @@ def grade_single_attempt(
                 weights_path=rubric_weight_path,
                 mode=det_checks,
             )
+
+        # Harness answer check (judge v6), also BEFORE the judge: it only
+        # needs the two workbooks, and its verdicts are handed to the
+        # single-pass scoring layer. The artifact is written into the task
+        # folder now and copied into the grading's output_dir after the judge
+        # returns (so S3 carries it). Failures never block grading — the
+        # judge's own verdicts then stand.
+        try:
+            solution_xlsx = find_golden_solution_file(Path(task_folder))
+            hardcoded_counts = str(
+                load_env_var("SINGLE_PASS_HARDCODED_COUNTS", default="true")
+            ).strip().lower() in ("1", "true", "yes")
+            ac_result = run_answer_check(
+                Path(task_folder) / "ai_attempt.xlsx",
+                solution_xlsx,
+                output_json_path=ac_artifact,
+                hardcoded_counts=hardcoded_counts,
+            )
+            logger.info(f"  [answer_check] {summary_block(ac_result)}")
+        except Exception as e:  # noqa: BLE001 — score-neutral by design
+            logger.warning(f"  [answer_check] skipped on error: {e}")
+            ac_result = {"status": "error", "error": str(e), "harness_verdicts": {}}
+        harness_verdicts = ac_result.get("harness_verdicts") or {}
+        if det_run is not None:
             harness_verdicts = merge_harness_verdicts(
                 harness_verdicts, det_run.harness_verdicts
             )
