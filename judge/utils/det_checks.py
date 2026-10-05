@@ -69,9 +69,16 @@ Task metadata
   requires_external_links  always False (maintainer: no task requires external links).
 
 Artefacts
-  task_folder/det_checks.json  everything (config, gate, task_meta, full verdicts, or the
-                               failure); judge._finalize_case copies it into the output dir
-  scored_results.det_checks    compact block (status, mode, per-check engine/decision/live)
+  task_folder/det_checks.json  everything (config, gate, task_meta, the full verdicts and the
+                               full recalculation block, or the failure);
+                               judge._finalize_case copies it into the output dir
+  scored_results.det_checks    compact block (status, mode, per-check engine / decision / live /
+                               n_mistakes / summary capped at DB_SUMMARY_CAP characters) and the
+                               recalculation block `values` ONCE (no local value_path)
+  stats in harness_verdicts    -> scored_results.accuracy_engine.checks[key].stats: a value check's
+                               stats.values is the reference {"ref": "det_checks.values"}; in the
+                               DB payload every list longer than DB_LIST_CAP keeps its first
+                               DB_LIST_CAP items, the original lengths under "db_capped"
 """
 from __future__ import annotations
 
@@ -439,6 +446,61 @@ def code_sha() -> str:
     return _CODE_SHA
 
 
+# --------------------------------------------------------------------------- DB payload
+# What lands in gradings.scored_results (and scores.json): the recalculation block `values` once,
+# at scored_results.det_checks.values, each value check's stats.values a reference to it (it was
+# copied into every value check: 7 identical copies, ~9 KB each with a LibreOffice gap list), and
+# every list longer than DB_LIST_CAP cut to its first DB_LIST_CAP items, the original length
+# recorded under "db_capped". det_checks.json (the bundle) keeps the full verdicts and the full
+# values block.
+DB_LIST_CAP = 10
+DB_SUMMARY_CAP = 300
+VALUES_REF = "det_checks.values"
+
+
+def _cap_lists(obj, path: str, capped: dict):
+    """A copy of `obj` (JSON-safe) whose lists keep their first DB_LIST_CAP items; `capped` gets
+    {json path: original length} for every list cut."""
+    if isinstance(obj, dict):
+        return {k: _cap_lists(v, f"{path}.{k}" if path else k, capped) for k, v in obj.items()}
+    if isinstance(obj, list):
+        if len(obj) > DB_LIST_CAP:
+            capped[path] = len(obj)
+            obj = obj[:DB_LIST_CAP]
+        return [_cap_lists(v, f"{path}[{i}]", capped) for i, v in enumerate(obj)]
+    return obj
+
+
+def _db_capped(obj: dict) -> dict:
+    capped: dict = {}
+    out = _cap_lists(obj, "", capped)
+    if capped:
+        out["db_capped"] = capped
+    return out
+
+
+def _db_values(values: dict | None) -> dict | None:
+    """The shared recalculation block as stored once in scored_results.det_checks.values: no local
+    value_path (deleted with det_checks_recalc/), lists capped (gaps: first DB_LIST_CAP of n_gaps)."""
+    if values is None:
+        return None
+    return _db_capped({k: v for k, v in values.items() if k != "value_path"})
+
+
+def _db_stats(stats: dict, shared_values: dict | None) -> dict:
+    """A check's stats as stored in scored_results.accuracy_engine.checks: stats.values -> the
+    reference VALUES_REF when it is the shared block, long lists capped."""
+    out = dict(stats)
+    if shared_values is not None and out.get("values") == shared_values:
+        out["values"] = {"ref": VALUES_REF}
+    return _db_capped(out)
+
+
+def _short(text, n: int = DB_SUMMARY_CAP) -> str:
+    text = str(text or "")
+    return text if len(text) <= n else text[: n - 3] + "..."
+
+
 def _file_sha256(path: Path) -> str | None:
     try:
         h = hashlib.sha256()
@@ -669,12 +731,15 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
         _reap_libreoffice(workdir)
         _remove_recalc_dir(workdir)
 
-    harness_verdicts, checks_block, values = {}, {}, None
+    all_stats = {no: json_safe(verdicts["/".join(DET_CHECK_NAMES[no])].get("stats") or {}) for no in selected}
+    # the recalculation block: one per grading (detchecks attaches the same one to every value check)
+    values = next((s["values"] for s in all_stats.values() if isinstance(s.get("values"), dict)), None)
+    harness_verdicts, checks_block = {}, {}
     for no in selected:
         key = "/".join(DET_CHECK_NAMES[no])
         v = verdicts[key]
         live = plan[no] and bool(v.get("live", True))
-        stats = json_safe(v.get("stats") or {})
+        stats = all_stats[no]
         mistakes = json_safe(list(v.get("mistakes") or []))
         entry = {
             "engine": "harness" if live else "llm",
@@ -686,21 +751,17 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
             "live": live,
             "check_no": no,
             "n_mistakes": stats.get("n_mistakes", len(mistakes)),
-            "stats": stats,
+            "stats": _db_stats(stats, values),
         }
         harness_verdicts[key] = entry
         checks_block[key] = {"check_no": no, "engine": entry["engine"], "decision": entry["decision"],
-                             "live": live, "n_mistakes": entry["n_mistakes"]}
-        if values is None and isinstance(stats.get("values"), dict):
-            sv = stats["values"]
-            values = {"source": sv.get("source"), "writer": sv.get("writer"),
-                      "n_gaps": sv.get("n_gaps"), "timings": sv.get("timings")}
+                             "live": live, "n_mistakes": entry["n_mistakes"], "summary": _short(entry["summary"])}
 
     seconds = round(time.perf_counter() - t0, 3)
     record.update(status="ok", seconds=seconds, values=values, verdicts=verdicts)
     _write_artefact(artefact, record)
-    summary = json_safe({"status": "ok", **base_summary, "values": values, "checks": checks_block,
-                         "seconds": seconds})
+    summary = json_safe({"status": "ok", **base_summary, "values": _db_values(values), "checks": checks_block,
+                         "db_list_cap": DB_LIST_CAP, "seconds": seconds})
     fails = [label(e["check_no"]) + ("" if e["live"] else " [recorded only]")
              for e in harness_verdicts.values() if e["decision"] == "fail"]
     logger.info(f"  [det_checks] {len(selected)} graded in {seconds:.1f} s "

@@ -586,8 +586,9 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   evidence and CSV caches `*_csv_cache_v9` unchanged), so agreement stays
   measurable: `scored_results.accuracy_engine.checks["<Category>/<name>"]`
   carries `engine`, the Python `decision`, `llm_decision`, `agreed`, `live`,
-  `counted`, `check_no`, `n_mistakes` and the check's `stats`. A check the LLM
-  never recorded is inserted under its rubric number.
+  `counted`, `check_no`, `n_mistakes` and the check's `stats` (see Artefacts for
+  what is shortened there). A check the LLM never recorded is inserted under its
+  rubric number.
 - **Recorded only**: No formula errors (22) and Negatives in parentheses (65)
   (the "v3 bucket"; detchecks marks both `Check.live = False`) run and are
   recorded the same way with `engine: "llm"`, `live: false` and
@@ -656,9 +657,17 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
 - **Artefacts**: `det_checks.json` in the bundle (config, gate, task metadata,
   the full verdicts with the recalculation plan, `code_sha` = a fingerprint of
   the grading code: `detchecks/__init__.py`, `api.py`, `errors.py`, `core/` and
-  `checks/` only, so the same commit always records the same value) and `scored_results.det_checks` (status, mode, graded and
-  not-applicable numbers, per-check engine / decision / live / n_mistakes); a
-  compact copy in `_metadata.json`.
+  `checks/` only, so the same commit always records the same value) and
+  `scored_results.det_checks` (status, mode, graded and not-applicable numbers,
+  per-check engine / decision / live / n_mistakes / Python summary capped at 300
+  characters, and the recalculation block `values` stored ONCE: each value
+  check's `stats.values` in `accuracy_engine.checks` is the reference
+  `{"ref": "det_checks.values"}`). In `scored_results` every list longer than 10
+  items (gaps, examples, per-sheet lists) keeps its first 10, the original
+  lengths under `db_capped`; `det_checks.json` keeps everything. Per row this
+  took the LibreOffice attempts 388 / 2121 from ~107 / 106 KB of
+  `scored_results` to ~50 / 55 KB (v12: ~20 KB); Excel-saved 1375 stays ~47 KB.
+  A compact copy in `_metadata.json`.
 - Not changed: the paper scripts still read `judge_version >= 12`
   (`MIN_JUDGE_VERSION`) and `pass_rule.DETERMINISTIC_CHECKS` lists Final
   calculation accuracy only, so a cohort mixing v12 and v13 rows mixes LLM and

@@ -261,7 +261,8 @@ def test_live_fail_and_live_pass():
     # every configured check was graded (no annotation staged, benchmark None: retired rule only)
     assert set(good.summary["graded"]) == LIVE | RECORDED_ONLY and good.summary["not_applicable"] == []
     assert good.summary["checks"][key(92)] == {"check_no": 92, "engine": "harness", "decision": "pass",
-                                              "live": True, "n_mistakes": 0}
+                                              "live": True, "n_mistakes": 0,
+                                              "summary": good.harness_verdicts[key(92)]["summary"]}
     assert bad.mode == "harness" and bad.for_judge()["mode"] == "harness"
 
 
@@ -525,6 +526,57 @@ def test_code_sha_hashes_only_the_grading_code():
         assert D.code_sha_of(root) == D.code_sha()
     finally:
         probe.unlink(missing_ok=True)
+
+
+def test_db_payload_stores_values_once_and_caps_lists():
+    """scored_results carries the recalculation block once (det_checks.values; each value check's
+    stats.values is a reference to it), lists cut to DB_LIST_CAP with their length recorded, the
+    Python summary per check (capped); det_checks.json keeps every list and every copy in full."""
+    gaps = [{"sheet": "S", "ref": f"A{i}", "value": "#VALUE!", "formula": f"SUM(UNIQUE_GAP_{i:02d}:B9)",
+             "functions": ["range"], "why": "w"} for i in range(25)]
+    shared = {"writer": "openpyxl", "source": "libreoffice", "value_path": "/tmp/x/det_checks_recalc/h/lo/a.xlsx",
+              "value_writer": "libreoffice", "n_gaps": 25, "gap_functions": ["range"], "gaps": gaps,
+              "n_lo_errors": 25, "timings": {"libreoffice_s": 2.0}, "lo_version": "LibreOffice/25.8", "notes": ["n"]}
+
+    def _verdict(no, decision="pass", **stats):
+        return {"decision": decision, "summary": f"py {no} " + "x" * (400 if no == 66 else 0),
+                "mistakes": [], "stats": {"n_mistakes": 0, **stats}, "live": no not in (22, 65)}
+
+    def _crafted(path, *, checks, task_meta, recalc):
+        return {key(22): _verdict(22, values=shared), key(65): _verdict(65, values=shared),
+                key(66): _verdict(66, values=shared,
+                                  examples=[f"E{i}" for i in range(40)],
+                                  per_sheet=[{"sheet": "S", "rows": list(range(15))}]),
+                key(92): _verdict(92, hidden_sheets=["a", "b"])}
+
+    with tempfile.TemporaryDirectory() as tmp, patched_grade(_crafted), \
+            env(DET_CHECKS_LIVE="66,92", DET_CHECKS_RECORDED_ONLY="22,65"):
+        folder = make_task(Path(tmp))
+        r = run(folder)
+        art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
+    vals = r.summary["values"]
+    assert vals["n_gaps"] == 25 and len(vals["gaps"]) == D.DB_LIST_CAP and vals["db_capped"] == {"gaps": 25}
+    assert "value_path" not in vals and vals["source"] == "libreoffice" and vals["timings"] == {"libreoffice_s": 2.0}
+    for no in (22, 65, 66):
+        assert r.harness_verdicts[key(no)]["stats"]["values"] == {"ref": D.VALUES_REF}, no
+    st66 = r.harness_verdicts[key(66)]["stats"]
+    assert st66["examples"] == [f"E{i}" for i in range(D.DB_LIST_CAP)]
+    assert st66["per_sheet"][0]["rows"] == list(range(D.DB_LIST_CAP))
+    assert st66["db_capped"] == {"examples": 40, "per_sheet[0].rows": 15}
+    assert r.harness_verdicts[key(92)]["stats"] == {"n_mistakes": 0, "hidden_sheets": ["a", "b"]}
+    assert r.summary["checks"][key(92)]["summary"] == "py 92 "
+    assert len(r.summary["checks"][key(66)]["summary"]) == D.DB_SUMMARY_CAP
+    assert r.summary["db_list_cap"] == D.DB_LIST_CAP
+    # the bundle keeps everything
+    assert len(art["values"]["gaps"]) == 25 and art["values"]["value_path"] == shared["value_path"]
+    assert all(len(art["verdicts"][key(no)]["stats"]["values"]["gaps"]) == 25 for no in (22, 65, 66))
+    assert len(art["verdicts"][key(66)]["stats"]["examples"]) == 40
+    # through the scoring layer: the block lands in scored_results exactly once
+    res, _out = _finalize(_llm_judgement(), r.harness_verdicts, "harness", r.for_judge())
+    text = json.dumps(res["score_results"], allow_nan=False)
+    assert text.count("UNIQUE_GAP_00") == 1 and "UNIQUE_GAP_24" not in text
+    p66 = res["score_results"]["accuracy_engine"]["checks"][key(66)]
+    assert p66["stats"]["values"] == {"ref": D.VALUES_REF} and res["score_results"]["det_checks"]["values"] == vals
 
 
 def test_merge_harness_verdicts():
