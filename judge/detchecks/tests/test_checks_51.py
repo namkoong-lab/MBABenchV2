@@ -22,7 +22,7 @@ from detchecks.api import grade
 from detchecks.checks import colour_rules as CR
 from detchecks.core.package import Package
 from detchecks.tests import test_checks_colours as TC
-from detchecks.tests.test_checks_colours import BADTHEME, BLACK, BLUE, GREEN, GREY50, RED, K49, K50, K51, book, c, locs, raises, run, sheet
+from detchecks.tests.test_checks_colours import BADTHEME, BLACK, BLUE, GREEN, GREY50, RED, K49, K50, K51, book, c, graded, locs, raises, run, sheet
 
 EXT = "[1]Prices!$A$2"
 INPUTS = ("Inputs", sheet(), None)
@@ -59,7 +59,8 @@ def test_51_external_certain_despite_unknown_scope_name():
     # the colour of a certain external cell decides, so an unresolvable one raises even with BadExt
     p = book("51_r1_colour.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "GoodExt+BadExt")])), None), INPUTS],
              names=names, ext_links=1)
-    raises(lambda: run(p, 51), "cannot be resolved")
+    v = graded("unresolved_colour", lambda: run(p, 51))         # read as black: an external link not in red
+    assert v["decision"] == "fail", v
     # classifier contract: the kind is EXTERNAL and the doubt is recorded
     pkg = Package.open(book("51_r1_clf.xlsx", [("Calc", sheet(), None), INPUTS], names=names, ext_links=1))
     try:
@@ -148,8 +149,8 @@ def test_classifier_sheets_unknown_contract():
         pkg.close()
     # 49 and 50 keep raising where the table decides their class (unchanged behaviour)
     p = book("51_r2_4950.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "SUM(Nope[Col])"), c("B1", BLACK, "Nope[Col]")])), None), INPUTS])
-    raises(lambda: run(p, 49), "table 'Nope' is not defined")
-    raises(lambda: run(p, 50), "table 'Nope' is not defined")
+    graded("unparsable_formula", lambda: run(p, 49))           # skipped since Patrick 2026-10-05
+    graded("unparsable_formula", lambda: run(p, 50))
     assert run(p, 51)["decision"] == "pass"
     # ... but an external cell is left to 51 whatever the table (certain kind), in one grade() call
     p = book("51_r2_all.xlsx", [("Calc", sheet((1, [c("A1", BLUE, "[1]Prices!A1+SUM(Nope[Col])")])), None)], ext_links=1)
@@ -164,7 +165,7 @@ def test_51_malformed_text_still_raises_only_when_it_could_be_external():
              ext_links=1)
     assert run(p, 51)["decision"] == "pass"
     p = book("51_malformed_black.xlsx", [("Calc", sheet((1, [c("A1", BLACK, "[1]Prices!A1+SUM(C1:C5")])), None)], ext_links=1)
-    raises(lambda: run(p, 51))
+    graded("unparsable_formula", lambda: run(p, 51))
 
 
 TESTS = [test_51_external_certain_despite_unknown_scope_name, test_51_table_lookup_never_needed,

@@ -15,7 +15,8 @@ LEGEND below).  Even then, a bright-yellow cell whose own text or comment is a p
 marker (TBD, to do, ...) still fails (WIP_CONTENT_OVERRIDES_LEGEND).  A conditional-format fill
 whose colour cannot be resolved is not counted (Patrick 2026-10-05: "CONDITIONAL FORMATS never stop
 a grading" - the rule is taken as off for this check; recorded in stats.cf_assumptions); an
-unresolvable colour of a cell, row, column or default style is graded under every reading as before.
+unresolvable fill colour of a cell, row, column or default style is read as no fill (Patrick 2026-10-05:
+every attempt graded; stats.defaults.unresolved_colour).
 
 Bright yellow = HSV hue in [47.5, 68] degrees, saturation >= 0.50, value >= 0.85 (FFFF00,
 FFFF66, FFD700, FFCC00 ...).  Pale yellows (FFFFCC, FFF2CC, FFFF99, FFEB9C, FFFFE0) and
@@ -23,9 +24,9 @@ Excel's orange/gold FFC000 are NOT bright.  Colours are resolved by the core (th
 indexed palette incl. custom <indexedColors>); solid fills use fgColor, hatch patterns their
 fg-over-bg blend, gradients count when ANY stop is bright yellow.  Fonts, sheet tabs, colour
 scales, data bars and icon sets never count.  A fill colour the core cannot resolve (invalid rgb,
-theme / indexed index beyond the palette ...: an UnknownColour, 47-R2-08) is graded under every
-reading of it - no fill, bright yellow, another colour - and the check raises GradingError only
-when the readings disagree (class C47).
+theme / indexed index beyond the palette ...: an UnknownColour, 47-R2-08) is read as Excel's default
+for a fill, none (Patrick 2026-10-05: every attempt graded; until then every reading of it was graded
+and the check raised when they disagreed).
 
 LEGEND (the exception).  Text sources: constant text cells (shared / inline strings), cell
 comments (legacy and threaded) and drawing text boxes, on every sheet.  A text "mentions"
@@ -84,7 +85,6 @@ verdict does not depend on it.
 from __future__ import annotations
 
 import colorsys
-import copy
 import re
 from collections import defaultdict
 from typing import Optional
@@ -92,7 +92,7 @@ from typing import Optional
 from ..core.refs import index_to_col, location, range_to_str, split_ref
 from ..core.styles import FillPaint, is_unknown
 from ..errors import GradingError
-from ._fills import dxf_fill_paints
+from ._fills import dxf_fill_paints, known_paint, paint_unknowns as _paint_unknowns
 from .base import Check
 
 # ---------------------------------------------------------------------------- tunables
@@ -114,11 +114,6 @@ KEY_LINE_CLEAR_COLS = 3            # a legend line has no number / formula in th
 TABLE_ROWS_BELOW = 2               # a key label with label / value rows in the 2 rows below heads a table (47-R2-04)
 MERGED_SWATCH_MAX_CELLS = 3        # a legend sample merged across up to 3 cells is still one sample (47-R2-10)
 MAX_LINES_IN_STATS = 12
-# An unresolvable fill colour (core.styles.UnknownColour; 47-R2-08) is graded under every reading of it:
-UNKNOWN_FILL_READINGS = ("none", "bright", "other")   # no fill / bright yellow FFFF00 / another, non-bright colour
-MAX_UNKNOWN_FILL_COLOURS = 4       # distinct unresolvable fill colours tried in every combination (3**4 = 81 readings)
-_READING_NAMES = {"none": "no fill", "bright": "bright yellow FFFF00", "other": "another (not bright yellow) colour"}
-_OTHER_COLOURS = ("FF2E4057", "FF5B2A86", "FF1B998B", "FF8E3B46")   # 'other' reading: one per unknown colour
 
 # ---------------------------------------------------------------------------- colour band
 
@@ -437,61 +432,32 @@ def _short(t: str, n: int = 90) -> str:
 
 
 # ---------------------------------------------------------------------------- unresolvable colours
-def _paint_unknowns(p) -> tuple:
-    """The unresolvable colours (UnknownColour) a fill paint depends on, in order, without repeats."""
-    out = []
-    if p is None:
-        return ()
-    if p.kind == "gradient":
-        out = [c for c in p.stops if is_unknown(c)]
-    if is_unknown(p.effective):
-        out.append(p.effective)
-    return tuple(dict.fromkeys(out))
-
-
-def _average(cols) -> Optional[str]:
-    """Average of 'FFRRGGBB' colours (a gradient's effective colour, as core.styles computes it)."""
-    if not cols:
-        return None
-    n = len(cols)
-    return "FF" + "".join(f"{int(round(sum(int(c[i:i + 2], 16) for c in cols) / n)):02X}" for i in (2, 4, 6))
-
-
 # ---------------------------------------------------------------------------- check
 # row-buffer cell kinds
 K_TEXT, K_VALUE, K_FORMULA, K_EMPTY = "t", "v", "f", "e"
 
 
 class C47(Check):
-    """The rule above, graded by one READING of the workbook's fill colours - or, when a position the
-    check examines uses an unresolvable fill colour (core.styles.UnknownColour: an invalid rgb, a theme /
-    indexed index beyond the palette ...; finding 47-R2-08), by one reading per way Excel could paint it:
-    no fill, bright yellow FFFF00, another (non-bright) colour; with several distinct unknown colours,
-    every combination.  Each reading is a full copy of the check (forked when the colour is first met,
-    so a workbook without one runs a single reading at no cost).  All readings agree -> that verdict
-    (the one reading every unknown colour as no fill, with the colours in stats); otherwise
-    GradingError: the verdict depends on the colour.  Never raised while the style table is built, nor
-    for a style no examined position uses."""
+    """The rule above.  A fill colour the core cannot resolve (core.styles.UnknownColour: an invalid rgb, a
+    theme / indexed index beyond the palette ...; finding 47-R2-08) is read as Excel's default for a fill:
+    none (Patrick 2026-10-05: every attempt graded).  Every examined position (cell, row / column style,
+    style 0) whose fill uses one is recorded in stats.defaults.unresolved_colour, and the colours in
+    stats.unresolved_fill_colours.  Building the style table never raises, nor does a style no examined
+    position uses."""
     number = 47
     key = "Formatting/No bright-yellow highlighting"
     needs_cells = True
     needs_rows = True
     sheet_kinds = ("worksheet", "dialogsheet", "macrosheet")
 
-    # -------------------------------------------------------------- readings (unresolvable fill colours)
+    # -------------------------------------------------------------- unresolvable fill colours: no fill
     def start(self, wb):
         super().start(wb)
         self.st = wb.styles
-        self._subst: dict = {}                # UnknownColour -> 'none' | 'bright' | 'other' (this reading)
-        self._readings: list = []             # the other readings (copies of this check; primary only)
-        self._unknown: dict = {}              # UnknownColour -> where it was first met (primary only)
+        self._unknown: dict = {}              # UnknownColour -> where it was first met
         self._keys_cache: dict = {}           # style index -> unknown colours its fill paint uses
         self._admit(self._style_keys(0), "the default cell style 0 (every empty cell)")
-        for r in self._all():
-            r._start_body(wb)
-
-    def _all(self) -> list:
-        return [self] + self._readings
+        self._start_body(wb)
 
     def _style_keys(self, s) -> tuple:
         k = self._keys_cache.get(s)
@@ -500,86 +466,28 @@ class C47(Check):
         return k
 
     def _admit(self, keys, where: str):
-        """Fork every reading for each unresolvable colour not met before: the existing readings read it
-        as no fill, their copies as bright yellow and as another colour."""
+        """A position whose fill uses unresolvable colour(s): read as no fill (recorded)."""
+        if not keys:
+            return
         for k in keys:
-            if k in self._subst:
-                continue
-            if len(self._subst) >= MAX_UNKNOWN_FILL_COLOURS:
-                raise GradingError(f"{self.key}: {where} uses an unresolvable fill colour ({k}), and "
-                                   f"{len(self._subst)} other distinct ones are used too; more than "
-                                   f"{MAX_UNKNOWN_FILL_COLOURS} cannot be tried in every combination, so whether the "
-                                   f"verdict depends on them cannot be worked out")
-            self._unknown[k] = where
-            copies = []
-            for r in self._all():
-                for alt in UNKNOWN_FILL_READINGS[1:]:
-                    c = r._copy()
-                    c._subst[k] = alt
-                    copies.append(c)
-                r._subst[k] = UNKNOWN_FILL_READINGS[0]
-            self._readings.extend(copies)
-
-    def _copy(self) -> "C47":
-        saved = self._readings
-        self._readings = []
-        try:
-            c = copy.deepcopy(self, {id(self.wb): self.wb, id(self.st): self.st})
-        finally:
-            self._readings = saved
-        c._paint_cache, c._bright_cache, c._filled_cache = {}, {}, {}
-        return c
-
-    def _reading_name(self) -> str:
-        return ", ".join(f"{k.ref} as {_READING_NAMES[alt]}" for k, alt in self._subst.items())
-
-    def _subst_colour(self, c) -> Optional[str]:
-        """An unresolvable colour under this reading: None (paints nothing), FFFF00, or a non-bright colour."""
-        alt = self._subst.get(c)
-        if alt is None:
-            raise GradingError(f"{self.key}: internal error: unresolvable colour {c} used before it was admitted")
-        if alt == "none":
-            return None
-        if alt == "bright":
-            return "FFFFFF00"
-        return _OTHER_COLOURS[list(self._subst).index(c) % len(_OTHER_COLOURS)]
+            self._unknown.setdefault(k, where)
+        self.note_default("unresolved_colour", f"{where}: fill colour {', '.join(str(k) for k in keys)} read as no "
+                                               f"fill")
 
     def _paint(self, s) -> FillPaint:
-        """The fill paint of style s under this reading (cached)."""
+        """The fill paint of style s, an unresolvable colour painting nothing (cached)."""
         p = self._paint_cache.get(s)
         if p is None:
-            p = self._paint_cache[s] = self._substituted(self.st.cell_fill(s))
+            p = self._paint_cache[s] = known_paint(self.st.cell_fill(s))
         return p
 
-    def _substituted(self, p) -> FillPaint:
-        if not _paint_unknowns(p):
-            return p
-        if p.kind == "gradient":
-            stops = []
-            for c in p.stops:
-                if is_unknown(c):
-                    c = self._subst_colour(c)
-                    if c is None:
-                        continue
-                stops.append(c)
-            return FillPaint("gradient", None, None, None, _average(stops), tuple(stops))
-        c = self._subst_colour(p.effective)
-        if c is None:
-            return FillPaint("none", None, None, None, None)
-        return FillPaint(p.kind, p.pattern, p.fg, p.bg, c, p.stops)
-
     def sheet_start(self, head):
-        keys = []
         # column styles through the shared <col> reading (later entry wins where entries overlap)
         for lo, hi, ci in head.col_segments():
             if ci.style is not None:
-                keys += [(k, f"the column style of "
-                              f"{location(head.name, f'{index_to_col(lo)}:{index_to_col(hi)}')}")
-                         for k in self._style_keys(ci.style)]
-        for k, where in keys:
-            self._admit((k,), where)
-        for r in self._all():
-            r._sheet_start(head)
+                self._admit(self._style_keys(ci.style),
+                            f"the column style of {location(head.name, f'{index_to_col(lo)}:{index_to_col(hi)}')}")
+        self._sheet_start(head)
 
     def row(self, row):
         if row.style is not None:
@@ -587,51 +495,23 @@ class C47(Check):
             if ks:
                 self._admit(ks, f"the row style of {location(self.sheet, f'{row.r}:{row.r}')}")
         self._row(row)
-        for r in self._readings:
-            r._row(row)
 
     def cell(self, cell):
         ks = self._style_keys(cell.s)
         if ks:
             self._admit(ks, f"{location(self.sheet, cell.ref)} (cell style {cell.s})")
         self._cell(cell)
-        for r in self._readings:
-            r._cell(cell)
 
     def sheet_end(self, head, tail):
-        # conditional-format fills with an unresolvable colour are not readings: such a rule is OFF here
+        # conditional-format fills with an unresolvable colour are not counted either: such a rule is OFF here
         # (Patrick 2026-10-05: conditional formats never stop a grading), see _sheet_end
-        for r in self._all():
-            r._sheet_end(head, tail)
+        self._sheet_end(head, tail)
 
     def finish(self) -> dict:
-        outs = []
-        for r in self._all():
-            try:
-                outs.append((r, r._finish_body(), None))
-            except GradingError as e:
-                outs.append((r, None, e))
-        if len(outs) == 1:
-            if outs[0][2] is not None:
-                raise outs[0][2]
-            return outs[0][1]
-        colours = "; ".join(f"{k} first used by {w}" for k, w in self._unknown.items())
-        err = next((x for x in outs if x[2] is not None), None)
-        if err is not None:
-            raise GradingError(f"{err[2]} (reading {err[0]._reading_name()}; unresolvable fill colour(s): {colours})")
-        dec = {v["decision"] for _r, v, _e in outs}
-        if len(dec) > 1:
-            ok = next(r for r, v, _e in outs if v["decision"] == "pass")
-            bad = next(r for r, v, _e in outs if v["decision"] == "fail")
-            raise GradingError(f"{self.key}: the verdict depends on unresolvable fill colour(s) - {colours}: reading "
-                               f"{ok._reading_name()} the workbook passes; reading {bad._reading_name()} it fails")
-        v = outs[0][1]
-        v["stats"]["unresolved_fill_colours"] = [{"colour": k.ref, "why": k.why, "first_used": w}
-                                                 for k, w in self._unknown.items()]
-        v["stats"]["unresolved_fill_readings"] = len(outs)
-        v["summary"] += (f" (Holds whatever the {len(self._unknown)} unresolvable fill colour(s) paint: "
-                         f"{len(outs)} readings agree.)")
-        return v
+        if self._unknown:
+            self.stats["unresolved_fill_colours"] = [{"colour": k.ref, "why": k.why, "first_used": w}
+                                                     for k, w in self._unknown.items()]
+        return self._finish_body()
 
     # -------------------------------------------------------------- workbook level (one reading)
     def _start_body(self, wb):

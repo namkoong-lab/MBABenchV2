@@ -17,7 +17,7 @@ import traceback
 
 from detchecks.checks import colour_rules as CR
 from . import test_checks_colours as T
-from .test_checks_colours import BLACK, BLUE, GREEN, GREY50, WHITE, book, c, locs, raises, run, sheet
+from .test_checks_colours import BLACK, BLUE, GREEN, GREY50, WHITE, book, c, graded, locs, raises, run, sheet
 
 
 def test_prefilter_rejects_shapes_that_cannot_be_pointers():
@@ -68,7 +68,7 @@ def test_prefilter_rejects_shapes_that_cannot_be_pointers():
     # a text of pointer shape whose class cannot be worked out still raises (no guess)
     for t in ("Nope[Col]", "-Nope[Col]", "(Nope[Col])", "_xlfn.TOROW(Nope[Col])", "Nope[Col]#"):
         p = book("50_r2_pure_unknown.xlsx", [("Calc", sheet((1, [c("A1", BLACK, t)])), None), ("Inputs", sheet(), None)])
-        raises(lambda: run(p, 50), "table 'Nope' is not defined")
+        graded("unparsable_formula", lambda: run(p, 50))          # skipped since Patrick 2026-10-05
     # green cells are never classified, whatever their text
     p = book("50_r2_green.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "Nope[Col]"), c("B1", GREEN, "SUM(Nope[Col]")])), None),
                                   ("Inputs", sheet(), None)])
@@ -80,7 +80,7 @@ def test_prefilter_rejects_shapes_that_cannot_be_pointers():
     v = run(p, 49)
     assert locs(v) == ["Calc!A1"] and v["stats"]["unclassified_offending_cells"] == 1, (locs(v), v["stats"])
     p = book("50_r2_49_grey_tbl.xlsx", [("Calc", sheet((1, [c("A1", GREY50, "SUM(Nope[Col])")])), None)])
-    raises(lambda: run(p, 49), "table 'Nope' is not defined")
+    graded("unparsable_formula", lambda: run(p, 49))
 
 
 TESTS = [test_prefilter_rejects_shapes_that_cannot_be_pointers]

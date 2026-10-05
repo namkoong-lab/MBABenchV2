@@ -72,7 +72,6 @@ class C49(ColourCheck):
     number = 49
     key = "Formatting/Black font for calculations"
     safe_family = "black"
-    colour_always_matters = False      # a pointer / external cell's colour is not 49's business
 
     def start(self, wb):
         super().start(wb)
@@ -106,9 +105,6 @@ class C49(ColourCheck):
             return True
         return self.clf.may_be_pointer(text) or self.clf.may_read_other_book(text)
 
-    def colour_matters(self, cls) -> bool:
-        return cls.kind not in NOT_JUDGED or bool(cls.unsure)
-
     def _raise(self, cell, what: str):
         raise GradingError(f"{self.key}: '{cell.sheet}'!{cell.ref}: {what}")
 
@@ -128,7 +124,12 @@ class C49(ColourCheck):
                 self._raise(cell, f"green formula using a {cls.unsure}; whether it reads another sheet "
                                   f"(green allowed) or only its own sheet (must be black) cannot be decided")
             if cls.indirect_unresolved:
-                tc = self.clf.classify(cell.formula_text, cell.sheet) if self._child else cls
+                try:
+                    tc = self.clf.classify(cell.formula_text, cell.sheet) if self._child else cls
+                except GradingError as e:
+                    # Patrick 2026-10-05 (every attempt graded): a formula text that cannot be read is skipped
+                    self.note_default("unparsable_formula", f"'{cell.sheet}'!{cell.ref}: {e}")
+                    return None
                 if INDIRECT_READ_ADDRESS_CELL and tc.indirect_cells:
                     return Pending(tc.indirect_cells)
                 self._raise(cell, "green formula whose INDIRECT address is built from cell contents; whether it "

@@ -154,6 +154,20 @@ def run(path, **kw):
     return Engine(path, [C22()], **kw).run()[C22.key]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -324,10 +338,10 @@ def test_implicit_intersection_toy_t5_pattern():
 def test_untrusted_values_raise_without_the_pipeline():
     # openpyxl-labelled file: its cache is never trusted -> GradingError (no fallback)
     p = book([("S", sheet([c("A1", "#DIV/0!", t="e", f="1/0")]))], app=APP_OPX, excel=False)
-    raises(lambda: run(p), "No formula errors", "untrusted", "S!A1")
+    graded("untrusted_value", lambda: run(p), "No formula errors", "untrusted", "S!A1")
     # a formula without any cached value in an Excel-labelled file is untrusted too
     p = book([("S", sheet([c("A1", None, f="1/0")]))])
-    raises(lambda: run(p), "untrusted")
+    graded("untrusted_value", lambda: run(p), "untrusted")
 
 
 def test_value_path_copy_supplies_values():
@@ -338,7 +352,7 @@ def test_value_path_copy_supplies_values():
     v = run(p, value_path=lo)
     assert locs(v) == ["S!A1"] and v["stats"]["values"]["source"] == "value_path"
     lo2 = book([("S", sheet([c("A1", "#NAME?", t="e", f="1/0"), c("A2", 3, f="SUM(1,2)")]))], app=APP_LO, excel=False)
-    raises(lambda: run(p, value_path=lo2), "untrusted")
+    graded("untrusted_value", lambda: run(p, value_path=lo2), "untrusted")
 
 
 def test_live_flag_on_verdicts():

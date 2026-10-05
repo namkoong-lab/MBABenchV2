@@ -146,6 +146,20 @@ def locs(v):
     return [m["location"] for m in v["mistakes"]]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -532,7 +546,7 @@ def test_73_formula_values_only_where_needed():
     assert v["decision"] == "fail" and v["stats"]["formula_values_read"] == 0
     # wrapped formula cell in a tall row: its value is needed; untrusted -> GradingError (no fallback)
     x = ws({2: ('ht="90" customHeight="1"', [c("A2", para, sw, f='REPT("Explanation ",30)')])}, cols=cols)
-    raises(lambda: run(book([("S", x)], st, app=app), C73), "needs the value of S!A2", "openpyxl")
+    graded("untrusted_value", lambda: run(book([("S", x)], st, app=app), C73), "needs the value of S!A2", "openpyxl")
     # ... but not when a constant in the same row already justifies the height
     x = ws({2: ('ht="90" customHeight="1"', [c("A2", para, sw, f='REPT("Explanation ",30)'), c("B2", para, sw)])}, cols=cols)
     v = run(book([("S", x)], st, app=app), C73)
@@ -573,7 +587,7 @@ def test_73_values_after_anchors_untrusted_only_if_needed():
     assert v["stats"]["undecided_rows"][0]["row"] == 46 and v["stats"]["undecided_rows"][0]["cells_needing_values"] == ["B46"]
     assert "undecided" in v["summary"]
     with patched(M73, UNTRUSTED_ONLY_IF_VERDICT_NEEDS=False):
-        raises(lambda: run(book([("S", x)], st, app=app), C73), "needs the value of S!B46", "openpyxl")
+        graded("untrusted_value", lambda: run(book([("S", x)], st, app=app), C73), "needs the value of S!B46", "openpyxl")
     # trusted values are read before untrusted ones: row 3's trusted cache settles the verdict (fail),
     # so row 2's formula without a cache (untrusted) is never needed
     x = ws({2: ('ht="90" customHeight="1"', [c("A2", None, sw, f='REPT("Explanation ",30)')]),
@@ -590,7 +604,7 @@ def test_73_values_after_anchors_untrusted_only_if_needed():
     assert v["stats"]["formula_values_read"] == 2 and v["stats"]["rows_undecided"] == 0
     # ... and when no row fails, the untrusted value is really needed -> GradingError
     x = ws({2: ('ht="90" customHeight="1"', [c("A2", None, sw, f='REPT("Explanation ",30)')])}, cols=cols)
-    raises(lambda: run(book([("S", x)], st), C73), "needs the value of S!A2")
+    graded("untrusted_value", lambda: run(book([("S", x)], st), C73), "needs the value of S!A2")
 
 
 def test_73_rich_runs_indent_cap_and_labels():

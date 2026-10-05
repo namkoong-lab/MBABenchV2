@@ -38,11 +38,6 @@ class C51(ColourCheck):
         # table that is not defined or cannot be read leaves the verdict unchanged (R2, 2026-10-04)
         return False
 
-    def colour_matters(self, cls) -> bool:
-        # EXTERNAL is certain (worked out from known operands only); otherwise the cell may
-        # still read another workbook through a defined name whose scope is unknown
-        return cls.kind == EXTERNAL or bool(cls.unsure_ext)
-
     def judge(self, cls, fam: str, argb: str, cell) -> Optional[str]:
         if cls.kind == EXTERNAL:                # certain whatever an unknown-scope name turns out to be (R1)
             return EXTERNAL

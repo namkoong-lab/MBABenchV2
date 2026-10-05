@@ -195,6 +195,20 @@ def run(path, value_path=None):
     return Engine(path, [C65()], value_path=value_path).run()[C65.key]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -547,14 +561,14 @@ def test_values_read_only_where_needed():
     p = st.xf('#,##0;(#,##0)')
     v = run(book([("S", sheet([c("A1", p, -5, f="B1*-1"), c("B1", 0, 5), c("C1", p, None, f="B1")]))], st, app=APP_OPX))
     assert v["decision"] == "pass" and v["stats"]["formula_values_read"] == 0
-    e = raises(lambda: run(book([("S", sheet([c("A1", 0, -5, f="B1*-1"), c("B1", 0, 5)]))], st, app=APP_OPX)),
+    e = graded("untrusted_value", lambda: run(book([("S", sheet([c("A1", 0, -5, f="B1*-1"), c("B1", 0, 5)]))], st, app=APP_OPX)),
                "untrusted", "S!A1", "'General'", "'-1234567.891'")
     # a conditional format needs the value too (which section applies depends on it)
     k = st.xf('[<-1000](#,##0);#,##0')
-    raises(lambda: run(book([("S", sheet([c("A1", k, -5, f="B1*-1"), c("B1", 0, 5)]))], st, app=APP_OPX)),
+    graded("untrusted_value", lambda: run(book([("S", sheet([c("A1", k, -5, f="B1*-1"), c("B1", 0, 5)]))], st, app=APP_OPX)),
            "untrusted", "conditional sections")
     # a positive cached value is still untrusted: the check cannot know it is positive
-    raises(lambda: run(book([("S", sheet([c("A1", 0, 5, f="B1"), c("B1", 0, 5)]))], st, app=APP_OPX)), "untrusted")
+    graded("untrusted_value", lambda: run(book([("S", sheet([c("A1", 0, 5, f="B1"), c("B1", 0, 5)]))], st, app=APP_OPX)), "untrusted")
     # constants are always readable
     assert locs(run(book([("S", sheet([c("A1", 0, -5)]))], st, app=APP_OPX))) == ["S!A1"]
     # a trusted writer (no docProps): the cache is read
@@ -578,11 +592,11 @@ def test_untrusted_values_needed_only_after_the_tail():
     cells = [c("A1", 0, "Label"), c("B1", 0, -5, f="D1*-1"), c("D1", 0, 5)]
     assert run(book([("S", sheet(cells, tail=tail))], st, app=APP_OPX))["decision"] == "pass"
     # controls: the tail does not rescue the cell -> GradingError naming it
-    raises(lambda: run(book([("S", sheet(f0 + [c("A3", 0, -5, f="B1*-1")], tail=tail))], st, app=APP_OPX)),
+    graded("untrusted_value", lambda: run(book([("S", sheet(f0 + [c("A3", 0, -5, f="B1*-1")], tail=tail))], st, app=APP_OPX)),
            "untrusted", "S!A1")
     tail_lt = cf_main("A1:A5", ("cellIs", dx, "lessThan", ["-100"], ""))      # fires only on some negatives
-    raises(lambda: run(book([("S", sheet(f0, tail=tail_lt))], st, app=APP_OPX)), "untrusted", "S!A1")
-    raises(lambda: run(book([("S", sheet(f0))], st, app=APP_OPX)), "untrusted", "S!A1")
+    graded("untrusted_value", lambda: run(book([("S", sheet(f0, tail=tail_lt))], st, app=APP_OPX)), "untrusted", "S!A1")
+    graded("untrusted_value", lambda: run(book([("S", sheet(f0))], st, app=APP_OPX)), "untrusted", "S!A1")
 
 
 def test_untrusted_values_beyond_buffer_second_pass():
@@ -593,7 +607,7 @@ def test_untrusted_values_beyond_buffer_second_pass():
         v = run(book([("S", sheet(rescued, tail=tail))], st, app=APP_OPX))
         assert v["decision"] == "pass" and v["stats"]["deferred_second_pass_sheets"] == ["S"], v
         bad = rescued + [c("D4", 0, -5, f="C1*-1")]
-        raises(lambda: run(book([("S", sheet(bad, tail=tail))], st, app=APP_OPX)), "untrusted", "S!D4")
+        graded("untrusted_value", lambda: run(book([("S", sheet(bad, tail=tail))], st, app=APP_OPX)), "untrusted", "S!D4")
 
 
 def test_unreadable_formats_raise_only_when_needed():
@@ -610,7 +624,7 @@ def test_array_members_missing_from_the_file():
     st = Styles()
     p = st.xf('#,##0;(#,##0)')
     anchor = '<c r="A1"><f t="array" ref="A1:C1">B9:D9*1</f><v>5</v></c>'
-    raises(lambda: run(book([("S", f'<sheetData><row r="1">{anchor}</row></sheetData>')], st)),
+    graded("unwritten_array_member", lambda: run(book([("S", f'<sheetData><row r="1">{anchor}</row></sheetData>')], st)),
            "S!A1:C1", "2 member cell(s) not written in the file", "'General'")
     cols = f'<cols><col min="2" max="3" width="9" style="{p}"/></cols>'
     v = run(book([("S", f'{cols}<sheetData><row r="1">{anchor}</row></sheetData>')], st))
@@ -622,7 +636,7 @@ def test_array_members_missing_from_the_file():
     v = run(book([("S", full)], st))
     assert v["decision"] == "pass" and v["stats"]["array_members_not_in_file"] == 0, v
     dyn = '<c r="A1" cm="1"><f t="array" ref="A1:A3">SEQUENCE(3)</f><v>1</v></c>'
-    raises(lambda: run(book([("S", f'<sheetData><row r="1">{dyn}</row></sheetData>')], st)),
+    graded("unwritten_array_member", lambda: run(book([("S", f'<sheetData><row r="1">{dyn}</row></sheetData>')], st)),
            "S!A1:A3", "2 member cell(s)")
 
 
@@ -651,7 +665,7 @@ def test_formula_results_typed_text_or_error_follow_the_trusted_value():
     v = run(delivered, value_path=copy2)
     assert v["decision"] == "pass" and v["stats"]["negative_cells_by_display"] == {}, v
     # no copy: the values are needed and untrusted -> GradingError naming the first such cell
-    raises(lambda: run(delivered), "untrusted", "S!A1", "'General'")
+    graded("untrusted_value", lambda: run(delivered), "untrusted", "S!A1", "'General'")
     # ... but not under a parenthesis format (no value needed)
     v = run(book([("S", sheet([c("A1", p, "", f="-C1"), c("A2", p, "#NAME?", t="e", f="-C1"), c("C1", 0, 5)]))],
                  st, app=APP_OPX, name="typed_parens"))
@@ -669,7 +683,7 @@ def test_formula_results_typed_text_or_error_follow_the_trusted_value():
               name="typed_cf_copy")
     v = run(d2, value_path=c2)
     assert v["decision"] == "fail" and locs(v) == ["S!A1:A2"] and v["stats"]["cf_second_pass_sheets"] == ["S"], v
-    raises(lambda: run(d2), "untrusted", "S!A2")
+    graded("untrusted_value", lambda: run(d2), "untrusted", "S!A2")
 
 
 def test_label_literals_are_not_signs():

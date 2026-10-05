@@ -168,6 +168,20 @@ def locs(v):
     return [m["location"] for m in v["mistakes"]]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -575,14 +589,14 @@ def test_69_text_values_formats_and_fonts():
         assert v["stats"]["text_formula_results"] == 1
         # openpyxl: an untrusted formula result is undecided and raises when nothing else fails (no fallback) - unless its
         # format shows nothing for numbers AND text (';;;'); under ';;' a text result would still show (69-F2 narrowed)
-        raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX)),
+        graded("untrusted_value", lambda: run(book([("S", ws({1: ("", [c("A1", None, f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX)),
                "cannot decide S!A1", "untrusted")
         v = run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;;"), f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX))
         assert v["decision"] == "pass" and v["stats"]["undecided_not_displayed"] == 1, v
-        raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;"), f="C1&C1"), c("C1", "x")])}))], st,
+        graded("untrusted_value", lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;"), f="C1&C1"), c("C1", "x")])}))], st,
                                 app=APP_OPX)), "cannot decide S!A1")
         # ... an untrusted result in a centre-across cell is needed for the text rule (the number rule skips the cell)
-        raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(horizontal="centerContinuous"), f="C1&C1"),
+        graded("untrusted_value", lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(horizontal="centerContinuous"), f="C1&C1"),
                                                      c("C1", "x")])}))], st, app=APP_OPX)), "cannot decide S!A1")
         # with a value copy holding a long text behind the placeholder: cut off -> fail
         x = ws({1: ("", [c("A1", 0, f='IF(C1>0,"far too long a label","")'), c("B1", 5.0), c("C1", 1)])}, cols=cols8)
@@ -713,11 +727,11 @@ def test_69_formula_values():
     narrow = col(1, 1, stored(3.0))
     # openpyxl-labelled file: the formula's cache is untrusted and nothing else decides -> GradingError
     x = ws({1: ("", [c("A1", 1234567.0, s_num, f="B1*2"), c("B1", 617283.5, s_num)])}, cols=col(1, 1, stored(3.0)) + col(2, 2, stored(20.0)))
-    raises(lambda: run(book([("S", x)], st, app="Microsoft Excel Compatible / Openpyxl 3.1.5")),
+    graded("untrusted_value", lambda: run(book([("S", x)], st, app="Microsoft Excel Compatible / Openpyxl 3.1.5")),
            "cannot decide S!A1", "untrusted", "writer=openpyxl")
     # the same with no cache at all
     x2 = ws({1: ("", [c("A1", None, s_num, f="B1*2"), c("B1", 617283.5, s_num)])}, cols=col(1, 1, stored(3.0)) + col(2, 2, stored(20.0)))
-    raises(lambda: run(book([("S", x2)], st)), "cannot decide S!A1")
+    graded("untrusted_value", lambda: run(book([("S", x2)], st)), "cannot decide S!A1")
     # Excel-labelled: the cache is read and the cell fails
     v = run(book([("S", x)], st, app="Microsoft Excel"))
     assert v["decision"] == "fail" and locs(v) == ["S!A1"] and v["stats"]["formula_values_read"] == 1
@@ -727,9 +741,9 @@ def test_69_formula_values():
     v = run(book([("S", x3)], st, app="Microsoft Excel Compatible / Openpyxl 3.1.5"))
     assert v["decision"] == "fail" and locs(v) == ["S!A2"]
     assert v["stats"]["undecided_cells"] == 1 and v["stats"]["undecided_examples"][0]["cell"] == "A1"
-    assert "could not be measured" in v["summary"]
+    assert "were skipped" in v["summary"] and v["stats"]["defaults"]["untrusted_value"]["count"] == 1, v
     with patched(M, UNTRUSTED_ONLY_IF_VERDICT_NEEDS=False):
-        raises(lambda: run(book([("S", x3)], st, app="Microsoft Excel Compatible / Openpyxl 3.1.5")), "cannot decide")
+        graded("untrusted_value", lambda: run(book([("S", x3)], st, app="Microsoft Excel Compatible / Openpyxl 3.1.5")), "cannot decide")
     # a shrink-to-fit formula cell never needs its value; a formula in a hidden column neither
     s_shr = st.xf(numfmt="#,##0.00", shrink=True)
     v = run(book([("S", ws({1: ("", [c("A1", None, s_shr, f="1/3")])}, cols=narrow))], st))
@@ -881,7 +895,7 @@ def test_69_review2_placeholder_types():
     big = 123456789
     # openpyxl t="str" placeholder with an empty cache: undecided -> GradingError (was a silent pass)
     x = ws({1: ("", [c("A1", "", s0, f="B1*1", t="str"), c("B1", big)])}, cols=cols)
-    raises(lambda: run(book([("S", x)], st, app=APP_OPX)), "cannot decide S!A1", "untrusted", "writer=openpyxl")
+    graded("untrusted_value", lambda: run(book([("S", x)], st, app=APP_OPX)), "cannot decide S!A1", "untrusted", "writer=openpyxl")
     # ... with a value copy holding the number: measured and failed (was a pass)
     copy = book([("S", ws({1: ("", [c("A1", big, s0, f="B1*1"), c("B1", big)])}, cols=cols))], st)
     v = run_with(book([("S", x)], st, app=APP_OPX), value_path=copy)
@@ -902,7 +916,7 @@ def test_69_review2_placeholder_types():
     assert v["stats"]["text_formula_results"] == 1 and v["stats"]["numeric_cells"] == 1
     # a LibreOffice-written #NAME? cache read without the pipeline is untrusted (core policy) -> undecided
     xe = ws({1: ("", [c("A1", "#NAME?", s0, f="FOO(1)", t="e")])}, cols=cols)
-    raises(lambda: run(book([("S", xe)], st, app=APP_LO)), "cannot decide S!A1", "writer=libreoffice")
+    graded("untrusted_value", lambda: run(book([("S", xe)], st, app=APP_LO)), "cannot decide S!A1", "writer=libreoffice")
     # trusted (Excel) text and error results are not numbers this check measures (the text goes to the cut-off
     # text rule: it runs into the empty B1 and is visible; the error sits in C1 since 2026-10-04 - in B1 it would
     # cut the text off)
@@ -948,18 +962,18 @@ def test_69_review2_not_displayed_never_undecided():
     d = st.dxf("0.000")
     cf = (f'<conditionalFormatting sqref="A1"><cfRule type="cellIs" dxfId="{d}" priority="1" operator="greaterThan">'
           f'<formula>0</formula></cfRule></conditionalFormatting>')
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, s_blank, f="B1*1"), c("B1", 1)])}, cols=narrow, tail=cf))],
+    graded("untrusted_value", lambda: run(book([("S", ws({1: ("", [c("A1", None, s_blank, f="B1*1"), c("B1", 1)])}, cols=narrow, tail=cf))],
                             st, app=APP_OPX)), "cannot decide S!A1")
     merge = '<mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells>'
     v = run(book([("S", ws({1: ("", [c("A1", 5, s0), c("B1", None, s0, f="A1*2")])}, cols=narrow, tail=merge))], st, app=APP_OPX))
     assert v["decision"] == "pass" and v["stats"]["undecided_not_displayed"] == 1, v
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, s0, f="C1*2"), c("C1", 5)])}, cols=narrow, tail=merge))],
+    graded("untrusted_value", lambda: run(book([("S", ws({1: ("", [c("A1", None, s0, f="C1*2"), c("C1", 5)])}, cols=narrow, tail=merge))],
                             st, app=APP_OPX)), "cannot decide S!A1")
     # an unverified rendering (numfmt certain=False) in a covered merged cell is not undecided either
     s_unc = st.xf(numfmt="#,##0.000000;[>100]0")
     v = run(book([("S", ws({1: ("", [c("A1", 5, s0), c("B1", -1234567.0, s_unc)])}, cols=narrow, tail=merge))], st))
     assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", -1234567.0, s_unc)])}, cols=narrow))], st)), "not verified")
+    graded("unverified_number_format", lambda: run(book([("S", ws({1: ("", [c("A1", -1234567.0, s_unc)])}, cols=narrow))], st)), "not verified")
 
 
 def test_69_review2_hidden_merge_anchor():
@@ -997,7 +1011,7 @@ def test_69_review2_hidden_merge_anchor():
     # an untrusted formula anchor there is undecided (raises) unless its format prints nothing
     s_blank = st.xf(numfmt=";;;")
     hid = col(1, 1, hidden=True) + col(2, 2, stored(3.0)) + col(3, 3, stored(40.0))
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, s0, f="C1*1"), c("C1", big)])}, cols=hid, tail=merge))],
+    graded("untrusted_value", lambda: run(book([("S", ws({1: ("", [c("A1", None, s0, f="C1*1"), c("C1", big)])}, cols=hid, tail=merge))],
                             st, app=APP_OPX)), "cannot decide S!A1")
     v = run(book([("S", ws({1: ("", [c("A1", None, s_blank, f="C1*1"), c("C1", big)])}, cols=hid, tail=merge))], st, app=APP_OPX))
     assert v["decision"] == "pass" and v["stats"]["undecided_not_displayed"] == 1, v

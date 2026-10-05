@@ -222,10 +222,20 @@ class C22(Check):
     def cell(self, cell):
         if cell.is_formula_result:
             self.n_formula += 1
+            if not cell.value_trusted:
+                # Patrick 2026-10-05 (every attempt graded): an untrusted value is skipped for this check
+                self.note_default("untrusted_value", f"{location(cell.sheet, cell.ref)} (source={cell.value_source})")
+                return
             self.n_values_read += 1
-            v = self.require_value(cell)          # GradingError when untrusted / missing (no fallback)
-            text = cell.formula_text if cell.has_formula else (
-                cell.array.formula.text if cell.array is not None and cell.array.formula is not None else None)
+            v = self.require_value(cell)
+            try:
+                text = cell.formula_text if cell.has_formula else (
+                    cell.array.formula.text if cell.array is not None and cell.array.formula is not None else None)
+            except GradingError as e:
+                # a formula text that cannot be read (a shared child without its master): its value is still
+                # judged, the implicit-intersection test is skipped (Patrick 2026-10-05: every attempt graded)
+                self.note_default("unparsable_formula", f"{location(cell.sheet, cell.ref)}: {e}")
+                text = None
             if isinstance(v, ExcelError):
                 code = str(v)
                 if code == "#VALUE!" and cell.vm is not None and cell.value_source == "cached":

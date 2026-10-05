@@ -893,7 +893,14 @@ class C69(Check):
                 cands.append((r, c, s, v, t, text, 999.0, "negative date"))
             return
         if status == "uncertain":
-            uncertain.append((r, c, ref, f"display of {v!r} under number format {sty.code!r} is not verified"))
+            # Patrick 2026-10-05 (every attempt graded): the engine's best rendering is measured, and it overflows
+            # under every model
+            self.note_default("unverified_number_format", f"{location(self._sheet_name, ref)} = {v!r} under "
+                                                          f"{sty.code!r} shows {text.strip()!r}")
+            cands.append((r, c, s, v, t, text, ov[REFERENCE_MODEL], "an unverified number format, best rendering"))
+            if len(cands) > MAX_CANDIDATES:
+                raise GradingError(f"{self.key}: more than {MAX_CANDIDATES:,} overflowing cells on sheet "
+                                   f"{self._sheet_name!r}; too many to grade")
             return
         if status == "band":
             self.n_band += 1
@@ -1608,7 +1615,7 @@ class C69(Check):
                 if pixels is None:
                     continue
                 status, ov, text = self._measure(self._style(s), v, t, self._style(s).code, pixels)
-                if status != "over":
+                if status not in ("over", "uncertain"):
                     if status == "band":
                         self.n_band += 1
                     continue
@@ -1814,15 +1821,16 @@ class C69(Check):
                 decisive = True
         if why:
             self._assume(cell.sheet, cell.ref, v, "; ".join(why), decisive)
-        over = [x for x in results.values() if x[0] == "over"]
+        if any(x[0] == "uncertain" for x in results.values()):
+            # the cell's OWN format's display is not verified (not a conditional-format matter): the engine's best
+            # rendering is measured (Patrick 2026-10-05: every attempt graded)
+            self.note_default("unverified_number_format", f"{location(cell.sheet, cell.ref)} = {v!r} under "
+                                                          f"{sty.code!r}: best rendering measured")
+        over = [x for x in results.values() if x[0] in ("over", "uncertain")]
         if over and len(over) == len(results):
             best = max(over, key=lambda x: x[1][REFERENCE_MODEL])
             note = f'conditional-format number format "{best[3]}"' if best[3] != sty.code else None
             p["cands"].append((cell.row, cell.col, cell.s, v, t, best[2], best[1][REFERENCE_MODEL], note))
-        elif any(x[0] == "uncertain" for x in results.values()):
-            # the cell's OWN format's display is not verified (not a conditional-format matter)
-            p["uncertain"].append((cell.row, cell.col, cell.ref,
-                                   f"display of {v!r} under number format {sty.code!r} is not verified"))
 
     def second_pass_end(self, head, tail):
         p = self._p2
@@ -1889,15 +1897,9 @@ class C69(Check):
                               "text_cut_off": len(rec["text_cut"]), "wrapped_text_cut_off": len(rec["wrap_cut"]),
                               "text_cut_off_short": rec["short"][0], "wrapped_text_cut_off_short": rec["short"][1]})
         self.counts["sure_overflows"] = n_sure
-        failed = self.mistakes.total > 0
-        if undecided and not (failed and UNTRUSTED_ONLY_IF_VERDICT_NEEDS):
-            u = undecided[0]
-            prov = getattr(self.wb, "provenance", None)
-            why = (f"writer={prov.writer}, value_path={'given' if prov and prov.value_path else 'none'}"
-                   if prov else "no provenance")
-            raise GradingError(f"{self.key}: cannot decide {u['sheet']}!{u['cell']}: {u['why']} ({why}); "
-                               f"{len(undecided)} cell(s) undecided in all, no measured cell overflows and no text "
-                               f"is cut off, so the verdict depends on them (no fallback)")
+        for u in undecided:
+            # Patrick 2026-10-05 (every attempt graded): an untrusted formula value is skipped, never raised
+            self.note_default("untrusted_value", f"{location(u['sheet'], u['cell'])}: {u['why']}")
         stats = dict(self.counts)
         stats.update(self.tcounts)
         stats.update({
@@ -1942,8 +1944,7 @@ class C69(Check):
         })
         und_note = ""
         if undecided:
-            und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values or conditional "
-                        f"formats); the verdict does not depend on them (see stats).")
+            und_note = (f" {len(undecided)} cell(s) with an untrusted formula value were skipped (stats.defaults).")
         flagged = ", ".join(f"'{p['sheet']}'" for p in per_sheet
                             if p["sure_overflows"] or (TEXT_CLIP and p["text_cut_off"])
                             or (WRAPPED_TEXT_CLIP and p["wrapped_text_cut_off"]))

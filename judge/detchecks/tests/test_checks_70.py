@@ -180,6 +180,20 @@ def locs(v):
     return [m["location"] for m in v["mistakes"]]
 
 
+def graded(kind, fn, *needles):
+    """Patrick 2026-10-05 (every attempt graded): where the check used to raise, it decides by a default
+    recorded in stats.defaults[kind]; needles that name a location ('S!A1') must appear in that record."""
+    import json
+    v = fn()
+    d = (v["stats"].get("defaults") or {}).get(kind)
+    assert d and d["count"] >= 1, (kind, v["stats"].get("defaults"))
+    blob = json.dumps(d)
+    for n in needles:
+        if "!" in n:
+            assert n.split("!")[-1] in blob, (n, d)
+    return v
+
+
 def raises(fn, *needles):
     try:
         fn()
@@ -488,18 +502,20 @@ def test_70_formula_values():
     wide = col(8, 8, stored(150))
     # openpyxl-labelled, judged column holding only untrusted formula results -> cannot decide
     x = ws({1: [c("H1", None, s_wrap, f='"Enterprise Value"')], 2: [c("H2", 5.0, s_wrap, f="1+4")]}, cols=wide)
-    raises(lambda: run(book([("S", x)], st, app=OPENPYXL)), "cannot decide S!H1", "untrusted", "writer=openpyxl")
+    graded("untrusted_value", lambda: run(book([("S", x)], st, app=OPENPYXL)), "cannot decide S!H1", "untrusted", "writer=openpyxl")
     # a constant that needs half the width settles the column: the untrusted values are not needed
     x2 = ws({1: [c("H1", None, s_wrap, f='"x"')], 3: [c("H3", digits(80))]}, cols=wide)
     v = run(book([("S", x2)], st, app=OPENPYXL))
-    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v
-    # a workbook that fails elsewhere lists the undecided cells and raises nothing
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 1, v           # H1 skipped (recorded)
+    assert v["stats"]["defaults"]["untrusted_value"]["count"] == 1, v["stats"]
+    # the untrusted value skipped (Patrick 2026-10-05: every attempt graded), column H holds nothing measurable
+    # and is graded as such: it fails beside J
     x3 = ws({1: [c("H1", None, s_wrap, f='"x"')]}, cols=wide + col(10, 10, stored(120)))
     v = run(book([("S", x3)], st, app=OPENPYXL))
-    assert v["decision"] == "fail" and locs(v) == ["S!J:J"] and v["stats"]["undecided_cells"] >= 1
-    assert "could not be measured" in v["summary"]
+    assert v["decision"] == "fail" and locs(v) == ["S!H:H", "S!J:J"] and v["stats"]["undecided_cells"] >= 1, locs(v)
+    assert "were skipped" in v["summary"], v["summary"]
     with patched(M, UNTRUSTED_ONLY_IF_VERDICT_NEEDS=False):
-        raises(lambda: run(book([("S", x3)], st, app=OPENPYXL)), "cannot decide")
+        graded("untrusted_value", lambda: run(book([("S", x3)], st, app=OPENPYXL)), "cannot decide")
     # trusted caches (unknown writer) are read: short cached results in a 150 column fail; a formula
     # without any cache is untrusted whatever the writer
     xc = ws({1: [c("H1", "Enterprise Value", s_wrap, f='"Enterprise Value"')], 2: [c("H2", 5.0, s_wrap, f="1+4")]},
@@ -507,7 +523,7 @@ def test_70_formula_values():
     v = run(book([("S", xc)], st))
     assert v["decision"] == "fail" and locs(v) == ["S!H:H"] and v["stats"]["formula_values_read"] >= 2
     assert "Enterprise Value" in v["mistakes"][0]["description"]
-    raises(lambda: run(book([("S", x)], st)), "cannot decide S!H1", "writer=unknown")
+    graded("untrusted_value", lambda: run(book([("S", x)], st)), "cannot decide S!H1", "writer=unknown")
     # an untrusted formula outside the judged columns is never read (no Test C any more): an unwrapped formula
     # that could spill, a blocked one and a wrapped one all pass without reading a value
     v = run(book([("S", ws({1: [c("B1", None, f="A1&A1")], 2: [c("B2", None, f="A1&A1"), c("C2", 1)],
@@ -524,7 +540,7 @@ def test_70_unverified_number_format():
     quoted = st.xf(numfmt='0" days"')
     wide = col(8, 8, stored(150))
     x = ws({1: [c("H1", 25.0, days)]}, cols=wide)
-    raises(lambda: run(book([("S", x)], st)), "cannot decide S!H1", "'0 days' is not verified")
+    graded("unverified_number_format", lambda: run(book([("S", x)], st)), "cannot decide S!H1", "'0 days' is not verified")
     # a constant that needs half the width settles the column: the unverified cell is not needed
     v = run(book([("S", ws({1: [c("H1", 25.0, days)], 3: [c("H3", digits(80))]}, cols=wide))], st))
     assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v

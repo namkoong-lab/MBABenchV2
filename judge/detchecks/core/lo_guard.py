@@ -257,9 +257,13 @@ class machine_lock:
                         if self.max_wait_s is not None and now - t0 >= self.max_wait_s:
                             self._give_up(t0, f"held by {_holder(self.path)}")
                         if logged_at is None or now - logged_at >= self.log_every_s:
-                            self.log(f"waiting for the machine-wide LibreOffice lock {self.path} to {self.what} "
-                                     f"(held by {_holder(self.path)}; waited {now - t0:.0f} s)")
-                            logged_at = now
+                            held_by = _holder(self.path)
+                            # the holder writes who it is just after taking the lock: give it a moment before
+                            # the first log line says "another process"
+                            if not (logged_at is None and held_by == "another process" and now - t0 < 1.0):
+                                self.log(f"waiting for the machine-wide LibreOffice lock {self.path} to {self.what} "
+                                         f"(held by {held_by}; waited {now - t0:.0f} s)")
+                                logged_at = now
                         self.sleep(FLOCK_POLL_S)
             self._mark()
         except BaseException:
