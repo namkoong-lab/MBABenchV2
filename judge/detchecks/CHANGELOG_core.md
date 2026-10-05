@@ -9,9 +9,9 @@ highlighting (47) took its column-style hits (and the column styles it admits fo
 raw entries, so an overridden yellow style still painted.
 
 ### checks
-- 93: the column loop walks `head.col_segments()` (core.sheet.paint_cols: the later entry - by `min`, then file
+- No hidden rows/columns (93): the column loop walks `head.col_segments()` (core.sheet.paint_cols: the later entry - by `min`, then file
   order - wins on the columns it covers, as a whole: hidden flag, width, outline level, collapsed mark).
-- 47: column-style hits and the admitted column styles come from `head.col_segments()`; a hit's range is the
+- No bright-yellow highlighting (47): column-style hits and the admitted column styles come from `head.col_segments()`; a hit's range is the
   segment's (an entry split by a later one gives one hit per remaining part).
 - Only Negatives in parentheses (65) and Zeros as dashes (66) still read `cols` directly (styles of missing array
   members; reader.md section 7).
@@ -20,9 +20,9 @@ raw entries, so an overridden yellow style still painted.
 - `test_93_overlapping_cols_later_entry_wins` (rowscols) and `test_47_overlapping_col_styles_later_entry_wins`
   (fills); both fail on the previous code.
 
-### Corpus effect (2026-10-04, one guarded job before / after, 47 and 93 only: neither needs values, no LibreOffice)
-- 374 files: 347 graded, 27 not graded (over 10 MB and not saved by Excel); before and after: 47 pass 347, 93 pass
-  347; **0 changes** in decisions, mistakes (location and description) or the kept stats (`col_style_hits`,
+### Corpus effect (2026-10-04, one guarded job before / after, these two checks only: neither needs values, no LibreOffice)
+- 374 files: 347 graded, 27 not graded (over 10 MB and not saved by Excel); before and after: No bright-yellow highlighting (47) passes all 347,
+  No hidden rows/columns (93) passes all 347; **0 changes** in decisions, mistakes (location and description) or the kept stats (`col_style_hits`,
   `row_style_hits`, `bright_cells`, hidden / zero-width / default-zero-width columns, exempt groups).
 
 ## 2026-10-04 — the LibreOffice step: encoded paths; a conversion never outlives its grading (judge v13 reviews)

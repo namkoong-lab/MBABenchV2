@@ -366,7 +366,7 @@ def test_malformed_origin_sidecar_fails_loudly():
             art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
             assert art["status"] == "error" and art["stage"] == "grade" and key(77) in art["failures"], what
             assert art["file"]["origin_problem"].startswith("malformed") and art["file"]["origin_sidecar"] is False
-        # 77 gated out for the task: nothing needs the delivered name, the grading goes on (recorded)
+        # File extension (.xlsx) (77) gated out for the task: nothing needs the delivered name (recorded)
         folder = make_task(root, origin=None)
         (folder / workbook_properties.ORIGIN_FILENAME).write_text('["Model.xlsx"]')
         stage_annotation(folder, not_applicable={77})

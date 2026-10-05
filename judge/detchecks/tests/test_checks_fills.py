@@ -1255,7 +1255,7 @@ def _cfx(sqref, dxf, op="greaterThan", f="0", prio=1):
 def test_47_overlapping_col_styles_later_entry_wins():
     """Column styles through the shared <col> reading (SheetHead.col_segments, later entry wins): a
     bright-yellow column style overridden by a later entry paints only the columns it still covers;
-    fully overridden, it paints nothing.  Before 2026-10-04 47 read the raw entries (C:H yellow + E:E
+    fully overridden, it paints nothing.  Before 2026-10-04 the check read the raw entries (C:H yellow + E:E
     plain failed as C:H; a yellow E:E overridden by a later plain E:E failed at E)."""
     st = Styles()
     yb = st.xf(fill=st.fill("FFFF00"))

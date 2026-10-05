@@ -67,7 +67,8 @@ Task metadata
                            it File extension (.xlsx) (77) raises: the staged name is not the
                            delivered one. A malformed sidecar (read_origin: not JSON, not an
                            object, no non-empty original_filename) raises the same way, named
-                           as malformed; when 77 is not graded it is only recorded.
+                           as malformed; when File extension (.xlsx) (77) is not graded it is
+                           only recorded.
   requires_external_links  always False (maintainer: no task requires external links).
 
 Artefacts
