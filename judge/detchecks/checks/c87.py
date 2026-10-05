@@ -93,7 +93,7 @@ class C87(FormulaScanCheck):
         self._name_items = []
         for i, dn in enumerate(wb.defined_names):
             self.site = name_location(dn)
-            r = self.classify(dn.text, None)
+            r = self.safe_classify(dn.text, None)
             if r is not None:
                 flagged.append(i)
                 self._name_items.append((i, dn, r))
@@ -135,7 +135,11 @@ class C87(FormulaScanCheck):
             self._edge_masters.pop(f.si, None)
             m = self._masters.get(f.si)
             if m is not None and m[0] is None and ":" in f.text and _RE_EDGE_ABS.search(F.mask_strings(f.text)):
-                rngs = [o.parts for o in parse_text(f.text).operands
+                try:
+                    ops = parse_text(f.text).operands
+                except F.FormulaError:
+                    ops = []                       # unparsable: skipped (recorded by safe_classify)
+                rngs = [o.parts for o in ops
                         if o.kind == "range" and o.bounds is not None and _edge_capable(o.parts)]
                 if rngs:
                     self._edge_masters[f.si] = (cell.row, cell.col, f.text, rngs)

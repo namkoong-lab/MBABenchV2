@@ -212,8 +212,18 @@ class C29(Check):
                                    f"it belongs to (and so which formulas use it) is unknown")
         if not self.counted:
             return                                 # nothing to grade: no other name can matter
-        for i in self.counted:
-            self.broken[i] = self._problems(i)
+        for i in list(self.counted):
+            try:
+                self.broken[i] = self._problems(i)
+            except F.FormulaError as e:
+                # Patrick 2026-10-05 (every attempt graded): a definition that cannot be parsed is skipped - the
+                # name is not graded and its definition uses nothing
+                self.note_default("unparsable_formula", f"{self._label(i)}: {e}")
+                self.kind[i] = "unparsable"
+                self.counted.remove(i)
+                self.cand.discard(i)
+        if not self.counted:
+            return
         self._name_graph()
         self._unscoped()
         for graph in (self.edges, self.maybe_edges):
@@ -319,12 +329,11 @@ class C29(Check):
                     r, dyn = runs[i]
                     if dyn or not spell.isdisjoint(r):
                         f = self._def(i) if self.kind[i] == "counted" else self._def_lenient(i)
-                        if f is None:                  # unparseable uncounted definition
-                            self.edges[i] = set()
-                            self.maybe_edges[i] = {t for s in r for t in self.by_spell.get(s, ()) if t != i}
-                            if dyn:                    # may hold INDIRECT(...) of anything
-                                self.n_dynamic += 1
-                                self._add_pattern(_ANY, f"the unparseable definition of {self._label(i)}", False)
+                        if f is None:                  # unparseable uncounted definition: skipped, it uses nothing
+                            self.edges[i] = set()      # (Patrick 2026-10-05: every attempt graded)
+                            if self.kind[i] != "unparsable":
+                                self.note_default("unparsable_formula", f"{self._label(i)}: "
+                                                                        f"{self.malformed.get(i, 'malformed text')}")
                             continue
                         self.edges[i] = {t for t in self._uses(f, n.scope) if t != i}
                         self._note_dynamic(f, n.scope, f"the definition of {self._label(i)}", owner=i)
@@ -355,7 +364,11 @@ class C29(Check):
             low = (d.text or "").lower()
             if not low or (all_spell.isdisjoint(_runs(low)) and not any(x in low for x in _TEXT_FUNCS_LOW)):
                 continue
-            f = self._parse_at(d.text, f"the definition of {k} name '{d.name}'")
+            try:
+                f = self._parse_at(d.text, f"the definition of {k} name '{d.name}'")
+            except F.FormulaError as e:
+                self.note_default("unparsable_formula", str(e))      # skipped (Patrick 2026-10-05)
+                continue
             readings = []
             for sc in [None] + self.sheet_names:
                 readings.append({self.pos[id(h)] for h in F.names_used_by(
@@ -461,7 +474,12 @@ class C29(Check):
             self._site_parse(text, scope, where, kind)
 
     def _site_parse(self, text: str, scope: Optional[str], where: str, kind: str) -> None:
-        f = self._parse_at(text, where)
+        try:
+            f = self._parse_at(text, where)
+        except F.FormulaError as e:
+            # Patrick 2026-10-05 (every attempt graded): a consumer formula that cannot be parsed is skipped
+            self.note_default("unparsable_formula", str(e))
+            return
         self.n_sites_parsed[kind] = self.n_sites_parsed.get(kind, 0) + 1
         for i in self._uses(f, scope):
             self._mark(i, where)
@@ -562,9 +580,10 @@ class C29(Check):
             return
         try:
             g = _parse(text)
-        except F.FormulaError:
-            if DYNAMIC_TEXT_GATE:                      # cannot read it: any name it spells may be used
-                self._add_pattern(_ANY, f"EVALUATE(\"{_short(text, 40)}\") in {where}", False)
+        except F.FormulaError as e:
+            # EVALUATE text that cannot be parsed is skipped: it uses no name (Patrick 2026-10-05: every attempt
+            # graded; until then any name it spelled could be used)
+            self.note_default("unparsable_formula", f"EVALUATE(\"{_short(text, 40)}\") in {where}: {e}")
             return
         for t in self._uses(g, scope):
             self._use_from(owner, t, f"{where} (EVALUATE text)")

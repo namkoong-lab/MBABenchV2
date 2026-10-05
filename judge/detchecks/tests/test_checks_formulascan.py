@@ -184,6 +184,28 @@ def raises(fn, *needles):
 
 
 # ============================================================================ 80
+def test_unparsable_formulas_are_skipped_2026_10_05():
+    """Patrick 2026-10-05 (every attempt graded): formula text that cannot be parsed - in a cell, a defined name,
+    a shared child without a master - is skipped for 80 / 87 / 95 and recorded in stats.defaults.unparsable_formula
+    (it raised FormulaError until then); the well-formed sites are graded as before."""
+    shared_orphan = '<c r="B2"><f t="shared" si="7"/><v>1</v></c>'
+    p = book("unparsable.xlsx", [("Model", sheet([
+        c("A1", "SUM(A:A"), c("A2", "OFFSET(A1,1"), c("A3", "([1]Prices!A1"), c("A4", "SUM(C:C)")])
+        .replace("<sheetData>", "<sheetData>").replace("</sheetData>", f'<row r="9">{shared_orphan}</row></sheetData>'))],
+        names=[("Broken", "OFFSET(Model!$A$1,1", None)])
+    v = run(p, 87)
+    expect(v, "fail", ["Model!A4"])
+    d = v["stats"]["defaults"]["unparsable_formula"]
+    assert d["count"] >= 2 and any("Model!A1" in x for x in d["examples"]), d
+    assert any("si=7" in x for x in d["examples"]), d
+    v = run(p, 80)
+    expect(v, "pass")
+    assert v["stats"]["defaults"]["unparsable_formula"]["count"] >= 2, v["stats"]
+    v = run(p, 95)
+    expect(v, "pass")
+    assert any("Model!A3" in x for x in v["stats"]["defaults"]["unparsable_formula"]["examples"]), v["stats"]
+
+
 def test_80_cells():
     p = book("v1.xlsx", [("Model", sheet([
         c("A1", s="Note: avoid OFFSET(, INDIRECT( and TODAY() in this model"),   # text cell
@@ -222,7 +244,8 @@ def test_80_shared_hidden_array():
     assert "49 formulas" in v["mistakes"][1]["description"]
     # a shared child whose master never appeared raises
     bad = book("v2b.xlsx", [("Calc", sheet([c("B3", None, shared=("7", None))]))])
-    raises(lambda: run(bad, 80), "no master")
+    v = run(bad, 80)                    # skipped, recorded (Patrick 2026-10-05: every attempt graded; it raised before)
+    assert "no master" in v["stats"]["defaults"]["unparsable_formula"]["examples"][0], v["stats"]
 
 
 def test_80_names():
@@ -767,7 +790,7 @@ def test_95_missing_file_named_sheet():
     assert v["stats"]["refs_to_missing_file_named_sheets_not_counted"] == 1, v["stats"]
 
 
-TESTS = [test_80_cells, test_80_shared_hidden_array, test_80_names, test_80_cf_dv, test_80_stamp_alone,
+TESTS = [test_unparsable_formulas_are_skipped_2026_10_05, test_80_cells, test_80_shared_hidden_array, test_80_names, test_80_cf_dv, test_80_stamp_alone,
          test_80_stamp_referenced, test_80_stamp_order_and_second_pass, test_87_forms, test_87_shared_names_rules,
          test_95_places, test_95_87_drawings, test_95_not_links, test_95_meta_connections, test_cross_check_isolation,
          test_cfvo_thresholds, test_form_control_uses, test_80_stamp_name_endpoints, test_80_stamp_builtin_name_used,
