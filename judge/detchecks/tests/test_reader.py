@@ -26,7 +26,7 @@ from detchecks.checks.base import Check, Mistakes, cells_to_ranges, make_verdict
 from detchecks.core import refs
 from detchecks.core.package import Package
 from detchecks.core.sheet import ExcelError, SheetStream, load_sheet
-from detchecks.core.styles import BLACK, WHITE, Color, Styles, excel_tint
+from detchecks.core.styles import BLACK, WHITE, Color, FillPaint, Styles, UnknownColour, excel_tint, is_unknown
 from detchecks.core.values import detect_provenance, detect_writer, make_context
 from detchecks.errors import GradingError
 
@@ -226,8 +226,10 @@ def test_styles_and_colours():
     assert st.dxf(2).num_fmt_code == ";;;" and st.dxf_font_color(2) is None
     assert st.resolve(Color(indexed=64), "font") == BLACK and st.resolve(Color(indexed=65), "fill") == WHITE
     assert st.resolve(Color(auto=True), "fill") == WHITE and st.resolve(Color(auto=True), "font") == BLACK
-    assert st.resolve(Color(theme=1)) == BLACK and st.resolve(Color(theme=99)) is None
-    assert st.resolve(Color(indexed=200)) is None
+    assert st.resolve(Color(theme=1)) == BLACK
+    # unresolvable references are an explicit UnknownColour, never None / black / no fill (47-R2-08;
+    # until 2026-10-04 they resolved to None, read as 'no fill' / automatic by the checks)
+    assert is_unknown(st.resolve(Color(theme=99))) and is_unknown(st.resolve(Color(indexed=200)))
     # custom indexed palette overrides the default
     custom = STYLES_XML + '<colors><indexedColors>' + '<rgbColor rgb="FF000000"/>' * 13 + '<rgbColor rgb="FF00B050"/></indexedColors></colors>'
     st2 = Styles.parse(f'<styleSheet xmlns="{MAIN}">{custom}</styleSheet>'.encode(), None)
@@ -241,6 +243,53 @@ def test_styles_and_colours():
     assert st3.resolve(Color(theme=4)) == "FF4472C4"      # missing slot -> Office default
     assert Styles.effective_style(None, 7, 3) == 7 and Styles.effective_style(None, None, 3) == 3
     assert Styles.effective_style(5, 7, 3) == 5 and Styles.effective_style(None, None, None) == 0
+
+
+def test_unresolvable_colours_are_unknown():
+    """Finding 47-R2-08 (2026-10-04): a colour reference Excel's rendering of which is not known resolves to an
+    explicit UnknownColour (ref + why) - never None, black or 'no fill' - and building the style table never
+    raises for one.  Colours a paint does not use (a solid cell fill's bgColor, a dxf solid fill's fgColor)
+    change nothing; resolvable colours resolve exactly as before."""
+    bad = ['rgb="FFGGFF00"', 'rgb=""', 'rgb="FF00"', 'rgb="0FF0000"', 'rgb="ZZFF0000"', 'theme="12"', 'theme="x"',
+           'indexed="81"', 'indexed="200"', 'indexed="-3"', 'theme="1" tint="2"', 'rgb="FFFF0000" tint="abc"',
+           'indexed="14"']                                   # 14: an invalid custom <indexedColors> entry
+    fonts = "".join(f'<font><color {a}/></font>' for a in bad)
+    fills = ('<fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+             '<fill><patternFill patternType="solid"><fgColor rgb="FFGGFF00"/></patternFill></fill>'                 # 2
+             '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFFFF"/><bgColor theme="40"/></patternFill></fill>'  # 3
+             '<fill><patternFill patternType="lightGray"><fgColor indexed="81"/><bgColor rgb="FFFFFFFF"/></patternFill></fill>'  # 4
+             '<fill><gradientFill degree="90"><stop position="0"><color rgb="FFFFFF00"/></stop>'
+             '<stop position="1"><color theme="33"/></stop></gradientFill></fill>')                                  # 5
+    xfs = "".join(f'<xf numFmtId="0" fontId="{i}" fillId="{min(i, 5)}" borderId="0" xfId="0"/>' for i in range(len(bad) + 1))
+    dxfs = ('<dxf><fill><patternFill patternType="solid"><fgColor rgb="FFGGFF00"/><bgColor rgb="FF0000FF"/></patternFill></fill></dxf>'
+            '<dxf><fill><patternFill patternType="solid"><bgColor theme="15"/></patternFill></fill><font><color indexed="81"/></font></dxf>')
+    pal = '<colors><indexedColors>' + '<rgbColor rgb="FF000000"/>' * 14 + '<rgbColor rgb="nope"/></indexedColors></colors>'
+    xml = (f'<styleSheet xmlns="{MAIN}"><fonts><font><sz val="11"/></font>{fonts}</fonts><fills>{fills}</fills>'
+           f'<cellXfs>{xfs}</cellXfs><dxfs>{dxfs}</dxfs>{pal}</styleSheet>')
+    st = Styles.parse(xml.encode(), None)                   # never raises while the table is built
+    assert st.unknown_indexed == {14: "nope"} and st.custom_indexed
+    for i, a in enumerate(bad, start=1):
+        u = st.resolve(st.fonts[i].color, "font")
+        assert isinstance(u, UnknownColour) and is_unknown(u) and u.why, (a, u)
+        assert st.font_color(i) == u and is_unknown(st.font_color(i)), a     # not BLACK any more
+        assert "unresolvable colour" in str(u)
+    assert "theme index" in st.resolve(Color(theme=12)).why and "6 or 8 hex" in st.resolve(Color(rgb="FFGGFF00")).why
+    assert "64 and 65" in st.resolve(Color(indexed=81)).why and "indexedColors" in st.resolve(Color(indexed=14)).why
+    assert 'tint="2"' in st.font_color(11).ref
+    assert st.resolve(Color(theme=1, tint=0.5)) == "FF808080" and st.resolve(Color(rgb="00FF0000")) == "FFFF0000"
+    assert st.resolve(Color(indexed=13)) == "FF000000"      # custom palette entry 13 (valid)
+    assert st.indexed_colour(14).why.startswith("custom") and st.indexed_colour(13) == "FF000000"
+    # equal stored references are equal unknowns (Excel renders one stored value one way)
+    assert st.resolve(Color(rgb="FFGGFF00")) == st.resolve(Color(rgb="FFGGFF00"))
+    # fills: the colour the paint uses decides
+    assert is_unknown(st.fill_color(2)) and is_unknown(st.cell_fill(2).effective)    # solid fgColor unknown
+    assert st.fill_color(3) == "FFFFFFFF" and is_unknown(st.cell_fill(3).bg)       # bgColor of a solid fill: unused
+    assert is_unknown(st.fill_color(4))                                             # hatch blend depends on it
+    p5 = st.cell_fill(5)
+    assert p5.kind == "gradient" and p5.stops[0] == "FFFFFF00" and is_unknown(p5.stops[1]) and is_unknown(p5.effective)
+    assert st.dxf_fill_color(0) == "FF0000FF"               # dxf: fgColor ignored (Excel 2026-10-03), bgColor known
+    assert is_unknown(st.dxf_fill_color(1)) and is_unknown(st.dxf_font_color(1))
+    assert isinstance(FillPaint("none", None, None, None, None), FillPaint)
 
 
 def _openpyxl_book(path):
@@ -1199,7 +1248,7 @@ TESTS = [test_refs, test_excel_tint, test_styles_and_colours, test_openpyxl_work
          test_r1_not_a_workbook, test_r2_second_pass_sheet_names, test_r3_shared_formula_expansion,
          test_r4_values_no_fallback, test_r5_writer_evidence, test_r6_failing_sheets_gate, test_r7_sparklines,
          test_r8_cursor_memory, test_r9_silent_skips, test_r10_prolog_before_root, test_r11_edge_cases, test_values_policy_ruling_2026_10_03,
-         test_overlapping_cols_later_entry_wins]
+         test_overlapping_cols_later_entry_wins, test_unresolvable_colours_are_unknown]
 
 
 def main() -> int:

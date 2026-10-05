@@ -1,5 +1,53 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-04 — unresolvable colours are an explicit unknown (finding 47-R2-08)
+
+Source: second-review finding 47-R2-08 (an unresolvable fill colour read as "no fill", so No bright-yellow
+highlighting (47) and No white-on-white hiding (94) passed silently). Not done by raising in `resolve` (the
+review's proposal): that would raise for colours no verdict depends on.
+
+### core/styles.py
+- `UnknownColour(ref, why)` (frozen, hashable; `str()` names the reference and why; not a string, so slicing it
+  like `'FFRRGGBB'` fails loudly) and `is_unknown(x)`. `Styles.resolve` returns it - never None, black or "no
+  fill" - for: an rgb that is not 6 or 8 hex digits (before: None when the last six were not hex, otherwise the
+  last six digits were used, e.g. `ZZFF0000` read red), `rgb=""` (was skipped), a theme index outside the 12
+  slots or not a number (None), an indexed value outside the palette other than 64 / 65 (None; e.g. 81, the
+  tooltip-text colour of comment fonts), an invalid custom `<indexedColors>` entry (was black), a tint that is not
+  a number in [-1, 1] (was ignored / clamped). Resolvable colours resolve exactly as before.
+- `Color.bad` (an attribute as stored that is not a valid value); `Styles.unknown_indexed`,
+  `Styles.indexed_colour(i)`.
+- `font_color(s)` returns the `UnknownColour` (was black). `fill_paint`: an unknown colour the paint uses makes
+  `effective` that `UnknownColour` (was: no fill for a solid fill, black / white defaults in a hatch blend, a
+  dropped gradient stop); one it does not use (a solid cell fill's bgColor, a dxf solid fill's fgColor) changes
+  nothing. `fill_color`, `cell_fill`, `dxf_fill_color`, `dxf_font_color` pass it on. Building the style table
+  never raises.
+
+### checks
+- No bright-yellow highlighting (47): when an examined position (cell, row / column style, style 0, a
+  conditional format's painted colour) first uses an unknown fill colour, the check forks into one reading per
+  way Excel could paint it - no fill, bright yellow FFFF00, another colour - every combination for several
+  distinct ones (at most 4, 81 readings; a fifth raises). All readings agree → that verdict (the no-fill
+  reading's mistakes; stats `unresolved_fill_colours`, `unresolved_fill_readings`); otherwise `GradingError`.
+  The swatch / legend / WIP logic runs unchanged in every reading.
+- No white-on-white hiding (94): `conceals` is three-valued (None = an unknown colour decides); a style with an
+  unknown font / fill is risky (values read); unknown rich-run, conditional-format font / fill / colour-scale and
+  `[ColorN]` palette colours likewise; such a cell is undecided (raises only when nothing else is certainly
+  concealed); a sheet whose CF outcomes meet one always gets the per-cell second pass.
+- Black / Green / Red font (49 / 50 / 51, `colour_rules.style_colour`): test `is_unknown` instead of `is None`;
+  behaviour unchanged (they already raised only where the cell's class makes its colour decide), but the new
+  unknowns (invalid palette entry, odd-length rgb, bad tint) now reach them instead of a guessed colour.
+
+### tests
+- `test_unresolvable_colours_are_unknown` (reader; and `test_styles_and_colours` now asserts `is_unknown(...)`
+  where it asserted the silent `None` this finding is about), `test_47_unresolvable_fill_colours`,
+  `test_94_unresolvable_colours` (fills), `test_unresolvable_colours_2026_10_04` (colours).
+
+### Corpus effect (the runs described in the overlapping `<col>` entry below)
+- The only unresolvable references in the corpus's styles.xml, sharedStrings.xml rich runs, conditional formats
+  and theme / palette parts are `indexed="81"` font colours of fonts no cellXf uses (44 in 21 files; 212 in 78 toy
+  files; `scratch/core_fixes/scan_core.py`). 0 verdict changes for 47, 49, 50, 51 and 94; the wording of 94's undecided
+  reason changed in attempts 2924 (raises before and after: a conditional white font, unchanged) and 211 (stats).
+
 ## 2026-10-04 — number formats mixing placeholders with unquoted date letters are unverified (finding 66-S3)
 
 Source: review finding 66-S3 (openpyxl writes `0 bps`, `0 days`, `#,##0 d` unquoted; the engine read the unit

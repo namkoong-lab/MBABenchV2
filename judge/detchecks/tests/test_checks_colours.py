@@ -821,6 +821,43 @@ def test_near_empty_attempt_no_gate():
     assert all(v[k]["decision"] == "pass" for k in (K49, K50, K51)), v
 
 
+def test_unresolvable_colours_2026_10_04():
+    """Finding 47-R2-08 in the core (2026-10-04): what the core used to guess now reaches 49 / 50 / 51 as an
+    unresolvable colour (core styles.UnknownColour) - an invalid custom <indexedColors> entry (read as black
+    before, so a formula in it passed 49 silently), an rgb of 7 digits (its last six were used), a tint that is
+    not a number in [-1, 1] (ignored), indexed 81 - and raises only where the cell's class makes its colour
+    decide, exactly as for a theme slot >= 12.  Valid custom palette entries resolve as before."""
+    global STYLES
+    fonts = ["", '<color indexed="14"/>', '<color rgb="0FF0000"/>', '<color theme="1" tint="2"/>',
+             '<color indexed="81"/>', '<color indexed="13"/>']
+    custom = ("<fonts count=\"%d\">%s</fonts>" % (len(fonts), "".join(f"<font><sz val=\"11\"/>{x}<name val=\"Calibri\"/></font>"
+                                                                       for x in fonts))
+              + '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
+              + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+              + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+              + '<cellXfs count="%d">%s</cellXfs>' % (len(fonts), "".join(
+                  f'<xf numFmtId="0" fontId="{i}" fillId="0" borderId="0" xfId="0" applyFont="1"/>' for i in range(len(fonts))))
+              + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+              + '<colors><indexedColors>' + '<rgbColor rgb="FF000000"/>' * 13 + '<rgbColor rgb="FF0000FF"/>'
+              + '<rgbColor rgb="not-a-colour"/></indexedColors></colors>')
+    saved = STYLES
+    STYLES = custom
+    try:
+        for s_, why in ((1, "custom <indexedColors> entry 14"), (2, "6 or 8 hex digits"), (3, 'tint="2"'),
+                        (4, "64 and 65")):
+            p = book(f"unres26_{s_}.xlsx", [("Calc", sheet((1, [c("A1", s_, "1+1")])), None)])
+            raises(lambda: run(p, 49), "cannot be resolved", why)      # an OWN formula: its colour decides 49
+            assert run(p, 50)["decision"] == "pass" and run(p, 51)["decision"] == "pass"
+        p = book("unres26_ptr.xlsx", [("Calc", sheet((1, [c("A1", 1, "Inputs!B5")])), None), ("Inputs", sheet(), None)])
+        raises(lambda: run(p, 50), "cannot be resolved", "custom <indexedColors> entry 14")
+        assert run(p, 49)["decision"] == "pass"                        # a pointer is not 49's business
+        p = book("unres26_valid.xlsx", [("Calc", sheet((1, [c("A1", 5, "1+1")])), None)])
+        v = run(p, 49)
+        assert v["decision"] == "fail" and "0000FF" in v["mistakes"][0]["description"], v   # entry 13: blue
+    finally:
+        STYLES = saved
+
+
 TESTS = [test_colour_families, test_classifier_kinds, test_prefilters_are_conservative, test_49_rules,
          test_49_arrays_shared_datatable_hidden, test_49_pass_and_contract, test_49_no_fallback, test_50_rules,
          test_50_shared_child_off_grid_and_pass, test_51_rules, test_51_default_pass, test_all_three_together,
@@ -829,7 +866,8 @@ TESTS = [test_colour_families, test_classifier_kinds, test_prefilters_are_conser
          test_unknown_scope_names_raise_only_where_needed, test_49_colour_wrong_in_every_class_needs_no_class,
          test_indirect_addresses, test_49_green_direct_reference_needs_no_parse,
          test_hyperlink_cells_any_colour, test_pointers_judged_only_by_50, test_light_text_on_dark_fill_no_exemption,
-         test_hyperlink_guarded_navigation_cells, test_49_indirect_unknown_wording, test_near_empty_attempt_no_gate]
+         test_hyperlink_guarded_navigation_cells, test_49_indirect_unknown_wording, test_near_empty_attempt_no_gate,
+         test_unresolvable_colours_2026_10_04]
 
 
 def main() -> int:

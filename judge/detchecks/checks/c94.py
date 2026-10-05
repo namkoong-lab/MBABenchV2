@@ -49,6 +49,7 @@ from typing import Optional
 from ..core import numfmt as N
 from ..core.refs import location, parse_range
 from ..core.sheet import ExcelError
+from ..core.styles import is_unknown
 from ..errors import GradingError
 from ._cftext import text_rule_fires
 from ._fills import dxf_fill_paints
@@ -182,9 +183,29 @@ def hue_exempt(text: str, bg: str) -> bool:
     return _de2000(t, b) >= SAME_COLOUR_DE and min(lt[0], lb[0]) >= CHROMA_MIN_L and max(ct, cb) >= CHROMA_MIN_C
 
 
-def conceals(text: str, bgs) -> bool:
-    """Text colour is invisible against every background candidate."""
-    return all(abs(apca_lc(text, b)) < CONCEAL_LC and not hue_exempt(text, b) for b in bgs)
+def conceals(text, bgs) -> Optional[bool]:
+    """Text colour is invisible against every background candidate: True / False, or None when an
+    unresolvable colour (core.styles.UnknownColour, finding 47-R2-08) decides it - an unknown text colour,
+    or unknown backgrounds when every known one conceals.  Callers treat None as 'may conceal'."""
+    if is_unknown(text):
+        return None
+    unknown_bg = False
+    for b in bgs:
+        if is_unknown(b):
+            unknown_bg = True
+        elif not (abs(apca_lc(text, b)) < CONCEAL_LC and not hue_exempt(text, b)):
+            return False
+    return None if unknown_bg else True
+
+
+def _hex6(c):
+    """'FFRRGGBB' / 'RRGGBB' -> 'RRGGBB'; an UnknownColour passes through unchanged."""
+    return c if is_unknown(c) else c[-6:]
+
+
+def _cname(c) -> str:
+    """A colour for messages: 'RRGGBB', or the unresolvable reference and why."""
+    return str(c) if is_unknown(c) else c[-6:]
 
 
 def _interp(c1: str, c2: str, t: float) -> str:
@@ -356,15 +377,22 @@ def _bg_of_paint(p) -> tuple[list, str]:
     if p is None or p.kind == "none" or p.effective is None:
         return [WHITE], "no fill, i.e. the white sheet"
     if p.kind == "gradient":
-        return [c[-6:] for c in p.stops] + [p.effective[-6:]], "gradient " + "→".join(c[-6:] for c in p.stops)
+        return ([_hex6(c) for c in p.stops] + ([] if is_unknown(p.effective) else [p.effective[-6:]]),
+                "gradient " + "→".join(_cname(c) for c in p.stops))
     if p.pattern and p.pattern != "solid":
-        return [p.effective[-6:]], f"{p.pattern} pattern ≈{p.effective[-6:]}"
-    return [p.effective[-6:]], f"fill {p.effective[-6:]}"
+        return [_hex6(p.effective)], f"{p.pattern} pattern ≈{_cname(p.effective)}"
+    return [_hex6(p.effective)], f"fill {_cname(p.effective)}"
 
 
 _NO_EFFECT = (None, None, None, None)     # (font, bgs, bg_desc, fmt): no conditional format applies
 _UNDECIDED = object()                     # a cell this check cannot decide (recorded by _undecided)
 _PACK = 16384                             # (row, col) -> row * _PACK + col in compact arrays
+
+
+def _sig_unknown(sig) -> bool:
+    """A verdict signature (font concealed, format profile) that an unresolvable colour decides."""
+    fcon, prof = sig
+    return fcon is None or (len(prof) == 3 and any(p is None for p in prof[2]))
 
 
 def _populated(value) -> bool:
@@ -428,8 +456,8 @@ class C94(Check):
                 if sec.is_empty:
                     v = True
                 elif sec.color is not None and colours:
-                    rgb = N.color_tag_rgb(sec.color, self.palette)
-                    if rgb and conceals(rgb, bgs):
+                    rgb = self._tag_rgb(sec.color)
+                    if rgb and conceals(rgb, bgs) is not False:
                         v = True
             if not v:   # sections that render blank for some values ('#,###' on 0, '?' digits, space literals)
                 probes = [0.0, 1e-9, 0.4, -1e-9, -0.4, 1.0, -1.0]
@@ -442,17 +470,26 @@ class C94(Check):
             self._fmt_cache[key] = v
         return v
 
+    def _tag_rgb(self, tag):
+        """RRGGBB of a number-format colour tag ([Red], [Color10] ...), None when it names no colour, an
+        UnknownColour for a [ColorN] whose custom <indexedColors> entry is not a colour."""
+        if tag and self.st.unknown_indexed:
+            m = re.match(r"^colou?r\s*(\d{1,2})$", tag.strip(), re.I)
+            if m and 1 <= int(m.group(1)) <= 56 and (int(m.group(1)) + 7) in self.st.unknown_indexed:
+                return self.st.indexed_colour(int(m.group(1)) + 7)
+        return N.color_tag_rgb(tag, self.palette)
+
     def _style(self, s: int) -> _Style:
         x = self._styles.get(s)
         if x is None:
             x = _Style()
-            x.font = self.st.font_color(s)[-6:]
+            x.font = _hex6(self.st.font_color(s))
             x.bgs, x.bg_desc = _bg_of_paint(self.st.cell_fill(s))
             x.bgs = tuple(x.bgs)
             x.fmt = N.resolve_format(self.st.num_fmt_id(s), self.st.num_fmts)
-            x.colour_conceal = conceals(x.font, x.bgs)
+            x.colour_conceal = conceals(x.font, x.bgs)        # None: an unresolvable colour decides
             x.fmt_risky = self._fmt_risky(x.fmt, x.bgs)
-            x.risky = x.colour_conceal or x.fmt_risky
+            x.risky = x.colour_conceal is not False or x.fmt_risky
             x.no_own_fill = self.st.cell_fill(s).effective is None
             x.direct_font = self.st.xf(s).font_id != self.st.xf(0).font_id
             self._styles[s] = x
@@ -481,14 +518,14 @@ class C94(Check):
             f = N.parse_format(fmt)
             pattern = ()
             if tags:
-                pattern = tuple(bool(rgb) and conceals(rgb, bgs) for rgb in
-                                (N.color_tag_rgb(sec.color, self.palette) for sec in f.sections
-                                 if sec.color is not None))
+                # True / False per tag, None where an unresolvable colour decides (never 'visible')
+                pattern = tuple((conceals(rgb, bgs) if rgb else False) for rgb in
+                                (self._tag_rgb(sec.color) for sec in f.sections if sec.color is not None))
             blanks = self._fmt_risky(fmt, bgs, colours=False)       # can print nothing for some value
             z = N.zero_hidden_by_show_zeros_off(fmt) if self.zeros_off else None
-            if not fcon and not any(pattern):                       # colour never conceals
+            if fcon is False and not any(p is not False for p in pattern):      # colour never conceals
                 v = ("blank", fmt) if blanks else ("plain", None)
-            elif fcon and not pattern and not blanks:               # the (concealing) font always shows
+            elif fcon is True and not pattern and not blanks:       # the (concealing) font always shows
                 v = ("plain", z)
             else:
                 v = (fmt, tags, pattern)
@@ -504,9 +541,9 @@ class C94(Check):
         fcon = conceals(st.font if font is None else font, bgs)
         return (fcon, self._fmt_profile(fmt, bgs, font is None, fcon))
 
-    def _runs_colours(self, cell, base_font: str) -> Optional[list]:
+    def _runs_colours(self, cell, base_font) -> Optional[list]:
         """Colours of the visible rich-text runs (None for plain cells).  A run without its own
-        colour shows the cell's font colour."""
+        colour shows the cell's font colour; an unresolvable run colour stays an UnknownColour."""
         runs = cell.rich_runs
         if not runs:
             return None
@@ -515,7 +552,7 @@ class C94(Check):
             if not (run.text or "").strip():
                 continue
             if run.font is not None and run.font.color is not None:
-                out.append((self.st.resolve(run.font.color, "font") or "FF000000")[-6:])
+                out.append(_hex6(self.st.resolve(run.font.color, "font")))
             else:
                 out.append(base_font)
         return out or None
@@ -561,8 +598,9 @@ class C94(Check):
             blanks = self._blank_alternatives(value, fmt, vt)
             primary = ("rich-text runs", runs) if runs else ("font", [st.font])
             alts = []
-            tag = r.color_rgb                    # the colour tag of the section used (text / logicals:
-            #                                      the text section's only; errors: none) - Excel 2026-10-03
+            tag = self._tag_rgb(r.color_tag) if r.color_tag else None    # the colour tag of the section used
+            #                                      (text / logicals: the text section's only; errors: none) -
+            #                                      Excel 2026-10-03; an UnknownColour for an invalid palette entry
             if cf_font is not None:
                 # a conditional-format font colour beats a number-format colour tag (Excel 2026-10-03)
                 alts.append(("conditional-format font", [cf_font]))
@@ -573,7 +611,7 @@ class C94(Check):
                 # format's colour tags may show
                 alts.append(primary)
                 for sec in N.parse_format(fmt).sections:
-                    t_ = N.color_tag_rgb(sec.color, self.palette) if sec.color is not None else None
+                    t_ = self._tag_rgb(sec.color) if sec.color is not None else None
                     if t_:
                         alts.append(("number-format colour", [t_]))
             elif tag is not None:
@@ -594,7 +632,9 @@ class C94(Check):
                     continue
             for blank in blanks:
                 for label, cols in alts:
-                    hidden = [c for c in cols if conceals(c, bgs)]
+                    states = [conceals(c, bgs) for c in cols]
+                    hidden = [c for c, x in zip(cols, states) if x is True]
+                    maybe = [c for c, x in zip(cols, states) if x is None]
                     reasons = []
                     if blank:
                         if isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0 \
@@ -610,11 +650,23 @@ class C94(Check):
                         lc = min(abs(apca_lc(c0, b)) for b in bgs)
                         reasons.append(f"its text colour {c0} ({label}) on its own background ({bg_desc}) has "
                                        f"APCA contrast Lc {lc:.1f} < {CONCEAL_LC:g}")
-                    outcomes.setdefault(bool(reasons), "; ".join(reasons) or None)
+                    if reasons or not maybe:
+                        outcomes.setdefault(bool(reasons), "; ".join(reasons) or None)
+                    else:
+                        # an unresolvable text or background colour decides: concealed or not (47-R2-08)
+                        t0 = maybe[0]
+                        if is_unknown(t0):
+                            why = (f"its text colour ({label}) is an {t0}, so whether it shows on its own background "
+                                   f"({bg_desc}) is unknown")
+                        else:
+                            why = (f"its text colour {t0} ({label}) may be invisible on its own background ({bg_desc}), "
+                                   f"a colour that cannot be resolved")
+                        outcomes.setdefault(True, why)
+                        outcomes.setdefault(False, None)
         if len(outcomes) > 1:
             self._undecided(cell, f"cannot decide whether {cell.sheet}!{cell.ref} (value {value!r}, format {st.fmt!r}) "
-                                  f"is concealed: the outcome depends on conditional formatting or Excel rendering "
-                                  f"this check cannot determine ({outcomes[True]})")
+                                  f"is concealed: the outcome depends on conditional formatting, an unresolvable "
+                                  f"colour or Excel rendering this check cannot determine ({outcomes[True]})")
             return _UNDECIDED
         return next(iter(outcomes.values()))
 
@@ -692,8 +744,9 @@ class C94(Check):
         self._judge(cell, st, [_NO_EFFECT], rich)
 
     def _dark_table_risk(self, cell, st) -> bool:
-        """Dark, directly formatted text with no fill of its own inside a TableStyleDark* table."""
-        return st.no_own_fill and st.direct_font and conceals(st.font, (DARK_TABLE_PROXY,)) and \
+        """Dark (or unresolvable), directly formatted text with no fill of its own inside a
+        TableStyleDark* table."""
+        return st.no_own_fill and st.direct_font and conceals(st.font, (DARK_TABLE_PROXY,)) is not False and \
             any(r1 <= cell.row <= r2 and c1 <= cell.col <= c2 for r1, c1, r2, c2 in self.dark_boxes)
 
     # -------------------------------------------------------------- conditional formatting
@@ -714,7 +767,8 @@ class C94(Check):
                 order += 1
                 prio = rule.priority if rule.priority is not None else 10 ** 9
                 if rule.type == "colorScale":
-                    cols = tuple((self.st.resolve(c, "fill") or "FFFFFFFF")[-6:] for c in rule.colors)
+                    # a stop without a colour reads as white (as before); an unresolvable one stays unknown
+                    cols = tuple(_hex6(self.st.resolve(c, "fill") or "FFFFFFFF") for c in rule.colors)
                     if cols:
                         out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], cols, anchor))
                     continue
@@ -731,14 +785,14 @@ class C94(Check):
                     continue
                 font = None
                 if d.font is not None and d.font.color is not None:
-                    font = (self.st.resolve(d.font.color, "font") or "FF000000")[-6:]
+                    font = _hex6(self.st.resolve(d.font.color, "font"))      # may be an UnknownColour
                 cols, together = dxf_fill_paints(self.st, d.fill)
                 if not cols:
                     fills = [(None, None)]
                 elif together:
-                    fills = [(tuple(x[-6:] for x in cols), "conditional gradient " + "→".join(x[-6:] for x in cols))]
+                    fills = [(tuple(_hex6(x) for x in cols), "conditional gradient " + "→".join(_cname(x) for x in cols))]
                 else:
-                    fills = [((x[-6:],), f"conditional fill {x[-6:]}") for x in cols]
+                    fills = [((_hex6(x),), f"conditional fill {_cname(x)}") for x in cols]
                 fmt = None
                 if d.num_fmt_code is not None:
                     fmt = d.num_fmt_code
@@ -755,8 +809,11 @@ class C94(Check):
     def _scale_effects(scale, font=None, fmt=None) -> list:
         samples = []
         for a, b in zip(scale, scale[1:]):
+            if is_unknown(a) or is_unknown(b):
+                samples += [a, b]                # the colours in between depend on the unresolvable stop
+                continue
             samples += [_interp(a, b, k / SCALE_SAMPLES) for k in range(SCALE_SAMPLES + 1)]
-        return [(font, (c,), f"colour-scale fill {c}", fmt) for c in (samples or list(scale))]
+        return [(font, (c,), f"colour-scale fill {_cname(c)}", fmt) for c in (samples or list(scale))]
 
     def _combos(self, cover, fired_known=None) -> Optional[list]:
         """All CF outcomes [(font, bgs, bg_desc, fmt)] for the covering rules (priority order):
@@ -824,8 +881,11 @@ class C94(Check):
                 continue
             seen.add(k)
             base = self._sig(st, _NO_EFFECT)
+            if _sig_unknown(base):
+                return True                      # an unresolvable colour: no value-independent screen
             for e in outcomes:
-                if self._sig(st, e) != base:
+                sig = self._sig(st, e)
+                if sig != base or _sig_unknown(sig):
                     return True
         return False
 
@@ -956,7 +1016,7 @@ class C94(Check):
             # visible under its own formatting; a dark table style could still paint a dark fill under dark,
             # directly formatted text (Excel's direct formatting wins over the table style's font)
             if self.table_boxes and st.no_own_fill and st.direct_font and all(e[1] is None for e in effects) and \
-                    any(conceals(col, (DARK_TABLE_PROXY,)) for col in (runs or [st.font])):
+                    any(conceals(col, (DARK_TABLE_PROXY,)) is not False for col in (runs or [st.font])):
                 for (r1, c1, r2, c2), style, tname in self.table_boxes:
                     if r1 <= cell.row <= r2 and c1 <= cell.col <= c2 and _DARK_TABLE_RX.match(style):
                         self._undecided(cell, f"{cell.sheet}!{cell.ref} has dark, directly formatted text and no fill "

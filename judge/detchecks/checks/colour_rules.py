@@ -65,6 +65,7 @@ from typing import Optional
 
 from ..core import formula as F
 from ..core.refs import group_cells, index_to_col, location, range_to_str
+from ..core.styles import is_unknown
 from ..errors import GradingError
 from .base import Check
 
@@ -989,9 +990,9 @@ class ColourCheck(Check):
         if hit is None:
             font = self.st.font(s)
             argb = self.st.resolve(font.color, "font")
-            if argb is None:
+            if is_unknown(argb):
                 hit = (None, None, f"{self.key}: font colour {font.color.describe()} of style {s} "
-                                   f"(first used at {where}) cannot be resolved")
+                                   f"(first used at {where}) cannot be resolved ({argb.why})")
             else:
                 hit = (argb, family(argb), None)
             self._fam_cache[s] = hit

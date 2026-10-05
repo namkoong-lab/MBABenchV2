@@ -1247,6 +1247,119 @@ def test_47_rereview_merged_swatch():
     assert v["decision"] == "fail" and locs(v) == ["S!A4:B4"], locs(v)
 
 
+def _cfx(sqref, dxf, op="greaterThan", f="0", prio=1):
+    return (f'<conditionalFormatting sqref="{sqref}"><cfRule type="cellIs" dxfId="{dxf}" priority="{prio}" '
+            f'operator="{op}"><formula>{escape(f)}</formula></cfRule></conditionalFormatting>')
+
+
+def test_47_unresolvable_fill_colours():
+    """Finding 47-R2-08 (2026-10-04): an unresolvable fill colour (rgb FFGGFF00, theme index 20 ...) used to read
+    as 'no fill' and pass silently.  47 now grades every reading of it (no fill / bright yellow / another
+    colour) and raises only when they disagree; a colour no examined position uses never matters."""
+    st = Styles()
+    unk = st.xf(fill=st.fill(fg_attr='rgb="FFGGFF00"'))
+    yb = st.xf(fill=st.fill("FFFF00"))
+    # alone, with no legend: no fill -> pass, bright yellow -> fail: the verdict depends on the colour
+    raises(lambda: run(_y47([c("B2", unk, 5.0)], st, name="u1.xlsx"), C47),
+           "verdict depends on unresolvable fill colour", "rgb:FFGGFF00", "rgb is not 6 or 8 hex digits", "S!B2",
+           "as no fill the workbook passes", "as bright yellow FFFF00 it fails")
+    # a certain bright-yellow offender elsewhere: every reading fails; the listed mistakes are the no-fill reading's
+    v = run(_y47([c("B2", unk, 5.0), c("D9", yb, 1.0)], st, name="u2.xlsx"), C47)
+    assert v["decision"] == "fail" and locs(v) == ["S!D9"], (locs(v), v["stats"])
+    assert v["stats"]["unresolved_fill_readings"] == 3 and "3 readings agree" in v["summary"]
+    assert v["stats"]["unresolved_fill_colours"] == [{"colour": "rgb:FFGGFF00", "why": "rgb is not 6 or 8 hex digits",
+                                                      "first_used": "S!B2 (cell style 1)"}], v["stats"]
+    # a legend that excuses yellow: every reading passes ...
+    v = run(_y47([c("A1", 0, "Yellow cells are inputs"), c("B2", unk, 5.0)], st, name="u3.xlsx"), C47)
+    assert v["decision"] == "pass" and v["stats"]["unresolved_fill_readings"] == 3, v
+    # ... unless the cell says TBD: read as bright yellow it is a placeholder the legend does not excuse
+    raises(lambda: run(_y47([c("A1", 0, "Yellow cells are inputs"), c("B2", unk, "TBD")], st, name="u4.xlsx"), C47),
+           "verdict depends on", "as bright yellow FFFF00 it fails")
+    # an empty cell beside a key label could be a legend swatch that excuses the workbook's other yellow
+    raises(lambda: run(_y47([c("A1", 0, "Colour key"), c("B3", unk), c("C3", 0, "Key output cells"),
+                             c("F9", yb, 1.0)], st, name="u4b.xlsx"), C47), "verdict depends on")
+    # never decisive: a style no cell uses, a solid fill's unused bgColor, an unresolvable FONT colour
+    st2 = Styles()
+    st2.xf(fill=st2.fill(fg_attr='theme="40"'))                              # defined, never used
+    st2.fills.append('<fill><patternFill patternType="solid"><fgColor rgb="FFDDEBF7"/><bgColor rgb="FFGGFF00"/>'
+                     '</patternFill></fill>')
+    used = st2.xf(fill=len(st2.fills) - 1)
+    fnt = st2.xf(font=st2.font('indexed="81"'))
+    v = run(_y47([c("A1", used, 1.0), c("A2", fnt, 2.0)], st2, name="u5.xlsx"), C47)
+    assert v["decision"] == "pass" and "unresolved_fill_colours" not in v["stats"], v["stats"]
+    # a conditional format whose dxf bgColor cannot be resolved (counted whether or not it fires)
+    st3 = Styles()
+    d_unk = st3.dxf(fill_xml='<patternFill><bgColor theme="25"/></patternFill>')
+    d_fg = st3.dxf(fill_xml='<patternFill patternType="solid"><fgColor rgb="FFGGFF00"/><bgColor rgb="FF0000FF"/></patternFill>')
+    raises(lambda: run(_y47([c("B2", 0, 1.0)], st3, name="u6.xlsx", sheet_kw={"tail": _cfx("B2:B5", d_unk)}), C47),
+           "verdict depends on", "theme:25", "a conditional format on S!B2:B5")
+    v = run(_y47([c("B2", 0, 1.0)], st3, name="u7.xlsx", sheet_kw={"tail": _cfx("B2:B5", d_fg)}), C47)
+    assert v["decision"] == "pass" and "unresolved_fill_colours" not in v["stats"]     # fgColor of a dxf: ignored
+    # a column / row style with an unresolvable fill decides too (positions without a <c>)
+    raises(lambda: run(_y47([c("A1", 0, 1.0)], st, name="u8.xlsx",
+                            sheet_kw={"head": f'<cols><col min="3" max="3" width="9" style="{unk}"/></cols>'}), C47),
+           "the column style of S!C:C")
+    # two distinct unresolvable colours: every combination (9 readings)
+    unk2 = st.xf(fill=st.fill(fg_attr='theme="20"'))
+    v = run(_y47([c("B2", unk, 5.0), c("B3", unk2, 5.0), c("D9", yb, 1.0)], st, name="u9.xlsx"), C47)
+    assert v["decision"] == "fail" and v["stats"]["unresolved_fill_readings"] == 9 and locs(v) == ["S!D9"], v["stats"]
+    # more than MAX_UNKNOWN_FILL_COLOURS distinct ones cannot be tried in every combination
+    many = [st.xf(fill=st.fill(fg_attr=f'theme="{20 + k}"')) for k in range(1, 5)]
+    raises(lambda: run(_y47([c("B2", unk, 5.0)] + [c(f"C{2 + k}", x, 1.0) for k, x in enumerate(many)] +
+                            [c("D9", yb, 1.0)], st, name="u10.xlsx"), C47), "cannot be tried in every combination")
+
+
+def test_94_unresolvable_colours():
+    """Finding 47-R2-08 for No white-on-white hiding (94): an unresolvable font / fill / conditional-format /
+    rich-run / number-format-tag colour used to read as black text or 'no fill'; now a populated cell whose
+    concealment depends on it is UNDECIDED, which raises only when nothing else is certainly concealed."""
+    st = Styles()
+    uf = st.xf(font=st.font('rgb="FFGGFF00"'))
+    ufill = st.xf(fill=st.fill(fg_attr='theme="30"'))
+    hid = st.xf(numfmt=";;;")
+    uf_hid = st.xf(font=st.font('indexed="81"'), numfmt=";;;")
+    raises(lambda: run(_w94([c("A1", uf, 5.0)], st, "w1.xlsx"), C94), "cannot decide whether S!A1",
+           "unresolvable colour rgb:FFGGFF00")
+    raises(lambda: run(_w94([c("A1", ufill, "label")], st, "w2.xlsx"), C94), "cannot decide whether S!A1", "theme:30")
+    # decisive only when nothing else is concealed
+    v = run(_w94([c("A1", uf, 5.0), c("B1", hid, 3.0)], st, "w3.xlsx"), C94)
+    assert v["decision"] == "fail" and locs(v) == ["S!B1"] and v["stats"]["undecided_cells"] == 1, v["stats"]
+    # never decisive: empty cells, a format that prints nothing anyway, styles no cell uses
+    st.xf(font=st.font('theme="44"'), fill=st.fill(fg_attr='indexed="99"'))         # unused
+    v = run(_w94([c("A1", uf), c("A2", uf, "", f='""'), c("A3", uf_hid, 7.0), c("A4", 0, 1.0)], st, "w4.xlsx"), C94)
+    assert v["decision"] == "fail" and locs(v) == ["S!A3"] and v["stats"]["undecided_cells"] == 0, v["stats"]
+    # a conditional-format font colour that cannot be resolved, on a rule that fires / cannot fire
+    st2 = Styles()
+    st2.dxfs.append('<dxf><font><color theme="77"/></font></dxf>')
+    d = len(st2.dxfs) - 1
+    raises(lambda: run(_w94([c("A1", 0, 5.0)], st2, "w5.xlsx", sheet_kw={"tail": _cfx("A1:A3", d)}), C94),
+           "cannot decide whether S!A1", "theme:77")
+    v = run(_w94([c("A1", 0, 5.0)], st2, "w6.xlsx", sheet_kw={"tail": _cfx("A1:A3", d, "equal", "99")}), C94)
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v["stats"]
+    # a colour scale with an unresolvable stop
+    scale = ('<conditionalFormatting sqref="A1:A3"><cfRule type="colorScale" priority="1"><colorScale>'
+             '<cfvo type="min"/><cfvo type="max"/><color rgb="FFFFFFFF"/><color rgb="FFGGFF00"/></colorScale>'
+             '</cfRule></conditionalFormatting>')
+    raises(lambda: run(_w94([c("A1", 0, 1.0), c("A2", 0, 2.0)], st2, "w7.xlsx", sheet_kw={"tail": scale}), C94),
+           "cannot decide")
+    # a rich-text run whose colour cannot be resolved
+    sst = ['<si><r><t>Visible </t></r><r><rPr><color theme="50"/></rPr><t>maybe</t></r></si>']
+    raises(lambda: run(book(tmp("w8.xlsx"), [("S", sheet([c("A1", 0, 0, t="s")]))], Styles(), sst=sst), C94),
+           "cannot decide whether S!A1")
+    # a [Color10] tag naming an invalid custom palette entry (17)
+    st3 = Styles()
+    tag = st3.xf(numfmt="[Color10]0")
+    pal = '<colors><indexedColors>' + '<rgbColor rgb="FF000000"/>' * 17 + '<rgbColor rgb="nope"/></indexedColors></colors>'
+    p = book(tmp("w9.xlsx"), [("S", sheet([c("A1", tag, 5.0)]))], st3)
+    with zipfile.ZipFile(p) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    parts["xl/styles.xml"] = parts["xl/styles.xml"].replace(b"</styleSheet>", pal.encode() + b"</styleSheet>")
+    with zipfile.ZipFile(p, "w") as z:
+        for n, b in parts.items():
+            z.writestr(n, b)
+    raises(lambda: run(p, C94), "cannot decide whether S!A1", "indexedColors")
+
+
 def test_94_unverified_number_format():
     """Finding 66-S3 in the core: a code mixing digit placeholders with unquoted date letters ('0 days') renders
     certain=False; 94 used to ignore that flag.  Now both blank / shown and every colour the code could show are
@@ -1282,7 +1395,7 @@ TESTS = [test_47_colour_band, test_47_legend_classifier, test_47_own_fill_pale_a
          test_47_rereview_back_reference_defines_nothing, test_47_rereview_section_header_is_not_a_colour_key,
          test_47_rereview_wip_vocabulary, test_47_rereview_classifier_phrasings,
          test_47_rereview_unreadable_text_decisive_only_with_yellow, test_47_rereview_merged_swatch,
-         test_94_unverified_number_format]
+         test_47_unresolvable_fill_colours, test_94_unresolvable_colours, test_94_unverified_number_format]
 
 
 def main() -> int:
