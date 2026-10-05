@@ -317,299 +317,394 @@ def merges(*refs):
 
 
 def test_69_text_cut_off_by_neighbours():
-    """Text that cannot be fully seen fails, any length; text running into empty neighbours and staying visible
-    passes (Patrick 2026-10-04).  Toy T4's B19 trap - a label cut off next to a filled C19, which the toy and the
-    judge guidance called ordinary - now FAILS.  The two narrow rules of the first build (a number stored as text
-    cut off; any text in a <= 12 px column blocked) are cases of the general rule."""
-    st = Styles(("Aptos Narrow", 11))
-    s_txt = st.xf("Arial", 10)
-    s_bold = st.xf("Arial", 10, bold=True)
-    s_num = st.xf("Arial", 10, numfmt="#,##0")
-    colb = col(2, 2, stored(17.0)) + col(3, 3, stored(34.0))
-    # B51 overflows into the empty C51 and stays fully visible -> pass
-    v = run(book([("S", ws({51: ("", [c("B51", "Real Estate Valuation (Income Approach)", s_txt)])}, cols=colb))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_fits_with_spill"] == 1, v["mistakes"]
-    # T4's B19: 'Net Operating Income' (Arial 10 bold, 136 px at 96 dpi) in the 17.0 column B (119 px of text area)
-    # next to a filled C19 -> cut off
-    p19 = book([("Solution Model", ws({19: ("", [c("B19", "Net Operating Income", s_bold), c("C19", "Year 1", s_txt)])},
-                                      cols=colb))], st)
-    v = run(p19)
-    assert v["decision"] == "fail" and locs(v) == ["'Solution Model'!B19"], v["mistakes"]
-    d = v["mistakes"][0]["description"]
-    assert ("Text in B19 on sheet 'Solution Model' is cut off: B19 'Net Operating Income' (text, Arial 10 bold, "
-            "left-aligned) is cut off by C19 (text): about 2 of its 20 characters (17 px at 96 dpi)") in d, d
-    assert v["stats"]["mistakes_by_rule"] == {"numbers": 0, "unwrapped_text": 1, "wrapped_text": 0}
-    assert v["stats"]["text_blockers"] == {"text": 1} and v["stats"]["text_cut_off"] == 1
-    with patched(M, TEXT_CLIP=False):
+    """Text that cannot be fully seen is cut off; text running into empty neighbours and staying visible is not
+    (Patrick 2026-10-04).  With the bar off (any length) toy T4's B19 trap - a label cut off next to a filled C19 -
+    and the two narrow rules of the first build (a number stored as text cut off; any text in a <= 12 px column
+    blocked) are cases of the rule; by default (option 3: 200+ characters) these short texts pass and are counted
+    in stats, as the toys and the judge guidance treat them."""
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):    # the rule's geometry and blockers, any length; the
+        # 200-character bar (Patrick, option 3) has its own test: test_69_text_clip_min_chars
+        st = Styles(("Aptos Narrow", 11))
+        s_txt = st.xf("Arial", 10)
+        s_bold = st.xf("Arial", 10, bold=True)
+        s_num = st.xf("Arial", 10, numfmt="#,##0")
+        colb = col(2, 2, stored(17.0)) + col(3, 3, stored(34.0))
+        # B51 overflows into the empty C51 and stays fully visible -> pass
+        v = run(book([("S", ws({51: ("", [c("B51", "Real Estate Valuation (Income Approach)", s_txt)])}, cols=colb))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_fits_with_spill"] == 1, v["mistakes"]
+        # T4's B19: 'Net Operating Income' (Arial 10 bold, 136 px at 96 dpi) in the 17.0 column B (119 px of text area)
+        # next to a filled C19 -> cut off
+        p19 = book([("Solution Model", ws({19: ("", [c("B19", "Net Operating Income", s_bold), c("C19", "Year 1", s_txt)])},
+                                          cols=colb))], st)
         v = run(p19)
-        assert v["decision"] == "pass" and v["stats"]["text_cut_off"] == 1, v["mistakes"]
-    # a label cut off by a number; the same label running across an empty styled cell and an absent one passes
-    lab = "Revenue growth assumption"
-    v = run(book([("S", ws({1: ("", [c("A1", lab, s_txt), c("B1", 0.05, s_num)])}))], st))
-    assert v["decision"] == "fail" and "A1 'Revenue growth assumption'" in v["mistakes"][0]["description"]
-    assert "cut off by B1 (a number)" in v["mistakes"][0]["description"], v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", lab, s_txt), c("B1", None, s_txt), c("D1", 0.05, s_num)])}))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # a formula returning "" is not empty for overflow: it cuts the label off
-    v = run(book([("S", ws({1: ("", [c("A1", lab, s_txt), c("B1", "", s_txt, f='IF(1,"","")')])}))], st,
-                 app="Microsoft Excel"))
-    assert v["decision"] == "fail" and "cut off by B1 (a formula result)" in v["mistakes"][0]["description"], v
-    # a number stored as text (the old TEXT_NUMBER_CLIP case): cut off by a filled B1; with room it passes
-    narrow = col(1, 1, stored(5.0))
-    v = run(book([("S", ws({1: ("", [c("A1", "1234567890123", s_txt), c("B1", "x", s_txt)])}, cols=narrow))], st))
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", "1234567890123", s_txt), c("B1", None, s_txt), c("D1", "x", s_txt)])},
-                           cols=narrow))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # text in a 12 px column (the old TEXT_HIDDEN_COL_MAX_PX case), any length: blocked fails, room passes
-    tiny = col(1, 1, stored(1.0))
-    for text, b, want in (("Note", "B1", "fail"), ("Note", "C1", "pass"), ("ab", "B1", "fail")):
-        v = run(book([("S", ws({1: ("", [c("A1", text, s_txt), c(b, 5.0, s_num)])}, cols=tiny))], st))
-        assert v["decision"] == want, (text, b, v["mistakes"])
+        assert v["decision"] == "fail" and locs(v) == ["'Solution Model'!B19"], v["mistakes"]
+        d = v["mistakes"][0]["description"]
+        assert ("Text in B19 on sheet 'Solution Model' is cut off: B19 'Net Operating Income' (text, Arial 10 bold, "
+                "left-aligned) is cut off by C19 (text): about 2 of its 20 characters (17 px at 96 dpi)") in d, d
+        assert v["stats"]["mistakes_by_rule"] == {"numbers": 0, "unwrapped_text": 1, "wrapped_text": 0}
+        assert v["stats"]["text_blockers"] == {"text": 1} and v["stats"]["text_cut_off"] == 1
+        with patched(M, TEXT_CLIP=False):
+            v = run(p19)
+            assert v["decision"] == "pass" and v["stats"]["text_cut_off"] == 1, v["mistakes"]
+        # a label cut off by a number; the same label running across an empty styled cell and an absent one passes
+        lab = "Revenue growth assumption"
+        v = run(book([("S", ws({1: ("", [c("A1", lab, s_txt), c("B1", 0.05, s_num)])}))], st))
+        assert v["decision"] == "fail" and "A1 'Revenue growth assumption'" in v["mistakes"][0]["description"]
+        assert "cut off by B1 (a number)" in v["mistakes"][0]["description"], v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", lab, s_txt), c("B1", None, s_txt), c("D1", 0.05, s_num)])}))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # a formula returning "" is not empty for overflow: it cuts the label off
+        v = run(book([("S", ws({1: ("", [c("A1", lab, s_txt), c("B1", "", s_txt, f='IF(1,"","")')])}))], st,
+                     app="Microsoft Excel"))
+        assert v["decision"] == "fail" and "cut off by B1 (a formula result)" in v["mistakes"][0]["description"], v
+        # a number stored as text (the old TEXT_NUMBER_CLIP case): cut off by a filled B1; with room it passes
+        narrow = col(1, 1, stored(5.0))
+        v = run(book([("S", ws({1: ("", [c("A1", "1234567890123", s_txt), c("B1", "x", s_txt)])}, cols=narrow))], st))
+        assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", "1234567890123", s_txt), c("B1", None, s_txt), c("D1", "x", s_txt)])},
+                               cols=narrow))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # text in a 12 px column (the old TEXT_HIDDEN_COL_MAX_PX case), any length: blocked fails, room passes
+        tiny = col(1, 1, stored(1.0))
+        for text, b, want in (("Note", "B1", "fail"), ("Note", "C1", "pass"), ("ab", "B1", "fail")):
+            v = run(book([("S", ws({1: ("", [c("A1", text, s_txt), c(b, 5.0, s_num)])}, cols=tiny))], st))
+            assert v["decision"] == want, (text, b, v["mistakes"])
+    # default bar: T4's B19 (20 characters) passes and is counted, with what cuts it off
+    v = run(p19)
+    assert v["decision"] == "pass" and v["stats"]["text_cut_off"] == 0 and v["stats"]["text_cut_off_short"] == 1, v
+    ex = v["stats"]["text_cut_off_short_examples"][0]
+    assert ex["cell"] == "Solution Model!B19" and ex["chars"] == 20 and ex["blocked_by"] == ["C19 (text)"], ex
+    assert v["stats"]["text_blockers"] == {} and v["stats"]["text_blockers_short"] == {"text": 1}
+    assert v["stats"]["per_sheet"][0]["text_cut_off_short"] == 1 and v["stats"]["mistakes_by_rule"]["unwrapped_text"] == 0
+    assert "1 cut-off text(s) shorter than 200 characters are counted in stats only" in v["summary"], v["summary"]
 
 
 def test_69_text_alignment_directions():
     """General / left text overflows to the right, right-aligned to the left, centred to both sides (each side must
     hold half the excess); centre-across-selection is centred over its selection first; fill never spills;
     rotated text is skipped and shrink-to-fit text is never cut off; an indent takes room."""
-    st = Styles()
-    s_r = st.xf(horizontal="right")
-    s_c = st.xf(horizontal="center")
-    s_cc = st.xf(horizontal="centerContinuous")
-    s_fill = st.xf(horizontal="fill")
-    s_left = st.xf(horizontal="left")
-    s_ind = st.xf(horizontal="left", indent=2)
-    narrow = col(3, 3, stored(5.0))                         # C: 35 / 46 px of text area
-    for cells, want, why in (([c("C1", TEN, s_r)], "pass", "right-aligned, B1 empty"),
-                             ([c("B1", 1.0), c("C1", TEN, s_r)], "fail", "right-aligned, B1 filled"),
-                             ([c("C1", TEN, s_r), c("D1", 1.0)], "pass", "right-aligned, only D1 filled"),
-                             ([c("C1", TEN, s_c)], "pass", "centred, both sides empty"),
-                             ([c("B1", 1.0), c("C1", TEN, s_c)], "fail", "centred, B1 filled"),
-                             ([c("C1", TEN, s_c), c("D1", 1.0)], "fail", "centred, D1 filled"),
-                             ([c("C1", TEN), c("B1", 1.0)], "pass", "general, only B1 filled")):
-        cells = sorted(cells, key=lambda x: x.split('"')[1])
-        v = run(book([("S", ws({1: ("", cells)}, cols=narrow))], st))
-        assert v["decision"] == want, (why, v["mistakes"])
-    v = run(book([("S", ws({1: ("", [c("B1", 1.0), c("C1", TEN, s_r)])}, cols=narrow))], st))
-    assert "(text, Calibri 11, right-aligned) is cut off by B1 (a number)" in v["mistakes"][0]["description"], v
-    # right-aligned text in column A / general text in column XFD: the sheet's edges stop them
-    v = run(book([("S", ws({1: ("", [c("A1", TEN, s_r)])}, cols=col(1, 1, stored(5.0))))], st))
-    assert v["decision"] == "fail" and "the left edge of the sheet" in v["mistakes"][0]["description"], v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("XFD1", TEN)])}, cols=col(16384, 16384, stored(5.0))))], st))
-    assert v["decision"] == "fail" and "the right edge of the sheet" in v["mistakes"][0]["description"], v["mistakes"]
-    # centre across selection: B1 (30 digits, 210 px) centred over B1:D1 (187 px) overflows 11.5 px on each side
-    # into A1 and E1; a filled E1 cuts it off; without the selection (C1:D1 plain) it is centred on B1 alone
-    thirty = "0" * 30
-    sel = [c("B1", thirty, s_cc), c("C1", None, s_cc), c("D1", None, s_cc)]
-    v = run(book([("S", ws({1: ("", sel)}))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_center_across"] == 1, v["mistakes"]
-    v = run(book([("S", ws({1: ("", sel + [c("E1", 1.0)])}))], st))
-    assert v["decision"] == "fail" and "cut off by E1 (a number)" in v["mistakes"][0]["description"], v["mistakes"]
-    assert "centred across selection" in v["mistakes"][0]["description"]
-    v = run(book([("S", ws({1: ("", [c("B1", thirty, s_cc), c("C1", None), c("D1", None)])}))], st))
-    assert v["decision"] == "fail" and "cut off by the left edge of the sheet" in v["mistakes"][0]["description"], v
-    # fill alignment never spills: 10 digits in a 5.0 column fail although B1 is empty; 4 fit; an empty
-    # fill-aligned B1 extends the cell
-    v = run(book([("S", ws({1: ("", [c("A1", TEN, s_fill)])}, cols=col(1, 1, stored(5.0))))], st))
-    assert v["decision"] == "fail" and "its fill alignment" in v["mistakes"][0]["description"], v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", "0000", s_fill)])}, cols=col(1, 1, stored(5.0))))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", TEN, s_fill), c("B1", None, s_fill)])}, cols=col(1, 1, stored(5.0))))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # rotated text is skipped (counted); shrink-to-fit text is never cut off
-    for s_, stat in ((st.xf(rotation=90), "text_rotated_skipped"), (st.xf(shrink=True), "text_shrink")):
-        v = run(book([("S", ws({1: ("", [c("A1", TEN, s_), c("B1", 1.0)])}, cols=col(1, 1, stored(5.0))))], st))
-        assert v["decision"] == "pass" and v["stats"][stat] == 1, (stat, v["mistakes"])
-    # an indent takes room: 9 digits (63 px) fit a 10.0 column (70 px) next to a filled B1; with indent 2
-    # (2 x 3 Normal spaces = 18 px at 96 dpi, 24 at 120 dpi) they do not
-    nine = "0" * 9
-    v = run(book([("S", ws({1: ("", [c("A1", nine, s_left), c("B1", 1.0)])}, cols=col(1, 1, stored(10.0))))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", nine, s_ind), c("B1", 1.0)])}, cols=col(1, 1, stored(10.0))))], st))
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):    # the rule's geometry and blockers, any length; the
+        # 200-character bar (Patrick, option 3) has its own test: test_69_text_clip_min_chars
+        st = Styles()
+        s_r = st.xf(horizontal="right")
+        s_c = st.xf(horizontal="center")
+        s_cc = st.xf(horizontal="centerContinuous")
+        s_fill = st.xf(horizontal="fill")
+        s_left = st.xf(horizontal="left")
+        s_ind = st.xf(horizontal="left", indent=2)
+        narrow = col(3, 3, stored(5.0))                         # C: 35 / 46 px of text area
+        for cells, want, why in (([c("C1", TEN, s_r)], "pass", "right-aligned, B1 empty"),
+                                 ([c("B1", 1.0), c("C1", TEN, s_r)], "fail", "right-aligned, B1 filled"),
+                                 ([c("C1", TEN, s_r), c("D1", 1.0)], "pass", "right-aligned, only D1 filled"),
+                                 ([c("C1", TEN, s_c)], "pass", "centred, both sides empty"),
+                                 ([c("B1", 1.0), c("C1", TEN, s_c)], "fail", "centred, B1 filled"),
+                                 ([c("C1", TEN, s_c), c("D1", 1.0)], "fail", "centred, D1 filled"),
+                                 ([c("C1", TEN), c("B1", 1.0)], "pass", "general, only B1 filled")):
+            cells = sorted(cells, key=lambda x: x.split('"')[1])
+            v = run(book([("S", ws({1: ("", cells)}, cols=narrow))], st))
+            assert v["decision"] == want, (why, v["mistakes"])
+        v = run(book([("S", ws({1: ("", [c("B1", 1.0), c("C1", TEN, s_r)])}, cols=narrow))], st))
+        assert "(text, Calibri 11, right-aligned) is cut off by B1 (a number)" in v["mistakes"][0]["description"], v
+        # right-aligned text in column A / general text in column XFD: the sheet's edges stop them
+        v = run(book([("S", ws({1: ("", [c("A1", TEN, s_r)])}, cols=col(1, 1, stored(5.0))))], st))
+        assert v["decision"] == "fail" and "the left edge of the sheet" in v["mistakes"][0]["description"], v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("XFD1", TEN)])}, cols=col(16384, 16384, stored(5.0))))], st))
+        assert v["decision"] == "fail" and "the right edge of the sheet" in v["mistakes"][0]["description"], v["mistakes"]
+        # centre across selection: B1 (30 digits, 210 px) centred over B1:D1 (187 px) overflows 11.5 px on each side
+        # into A1 and E1; a filled E1 cuts it off; without the selection (C1:D1 plain) it is centred on B1 alone
+        thirty = "0" * 30
+        sel = [c("B1", thirty, s_cc), c("C1", None, s_cc), c("D1", None, s_cc)]
+        v = run(book([("S", ws({1: ("", sel)}))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_center_across"] == 1, v["mistakes"]
+        v = run(book([("S", ws({1: ("", sel + [c("E1", 1.0)])}))], st))
+        assert v["decision"] == "fail" and "cut off by E1 (a number)" in v["mistakes"][0]["description"], v["mistakes"]
+        assert "centred across selection" in v["mistakes"][0]["description"]
+        v = run(book([("S", ws({1: ("", [c("B1", thirty, s_cc), c("C1", None), c("D1", None)])}))], st))
+        assert v["decision"] == "fail" and "cut off by the left edge of the sheet" in v["mistakes"][0]["description"], v
+        # fill alignment never spills: 10 digits in a 5.0 column fail although B1 is empty; 4 fit; an empty
+        # fill-aligned B1 extends the cell
+        v = run(book([("S", ws({1: ("", [c("A1", TEN, s_fill)])}, cols=col(1, 1, stored(5.0))))], st))
+        assert v["decision"] == "fail" and "its fill alignment" in v["mistakes"][0]["description"], v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", "0000", s_fill)])}, cols=col(1, 1, stored(5.0))))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", TEN, s_fill), c("B1", None, s_fill)])}, cols=col(1, 1, stored(5.0))))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # rotated text is skipped (counted); shrink-to-fit text is never cut off
+        for s_, stat in ((st.xf(rotation=90), "text_rotated_skipped"), (st.xf(shrink=True), "text_shrink")):
+            v = run(book([("S", ws({1: ("", [c("A1", TEN, s_), c("B1", 1.0)])}, cols=col(1, 1, stored(5.0))))], st))
+            assert v["decision"] == "pass" and v["stats"][stat] == 1, (stat, v["mistakes"])
+        # an indent takes room: 9 digits (63 px) fit a 10.0 column (70 px) next to a filled B1; with indent 2
+        # (2 x 3 Normal spaces = 18 px at 96 dpi, 24 at 120 dpi) they do not
+        nine = "0" * 9
+        v = run(book([("S", ws({1: ("", [c("A1", nine, s_left), c("B1", 1.0)])}, cols=col(1, 1, stored(10.0))))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", nine, s_ind), c("B1", 1.0)])}, cols=col(1, 1, stored(10.0))))], st))
+        assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
 
 
 def test_69_text_merges_hidden_columns_and_edges():
-    st = Styles()
-    narrow = col(1, 3, stored(5.0))                         # A:C 40 / 51 px each
-    # a merged anchor has the merge's width and never spills: 10 digits fit A1:B1 (75 px of text area), 15 do
-    # not although C1 is empty
-    v = run(book([("S", ws({1: ("", [c("A1", TEN)])}, cols=narrow, tail=merges("A1:B1")))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", "0" * 15)])}, cols=narrow, tail=merges("A1:B1")))], st))
-    assert v["decision"] == "fail" and "the edge of its merged range A1:B1" in v["mistakes"][0]["description"], v
-    # a covered cell is not displayed
-    v = run(book([("S", ws({1: ("", [c("A1", "x"), c("B1", "0" * 15)])}, cols=narrow, tail=merges("A1:B1")))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_covered_merged"] == 1, v["mistakes"]
-    # a merged range takes no overflow (MERGES_BLOCK_OVERFLOW): A1 is cut off by the empty merge B1:C1
-    p = book([("S", ws({1: ("", [c("A1", TEN)])}, cols=narrow, tail=merges("B1:C1")))], st)
-    v = run(p)
-    assert v["decision"] == "fail" and "the merged range B1:C1" in v["mistakes"][0]["description"], v["mistakes"]
-    with patched(M, MERGES_BLOCK_OVERFLOW=False):
-        assert run(p)["decision"] == "pass"
-    # hidden column B in the path: empty, it lets the text through but gives no room (C, D give it); filled, it
-    # still stops it (HIDDEN_CELLS_BLOCK_OVERFLOW)
-    hid = col(1, 1, stored(5.0)) + col(2, 2, stored(5.0), hidden=True) + col(3, 3, stored(5.0))
-    v = run(book([("S", ws({1: ("", [c("A1", TEN)])}, cols=hid))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", TEN), c("C1", 1.0)])}, cols=hid))], st))
-    assert v["decision"] == "fail" and "cut off by C1 (a number)" in v["mistakes"][0]["description"], v["mistakes"]
-    p = book([("S", ws({1: ("", [c("A1", TEN), c("B1", 1.0)])}, cols=hid))], st)
-    v = run(p)
-    assert v["decision"] == "fail" and "B1 (a number, in hidden column B)" in v["mistakes"][0]["description"], v
-    assert v["stats"]["text_blockers"] == {"number (hidden column)": 1}
-    with patched(M, HIDDEN_CELLS_BLOCK_OVERFLOW=False):
-        assert run(p)["decision"] == "pass"
-    # a merge spanning a hidden column has only its visible width: A1:C1 with B hidden is 75 px of text area,
-    # too narrow for 12 digits (84 px); with B visible (115 px) they fit
-    v = run(book([("S", ws({1: ("", [c("A1", "0" * 12)])}, cols=hid, tail=merges("A1:C1")))], st))
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", "0" * 12)])}, cols=narrow, tail=merges("A1:C1")))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # 69-F4 for text: a merge anchor in a hidden column shows its text across the visible part of the merge
-    hcols = col(1, 1, hidden=True) + col(2, 2, stored(3.0))
-    v = run(book([("S", ws({1: ("", [c("A1", "Long label text")])}, cols=hcols, tail=merges("A1:B1")))], st))
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"] and v["stats"]["text_hidden_anchor_cells"] == 1, v
-    v = run(book([("S", ws({1: ("", [c("A1", "Long label text")])}, cols=col(1, 1, hidden=True) + col(2, 2, stored(40.0)),
-                           tail=merges("A1:B1")))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # a text in a hidden column (not a merge anchor) or a hidden row is not displayed
-    v = run(book([("S", ws({1: ("", [c("A1", TEN), c("B1", 1.0)]), 2: ('hidden="1"', [c("C2", TEN), c("D2", 1.0)])},
-                           cols=col(1, 1, hidden=True) + col(3, 3, stored(5.0))))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_hidden_col_cells"] == 1, v["mistakes"]
-    # hidden sheets are graded
-    v = run(book([("S", ws({1: ("", [c("A1", TEN), c("B1", 1.0)])}, cols=narrow))], st, states={0: "hidden"}))
-    assert v["decision"] == "fail" and "(hidden sheet)" in v["mistakes"][0]["description"]
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):    # the rule's geometry and blockers, any length; the
+        # 200-character bar (Patrick, option 3) has its own test: test_69_text_clip_min_chars
+        st = Styles()
+        narrow = col(1, 3, stored(5.0))                         # A:C 40 / 51 px each
+        # a merged anchor has the merge's width and never spills: 10 digits fit A1:B1 (75 px of text area), 15 do
+        # not although C1 is empty
+        v = run(book([("S", ws({1: ("", [c("A1", TEN)])}, cols=narrow, tail=merges("A1:B1")))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", "0" * 15)])}, cols=narrow, tail=merges("A1:B1")))], st))
+        assert v["decision"] == "fail" and "the edge of its merged range A1:B1" in v["mistakes"][0]["description"], v
+        # a covered cell is not displayed
+        v = run(book([("S", ws({1: ("", [c("A1", "x"), c("B1", "0" * 15)])}, cols=narrow, tail=merges("A1:B1")))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_covered_merged"] == 1, v["mistakes"]
+        # a merged range takes no overflow (MERGES_BLOCK_OVERFLOW): A1 is cut off by the empty merge B1:C1
+        p = book([("S", ws({1: ("", [c("A1", TEN)])}, cols=narrow, tail=merges("B1:C1")))], st)
+        v = run(p)
+        assert v["decision"] == "fail" and "the merged range B1:C1" in v["mistakes"][0]["description"], v["mistakes"]
+        with patched(M, MERGES_BLOCK_OVERFLOW=False):
+            assert run(p)["decision"] == "pass"
+        # hidden column B in the path: empty, it lets the text through but gives no room (C, D give it); filled, it
+        # still stops it (HIDDEN_CELLS_BLOCK_OVERFLOW)
+        hid = col(1, 1, stored(5.0)) + col(2, 2, stored(5.0), hidden=True) + col(3, 3, stored(5.0))
+        v = run(book([("S", ws({1: ("", [c("A1", TEN)])}, cols=hid))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", TEN), c("C1", 1.0)])}, cols=hid))], st))
+        assert v["decision"] == "fail" and "cut off by C1 (a number)" in v["mistakes"][0]["description"], v["mistakes"]
+        p = book([("S", ws({1: ("", [c("A1", TEN), c("B1", 1.0)])}, cols=hid))], st)
+        v = run(p)
+        assert v["decision"] == "fail" and "B1 (a number, in hidden column B)" in v["mistakes"][0]["description"], v
+        assert v["stats"]["text_blockers"] == {"number (hidden column)": 1}
+        with patched(M, HIDDEN_CELLS_BLOCK_OVERFLOW=False):
+            assert run(p)["decision"] == "pass"
+        # a merge spanning a hidden column has only its visible width: A1:C1 with B hidden is 75 px of text area,
+        # too narrow for 12 digits (84 px); with B visible (115 px) they fit
+        v = run(book([("S", ws({1: ("", [c("A1", "0" * 12)])}, cols=hid, tail=merges("A1:C1")))], st))
+        assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", "0" * 12)])}, cols=narrow, tail=merges("A1:C1")))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # 69-F4 for text: a merge anchor in a hidden column shows its text across the visible part of the merge
+        hcols = col(1, 1, hidden=True) + col(2, 2, stored(3.0))
+        v = run(book([("S", ws({1: ("", [c("A1", "Long label text")])}, cols=hcols, tail=merges("A1:B1")))], st))
+        assert v["decision"] == "fail" and locs(v) == ["S!A1"] and v["stats"]["text_hidden_anchor_cells"] == 1, v
+        v = run(book([("S", ws({1: ("", [c("A1", "Long label text")])}, cols=col(1, 1, hidden=True) + col(2, 2, stored(40.0)),
+                               tail=merges("A1:B1")))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # a text in a hidden column (not a merge anchor) or a hidden row is not displayed
+        v = run(book([("S", ws({1: ("", [c("A1", TEN), c("B1", 1.0)]), 2: ('hidden="1"', [c("C2", TEN), c("D2", 1.0)])},
+                               cols=col(1, 1, hidden=True) + col(3, 3, stored(5.0))))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_hidden_col_cells"] == 1, v["mistakes"]
+        # hidden sheets are graded
+        v = run(book([("S", ws({1: ("", [c("A1", TEN), c("B1", 1.0)])}, cols=narrow))], st, states={0: "hidden"}))
+        assert v["decision"] == "fail" and "(hidden sheet)" in v["mistakes"][0]["description"]
 
 
 def test_69_wrapped_text_rows():
     """(b) wrapped text is cut off when it needs more lines than its custom-height row shows (more than half a
     line hidden); rows without customHeight are auto-fitted by Excel and never cut it (excel_measurements 6)."""
-    st = Styles()
-    s_wrap = st.xf(wrap=True)
-    s_just = st.xf(horizontal="justify")
-    w8 = "0" * 8                                            # 56 / 59.5 / 72 / 74.4 px: one per line in a 10.0 column
-    two, four = f"{w8} {w8}", " ".join([w8] * 4)
-    cols10 = col(1, 2, stored(10.0))
-    custom = 'ht="15" customHeight="1"'
-    p = book([("S", ws({1: (custom, [c("A1", four, s_wrap)])}, cols=cols10))], st)
-    v = run(p)
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
-    d = v["mistakes"][0]["description"]
-    assert ("Wrapped text in A1 on sheet 'S' is cut off at the bottom: A1 '00000000 00000000 00000000 000…' "
-            "(wrapped text, Calibri 11) needs 4 lines in its 10.00-character column A, but row 1 has a custom height of "
-            "15 pt: room for about 1.0 lines of 14.3 pt, so about 3.0 line(s) cannot be seen") in d, d
-    assert v["stats"]["mistakes_by_rule"]["wrapped_text"] == 1 and v["stats"]["wrapped_custom_rows"] == 1
-    with patched(M, WRAPPED_TEXT_CLIP=False):
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):    # the rule's geometry and blockers, any length; the
+        # 200-character bar (Patrick, option 3) has its own test: test_69_text_clip_min_chars
+        st = Styles()
+        s_wrap = st.xf(wrap=True)
+        s_just = st.xf(horizontal="justify")
+        w8 = "0" * 8                                            # 56 / 59.5 / 72 / 74.4 px: one per line in a 10.0 column
+        two, four = f"{w8} {w8}", " ".join([w8] * 4)
+        cols10 = col(1, 2, stored(10.0))
+        custom = 'ht="15" customHeight="1"'
+        p = book([("S", ws({1: (custom, [c("A1", four, s_wrap)])}, cols=cols10))], st)
         v = run(p)
-        assert v["decision"] == "pass" and v["stats"]["wrapped_cut_off"] == 1, v["mistakes"]
-    # the same height without customHeight, or no height at all: auto-fitted -> pass
-    for attrs in ('ht="15"', ""):
-        v = run(book([("S", ws({1: (attrs, [c("A1", four, s_wrap)])}, cols=cols10))], st))
-        assert v["decision"] == "pass" and v["stats"]["wrapped_auto_rows"] == 1, (attrs, v["mistakes"])
-    # two lines (28.6 pt): a 22 pt row shows 1.54 lines (0.46 hidden <= 0.5: pass); 20 pt shows 1.40 (fail)
-    for ht, want in ((22, "pass"), (20, "fail")):
-        v = run(book([("S", ws({1: (f'ht="{ht}" customHeight="1"', [c("A1", two, s_wrap)])}, cols=cols10))], st))
-        assert v["decision"] == want, (ht, v["mistakes"])
-    # horizontal justify wraps like wrapText; a trailing line break shows nothing
-    v = run(book([("S", ws({1: (custom, [c("A1", four, s_just)])}, cols=cols10))], st))
-    assert v["decision"] == "fail" and v["stats"]["wrapped_cut_off"] == 1, v["mistakes"]
-    v = run(book([("S", ws({1: (custom, [c("A1", w8 + "\n", s_wrap)])}, cols=cols10))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # shrink-to-fit with wrap: never cut off
-    v = run(book([("S", ws({1: (custom, [c("A1", four, st.xf(wrap=True, shrink=True))])}, cols=cols10))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # a merge over two custom rows (30 pt, 2.1 lines) still hides about 1.9 of 4 lines; with an auto-fitted row
-    # in the block it is not graded (counted); a wider merge needs fewer lines
-    rows2 = {1: (custom, [c("A1", four, s_wrap)]), 2: (custom, [c("A2", None, s_wrap)])}
-    v = run(book([("S", ws(rows2, cols=cols10, tail=merges("A1:A2")))], st))
-    assert v["decision"] == "fail" and "rows 1:2 of the merge have custom heights totalling 30 pt" in \
-        v["mistakes"][0]["description"], v["mistakes"]
-    rows2a = {1: (custom, [c("A1", four, s_wrap)]), 2: ("", [c("A2", None, s_wrap)])}
-    v = run(book([("S", ws(rows2a, cols=cols10, tail=merges("A1:A2")))], st))
-    assert v["decision"] == "pass" and v["stats"]["wrapped_merge_auto_rows"] == 1, v["mistakes"]
-    v = run(book([("S", ws({1: (custom, [c("A1", two, s_wrap)])}, cols=cols10, tail=merges("A1:B1")))], st))
-    assert v["decision"] == "pass", v["mistakes"]       # 150 px wide: both words on one line
-    # Excel's AutoFit ignores merged cells: a wrapped merge anchor needing several lines in an auto-fitted row is
-    # counted (not graded)
-    v = run(book([("S", ws({1: ("", [c("A1", " ".join([w8] * 8), s_wrap)])}, cols=cols10, tail=merges("A1:B1")))], st))
-    assert v["decision"] == "pass" and v["stats"]["wrapped_merged_in_auto_rows"] == 1, v["stats"]
-    # a wrapped text formula result (Excel cache) is graded too
-    v = run(book([("S", ws({1: (custom, [c("A1", four, s_wrap, f='REPT("0",8)&" "&REPT("0",8)')])}, cols=cols10))],
-                 st, app="Microsoft Excel"))
-    assert v["decision"] == "fail" and "a wrapped text formula result" in v["mistakes"][0]["description"], v
+        assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
+        d = v["mistakes"][0]["description"]
+        assert ("Wrapped text in A1 on sheet 'S' is cut off at the bottom: A1 '00000000 00000000 00000000 000…' "
+                "(wrapped text, Calibri 11) needs 4 lines in its 10.00-character column A, but row 1 has a custom height of "
+                "15 pt: room for about 1.0 lines of 14.3 pt, so about 3.0 line(s) cannot be seen") in d, d
+        assert v["stats"]["mistakes_by_rule"]["wrapped_text"] == 1 and v["stats"]["wrapped_custom_rows"] == 1
+        with patched(M, WRAPPED_TEXT_CLIP=False):
+            v = run(p)
+            assert v["decision"] == "pass" and v["stats"]["wrapped_cut_off"] == 1, v["mistakes"]
+        # the same height without customHeight, or no height at all: auto-fitted -> pass
+        for attrs in ('ht="15"', ""):
+            v = run(book([("S", ws({1: (attrs, [c("A1", four, s_wrap)])}, cols=cols10))], st))
+            assert v["decision"] == "pass" and v["stats"]["wrapped_auto_rows"] == 1, (attrs, v["mistakes"])
+        # two lines (28.6 pt): a 22 pt row shows 1.54 lines (0.46 hidden <= 0.5: pass); 20 pt shows 1.40 (fail)
+        for ht, want in ((22, "pass"), (20, "fail")):
+            v = run(book([("S", ws({1: (f'ht="{ht}" customHeight="1"', [c("A1", two, s_wrap)])}, cols=cols10))], st))
+            assert v["decision"] == want, (ht, v["mistakes"])
+        # horizontal justify wraps like wrapText; a trailing line break shows nothing
+        v = run(book([("S", ws({1: (custom, [c("A1", four, s_just)])}, cols=cols10))], st))
+        assert v["decision"] == "fail" and v["stats"]["wrapped_cut_off"] == 1, v["mistakes"]
+        v = run(book([("S", ws({1: (custom, [c("A1", w8 + "\n", s_wrap)])}, cols=cols10))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # shrink-to-fit with wrap: never cut off
+        v = run(book([("S", ws({1: (custom, [c("A1", four, st.xf(wrap=True, shrink=True))])}, cols=cols10))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # a merge over two custom rows (30 pt, 2.1 lines) still hides about 1.9 of 4 lines; with an auto-fitted row
+        # in the block it is not graded (counted); a wider merge needs fewer lines
+        rows2 = {1: (custom, [c("A1", four, s_wrap)]), 2: (custom, [c("A2", None, s_wrap)])}
+        v = run(book([("S", ws(rows2, cols=cols10, tail=merges("A1:A2")))], st))
+        assert v["decision"] == "fail" and "rows 1:2 of the merge have custom heights totalling 30 pt" in \
+            v["mistakes"][0]["description"], v["mistakes"]
+        rows2a = {1: (custom, [c("A1", four, s_wrap)]), 2: ("", [c("A2", None, s_wrap)])}
+        v = run(book([("S", ws(rows2a, cols=cols10, tail=merges("A1:A2")))], st))
+        assert v["decision"] == "pass" and v["stats"]["wrapped_merge_auto_rows"] == 1, v["mistakes"]
+        v = run(book([("S", ws({1: (custom, [c("A1", two, s_wrap)])}, cols=cols10, tail=merges("A1:B1")))], st))
+        assert v["decision"] == "pass", v["mistakes"]       # 150 px wide: both words on one line
+        # Excel's AutoFit ignores merged cells: a wrapped merge anchor needing several lines in an auto-fitted row is
+        # counted (not graded)
+        v = run(book([("S", ws({1: ("", [c("A1", " ".join([w8] * 8), s_wrap)])}, cols=cols10, tail=merges("A1:B1")))], st))
+        assert v["decision"] == "pass" and v["stats"]["wrapped_merged_in_auto_rows"] == 1, v["stats"]
+        # a wrapped text formula result (Excel cache) is graded too
+        v = run(book([("S", ws({1: (custom, [c("A1", four, s_wrap, f='REPT("0",8)&" "&REPT("0",8)')])}, cols=cols10))],
+                     st, app="Microsoft Excel"))
+        assert v["decision"] == "fail" and "a wrapped text formula result" in v["mistakes"][0]["description"], v
+    # default bar: the 35-character text hidden in the 15 pt row passes and is counted
+    v = run(p)
+    assert v["decision"] == "pass" and v["stats"]["wrapped_cut_off"] == 0 and v["stats"]["wrapped_cut_off_short"] == 1, v
+    ex = v["stats"]["wrapped_cut_off_short_examples"][0]
+    assert ex["cell"] == "S!A1" and ex["chars"] == 35 and ex["lines"] == 4, ex
 
 
 def test_69_text_values_formats_and_fonts():
-    st = Styles()
-    cols8 = col(1, 1, stored(8.0))                          # A: 56 / 73 px of text area
-    label = "far too long a label"
-    # a trusted (Excel) text formula result is graded like a constant
-    v = run(book([("S", ws({1: ("", [c("A1", label, f='"far too long a label"'), c("B1", 5.0)])}, cols=cols8))], st,
-                 app="Microsoft Excel"))
-    assert v["decision"] == "fail" and "(a text formula result, Calibri 11" in v["mistakes"][0]["description"], v
-    assert v["stats"]["text_formula_results"] == 1
-    # openpyxl: an untrusted formula result is undecided and raises when nothing else fails (no fallback) - unless its
-    # format shows nothing for numbers AND text (';;;'); under ';;' a text result would still show (69-F2 narrowed)
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX)),
-           "cannot decide S!A1", "untrusted")
-    v = run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;;"), f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX))
-    assert v["decision"] == "pass" and v["stats"]["undecided_not_displayed"] == 1, v
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;"), f="C1&C1"), c("C1", "x")])}))], st,
-                            app=APP_OPX)), "cannot decide S!A1")
-    # ... an untrusted result in a centre-across cell is needed for the text rule (the number rule skips the cell)
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(horizontal="centerContinuous"), f="C1&C1"),
-                                                 c("C1", "x")])}))], st, app=APP_OPX)), "cannot decide S!A1")
-    # with a value copy holding a long text behind the placeholder: cut off -> fail
-    x = ws({1: ("", [c("A1", 0, f='IF(C1>0,"far too long a label","")'), c("B1", 5.0), c("C1", 1)])}, cols=cols8)
-    copy = book([("S", ws({1: ("", [c("A1", label, f='IF(C1>0,"far too long a label","")'), c("B1", 5.0), c("C1", 1)])},
-                          cols=cols8))], st)
-    v = run_with(book([("S", x)], st, app=APP_OPX), value_path=copy)
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
-    # number formats: a text section can hide text (';;;') or lengthen it; 'Revenue' (52 px) fits A on its own
-    s_hide = st.xf(numfmt=";;;")
-    s_suffix = st.xf(numfmt='0;-0;0;@" (in millions)"')
-    for s_, want in ((0, "pass"), (s_hide, "pass"), (s_suffix, "fail")):
-        v = run(book([("S", ws({1: ("", [c("A1", "Revenue", s_), c("B1", 5.0)])}, cols=cols8))], st))
-        assert v["decision"] == want, (s_, v["mistakes"])
-    assert "'Revenue (in millions)'" in v["mistakes"][0]["description"]
-    # blanks at the ends: trailing blanks are invisible, leading blanks push the text right
-    v = run(book([("S", ws({1: ("", [c("A1", "Revenue" + " " * 30), c("B1", 5.0)])}, cols=cols8))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    v = run(book([("S", ws({1: ("", [c("A1", " " * 6 + "Revenue"), c("B1", 5.0)])}, cols=cols8))], st))
-    assert v["decision"] == "fail", v["mistakes"]
-    # an unwrapped cell shows typed line breaks as nothing: 'Rev\n\n\nenue' is 'Revenue' on one line (fits; three
-    # breaks measured as glyphs would add about 21 px)
-    v = run(book([("S", ws({1: ("", [c("A1", "Rev\n\n\nenue"), c("B1", 5.0)])}, cols=cols8))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # rich text: a 22 pt run doubles the width
-    v = run(book([("S", ws({1: ("", [rich("A1", [("Revenue", 22)]), c("B1", 5.0)])}, cols=cols8))], st))
-    assert v["decision"] == "fail", v["mistakes"]
-    v = run(book([("S", ws({1: ("", [rich("A1", [("Revenue", None)]), c("B1", 5.0)])}, cols=cols8))], st))
-    assert v["decision"] == "pass", v["mistakes"]
-    # an unknown face is measured as Calibri and listed
-    v = run(book([("S", ws({1: ("", [c("A1", "Revenue", st.xf("Segoe UI", 11)), c("B1", 5.0)])}, cols=cols8))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_unknown_faces"] == {"Segoe UI": 1}, v
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):    # the rule's geometry and blockers, any length; the
+        # 200-character bar (Patrick, option 3) has its own test: test_69_text_clip_min_chars
+        st = Styles()
+        cols8 = col(1, 1, stored(8.0))                          # A: 56 / 73 px of text area
+        label = "far too long a label"
+        # a trusted (Excel) text formula result is graded like a constant
+        v = run(book([("S", ws({1: ("", [c("A1", label, f='"far too long a label"'), c("B1", 5.0)])}, cols=cols8))], st,
+                     app="Microsoft Excel"))
+        assert v["decision"] == "fail" and "(a text formula result, Calibri 11" in v["mistakes"][0]["description"], v
+        assert v["stats"]["text_formula_results"] == 1
+        # openpyxl: an untrusted formula result is undecided and raises when nothing else fails (no fallback) - unless its
+        # format shows nothing for numbers AND text (';;;'); under ';;' a text result would still show (69-F2 narrowed)
+        raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX)),
+               "cannot decide S!A1", "untrusted")
+        v = run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;;"), f="C1&C1"), c("C1", "x")])}))], st, app=APP_OPX))
+        assert v["decision"] == "pass" and v["stats"]["undecided_not_displayed"] == 1, v
+        raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(numfmt=";;"), f="C1&C1"), c("C1", "x")])}))], st,
+                                app=APP_OPX)), "cannot decide S!A1")
+        # ... an untrusted result in a centre-across cell is needed for the text rule (the number rule skips the cell)
+        raises(lambda: run(book([("S", ws({1: ("", [c("A1", None, st.xf(horizontal="centerContinuous"), f="C1&C1"),
+                                                     c("C1", "x")])}))], st, app=APP_OPX)), "cannot decide S!A1")
+        # with a value copy holding a long text behind the placeholder: cut off -> fail
+        x = ws({1: ("", [c("A1", 0, f='IF(C1>0,"far too long a label","")'), c("B1", 5.0), c("C1", 1)])}, cols=cols8)
+        copy = book([("S", ws({1: ("", [c("A1", label, f='IF(C1>0,"far too long a label","")'), c("B1", 5.0), c("C1", 1)])},
+                              cols=cols8))], st)
+        v = run_with(book([("S", x)], st, app=APP_OPX), value_path=copy)
+        assert v["decision"] == "fail" and locs(v) == ["S!A1"], v["mistakes"]
+        # number formats: a text section can hide text (';;;') or lengthen it; 'Revenue' (52 px) fits A on its own
+        s_hide = st.xf(numfmt=";;;")
+        s_suffix = st.xf(numfmt='0;-0;0;@" (in millions)"')
+        for s_, want in ((0, "pass"), (s_hide, "pass"), (s_suffix, "fail")):
+            v = run(book([("S", ws({1: ("", [c("A1", "Revenue", s_), c("B1", 5.0)])}, cols=cols8))], st))
+            assert v["decision"] == want, (s_, v["mistakes"])
+        assert "'Revenue (in millions)'" in v["mistakes"][0]["description"]
+        # blanks at the ends: trailing blanks are invisible, leading blanks push the text right
+        v = run(book([("S", ws({1: ("", [c("A1", "Revenue" + " " * 30), c("B1", 5.0)])}, cols=cols8))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        v = run(book([("S", ws({1: ("", [c("A1", " " * 6 + "Revenue"), c("B1", 5.0)])}, cols=cols8))], st))
+        assert v["decision"] == "fail", v["mistakes"]
+        # an unwrapped cell shows typed line breaks as nothing: 'Rev\n\n\nenue' is 'Revenue' on one line (fits; three
+        # breaks measured as glyphs would add about 21 px)
+        v = run(book([("S", ws({1: ("", [c("A1", "Rev\n\n\nenue"), c("B1", 5.0)])}, cols=cols8))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # rich text: a 22 pt run doubles the width
+        v = run(book([("S", ws({1: ("", [rich("A1", [("Revenue", 22)]), c("B1", 5.0)])}, cols=cols8))], st))
+        assert v["decision"] == "fail", v["mistakes"]
+        v = run(book([("S", ws({1: ("", [rich("A1", [("Revenue", None)]), c("B1", 5.0)])}, cols=cols8))], st))
+        assert v["decision"] == "pass", v["mistakes"]
+        # an unknown face is measured as Calibri and listed
+        v = run(book([("S", ws({1: ("", [c("A1", "Revenue", st.xf("Segoe UI", 11)), c("B1", 5.0)])}, cols=cols8))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_unknown_faces"] == {"Segoe UI": 1}, v
 
 
 def test_69_text_mistakes_band_and_stats():
-    # adjacent cut-off labels form one mistake, the worst one quoted
-    st = Styles(("Aptos Narrow", 11))
-    s_txt = st.xf("Arial", 10)
-    rows = {r: ("", [c(f"A{r}", ("Revenue growth assumption " + "x" * (r - 5)).strip(), s_txt), c(f"B{r}", 0.05)])
-            for r in (5, 6, 7)}
-    rows[9] = ("", [c("A9", "Cost of goods sold, net of rebates", s_txt), c("B9", 1.0)])
-    v = run(book([("Model", ws(rows))], st))
-    assert locs(v) == ["Model!A5:A7", "Model!A9"], locs(v)
-    assert v["mistakes"][0]["description"].startswith("3 text cells A5:A7 on sheet 'Model' are cut off; e.g. A7 "), v
-    assert v["stats"]["text_cut_off"] == 4 and v["stats"]["per_sheet"][0]["text_cut_off"] == 4
-    # a band case: '709,557.13' as text (Arial 10) in a 9.0 column next to a filled B1 overflows under the
-    # 96 dpi models only -> pass, counted
-    v = run(book([("S", ws({1: ("", [c("A1", "709,557.13", s_txt), c("B1", 1.0)])}, cols=col(1, 1, stored(9.0))))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_band"] == 1, v["stats"]["text_band_examples"]
-    # a one-line text in a custom-height row lower than half a line is counted only
-    v = run(book([("S", ws({1: ('ht="3" customHeight="1"', [c("A1", "Note", s_txt)])}))], st))
-    assert v["decision"] == "pass" and v["stats"]["text_rows_under_half_line"] == 1, v["stats"]
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):    # the rule's geometry and blockers, any length; the
+        # 200-character bar (Patrick, option 3) has its own test: test_69_text_clip_min_chars
+        # adjacent cut-off labels form one mistake, the worst one quoted
+        st = Styles(("Aptos Narrow", 11))
+        s_txt = st.xf("Arial", 10)
+        rows = {r: ("", [c(f"A{r}", ("Revenue growth assumption " + "x" * (r - 5)).strip(), s_txt), c(f"B{r}", 0.05)])
+                for r in (5, 6, 7)}
+        rows[9] = ("", [c("A9", "Cost of goods sold, net of rebates", s_txt), c("B9", 1.0)])
+        v = run(book([("Model", ws(rows))], st))
+        assert locs(v) == ["Model!A5:A7", "Model!A9"], locs(v)
+        assert v["mistakes"][0]["description"].startswith("3 text cells A5:A7 on sheet 'Model' are cut off; e.g. A7 "), v
+        assert v["stats"]["text_cut_off"] == 4 and v["stats"]["per_sheet"][0]["text_cut_off"] == 4
+        # a band case: '709,557.13' as text (Arial 10) in a 9.0 column next to a filled B1 overflows under the
+        # 96 dpi models only -> pass, counted
+        v = run(book([("S", ws({1: ("", [c("A1", "709,557.13", s_txt), c("B1", 1.0)])}, cols=col(1, 1, stored(9.0))))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_band"] == 1, v["stats"]["text_band_examples"]
+        # a one-line text in a custom-height row lower than half a line is counted only
+        v = run(book([("S", ws({1: ('ht="3" customHeight="1"', [c("A1", "Note", s_txt)])}))], st))
+        assert v["decision"] == "pass" and v["stats"]["text_rows_under_half_line"] == 1, v["stats"]
+
+
+def long_text(n: int) -> str:
+    """A text of exactly n characters with blanks inside it but none at either end."""
+    t = ("Assumption note " * (n // 16 + 2))[:n]
+    return t[:-1] + "."
+
+
+def test_69_text_clip_min_chars():
+    """Option 3 (Patrick 2026-10-04): cut-off text fails only when it shows TEXT_CLIP_MIN_CHARS (200) or more
+    characters - the displayed text (after the number format) without leading / trailing blanks and without typed
+    line breaks.  199 vs 200 for (a) unwrapped and (b) wrapped text; shorter cut-off text is counted in stats."""
+    assert M.TEXT_CLIP_MIN_CHARS == 200
+    assert M.shown_chars("  " + long_text(199) + " \n") == 199 and M.shown_chars(long_text(100) + "\n" + long_text(99)) == 199
+    st = Styles()
+    s_wrap = st.xf(wrap=True)
+    s_suffix = st.xf(numfmt='0;-0;0;@" (bn)"')               # a text section adding 5 characters
+    # (a) unwrapped, cut off by B1 (a number) in a default column: 199 passes (counted), 200 fails
+    for n, want in ((199, "pass"), (200, "fail")):
+        v = run(book([("S", ws({1: ("", [c("A1", long_text(n)), c("B1", 5.0)])}))], st))
+        assert v["decision"] == want, (n, v["mistakes"])
+        assert v["stats"]["text_cut_off"] == (n >= 200) and v["stats"]["text_cut_off_short"] == (n < 200), v["stats"]
+    d = v["mistakes"][0]["description"]
+    assert "is cut off by B1 (a number): about 192 of its 200 characters" in d, d
+    # blanks at the ends and typed line breaks are not counted; a number format's added text is
+    for text, s_, want in (("   " + long_text(199) + "   ", 0, "pass"),
+                           (long_text(100) + "\n" + long_text(99), 0, "pass"),
+                           (long_text(195), s_suffix, "fail"),           # 195 + ' (bn)' = 200 shown
+                           (long_text(194), s_suffix, "pass")):          # 199 shown
+        v = run(book([("S", ws({1: ("", [c("A1", text, s_), c("B1", 5.0)])}))], st))
+        assert v["decision"] == want, (repr(text[-12:]), s_, v["mistakes"])
+    # with the bar off, the 199-character text fails too
+    with patched(M, TEXT_CLIP_MIN_CHARS=0):
+        assert run(book([("S", ws({1: ("", [c("A1", long_text(199)), c("B1", 5.0)])}))], st))["decision"] == "fail"
+    # (b) wrapped, in a 15 pt custom-height row of a 10.0 column: 199 passes (counted), 200 fails; a typed line
+    # break inside does not count
+    custom = 'ht="15" customHeight="1"'
+    for text, want in ((long_text(199), "pass"), (long_text(200), "fail"),
+                       (long_text(150) + "\n" + long_text(49), "pass"), (long_text(150) + "\n" + long_text(50), "fail")):
+        v = run(book([("S", ws({1: (custom, [c("A1", text, s_wrap)])}, cols=col(1, 1, stored(10.0))))], st))
+        assert v["decision"] == want, (len(text), v["mistakes"])
+        assert v["stats"]["wrapped_cut_off"] == (want == "fail"), v["stats"]
+        assert v["stats"]["wrapped_cut_off_short"] == (want == "pass"), v["stats"]
+    assert v["stats"]["mistakes_by_rule"] == {"numbers": 0, "unwrapped_text": 0, "wrapped_text": 1}
+    # a '####' number still fails whatever the text: the bar concerns cut-off text only
+    v = run(book([("S", ws({1: ("", [c("A1", long_text(50)), c("B1", 123456789, st.xf(numfmt=1))])},
+                           cols=col(2, 2, stored(3.0))))], st))
+    assert v["decision"] == "fail" and v["stats"]["mistakes_by_rule"]["numbers"] == 1 and v["stats"]["text_cut_off_short"] == 1
+
+
+def test_69_text_run_size_out_of_range():
+    """A rich-text run size outside Excel's 1-409 pt range (ChatGPT's writer stores 1000 for 10 pt, GPT-6 1331) never
+    enlarges the text: the cell's size is used and the run is counted.  A 250-character paragraph whose runs say
+    1000 / 1200 fits two lines of a 34 pt row in a 142-character column (measured at 1000 pt it needed 158 lines)."""
+    st = Styles()
+    s_wrap = st.xf("Arial", 10, wrap=True)
+    para = [(long_text(120) + " ", 1000), (long_text(129), 1200)]
+    v = run(book([("Instructions", ws({10: ('ht="34" customHeight="1"', [rich("B10", para, s_wrap)])},
+                                      cols=col(2, 2, stored(141.29))))], st))
+    assert v["decision"] == "pass" and v["stats"]["wrapped_cut_off"] == 0, v["mistakes"]
+    assert v["stats"]["text_runs_size_out_of_range"] == 2, v["stats"]["text_runs_size_out_of_range"]
+    # an in-range run size still counts: the same paragraph at 36 pt needs far more than the row shows
+    para36 = [(long_text(120) + " ", 36), (long_text(129), 36)]
+    v = run(book([("Instructions", ws({10: ('ht="34" customHeight="1"', [rich("B10", para36, s_wrap)])},
+                                      cols=col(2, 2, stored(141.29))))], st))
+    assert v["decision"] == "fail" and v["stats"]["wrapped_cut_off"] == 1, v["mistakes"]
+    # unwrapped: a 1000 'pt' run is measured at the cell's 11 pt (fits a 10.0 column next to a filled B1)
+    v = run(book([("S", ws({1: ("", [rich("A1", [("Revenue", 1000)]), c("B1", 5.0)])}, cols=col(1, 1, stored(10.0))))], st))
+    assert v["decision"] == "pass" and v["stats"]["text_cut_off_short"] == 0, v["stats"]
 
 
 def test_69_formula_values():
@@ -918,7 +1013,8 @@ def test_69_review2_hidden_merge_anchor():
 TESTS = [test_69_metrics, test_69_narrow_number_date_percent, test_69_one_digit_overflow_and_general,
          test_69_shrink_merge_hidden, test_69_text_cut_off_by_neighbours, test_69_text_alignment_directions,
          test_69_text_merges_hidden_columns_and_edges, test_69_wrapped_text_rows,
-         test_69_text_values_formats_and_fonts, test_69_text_mistakes_band_and_stats,
+         test_69_text_values_formats_and_fonts, test_69_text_mistakes_band_and_stats, test_69_text_clip_min_chars,
+         test_69_text_run_size_out_of_range,
          test_69_formula_values, test_69_conditional_formats,
          test_69_band_indent_unknown_face_negative_date, test_69_default_widths_and_grouping,
          test_69_review2_placeholder_types, test_69_review2_iso_date_general,
