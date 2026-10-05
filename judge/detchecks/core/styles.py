@@ -4,11 +4,11 @@ Colours are resolved to ARGB strings 'FFRRGGBB' (alpha always FF: Excel ignores 
 stored alpha byte for cell fonts and fills; openpyxl writes 00RRGGBB for opaque colours).
 
 Resolution rules (ECMA-376 18.8.19 CT_Color, verified against Excel):
-  rgb       -> that colour (alpha ignored)
+  rgb       -> that colour (alpha ignored); 6 or 8 hex digits
   indexed   -> the workbook's own <indexedColors> palette if present, else the legacy
                64-colour default palette (note indexed 13 = FFFF00, bright yellow);
                64 = system foreground (window text: black), 65 = system background
-               (window: white); anything else is unresolvable (None)
+               (window: white)
   theme     -> theme part clrScheme slot, cell index order 0=lt1, 1=dk1, 2=lt2, 3=dk2,
                4..9=accent1..6, 10=hlink, 11=folHlink (same as judge/utils/theme_palette.py;
                so theme 0 is WHITE and theme 1 BLACK in the default Office theme)
@@ -17,6 +17,13 @@ Resolution rules (ECMA-376 18.8.19 CT_Color, verified against Excel):
                (HLSMAX = 240, see excel_tint()); reproduces Excel's rendered colours
                exactly on all 46 Office-theme swatches tested, e.g. theme 1 + tint
                0.49998 -> 808080 (theme_palette.py's float version gives 7F7F7F).
+Anything else is UNRESOLVABLE and resolves to an explicit UnknownColour (never None, never black
+or 'no fill'): an rgb that is not 6 or 8 hex digits ('FFGGFF00', ''), a theme index outside the 12
+slots, an indexed value outside the palette other than 64 / 65 (e.g. 81, the system tooltip-text
+colour Excel writes for comment fonts), an invalid entry of a custom <indexedColors> palette, a tint
+that is not a number in [-1, 1].  Building the style table never raises for one; a check that meets
+one decides whether its verdict depends on the colour and raises GradingError only then (finding
+47-R2-08, 2026-10-04; docs/reader.md section 5).
 """
 from __future__ import annotations
 
@@ -187,37 +194,69 @@ def excel_tint(hex6: str, tint: float) -> str:
 @dataclass(frozen=True)
 class Color:
     """A colour reference exactly as stored (one of rgb / theme / indexed / auto) + tint."""
-    rgb: Optional[str] = None       # as written (6 or 8 hex digits), upper-case
+    rgb: Optional[str] = None       # as written (6 or 8 hex digits when valid), upper-case
     theme: Optional[int] = None
     indexed: Optional[int] = None
     auto: bool = False
     tint: float = 0.0
+    bad: Optional[str] = None       # an attribute as stored that is not a valid value ('theme="x"', 'tint="2"')
 
     @staticmethod
     def from_el(el) -> Optional["Color"]:
         if el is None:
             return None
         a = el.attrib
-        tint = _float(a.get("tint"), 0.0) or 0.0
-        if a.get("rgb"):
-            return Color(rgb=a["rgb"].strip().upper(), tint=tint)
+        bad = None
+        tint = 0.0
+        if a.get("tint") is not None:
+            t = _float(a.get("tint"))
+            if t is None or not math.isfinite(t) or not -1.0 <= t <= 1.0:
+                bad = f'tint="{a.get("tint")}"'
+            else:
+                tint = t
+        if a.get("rgb") is not None:
+            return Color(rgb=a["rgb"].strip().upper(), tint=tint, bad=bad)
         if a.get("theme") is not None:
-            return Color(theme=_int(a["theme"], -1), tint=tint)
+            t = _int(a["theme"])
+            return Color(theme=t if t is not None else -1, tint=tint,
+                         bad=bad if t is not None else f'theme="{a["theme"]}"')
         if a.get("indexed") is not None:
-            return Color(indexed=_int(a["indexed"], -1), tint=tint)
+            i = _int(a["indexed"])
+            return Color(indexed=i if i is not None else -1, tint=tint,
+                         bad=bad if i is not None else f'indexed="{a["indexed"]}"')
         if (a.get("auto") or "").lower() in ("1", "true"):
             return Color(auto=True)
         return None
 
     def describe(self) -> str:
         t = f"{self.tint:+.3f}" if self.tint else ""
-        if self.rgb:
-            return f"rgb:{self.rgb}{t}"
+        b = f" ({self.bad})" if self.bad else ""
+        if self.rgb is not None:
+            return f"rgb:{self.rgb}{t}{b}"
         if self.theme is not None:
-            return f"theme:{self.theme}{t}"
+            return f"theme:{self.theme}{t}{b}"
         if self.indexed is not None:
-            return f"indexed:{self.indexed}{t}"
+            return f"indexed:{self.indexed}{t}{b}"
         return "auto" if self.auto else "none"
+
+
+@dataclass(frozen=True)
+class UnknownColour:
+    """What Styles.resolve returns for a colour reference whose rendering is not known (see the module
+    doc): never a colour string, so it cannot be mistaken for black, white or 'no fill' - code that
+    slices it like 'FFRRGGBB' fails loudly.  ref = the reference as stored (Color.describe()), why =
+    why it cannot be resolved.  Hashable; equal references compare equal (Excel renders one stored
+    value one way, whatever that is)."""
+    ref: str
+    why: str
+
+    def __str__(self) -> str:
+        return f"unresolvable colour {self.ref} ({self.why})"
+
+
+def is_unknown(colour) -> bool:
+    """True for an UnknownColour (an unresolvable colour reference)."""
+    return isinstance(colour, UnknownColour)
 
 
 @dataclass(frozen=True)
@@ -305,7 +344,8 @@ class CellStyle:
 class FillPaint:
     """What a fill paints.  effective = the single colour a viewer perceives:
     solid -> fg; other patterns -> fg blended over bg by pattern density; gradient ->
-    average of the stops.  None means 'no fill' (the cell shows the sheet background, white)."""
+    average of the stops.  None means 'no fill' (the cell shows the sheet background, white);
+    an UnknownColour means the paint depends on a colour that cannot be resolved."""
     kind: str
     pattern: Optional[str]
     fg: Optional[str]
@@ -458,6 +498,9 @@ class Styles:
         self.dxfs: list[Dxf] = []
         self.indexed_palette: tuple = DEFAULT_INDEXED   # RRGGBB, custom <indexedColors> applied
         self.custom_indexed: bool = False
+        self.unknown_indexed: dict = {}                 # palette index -> invalid <rgbColor rgb> as stored
+        #                                                 (its palette slot holds a placeholder; resolve() and
+        #                                                 indexed_colour() return an UnknownColour for it)
         self.theme_colors: tuple = DEFAULT_THEME        # RRGGBB in cell theme-index order
         self.theme_present: bool = False
         self._fill_paint_cache: dict[int, FillPaint] = {}
@@ -518,7 +561,11 @@ class Styles:
                             vals = []
                             for rc in c:
                                 v = (rc.get("rgb") or "").strip()
-                                vals.append(v[-6:].upper() if (_HEX8.match(v) or _HEX6.match(v)) else "000000")
+                                if _HEX8.match(v) or _HEX6.match(v):
+                                    vals.append(v[-6:].upper())
+                                else:
+                                    st.unknown_indexed[len(vals)] = v      # not a colour: unknown, not black
+                                    vals.append("000000")                  # placeholder (never read as a colour)
                             if vals:
                                 st.indexed_palette = tuple(vals) + DEFAULT_INDEXED[len(vals):]
                                 st.custom_indexed = True
@@ -573,44 +620,63 @@ class Styles:
         return None
 
     # ------------------------------------------------------------------ colours
-    def resolve(self, color: Optional[Color], role: str = "font") -> Optional[str]:
-        """Color -> 'FFRRGGBB'.  role 'font'|'border' (auto/None -> black) or 'fill'
-        (auto -> white; None -> None = no colour).  Unresolvable references -> None."""
+    def resolve(self, color: Optional[Color], role: str = "font"):
+        """Color -> 'FFRRGGBB', or an UnknownColour when the reference cannot be resolved (never
+        raises; never guessed as black / white / no fill).  role 'font'|'border' (auto/None ->
+        black) or 'fill' (auto -> white; None -> None = no colour)."""
         if color is None:
             return BLACK if role != "fill" else None
         if color.auto:
             return BLACK if role != "fill" else WHITE
+        if color.bad is not None:
+            return UnknownColour(color.describe(), f"{color.bad} is not a valid value")
         base = None
-        if color.rgb:
-            h = color.rgb[-6:]
-            if not _HEX6.match(h):
-                return None
-            base = h.upper()
+        if color.rgb is not None:
+            h = color.rgb
+            if not (_HEX8.match(h) or _HEX6.match(h)):
+                return UnknownColour(color.describe(), "rgb is not 6 or 8 hex digits")
+            base = h[-6:].upper()
         elif color.theme is not None:
             if 0 <= color.theme < len(self.theme_colors):
                 base = self.theme_colors[color.theme]
             else:
-                return None
+                return UnknownColour(color.describe(), "theme index outside the theme's 12 colour slots")
         elif color.indexed is not None:
-            if color.indexed == 64:
+            i = color.indexed
+            if i == 64:
                 base = "000000"          # system foreground (window text)
-            elif color.indexed == 65:
+            elif i == 65:
                 base = "FFFFFF"
-            elif 0 <= color.indexed < len(self.indexed_palette):
-                base = self.indexed_palette[color.indexed]
+            elif i in self.unknown_indexed:
+                return UnknownColour(color.describe(), f"custom <indexedColors> entry {i} "
+                                                       f"(rgb={self.unknown_indexed[i]!r}) is not a colour")
+            elif 0 <= i < len(self.indexed_palette):
+                base = self.indexed_palette[i]
             else:
-                return None
+                return UnknownColour(color.describe(), "indexed value outside the palette (only 64 and 65, the "
+                                                       "window text / background, are known system colours)")
         else:
             return BLACK if role != "fill" else None
         if color.tint:
             base = excel_tint(base, color.tint)
         return "FF" + base
 
-    def font_color(self, s: Optional[int]) -> str:
-        """Rendered font colour of a cell style (no conditional formatting / number-format colour)."""
+    def indexed_colour(self, i: int):
+        """'FFRRGGBB' of palette entry i as a number-format [ColorN] tag uses it (N + 7), or an
+        UnknownColour for an invalid custom <indexedColors> entry; None outside the palette."""
+        if i in self.unknown_indexed:
+            return UnknownColour(f"indexed:{i}", f"custom <indexedColors> entry {i} "
+                                                 f"(rgb={self.unknown_indexed[i]!r}) is not a colour")
+        if 0 <= i < len(self.indexed_palette):
+            return "FF" + self.indexed_palette[i]
+        return None
+
+    def font_color(self, s: Optional[int]):
+        """Rendered font colour of a cell style (no conditional formatting / number-format colour):
+        'FFRRGGBB', or an UnknownColour when the font's colour cannot be resolved."""
         v = self._font_argb_cache.get(s)
         if v is None:
-            v = self.resolve(self.font(s).color, "font") or BLACK
+            v = self.resolve(self.font(s).color, "font")
             self._font_argb_cache[s] = v
         return v
 
@@ -618,14 +684,18 @@ class Styles:
         """Resolve a Fill.  For a solid cell fill the paint is fgColor.  For a dxf
         (conditional-format) solid fill pass dxf=True: Excel paints bgColor ONLY (measured by
         Patrick in Excel, 2026-10-03): fgColor is ignored; bgColor indexed 64 and rgb 00000000
-        paint BLACK (alpha ignored); no bgColor -> no fill (FillPaint kind 'none')."""
+        paint BLACK (alpha ignored); no bgColor -> no fill (FillPaint kind 'none').
+        An unresolvable colour the paint uses makes `effective` that UnknownColour (a gradient stop:
+        the stop is the UnknownColour and `effective` the first unknown stop); one the paint does not
+        use (the bgColor of a solid cell fill, the fgColor of a dxf solid fill) changes nothing."""
         if fill.kind == "none":
             return FillPaint("none", None, None, None, None)
         if fill.kind == "gradient":
             cols = [self.resolve(c, "fill") for _p, c in fill.stops]
-            cols = [c for c in cols if c]
-            eff = None
-            if cols:
+            cols = [c for c in cols if c]                   # a stop without a colour paints nothing
+            unknown = next((c for c in cols if is_unknown(c)), None)
+            eff = unknown
+            if cols and unknown is None:
                 n = len(cols)
                 eff = "FF" + "".join(f"{int(round(sum(int(c[i:i + 2], 16) for c in cols) / n)):02X}" for i in (2, 4, 6))
             return FillPaint("gradient", None, None, None, eff, tuple(cols))
@@ -646,29 +716,36 @@ class Styles:
         else:
             fgc = fg or BLACK
             bgc = bg or WHITE
-            eff = _blend(fgc, bgc, PATTERN_FG_SHARE.get(pt, 0.5))
+            if is_unknown(fgc) or is_unknown(bgc):
+                eff = fgc if is_unknown(fgc) else bgc        # the blend depends on the unknown colour
+            else:
+                eff = _blend(fgc, bgc, PATTERN_FG_SHARE.get(pt, 0.5))
         return FillPaint("pattern", pt, fg, bg, eff)
 
     def cell_fill(self, s: Optional[int]) -> FillPaint:
-        """Fill paint of a cell style (cached per style index)."""
+        """Fill paint of a cell style (cached per style index; see fill_paint for unknown colours)."""
         p = self._fill_paint_cache.get(s)
         if p is None:
             p = self.fill_paint(self.fill(s))
             self._fill_paint_cache[s] = p
         return p
 
-    def fill_color(self, s: Optional[int]) -> Optional[str]:
-        """Effective fill colour 'FFRRGGBB' of a cell style, None when there is no fill."""
+    def fill_color(self, s: Optional[int]):
+        """Effective fill colour 'FFRRGGBB' of a cell style, None when there is no fill, an
+        UnknownColour when the paint depends on an unresolvable colour."""
         return self.cell_fill(s).effective
 
-    def dxf_fill_color(self, dxf_id: Optional[int]) -> Optional[str]:
+    def dxf_fill_color(self, dxf_id: Optional[int]):
+        """Colour a conditional-format dxf paints (bgColor only), None for no fill, an UnknownColour
+        when that colour cannot be resolved."""
         d = self.dxf(dxf_id)
         if d is None or d.fill is None:
             return None
         return self.fill_paint(d.fill, dxf=True).effective
 
-    def dxf_font_color(self, dxf_id: Optional[int]) -> Optional[str]:
-        """Font colour a dxf sets, None when the dxf does not set one."""
+    def dxf_font_color(self, dxf_id: Optional[int]):
+        """Font colour a dxf sets, None when the dxf does not set one, an UnknownColour when it
+        cannot be resolved."""
         d = self.dxf(dxf_id)
         if d is None or d.font is None or d.font.color is None:
             return None
@@ -687,6 +764,8 @@ class Styles:
         return 0
 
 
-def rgb6(argb: Optional[str]) -> Optional[str]:
-    """'FFRRGGBB' -> 'RRGGBB' (None passes through)."""
+def rgb6(argb):
+    """'FFRRGGBB' -> 'RRGGBB' (None and an UnknownColour pass through)."""
+    if argb is None or is_unknown(argb):
+        return argb
     return argb[-6:] if argb else None

@@ -108,8 +108,8 @@ one-space code it is blank). `indexed_palette`: the workbook's custom
 ## Conveniences
 
 `parse_format(code) -> NumberFormat` (cached: `sections`, `numeric`, `text_index`,
-`general_numbers`, `has_conditions`, `is_date`), `Section` (`raw tokens color condition kind
-has_at locale_tags`), `split_sections(code)`, `select_section(fmt, value) -> (index|None,
+`general_numbers`, `has_conditions`, `is_date`, `verified`, `unverified_why`), `Section` (`raw tokens color condition kind
+has_at locale_tags`), `mixed_date_letters(tokens) -> str | None` (see Known limits), `split_sections(code)`, `select_section(fmt, value) -> (index|None,
 auto_minus, certain)`, `general_text(v)`, `serial_to_datetime(serial, date1904)`,
 `color_tag_rgb(tag, palette)`, `is_date_format(code_or_id, custom)`,
 `zero_display(code_or_id, custom) -> 'dash'|'blank'|'digit'|'other'|'hash'`.
@@ -151,6 +151,30 @@ auto_minus, certain)`, `general_text(v)`, `serial_to_datetime(serial, date1904)`
   - a conditional-format font colour beats a number-format colour tag (applied by check 94).
 * Still `certain=False` (unmeasured): a negative number in the first section when only the
   SECOND section has a condition, and `#####` when no section applies to the value.
+* **Placeholders mixed with unquoted date-time letters → unverified** (finding 66-S3, in the core
+  since 2026-10-04; `mixed_date_letters(section.tokens)`). openpyxl writes unit words unquoted
+  (`0 bps`, `0 days`, `0 yrs`, `#,##0 d`); the engine would read the letters as date codes and
+  render garbage dates, and Excel's own reading is unmeasured (its Format Cells dialog rejects such
+  codes). A code is **unverified** (`NumberFormat.verified = False`, the reason in
+  `NumberFormat.unverified_why`) when ONE of its sections holds both
+  - a **placeholder**: a digit placeholder `0` `#` `?` - except the `0`s of a fractional-seconds
+    group, a `.` directly after a seconds code `s` / `ss` / `[s]` / `[ss]` (`h:mm:ss.000`, `mm:ss.0`,
+    `[ss].00`) - or `General`, or the text placeholder `@`; and
+  - an **unquoted, unescaped date-time letter outside brackets**: `y` `m` `d` `h` `s` (date / time
+    codes, any case), `e` `g` `b` (era / Buddhist-year codes; `E` followed by `+` or `-` is
+    scientific notation, not a letter), `AM/PM` or `A/P`, or an elapsed bracket `[h]` `[m]` `[s]`.
+
+  Under an unverified code every **number** renders `certain=False` (the rendering itself is
+  unchanged), whichever section the value uses - Excel may reject the whole code (`0;0 days` on 5
+  is uncertain too). Displays that do not depend on the code stay certain: an empty cell, an
+  error value (always shown unformatted), and text / a logical when the code has **no text
+  section** (shown as typed whatever Excel makes of the code; with a text section, `0 days;@`,
+  text is uncertain too). Not affected: genuine date / time codes (no placeholder), scientific
+  notation, quoted or escaped units (`0" bps"`, `0 "days"`, `0\x`, `"FY"0"E"`) and unquoted letters
+  that are no date code (`0.0x` keeps rendering `x` as a literal). No corpus or toy code is
+  unverified (392 distinct corpus codes + the toy codes + all built-ins checked, 2026-10-04).
+  Checks: 66 and 65 make such a value `uncertain` (GradingError where it decides), 69 and 70 leave
+  the cell undecided, 94 tries both blank and shown.
 * `_x` padding is one space whatever x is; `*x` fill renders as nothing (min width).
 * East Asian era codes (`g`, `e`) and Buddhist years (`b`) are approximated; Thai digits are
   rendered as Western digits; `[DBNum]`/`[NatNum]` are ignored.

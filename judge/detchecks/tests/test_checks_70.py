@@ -229,6 +229,9 @@ def test_70_geometry_and_text():
     assert [(a, b, ci.width) for a, b, ci in segs] == [(11, 11, 40.0), (12, 12, 22.0), (13, 24, 10.21875)]
     segs = paint_cols([ColInfo(1, 3, 5.0), ColInfo(5, 9, 6.0), ColInfo(2, 6, 7.0)])
     assert [(a, b, ci.width) for a, b, ci in segs] == [(1, 1, 5.0), (2, 6, 7.0), (7, 9, 6.0)]
+    # the painting is the core reader's one rule (SheetHead.col_segments / col_info, shared with 69 and 73)
+    from detchecks.core import sheet as core_sheet
+    assert paint_cols is core_sheet.paint_cols
     # stored pieces / runs: hidden columns are left out and break runs; widths rounded to 2 decimals
     pieces = stored_pieces(paint_cols([ColInfo(1, 2, 12.886), ColInfo(3, 3, 12.89, hidden=True), ColInfo(4, 5, 12.89)]), 8.43)
     assert pieces[:3] == [(1, 2, 12.89), (3, 3, None), (4, 5, 12.89)] and pieces[3] == (6, 16384, 8.43)
@@ -512,10 +515,28 @@ def test_70_formula_values():
     assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0 and v["stats"]["formula_values_read"] == 0, v
 
 
+def test_70_unverified_number_format():
+    """66-S3 in the core (2026-10-04): a number under a code mixing digit placeholders with unquoted date letters
+    ('0 days') renders certain=False.  70 used to measure the engine's date reading of it; now such a cell is
+    undecided like an untrusted value: decisive only when nothing else settles the column."""
+    st = Styles()
+    days = st.xf(numfmt="0 days")
+    quoted = st.xf(numfmt='0" days"')
+    wide = col(8, 8, stored(150))
+    x = ws({1: [c("H1", 25.0, days)]}, cols=wide)
+    raises(lambda: run(book([("S", x)], st)), "cannot decide S!H1", "'0 days' is not verified")
+    # a constant that needs half the width settles the column: the unverified cell is not needed
+    v = run(book([("S", ws({1: [c("H1", 25.0, days)], 3: [c("H3", digits(80))]}, cols=wide))], st))
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v
+    # the quoted unit is verified and measured: '25 days' in a 150-character column is excessive
+    v = run(book([("S", ws({1: [c("H1", 25.0, quoted)]}, cols=wide))], st))
+    assert v["decision"] == "fail" and locs(v) == ["S!H:H"], v
+
+
 TESTS = [test_70_geometry_and_text, test_70_wide_outlier_port, test_70_judge_port_parity, test_70_cap_rule,
          test_70_empty_hidden_and_default_columns, test_70_wrapped_unwrapped_and_merged,
          test_70_rich_text_fonts_units, test_70_outlier_rule, test_70_long_unwrapped_text_is_not_a_width_problem,
-         test_70_brief_and_hidden_sheets, test_70_formula_values]
+         test_70_brief_and_hidden_sheets, test_70_formula_values, test_70_unverified_number_format]
 
 
 def main() -> int:

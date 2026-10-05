@@ -416,8 +416,10 @@ class _Model:
 
 
 class _SheetGeo:
-    """Column text areas per model for one sheet (lazy, cached per column)."""
-    __slots__ = ("head", "models", "dflt", "cache", "_cols", "_starts")
+    """Column text areas per model for one sheet (lazy, cached per column).  A column's width comes
+    from the core reader's one rule (SheetHead.col_info / col_run): where <col> entries overlap, the
+    later entry wins, as in Reasonable column widths (70) and Reasonable row heights (73)."""
+    __slots__ = ("head", "models", "dflt", "cache")
 
     def __init__(self, head, models):
         self.head, self.models = head, models
@@ -426,7 +428,6 @@ class _SheetGeo:
             strict, lenient = default_col_px(head.format, m.mdw)
             self.dflt[m.name] = strict if m.name == REFERENCE_MODEL else lenient
         self.cache = {}
-        self._cols = self._starts = None
 
     def col_pixels(self, c: int):
         """{model: px} for column c, or None when the column is hidden / zero width."""
@@ -458,27 +459,17 @@ class _SheetGeo:
 
     def room(self, a: int, b: int, target=None) -> dict:
         """{model: px} summed over the columns a..b (hidden / zero-width columns count 0: an empty cell
-        there lets text through without giving it room).  Walks runs of columns that share one <col>
-        entry, exactly as col_info reads them; with target ({model: px}) it stops once every model has
-        at least its target (the sum is then a lower bound, which is all a fit decision needs)."""
+        there lets text through without giving it room).  Walks runs of columns that share one applying
+        <col> entry (SheetHead.col_run, the reading col_info gives); with target ({model: px}) it stops
+        once every model has at least its target (the sum is then a lower bound, which is all a fit
+        decision needs)."""
         tot = {m.name: 0 for m in self.models}
         a, b = max(a, 1), min(b, MAX_COL)
         if a > b:
             return tot
-        cols = self._cols
-        if cols is None:
-            cols = sorted(self.head.cols, key=lambda ci: ci.min)
-            self._cols, self._starts = cols, [ci.min for ci in cols]
-        starts = self._starts
         x = a
         while x <= b:
-            i = bisect_right(starts, x) - 1
-            nxt = starts[i + 1] - 1 if i + 1 < len(cols) else MAX_COL
-            if i >= 0 and cols[i].min <= x <= cols[i].max:
-                end = min(cols[i].max, nxt)
-            else:
-                end = nxt
-            end = min(end, b)
+            end = min(self.head.col_run(x)[1], b)
             px = self.col_pixels(x)
             if px is not None:
                 n = end - x + 1

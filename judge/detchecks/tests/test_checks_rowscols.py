@@ -751,6 +751,22 @@ def test_73_vertical_merge_whole_block():
     assert "115.0 pt block" in v["stats"]["per_sheet"][0]["tall_rows_justified"][0]["why"]
 
 
+def test_73_overlapping_cols_later_entry_wins():
+    """Overlapping <col> entries: the later entry wins (the core reader's one rule, SheetHead.col_info; 73.md
+    question 12).  A:J 60 followed by B:B 5: C is 60 wide, so the note needs 2 lines and a 70 pt row fails.
+    Before the fix col_info returned the sheet default (8.43) for C - many lines, and the row passed."""
+    long = ("This explanatory note is long enough to need several lines in one narrow column but only "
+            "two lines across the merged block.")
+    st = Styles()
+    sw = st.xf("Arial", 10, wrap=True)
+    cols = '<col min="1" max="10" width="60" customWidth="1"/><col min="2" max="2" width="5" customWidth="1"/>'
+    v = run(book([("S", ws({3: ('ht="70" customHeight="1"', [c("C3", long, sw)])}, cols=cols))], st), C73)
+    assert v["decision"] == "fail" and locs(v) == ["S!3:3"], (v["mistakes"], v["stats"]["per_sheet"])
+    # in B, the later 5-wide entry wins: many lines, the 70 pt row is needed
+    v = run(book([("S", ws({3: ('ht="70" customHeight="1"', [c("B3", long, sw)])}, cols=cols))], st), C73)
+    assert v["decision"] == "pass", v["mistakes"]
+
+
 TESTS = [test_93_collapsed_members, test_93_hidden_row_flag_and_zero_height,
          test_93_collapsed_group_passes_ungrouped_fails, test_93_partial_and_nested_groups, test_93_columns,
          test_93_sheet_defaults_hidden_sheets_and_variants, test_93_mistake_cap,
@@ -759,7 +775,7 @@ TESTS = [test_93_collapsed_members, test_93_hidden_row_flag_and_zero_height,
          test_73_formula_values_only_where_needed, test_73_values_after_anchors_untrusted_only_if_needed,
          test_73_rich_runs_indent_cap_and_labels,
          test_73_excel_2026_10_03_non_custom_heights_ignored, test_73_instructions_title_with_lost_font_fails,
-         test_73_vertical_merge_whole_block]
+         test_73_vertical_merge_whole_block, test_73_overlapping_cols_later_entry_wins]
 
 
 def main() -> int:

@@ -14,7 +14,8 @@ Rule as implemented (the toys' wording; every judgement call is a module constan
   columns are skipped (No hidden rows/columns (93) owns them).  Every worksheet, dialog sheet and
   macro sheet is graded, hidden sheets included.  Overlapping <col> entries (GPT-6 tooling): a later
   entry (the reader's order: by min, then file order) overrides earlier ones on the columns it
-  covers.
+  covers - the core reader's one rule (SheetHead.col_segments / col_info, shared with Sufficient
+  column widths (69) and Reasonable row heights (73)).
 
   Content need of a column = its widest displayed content in the same characters: the text width of
   each displayed cell in the cell's own face, size and weight (c69's glyph tables, 96 dpi, per-glyph
@@ -70,12 +71,12 @@ from __future__ import annotations
 
 import math
 import re
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from typing import Optional
 
 from ..core import numfmt as N
 from ..core.refs import MAX_COL, index_to_col, location, make_ref
-from ..core.sheet import ExcelError
+from ..core.sheet import ExcelError, paint_cols  # noqa: F401  (paint_cols re-exported: tests, scratch)
 from ..errors import GradingError
 from .base import Check
 from .c69 import (CELL_MARGIN_PX, DEFAULT_FONT_PT, GLYPH_CHARS, WIDE_CHAR, _normal_font, col_px, default_col_px,
@@ -129,35 +130,6 @@ def text_px(row: tuple, text: str, ppem: float) -> int:
 
 
 # ---------------------------------------------------------------- column geometry
-def paint_cols(cols) -> list:
-    """Disjoint, sorted (lo, hi, ColInfo) segments from a sheet's <col> entries: each entry, in the
-    reader's order (by min, file order among equal mins), overrides the earlier ones on the columns it
-    covers.  (Valid files never overlap; GPT-6 tooling writes e.g. F:G 9.0 followed by F:F 44.0.)"""
-    segs: list = []
-    ends: list = []
-    for ci in cols:
-        lo, hi = max(1, ci.min), min(MAX_COL, ci.max)
-        if lo > hi:
-            continue
-        if not segs or lo > ends[-1]:
-            segs.append((lo, hi, ci))
-            ends.append(hi)
-            continue
-        i = bisect_left(ends, lo)                 # first segment ending at or after lo
-        j = i
-        while j < len(segs) and segs[j][0] <= hi:
-            j += 1
-        repl = []
-        if i < j and segs[i][0] < lo:
-            repl.append((segs[i][0], lo - 1, segs[i][2]))
-        repl.append((lo, hi, ci))
-        if i < j and segs[j - 1][1] > hi:
-            repl.append((hi + 1, segs[j - 1][1], segs[j - 1][2]))
-        segs[i:j] = repl
-        ends[i:j] = [s[1] for s in repl]
-    return segs
-
-
 class Geo:
     """Pixel widths (96 dpi) of one sheet's columns; None = hidden or zero width."""
     __slots__ = ("segs", "seg_lo", "default_px", "mdw", "cache")
@@ -335,10 +307,12 @@ class _Need:
         elif self.unwrapped is None or px > self.unwrapped[0]:
             self.unwrapped = (px, r, c, snippet, font)
 
-    def add_untrusted(self, r, c):
+    def add_untrusted(self, r, c, why=None):
+        """A cell whose display cannot be measured: an untrusted formula value (why None) or a number
+        rendering the format engine marks unverified (why says so)."""
         self.n_untrusted += 1
         if len(self.untrusted) < MAX_UNDECIDED_LISTED:
-            self.untrusted.append((r, c))
+            self.untrusted.append((r, c, why))
 
 
 def _filled(cell) -> bool:
@@ -504,11 +478,15 @@ class C70(Check):
         return "empty", None
 
     def _display(self, cell, sty: _Sty, kind: str, v):
-        """(text, rich runs or None) a displayed cell shows."""
+        """(text, rich runs or None) a displayed cell shows; (None, why) when the number format engine
+        marks the rendering unverified (certain=False: e.g. '0 days', unquoted date letters among digit
+        placeholders) - the cell is then undecided like an untrusted value."""
         if kind in ("number", "date"):
             if sty.fmt_err:
                 raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.fmt_err}")
             r = N.render(v, sty.code, value_type=("d" if kind == "date" else None), date1904=self.date1904)
+            if not r.certain:
+                return None, f"display of {v!r} under number format {sty.code!r} is not verified"
             return ("" if r.is_blank else r.text), None
         if kind == "bool":
             return ("TRUE" if v else "FALSE"), None
@@ -520,7 +498,7 @@ class C70(Check):
     def sheet_start(self, head):
         name = head.name
         self._brief = is_instructions_sheet(name)
-        segs = paint_cols(head.cols)
+        segs = head.col_segments()               # the shared reading: the later <col> entry wins (core)
         raw = sum(min(ci.max, MAX_COL) - max(ci.min, 1) + 1 for ci in head.cols if ci.max >= ci.min)
         if raw > sum(s[1] - s[0] + 1 for s in segs):
             self.counts["sheets_with_overlapping_cols"] += 1
@@ -583,7 +561,9 @@ class C70(Check):
             nd.add_untrusted(cell.row, c)
         elif kind != "empty":
             text, runs = self._display(cell, sty, kind, v)
-            if text:
+            if text is None:
+                nd.add_untrusted(cell.row, c, runs)          # unverified rendering (runs holds why)
+            elif text:
                 nd.add(self._need_px(sty, text, runs), sty.wrap and kind == "text", cell.row, c, text[:60],
                        sty.font)
                 self.counts["cells_measured"] += 1
@@ -601,7 +581,7 @@ class C70(Check):
                "judge_skip": bool(JUDGE_SKIP_SHEETS.search(name)), "geo": self.geo, "wide": self._wide,
                "groups": groups, "outlier_of": outlier_of, "needs": self._needs, "used": (lo, hi),
                "hidden_rows": self._hidden_rows, "spans": [], "anchors": {}, "anchor_need": {},
-               "remeasure": set()}
+               "anchor_why": {}, "remeasure": set()}
         # merges over a judged column: covered cells need nothing and the merged content needs the span,
         # so those columns are measured again in a second pass, merges known
         if merges:
@@ -662,7 +642,10 @@ class C70(Check):
                 rec["anchor_need"][(r, c)] = None
             elif kind != "empty":
                 text, runs = self._display(cell, sty, kind, v)
-                if text:
+                if text is None:
+                    rec["anchor_need"][(r, c)] = None
+                    rec["anchor_why"][(r, c)] = runs             # unverified rendering
+                elif text:
                     rec["anchor_need"][(r, c)] = (self._need_px(sty, text, runs), sty.wrap and kind == "text",
                                                   text[:60], sty.font)
             return
@@ -671,7 +654,9 @@ class C70(Check):
             nd.add_untrusted(r, c)
         elif kind != "empty":
             text, runs = self._display(cell, sty, kind, v)
-            if text:
+            if text is None:
+                nd.add_untrusted(r, c, runs)
+            elif text:
                 nd.add(self._need_px(sty, text, runs), sty.wrap and kind == "text", r, c, text[:60], sty.font)
 
     def second_pass_end(self, head, tail):
@@ -705,7 +690,7 @@ class C70(Check):
                 continue                         # empty anchor: nothing to show
             an = rec["anchor_need"][key]
             if an is None:
-                und.append(key)
+                und.append(key + (rec["anchor_why"].get(key),))
                 continue
             t = min(an[0], cap_px) if an[1] else an[0]
             others = sum((geo.px(k) or 0) for k in range(m.c1, min(m.c2, MAX_COL) + 1) if k != c)
@@ -768,10 +753,12 @@ class C70(Check):
             elif open_:
                 for x in u[:3]:
                     if x[0] == "more":
-                        und.append((name, index_to_col(c), f"{x[1]} more untrusted formula value(s) in the column"))
+                        und.append((name, index_to_col(c), f"{x[1]} more unmeasurable cell(s) (untrusted formula "
+                                                           f"values / unverified number formats) in the column"))
                     else:
-                        und.append((name, make_ref(*x), f"formula value untrusted; column {index_to_col(c)} "
-                                                       f"(test {'/'.join(open_)}) depends on it"))
+                        why = x[2] if len(x) > 2 and x[2] else "formula value untrusted"
+                        und.append((name, make_ref(x[0], x[1]), f"{why}; column {index_to_col(c)} "
+                                                                f"(test {'/'.join(open_)}) depends on it"))
         for a, b, W in empties:
             if W > cap:
                 fails.append(("empty", a, b))
@@ -844,8 +831,8 @@ class C70(Check):
         })
         und_note = ""
         if undecided:
-            und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values); the verdict does "
-                        f"not depend on them (see stats).")
+            und_note = (f" {len(undecided)} cell(s) could not be measured (untrusted formula values or unverified "
+                        f"number formats); the verdict does not depend on them (see stats).")
         return self.verdict(
             f"No excessive column width: no visible column is over {WIDTH_CAP_CHARS:g} characters and more than "
             f"{EXCESS_FACTOR:g}x its content, and no WIDE OUTLIER column is more than twice its content "

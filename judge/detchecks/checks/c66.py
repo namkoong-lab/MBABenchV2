@@ -33,8 +33,9 @@ Outcome per zero cell (constants below):
             (NOT charged by 94)                                                         question for Patrick)
   date/time a date or time format (0 shows '1/0/1900', '0:00')                        -> not judged (DATE_TIME_IN_SCOPE)
   uncertain Excel's display is unmeasured: a digit / text zero under a CONDITIONAL-format
-            number format on a showZeros=0 sheet; a date section mixed with digit
-            placeholders ('0 bps', '0 days': unquoted unit letters read as date codes)    -> GradingError
+            number format on a showZeros=0 sheet; any render the format engine marks
+            certain=False, e.g. a section mixing digit placeholders with unquoted date
+            letters ('0 bps', '0 days': core numfmt.mixed_date_letters, review 66-S3)    -> GradingError
 Never judged (not numeric zeros): booleans (FALSE), text '0', errors, empty cells, formulas
 returning "".  Non-anchor cells of a merged range are not displayed and are not judged
 (SKIP_MERGED_NON_ANCHOR).  Values that are not exactly 0 (a 2.33E-10 residue showing '0.00')
@@ -158,41 +159,14 @@ def pure_dash(text: str, fill: Optional[str], code: str) -> bool:
     return fill is not None and fill in DASH_CHARS
 
 
-def mixed_date_section(code: str, section_index: Optional[int]) -> bool:
-    """Does a date / elapsed section also hold digit placeholders outside a fractional-seconds
-    group ('ss.000')?  '0 bps', '0 days', '0 yrs', '#,##0 d' are numeric formats whose unquoted unit
-    letters (b d y m h s) the format engine reads as date codes; Excel's Format Cells dialog rejects
-    them, agent tools (openpyxl) write them anyway, and what Excel then shows is unmeasured
-    (review 66-S3) -> UNCERTAIN, never 'a date, not judged'.  The fractional-seconds group is
-    recognised exactly as the engine renders it (a '.' followed by '0' placeholders)."""
-    if section_index is None:
-        return False
-    try:
-        toks = N.parse_format(code).sections[section_index].tokens
-    except (GradingError, IndexError):
-        return False
-    i, n = 0, len(toks)
-    while i < n:
-        k, v = toks[i]
-        if k == "dot" and i + 1 < n and toks[i + 1] == ("digit", "0"):
-            i += 1
-            while i < n and toks[i] == ("digit", "0"):
-                i += 1
-            continue
-        if k == "digit":
-            return True
-        i += 1
-    return False
-
-
 def classify(value: float, code: str, date1904: bool = False) -> tuple[str, str]:
     """(display class, rendered text) of a numeric value under a format code."""
     r = N.render(value, code, date1904=date1904)
     if not r.certain:
+        # includes a section mixing digit placeholders with unquoted date letters ('0 bps', '0 days',
+        # '#,##0 d'; review 66-S3): the core marks such codes unverified (numfmt.mixed_date_letters)
         return UNCERTAIN, r.text
     if r.kind in ("date", "elapsed"):
-        if mixed_date_section(code, r.section_index):
-            return UNCERTAIN, r.text
         return DATETIME, r.text
     if r.is_blank:
         return BLANK, r.text

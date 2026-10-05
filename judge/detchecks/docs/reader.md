@@ -259,7 +259,7 @@ Lists are indexed exactly as in `styles.xml`. A lookup with an out-of-range inde
 | `cell_xfs`, `cell_style_xfs` | `[Xf]`: `num_fmt_id`, `font_id`, `fill_id`, `border_id`, `xf_id`, `alignment`, `locked`, `hidden`, `quote_prefix`, `apply` |
 | `cell_styles` | `[CellStyle(name, xf_id, builtin_id)]` |
 | `dxfs` | `[Dxf(font, fill, num_fmt_id, num_fmt_code, border)]`; a dxf font is partial (see `Font.specified`) |
-| `indexed_palette` | 64 RRGGBB entries, with any custom `<indexedColors>` applied (`custom_indexed`) |
+| `indexed_palette` | 64 RRGGBB entries, with any custom `<indexedColors>` applied (`custom_indexed`); an invalid custom entry holds a placeholder and is listed in `unknown_indexed` (`{index: rgb as stored}`) |
 | `theme_colors` | 12 RRGGBB entries in cell theme-index order (`theme_present`) |
 
 `Alignment` has `horizontal`, `vertical`, `wrap_text`, `shrink_to_fit`, `indent` and `text_rotation`. Center Across Selection is `horizontal == "centerContinuous"`.
@@ -274,24 +274,40 @@ Lists are indexed exactly as in `styles.xml`. A lookup with an out-of-range inde
 | `num_fmt_id(s)` | the number-format id |
 | `num_fmt_code(s)` | the custom code, else the en-US built-in table, else `General`. Built-in 44 is correct here. `detchecks.core.numfmt` is the authority for rendering |
 | `style_name(s)` | cell style name (`Normal`, `Note`, ...) or None |
-| `font_color(s)` | `'FFRRGGBB'`: the rendered font colour (before CF and number-format colours) |
-| `fill_color(s)` | `'FFRRGGBB'` or None (no fill) |
-| `cell_fill(s)` | `FillPaint(kind, pattern, fg, bg, effective, stops)` |
+| `font_color(s)` | `'FFRRGGBB'`: the rendered font colour (before CF and number-format colours), or an `UnknownColour` |
+| `fill_color(s)` | `'FFRRGGBB'`, None (no fill), or an `UnknownColour` |
+| `cell_fill(s)` | `FillPaint(kind, pattern, fg, bg, effective, stops)` (`effective` / `stops` may hold an `UnknownColour`) |
 
 ### Colour resolution
 
-`styles.resolve(color, role)` returns `'FFRRGGBB'` or None. `role` is `font`, `fill` or `border`. The alpha byte is always FF, because Excel ignores the stored alpha.
+`styles.resolve(color, role)` returns `'FFRRGGBB'`, None (fill role, no colour element), or an **`UnknownColour`** (below). `role` is `font`, `fill` or `border`. The alpha byte is always FF, because Excel ignores the stored alpha.
 
 | stored | resolves to |
 |---|---|
-| `rgb` | that colour (alpha dropped: openpyxl's `00FF0000` is red) |
+| `rgb` (6 or 8 hex digits) | that colour (alpha dropped: openpyxl's `00FF0000` is red) |
 | `indexed` 0..63 | the workbook's `<indexedColors>` if present, else the legacy palette. **indexed 13 = FFFF00 (bright yellow)** |
 | `indexed` 64 | system foreground: black |
 | `indexed` 65 | system background: white |
-| other indexed | None |
-| `theme` | theme part slot. Index order is 0 = lt1, 1 = dk1, 2 = lt2, 3 = dk2, 4..9 = accent1..6, 10 = hlink, 11 = folHlink (as `judge/utils/theme_palette.py`). **Theme 0 is white and theme 1 is black** in the Office theme. Index ≥ 12 → None |
+| `theme` 0..11 | theme part slot. Index order is 0 = lt1, 1 = dk1, 2 = lt2, 3 = dk2, 4..9 = accent1..6, 10 = hlink, 11 = folHlink (as `judge/utils/theme_palette.py`). **Theme 0 is white and theme 1 is black** in the Office theme |
 | `auto` or no `<color>` | font / border: black; fill: white for auto (window background), None for no colour element. Exception: a pattern fill's auto `fgColor` is Excel's "Automatic" pattern colour, black |
-| `tint` | applied with **Excel's integer HLS arithmetic** (`excel_tint`, HLSMAX = 240) |
+| `tint` in [-1, 1] | applied with **Excel's integer HLS arithmetic** (`excel_tint`, HLSMAX = 240) |
+| anything else | an **`UnknownColour(ref, why)`**: an rgb that is not 6 or 8 hex digits (`FFGGFF00`, `""`, `0FF0000`), a theme index ≥ 12 or not a number, an indexed value outside the palette other than 64 / 65 (e.g. 81, the system tooltip-text colour Excel writes for comment fonts) or not a number, an invalid entry of a custom `<indexedColors>`, a tint that is not a number in [-1, 1] |
+
+**Unresolvable colours (finding 47-R2-08, 2026-10-04).** An `UnknownColour` is never None, black,
+white or "no fill" - until 2026-10-04 `resolve` returned None for these and the checks read it as
+"no fill" / automatic, so 47 and 94 passed such files silently (and an invalid custom palette
+entry read as black, a 7-digit rgb as its last six digits). It is not a string: code that slices
+it like `'FFRRGGBB'` fails loudly. It is hashable (`ref` = `Color.describe()`, `why`), and equal
+stored references compare equal. `styles.is_unknown(x)` tests for one; `styles.indexed_colour(i)`
+gives a palette entry as a `[ColorN]` tag uses it (an `UnknownColour` for an invalid custom entry).
+Building the style table never raises for one. **A check that meets one decides whether its
+verdict depends on the colour and raises `GradingError` only then** - never for a style no cell
+uses: 49 / 50 / 51 raise where the cell's class makes its colour decide (`colour_rules`), 47 grades
+every reading of an unknown fill (no fill / bright yellow / another colour) and raises when they
+disagree, 94 makes the cell undecided (raised only when nothing else is certainly concealed). In
+`fill_paint` an unknown colour the paint does not use (a solid cell fill's bgColor, a dxf solid
+fill's fgColor) changes nothing; one it uses makes `effective` that `UnknownColour` (a gradient:
+the unknown stop, kept in `stops`).
 
 The tint algorithm reproduces Excel's rendered colour exactly on 46 Office-theme swatches. For example, theme 1 + tint 0.49998 → `808080`, and accent4 + 0.8 → `FFF2CC`. The float version in `theme_palette.py` is off by one in about half of those cases (it gives `7F7F7F` for the first).
 
@@ -396,10 +412,25 @@ Valid from `sheet_start` on. Fields come from everything before `<sheetData>`.
 | `views` | `[SheetView]` |
 | `view` | the view of workbook window 0 (else the first; None if none) |
 | `format` | `SheetFormat(default_row_height, custom_height, zero_height, default_col_width, base_col_width, outline_level_row, outline_level_col, thick_top, thick_bottom)`. `zero_height` means rows are hidden unless a `<row>` says otherwise |
-| `cols` | `[ColInfo(min, max, width, hidden, custom_width, best_fit, outline_level, collapsed, style)]` sorted by `min` |
-| `col_info(c)` | the `<col>` entry covering column `c`, or None |
+| `cols` | `[ColInfo(min, max, width, hidden, custom_width, best_fit, outline_level, collapsed, style)]` sorted by `min` (file order among equal mins) |
+| `col_info(c)` | the `<col>` entry that applies to column `c`, or None (sheet defaults). **Overlapping entries: the later one wins** (below) |
 | `col_style(c)` | that entry's `style`, or None |
+| `col_segments()` | the disjoint, sorted `(lo, hi, ColInfo)` runs the entries cover, the later entry winning where they overlap (`core.sheet.paint_cols`) |
+| `col_run(c)` | `(lo, hi, ColInfo or None)`: the maximal run of columns around `c` sharing one applying entry (None = defaults), for walking a range run by run |
 | `has_sheet_data` | False for chartsheets and parts without `<sheetData>` |
+
+**Overlapping `<col>` entries** (invalid, but written by GPT-6 tooling in 187 of 374 corpus files,
+e.g. `F:G 9.0` followed by `F:F 44.0`, or `C:XFD 18` followed by `D:D 3`): one rule for every
+check (2026-10-04) - **the later entry wins** on the columns it covers, as a whole (width, hidden,
+style, ...; an entry without a width still wins and means the default width), "later" in the
+reader's order of `cols` (by `min`, then file order). It is the rule Reasonable column widths (70)
+and Reasonable row heights (73) had decided; no Excel measurement or toy settles what Excel itself
+does (no toy has overlapping entries), and on every corpus file "later in file order" gives the same
+widths. Before 2026-10-04 `col_info` returned None - the sheet default - for every column an earlier
+range covers after a later entry that starts inside it (`C:XFD 18` + `D:D 3`: F onwards read 8.43);
+that hit 130 corpus files, through Sufficient column widths (69) and Reasonable row heights (73).
+Checks that read `cols` directly (47 column styles, 65 / 66 missing array members, 93 hidden
+columns) apply their own reading.
 
 `SheetView` fields:
 - Window and zoom: `workbook_view_id`, `tab_selected`, `zoom_scale` (as stored; None means absent), `zoom_scale_normal`, `zoom_scale_page_layout_view`, `zoom_scale_sheet_layout_view`, `view` (`normal` / `pageBreakPreview` / `pageLayout`), `top_left_cell`
