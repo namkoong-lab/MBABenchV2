@@ -19,6 +19,7 @@ from xml.sax.saxutils import escape, quoteattr
 from detchecks.api import Engine
 from detchecks.checks.c47 import (C47, classify_label, classify_legend, is_bright_yellow, is_key_label,
                                   is_wip_content, mentions_yellow)
+from detchecks.checks._cfeval import is_unevaluable
 from detchecks.checks.c94 import C94, CONCEAL_LC, apca_lc, conceals, eval_rule, parse_operand, UNKNOWN
 from detchecks.core.package import Package
 from detchecks.core.sheet import CfRule, ExcelError
@@ -536,11 +537,12 @@ def test_94_cf_rule_evaluation():
     assert eval_rule(rule("expression", formulas=['C4="PASS"']), "pass", (4, 3, 4, 3)) is True
     assert eval_rule(rule("expression", formulas=['I31="FAIL"']), "FAIL", (33, 9, 31, 9)) is True
     assert eval_rule(rule("expression", formulas=["0<A1"]), 5.0, (7, 1, 1, 1)) is True
-    assert eval_rule(rule("expression", formulas=["$A$1>0"]), 5.0, (2, 1, 1, 1)) is UNKNOWN   # another cell
-    assert eval_rule(rule("expression", formulas=["$B1>0"]), 5.0, (1, 1, 1, 1)) is UNKNOWN
+    # another cell without a value source (no env): cannot be evaluated - with one it is read (test_cfeval.py)
+    assert is_unevaluable(eval_rule(rule("expression", formulas=["$A$1>0"]), 5.0, (2, 1, 1, 1)))
+    assert is_unevaluable(eval_rule(rule("expression", formulas=["$B1>0"]), 5.0, (1, 1, 1, 1)))
     assert eval_rule(rule("expression", formulas=["MOD(ROW(),2)=0"]), 5.0, (32, 1, 31, 1)) is True
     assert eval_rule(rule("expression", formulas=["ISODD(COLUMN())"]), 5.0, (1, 2, 1, 1)) is False
-    assert eval_rule(rule("top10"), 1.0) is UNKNOWN
+    assert is_unevaluable(eval_rule(rule("top10"), 1.0))      # Patrick 2026-10-05: assumed visible where it matters
 
 
 # ============================================================================ 94: workbooks
@@ -629,10 +631,14 @@ def test_94_conditional_formatting():
     assert run(_w94([c("A1", 0, 5.0)], st, "cf_d1.xlsx", sheet_kw={"tail": tail}), C94)["decision"] == "pass"
     tail = cf("A1", cellis(d_white, 1, "greaterThan", "0"), cellis(d_black, 2, "greaterThan", "0"))
     assert run(_w94([c("A1", 0, 5.0)], st, "cf_d2.xlsx", sheet_kw={"tail": tail}), C94)["decision"] == "fail"
-    # (e) an expression rule that would conceal cannot be evaluated: GradingError, never a guess
+    # (e) an expression rule reading another cell is evaluated through the value source (Patrick 2026-10-05;
+    #     until then GradingError): B1 empty -> the rule is off, B1 = "x" -> white text, concealed
     tail = cf("A1", f'<cfRule type="expression" dxfId="{d_white}" priority="1"><formula>$B1="x"</formula></cfRule>')
-    raises(lambda: run(_w94([c("A1", 0, 5.0)], st, "cf_e.xlsx", sheet_kw={"tail": tail}), C94), "cannot decide", "S!A1")
-    # (f) an unevaluable rule that cannot change visibility (red fill under black text) is harmless
+    v = run(_w94([c("A1", 0, 5.0)], st, "cf_e.xlsx", sheet_kw={"tail": tail}), C94)
+    assert v["decision"] == "pass" and v["stats"]["cf_assumptions"]["cells"] == 0, v["stats"]
+    v = run(_w94([c("A1", 0, 5.0), c("B1", 0, "x")], st, "cf_e2.xlsx", sheet_kw={"tail": tail}), C94)
+    assert v["decision"] == "fail" and locs(v) == ["S!A1"], locs(v)
+    # (f) a rule that cannot change visibility (red fill under black text) is never evaluated
     tail = cf("A1:A9", f'<cfRule type="expression" dxfId="{d_red}" priority="1"><formula>$B1="x"</formula></cfRule>')
     v = run(_w94([c("A1", 0, 5.0), c("A2", 0, 1.0, f="1")], st, "cf_f.xlsx", sheet_kw={"tail": tail}), C94)
     assert v["decision"] == "pass" and v["stats"]["cf_second_pass_sheets"] == [], v["stats"]
@@ -654,11 +660,12 @@ def test_94_conditional_formatting():
     v = run(_w94([c("C4", 0, "PASS")], st, "cf_i.xlsx", sheet_kw={"tail": tail}), C94)
     assert v["decision"] == "fail" and locs(v) == ["S!C4"], locs(v)
     assert run(_w94([c("C4", 0, "FAIL")], st, "cf_i2.xlsx", sheet_kw={"tail": tail}), C94)["decision"] == "pass"
-    # (g) a colour scale ending in white under white text: depends on the value's rank -> no guessing
+    # (g) a colour scale ending in white under white text: a built-in conditional format never counts as hiding
+    #     text (Patrick 2026-10-05; until then GradingError: the fill depends on the value's rank)
     tail = cf("A1:A3", '<cfRule type="colorScale" priority="1"><colorScale><cfvo type="min"/><cfvo type="max"/>'
                        '<color rgb="FFFFFFFF"/><color rgb="FF1F4E78"/></colorScale></cfRule>')
-    raises(lambda: run(_w94([c("A1", s_w, 1.0), c("A2", s_w, 5.0)], st, "cf_g.xlsx", sheet_kw={"tail": tail}), C94),
-           "cannot decide")
+    v = run(_w94([c("A1", s_w, 1.0), c("A2", s_w, 5.0)], st, "cf_g.xlsx", sheet_kw={"tail": tail}), C94)
+    assert v["decision"] == "pass" and v["stats"]["cf_builtin_visible"]["cells"] == 2, v["stats"]
 
 
 def test_94_values_needed_only_where_formatting_could_conceal():
@@ -891,14 +898,16 @@ def test_94_review_undecided_only_when_decisive():
     """94-raise-when-decided: an undecidable cell raises only when nothing is certainly concealed."""
     st = Styles()
     w = st.xf(font=st.font("FFFFFF"))
-    # an expression reading another cell decides whether A2 turns white: undecidable (the former example,
-    # a logical under ';;;', is decided since Excel 2026-10-03)
+    # a rule that cannot be evaluated decides whether A2 turns white: until 2026-10-05 undecided (raising when
+    # nothing else was concealed); now assumed visible and recorded (Patrick 2026-10-05) - never undecided
     d_w = st.dxf(font="FFFFFF")
     tail = ('<conditionalFormatting sqref="A2"><cfRule type="expression" dxfId="%d" priority="1">'
-            '<formula>$B2="x"</formula></cfRule></conditionalFormatting>' % d_w)
+            '<formula>COUNTIF($B:$B,"x")&gt;0</formula></cfRule></conditionalFormatting>' % d_w)
     v = run(_w94([c("A1", w, 5.0), c("A2", 0, 7.0)], st, "und1.xlsx", sheet_kw={"tail": tail}), C94)
-    assert v["decision"] == "fail" and locs(v) == ["S!A1"] and v["stats"]["undecided_cells"] == 1, v["stats"]
-    raises(lambda: run(_w94([c("A2", 0, 7.0)], st, "und2.xlsx", sheet_kw={"tail": tail}), C94), "cannot decide", "S!A2")
+    assert v["decision"] == "fail" and locs(v) == ["S!A1"] and v["stats"]["undecided_cells"] == 0, v["stats"]
+    assert v["stats"]["cf_assumptions"]["cells"] == 1, v["stats"]["cf_assumptions"]
+    v = run(_w94([c("A2", 0, 7.0)], st, "und2.xlsx", sheet_kw={"tail": tail}), C94)
+    assert v["decision"] == "pass" and v["stats"]["cf_assumptions"]["cells"] == 1, v["stats"]
     import openpyxl
     from openpyxl.styles import Font
     p = tmp("und_opx.xlsx")
@@ -1312,12 +1321,17 @@ def test_47_unresolvable_fill_colours():
     fnt = st2.xf(font=st2.font('indexed="81"'))
     v = run(_y47([c("A1", used, 1.0), c("A2", fnt, 2.0)], st2, name="u5.xlsx"), C47)
     assert v["decision"] == "pass" and "unresolved_fill_colours" not in v["stats"], v["stats"]
-    # a conditional format whose dxf bgColor cannot be resolved (counted whether or not it fires)
+    # a conditional format whose dxf bgColor cannot be resolved: until 2026-10-05 a reading ("verdict depends
+    # on"); now the rule is off for this check and recorded (Patrick 2026-10-05: conditional formats never stop
+    # a grading)
     st3 = Styles()
     d_unk = st3.dxf(fill_xml='<patternFill><bgColor theme="25"/></patternFill>')
     d_fg = st3.dxf(fill_xml='<patternFill patternType="solid"><fgColor rgb="FFGGFF00"/><bgColor rgb="FF0000FF"/></patternFill>')
-    raises(lambda: run(_y47([c("B2", 0, 1.0)], st3, name="u6.xlsx", sheet_kw={"tail": _cfx("B2:B5", d_unk)}), C47),
-           "verdict depends on", "theme:25", "a conditional format on S!B2:B5")
+    v = run(_y47([c("B2", 0, 1.0)], st3, name="u6.xlsx", sheet_kw={"tail": _cfx("B2:B5", d_unk)}), C47)
+    assert v["decision"] == "pass" and "unresolved_fill_colours" not in v["stats"], v["stats"]
+    assert v["stats"]["cf_assumptions"]["rules"] == 1 and "theme:25" in v["stats"]["cf_assumptions"]["examples"][0], \
+        v["stats"]["cf_assumptions"]
+    assert "S!B2:B5" in v["stats"]["cf_assumptions"]["examples"][0]
     v = run(_y47([c("B2", 0, 1.0)], st3, name="u7.xlsx", sheet_kw={"tail": _cfx("B2:B5", d_fg)}), C47)
     assert v["decision"] == "pass" and "unresolved_fill_colours" not in v["stats"]     # fgColor of a dxf: ignored
     # a column / row style with an unresolvable fill decides too (positions without a <c>)
@@ -1353,20 +1367,24 @@ def test_94_unresolvable_colours():
     st.xf(font=st.font('theme="44"'), fill=st.fill(fg_attr='indexed="99"'))         # unused
     v = run(_w94([c("A1", uf), c("A2", uf, "", f='""'), c("A3", uf_hid, 7.0), c("A4", 0, 1.0)], st, "w4.xlsx"), C94)
     assert v["decision"] == "fail" and locs(v) == ["S!A3"] and v["stats"]["undecided_cells"] == 0, v["stats"]
-    # a conditional-format font colour that cannot be resolved, on a rule that fires / cannot fire
+    # a conditional-format font colour that cannot be resolved, on a rule that fires / cannot fire: until
+    # 2026-10-05 undecided; now the conditional format alone leaves the cell open, so it is assumed visible
+    # and recorded (Patrick 2026-10-05: conditional formats never stop a grading)
     st2 = Styles()
     st2.dxfs.append('<dxf><font><color theme="77"/></font></dxf>')
     d = len(st2.dxfs) - 1
-    raises(lambda: run(_w94([c("A1", 0, 5.0)], st2, "w5.xlsx", sheet_kw={"tail": _cfx("A1:A3", d)}), C94),
-           "cannot decide whether S!A1", "theme:77")
+    v = run(_w94([c("A1", 0, 5.0)], st2, "w5.xlsx", sheet_kw={"tail": _cfx("A1:A3", d)}), C94)
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v["stats"]
+    assert v["stats"]["cf_assumptions"]["cells"] == 1 and "theme:77" in v["stats"]["cf_assumptions"]["examples"][0], \
+        v["stats"]["cf_assumptions"]
     v = run(_w94([c("A1", 0, 5.0)], st2, "w6.xlsx", sheet_kw={"tail": _cfx("A1:A3", d, "equal", "99")}), C94)
     assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v["stats"]
-    # a colour scale with an unresolvable stop
+    # a colour scale with an unresolvable stop: a built-in format never hides text
     scale = ('<conditionalFormatting sqref="A1:A3"><cfRule type="colorScale" priority="1"><colorScale>'
              '<cfvo type="min"/><cfvo type="max"/><color rgb="FFFFFFFF"/><color rgb="FFGGFF00"/></colorScale>'
              '</cfRule></conditionalFormatting>')
-    raises(lambda: run(_w94([c("A1", 0, 1.0), c("A2", 0, 2.0)], st2, "w7.xlsx", sheet_kw={"tail": scale}), C94),
-           "cannot decide")
+    v = run(_w94([c("A1", 0, 1.0), c("A2", 0, 2.0)], st2, "w7.xlsx", sheet_kw={"tail": scale}), C94)
+    assert v["decision"] == "pass" and v["stats"]["undecided_cells"] == 0, v["stats"]
     # a rich-text run whose colour cannot be resolved
     sst = ['<si><r><t>Visible </t></r><r><rPr><color theme="50"/></rPr><t>maybe</t></r></si>']
     raises(lambda: run(book(tmp("w8.xlsx"), [("S", sheet([c("A1", 0, 0, t="s")]))], Styles(), sst=sst), C94),

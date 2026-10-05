@@ -11,13 +11,17 @@ dash.  What the cell displays is worked out as Excel does:
     conditional sections; built-in ids from the en-US table: 41-44 dash, 37-40 digits),
     rendered by detchecks.core.numfmt;
   * a conditional format that fires on the cell and carries a number format replaces it
-    (rules evaluated per cell; GradingError when a rule cannot be evaluated and the verdict
-    depends on it);
+    (rules evaluated per cell with the shared evaluator, checks/_cfeval.py: cellIs, text rules,
+    blanks / errors, expressions reading the cell, other cells and other sheets).  Patrick
+    2026-10-05, "CONDITIONAL FORMATS never stop a grading": a rule that cannot be evaluated is
+    taken as OFF, and a conditional format whose display Excel's reading of is not verified is
+    ignored - the cell is graded by its own number format; every such assumption is recorded in
+    stats.cf_assumptions;
   * the sheet option showZeros="0" hides it under General and single-section formats, but NOT
     under a format with an explicit zero section (3 numeric sections), which still prints that
     section (Excel, measured 2026-10-03, base formats only: under a conditional format's number
-    format a digit / text zero is UNCERTAIN -> GradingError); data bars / icon sets with
-    showValue="0" hide it.
+    format a digit / text zero is not verified: the cell's own format is used instead, as above);
+    data bars / icon sets with showValue="0" hide it.
 Outcome per zero cell (constants below):
   dash      only dash characters ('-', en/em dash, minus sign) besides spaces / padding,
             currency symbols, brackets and the format's own number decorations (the literals
@@ -32,10 +36,11 @@ Outcome per zero cell (constants below):
   hidden    showZeros=0 sheet (no zero section), hidden-value data bar / icon set   -> pass  (HIDDEN_ZERO_PASSES;
             (NOT charged by 94)                                                         question for Patrick)
   date/time a date or time format (0 shows '1/0/1900', '0:00')                        -> not judged (DATE_TIME_IN_SCOPE)
-  uncertain Excel's display is unmeasured: a digit / text zero under a CONDITIONAL-format
-            number format on a showZeros=0 sheet; any render the format engine marks
-            certain=False, e.g. a section mixing digit placeholders with unquoted date
+  uncertain Excel's display is unmeasured: any render of the cell's OWN format the engine
+            marks certain=False, e.g. a section mixing digit placeholders with unquoted date
             letters ('0 bps', '0 days': core numfmt.mixed_date_letters, review 66-S3)    -> GradingError
+            (under a CONDITIONAL-format number format - also a digit / text zero on a showZeros=0
+            sheet - the cell is graded by its own format instead: Patrick 2026-10-05)
 Never judged (not numeric zeros): booleans (FALSE), text '0', errors, empty cells, formulas
 returning "".  Non-anchor cells of a merged range are not displayed and are not judged
 (SKIP_MERGED_NON_ANCHOR).  Values that are not exactly 0 (a 2.33E-10 residue showing '0.00')
@@ -65,6 +70,8 @@ from typing import Optional
 from ..core import numfmt as N
 from ..core.refs import location, make_ref, parse_range, range_to_str
 from ..errors import GradingError
+from ._cfeval import (UNKNOWN, Unevaluable, cellis_fires, cf_env, expression_fires, is_unevaluable, prefetch)
+from ._cfeval import literal as _literal
 from ._cftext import text_rule_fires
 from .base import Check
 
@@ -82,7 +89,9 @@ DATE_TIME_IN_SCOPE = False      # zeros under date/time/elapsed formats ('1/0/19
 DISPLAYED_ZERO_COUNTS = False   # True: non-zero values that DISPLAY as zero (0.0004 under '0') count too
 SKIP_MERGED_NON_ANCHOR = True   # values hidden under a merged range (not its top-left cell) are not displayed
 CF_COUNTS = True                # conditional-format number formats count where they fire
-MAX_UNKNOWN_RULES = 8           # more unevaluable CF rules on one cell than this -> GradingError
+CF_UNEVALUABLE_OFF = True       # Patrick 2026-10-05: a rule that cannot be evaluated is OFF (recorded)
+MAX_UNKNOWN_RULES = 8           # more position- / value-dependent CF rules than this in a screen: the value is read
+MAX_ASSUMPTION_EXAMPLES = 10
 MAX_DEFERRED = 50_000           # untrusted formula cells buffered per sheet until the tail is known (rest: 2nd pass)
 MAX_EXAMPLES = 8
 
@@ -183,130 +192,44 @@ def classify(value: float, code: str, date1904: bool = False) -> tuple[str, str]
 
 
 # ---------------------------------------------------------------------------- CF evaluation
-UNKNOWN = object()
-_NUM_RX = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
-_REF = r"(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})"
-_WRAP_RX = re.compile(r"\b(?:ABS|ROUND|ROUNDUP|ROUNDDOWN|TRUNC|INT)\(\s*(\$?[A-Za-z]{1,3}\$?\d{1,7})\s*(?:,\s*-?\d+\s*)?\)",
-                      re.I)
-_SELF_CMP_RX = re.compile(r"^\s*" + _REF + r"\s*(<>|<=|>=|=|<|>)\s*(.+?)\s*$")
-_CMP_SELF_RX = re.compile(r"^\s*(.+?)\s*(<>|<=|>=|=|<|>)\s*" + _REF + r"\s*$")
-_FLIP = {"<": ">", ">": "<", "<=": ">=", ">=": "<=", "=": "=", "<>": "<>"}
-_OPS = {"=": lambda k: k == 0, "<>": lambda k: k != 0, "<": lambda k: k < 0, ">": lambda k: k > 0,
-        "<=": lambda k: k <= 0, ">=": lambda k: k >= 0}
+literal = _literal          # a CF operand / expression as a literal (float, str, bool) or UNKNOWN
 
 
-def literal(f: Optional[str]):
-    """A CF operand / expression as a literal (float, str, bool) or UNKNOWN."""
-    if f is None:
-        return UNKNOWN
-    t = f.strip()
-    if t.startswith("="):
-        t = t[1:].strip()
-    if _NUM_RX.match(t):
-        return float(t)
-    if len(t) >= 2 and t[0] == '"' and t[-1] == '"' and '"' not in t[1:-1].replace('""', ""):
-        return t[1:-1].replace('""', '"')
-    if t.upper() in ("TRUE", "FALSE"):
-        return t.upper() == "TRUE"
-    return UNKNOWN
-
-
-def _rank(v) -> int:
-    return 2 if isinstance(v, bool) else 1 if isinstance(v, str) else 0
-
-
-def _cmp(a, b) -> int:
-    """Excel comparison: numbers < text < logicals; text case-insensitive."""
-    ra, rb = _rank(a), _rank(b)
-    if ra != rb:
-        return -1 if ra < rb else 1
-    if ra == 1:
-        a, b = a.casefold(), b.casefold()
-    return (a > b) - (a < b)
-
-
-def _col_num(letters: str) -> int:
-    n = 0
-    for ch in letters.upper():
-        n = n * 26 + ord(ch) - 64
-    return n
-
-
-def fires(rule, value: float, where=None):
-    """True / False when the CF rule fires / does not fire on a cell holding the number
-    `value`; UNKNOWN when that cannot be told from the cell alone.  where = (row, col,
-    anchor_row, anchor_col): relative references in a CF formula are relative to the top-left
-    cell of the rule's first range."""
+def fires(rule, value: float, where=None, env=None):
+    """True / False when the CF rule fires / does not fire on a cell holding the number `value`;
+    UNKNOWN when that depends on what the caller does not know (a position-dependent rule without
+    `where`); an Unevaluable when the rule cannot be evaluated (checks/_cfeval.py; the caller then
+    takes the rule as off - Patrick 2026-10-05).  where = (row, col, anchor_row, anchor_col):
+    relative references in a CF formula are relative to the top-left cell of the rule's first
+    range; env = the sheet's _cfeval.CfEnv (other cells' values; None: none can be read)."""
     t = rule.type
     if t in ("dataBar", "iconSet", "colorScale"):
         return True                               # applies to every number in its range
     if t == "cellIs":
-        ops = [literal(f) for f in rule.formulas]
-        if not ops or any(o is UNKNOWN for o in ops):
-            return UNKNOWN
-        op = rule.operator or "between"
-        if op in ("between", "notBetween"):
-            if len(ops) < 2:
-                return UNKNOWN
-            lo, hi = sorted(ops[:2], key=lambda x: (_rank(x), x.casefold() if isinstance(x, str) else x))
-            inside = _cmp(value, lo) >= 0 and _cmp(value, hi) <= 0
-            return inside if op == "between" else not inside
-        k = _cmp(value, ops[0])
-        f = {"equal": k == 0, "notEqual": k != 0, "greaterThan": k > 0, "lessThan": k < 0,
-             "greaterThanOrEqual": k >= 0, "lessThanOrEqual": k <= 0}.get(op)
-        return UNKNOWN if f is None else f
+        return cellis_fires(rule, value, env, where)
     if t == "containsBlanks" or t == "containsErrors":
         return False                              # a number is neither blank nor an error
     if t == "notContainsBlanks" or t == "notContainsErrors":
         return True
     if t in ("containsText", "notContainsText", "beginsWith", "endsWith"):
         if rule.text is None:
-            return UNKNOWN
+            return Unevaluable(f"{t} rule without its text")
         # containsText / notContainsText use SEARCH wildcards (Excel 2026-10-03, _cftext.py)
         return text_rule_fires(t, rule.text, N.general_text(float(value)))
     if t == "expression":
         if len(rule.formulas) != 1:
-            return UNKNOWN
-        return _eval_expression(rule.formulas[0], value, where)
-    return UNKNOWN                                # top10, aboveAverage, duplicates, timePeriod ...
+            return Unevaluable(f"expression rule with {len(rule.formulas)} formulas")
+        return expression_fires(rule.formulas[0], env, where, value)
+    return Unevaluable(f"rule type {t!r} is not evaluated")   # top10, aboveAverage, duplicates, timePeriod ...
 
 
-def _eval_expression(formula: Optional[str], value: float, where):
-    """Literal expressions (TRUE, 1, 0), and '<self> <op> <literal>' in either order where
-    <self> is the cell itself, optionally wrapped as ABS(<self>), ROUND(<self>,n) and
-    similar (exact for value 0)."""
-    if formula is None:
-        return UNKNOWN
-    f = formula.strip()
-    if f.startswith("="):
-        f = f[1:].strip()
-    o = literal(f)
-    if o is not UNKNOWN:
-        if isinstance(o, str):
-            return UNKNOWN
-        return bool(o)
-    if where is None:
-        return UNKNOWN
-    if value == 0:                                # ABS(0) = ROUND(0, n) = INT(0) = 0
-        f = _WRAP_RX.sub(lambda m: m.group(1), f)
-    r, c, r0, c0 = where
-    m = _SELF_CMP_RX.match(f)
-    if m:
-        dc, col, dr, row, op, rhs = m.groups()
-    else:
-        m = _CMP_SELF_RX.match(f)
-        if not m:
-            return UNKNOWN
-        rhs, op, dc, col, dr, row = m.groups()
-        op = _FLIP[op]
-    lit = literal(rhs)
-    if lit is UNKNOWN:
-        return UNKNOWN
-    rr = int(row) if dr else int(row) + (r - r0)
-    cc = _col_num(col) if dc else _col_num(col) + (c - c0)
-    if (rr, cc) != (r, c):
-        return UNKNOWN                            # the rule reads another cell
-    return _OPS[op](_cmp(value, lit))
+def rule_text(rule) -> str:
+    what = rule.type or "?"
+    if rule.formulas:
+        what += " " + ", ".join(repr(f) for f in rule.formulas[:2])
+    elif rule.text is not None:
+        what += f" {rule.text!r}"
+    return what
 
 
 class _Rule:
@@ -375,6 +298,11 @@ class C66(Check):
         self.examples: list = []
         self.pending: dict = {}
         self._p = None
+        self._env = None
+        self.cf_assumed = 0                       # zero cells graded under a conditional-format assumption
+        self.cf_assumed_decisive = 0              # ... where the assumption decides the cell's verdict
+        self.cf_assumed_examples: list = []
+        self.cf_unevaluable: dict = {}            # (sheet, rule order) -> description, rules met in judged cells
 
     # -------------------------------------------------------------- formats
     def _zclass(self, code: str) -> tuple[str, str]:
@@ -600,10 +528,19 @@ class C66(Check):
             out.add((fmt, hide))
         return sorted(out, key=lambda e: (e[0] is None, e[0] or "", e[1]))
 
-    def _outcomes(self, v: float, st: _Style, rules, ids, pos: Optional[tuple]) -> list:
+    def _fire(self, x, v, where):
+        """fires() for a _Rule: an Unevaluable when its own number format cannot be read either."""
+        if x.fmt_err is not None:
+            return Unevaluable(f"its number format cannot be read ({x.fmt_err})")
+        return fires(x.rule, v, where, self._env)
+
+    def _outcomes(self, v: float, st: _Style, rules, ids, pos: Optional[tuple], branch: bool = False) -> list:
         """[(class, text, format code, via_cf)] the cell can show under its CF rules.  pos = (row,
-        col), or None for a whole range (rules that read the cell's position become unknown)."""
-        fired = tuple(fires(rules[i].rule, v, None if pos is None else pos + rules[i].anchor) for i in ids)
+        col), or None for a whole range (rules that read the cell's position become unknown).
+        A rule that cannot be evaluated is OFF (Patrick 2026-10-05); branch=True: it branches like
+        an unknown rule instead (only to tell whether that assumption decides the verdict)."""
+        fired = tuple(self._fire(rules[i], v, None if pos is None else pos + rules[i].anchor) for i in ids)
+        fired = tuple(((UNKNOWN if branch else False) if is_unevaluable(f) else f) for f in fired)
         key = (v if DISPLAYED_ZERO_COUNTS else 0.0, st.code, ids, fired, self.show_zeros_on)
         res = self._outcome_cache.get(key)
         if res is not None:
@@ -611,7 +548,7 @@ class C66(Check):
         effects = self._effects(rules, ids, fired) if ids else [(None, False)]
         if effects is None:
             raise GradingError(f"{self.key}: a cell is covered by more than {MAX_UNKNOWN_RULES} conditional-format "
-                               f"rules this check cannot evaluate")
+                               f"rules whose outcome depends on its position or value")
         res = []
         for fmt, hide in effects:
             code = fmt if fmt is not None else st.code
@@ -631,19 +568,59 @@ class C66(Check):
         self._outcome_cache[key] = res
         return res
 
-    def _zero_could_fail(self, st: _Style, rules, ids, pos: Optional[tuple]) -> bool:
+    def _settled(self, res: list, v: float, st: _Style, pos) -> list:
+        """The outcomes the verdict uses: an outcome under a CONDITIONAL-format number format whose display
+        is not verified gives way to the cell's own format (Patrick 2026-10-05: a conditional format never
+        stops a grading).  The same list when there is none."""
+        if not any(x[0] == UNCERTAIN and x[3] for x in res):
+            return res
+        out = [x for x in res if not (x[0] == UNCERTAIN and x[3])]
+        return out + [x for x in self._outcomes(v, st, [], (), pos) if x not in out]
+
+    def _zero_could_fail(self, st: _Style, rules, ids, pos: Optional[tuple], branch: bool = False) -> bool:
         """Could a zero under this base format (and these CF rules) break the rule or be
-        undecidable?  If not, the cell's value is not needed."""
+        undecidable?  If not, the cell's value is not needed.  branch=True: without the
+        conditional-format assumptions (an unevaluable rule may fire, a CF display that is not
+        verified stays open) - could one of them decide a zero here?  Then a readable value is read
+        so that the assumption is recorded."""
         try:
-            res = self._outcomes(0.0, st, rules, ids, pos)
+            res = self._outcomes(0.0, st, rules, ids, pos, branch)
+            if not branch:
+                res = self._settled(res, 0.0, st, pos)
         except GradingError:
             return True
         return any(fails(x[0]) or x[0] == UNCERTAIN for x in res)
 
     def _decide(self, sheet: str, ref: str, v: float, st: _Style, rules, ids, r: int, c: int):
-        """(fails?, class, text, code, via_cf) for one zero cell; GradingError when it cannot be
-        decided (no guessing)."""
+        """(fails?, class, text, code, via_cf) for one zero cell; GradingError when its own format's
+        display is not verified (no guessing).  Conditional formats never raise (Patrick 2026-10-05):
+        an unevaluable rule is off and a CF display that is not verified gives way to the cell's own
+        format - each such assumption recorded in stats.cf_assumptions."""
         res = self._outcomes(v, st, rules, ids, (r, c))
+        why = []
+        decisive = False
+        settled = self._settled(res, v, st, (r, c))
+        if settled is not res or len({fails(x[0]) for x in settled}) > 1:
+            why.append("its conditional formatting's display is not verified (" +
+                       ", ".join(sorted({repr(x[2]) for x in res if x[3]})) + "): graded by its own format")
+            decisive = True
+            settled = self._outcomes(v, st, [], (), (r, c))
+        opened = [(rules[i], f) for i in ids
+                  for f in (self._fire(rules[i], v, (r, c) + rules[i].anchor),) if is_unevaluable(f)]
+        if opened:
+            why.append("rule(s) assumed off: " + "; ".join(f"{rule_text(x.rule)} ({f.why})" for x, f in opened))
+            for x, f in opened:
+                self._note_unevaluable(sheet, x, f.why)
+            if not decisive:
+                try:
+                    alt = self._settled(self._outcomes(v, st, rules, ids, (r, c), branch=True), v, st, (r, c))
+                    decisive = {fails(x[0]) for x in alt} != {fails(x[0]) for x in settled} or \
+                        any(x[0] == UNCERTAIN for x in alt)
+                except GradingError:
+                    decisive = True
+        res = settled
+        if why:
+            self._assume(sheet, ref, v, "; ".join(why), decisive)
         unc = [x for x in res if x[0] == UNCERTAIN]
         if unc:
             raise GradingError(f"{self.key}: {sheet}!{ref} holds {v!r}; how Excel displays it under "
@@ -651,16 +628,24 @@ class C66(Check):
                                + f"number format {unc[0][2]!r}"
                                + ("" if self.show_zeros_on else " on a sheet with showZeros=0")
                                + " is not verified, so the check cannot tell whether it shows a dash")
-        verdicts = {fails(x[0]) for x in res}
-        if len(verdicts) > 1:
-            shows = ", ".join(sorted({repr(x[1].strip()) for x in res}))
-            raise GradingError(f"{self.key}: cannot decide whether {sheet}!{ref} (value {v!r}, format {st.code!r}) "
-                               f"shows a dash: it depends on conditional formatting this check cannot evaluate "
-                               f"(possible displays {shows})")
         bad = [x for x in res if fails(x[0])]
         if bad:
             return (True,) + bad[0]
         return (False,) + res[0]
+
+    def _assume(self, sheet: str, ref: str, v, why: str, decisive: bool):
+        """Record a cell graded under a conditional-format assumption (stats.cf_assumptions)."""
+        self.cf_assumed += 1
+        self.cf_assumed_decisive += int(decisive)
+        if len(self.cf_assumed_examples) < MAX_ASSUMPTION_EXAMPLES and (decisive or len(self.cf_assumed_examples) < 3):
+            self.cf_assumed_examples.append(f"{location(sheet, ref)} = {v!r}{' (decisive)' if decisive else ''}: "
+                                            f"{why}"[:300])
+
+    def _note_unevaluable(self, sheet: str, x, why: str):
+        k = (sheet, x.order)
+        if k not in self.cf_unevaluable and len(self.cf_unevaluable) < 1000:
+            where = ",".join(range_to_str(*b) for b in x.boxes[:3]) + (",..." if len(x.boxes) > 3 else "")
+            self.cf_unevaluable[k] = f"{location(sheet, where)}: {rule_text(x.rule)} ({why})"[:300]
 
     # -------------------------------------------------------------- merges
     @staticmethod
@@ -778,8 +763,10 @@ class C66(Check):
     def sheet_end(self, head, tail):
         self._outcome_cache = {}                  # keyed by rule indexes: valid for one sheet only
         rules = self._cf_rules(tail) if CF_COUNTS else []
+        self._env = cf_env(self.wb, head.name)    # the rules' formulas read other cells through it
         if rules:
             self.cf_rule_sheets.append(head.name)
+            prefetch(self._env, tail.conditional_formats)
         merges = self._merge_index(tail) if (self.cand or rules or self.deferred) else {}
         self.n_deferred_total += self.n_deferred
         self._check_deferred(head.name, rules, merges)
@@ -791,7 +778,7 @@ class C66(Check):
         if cf_second or overflow:
             boxes = [b for x in rules for b in x.boxes]
             self.pending[head.name] = {"rules": rules, "merges": merges, "cf": cf_second, "overflow": overflow,
-                                       "seen_untrusted": 0,
+                                       "seen_untrusted": 0, "env": self._env,
                                        "done": {(r, c) for r, c, _s, _v in self.cand},
                                        "show_zeros_on": self.show_zeros_on, "hits": hits, "index": {},
                                        "bbox": ((min(b[0] for b in boxes), min(b[1] for b in boxes),
@@ -843,7 +830,7 @@ class C66(Check):
                 return True
             cls = self._here(classify(0.0, x.fmt, self.date1904)[0], x.fmt, via_cf=True)
             if cls == UNCERTAIN or fails(cls):
-                if fires(x.rule, 0.0, None) is not False:
+                if self._fire(x, 0.0, None) is not False:     # fires, depends on the cell, or cannot be evaluated
                     return True
         return False
 
@@ -873,6 +860,7 @@ class C66(Check):
         p = self.pending[head.name]
         self._p = p
         self.show_zeros_on = p["show_zeros_on"]
+        self._env = p["env"]
         self._outcome_cache = {}
 
     def second_pass_cell(self, cell):
@@ -902,7 +890,11 @@ class C66(Check):
         if not ids or not any(rules[i].fmt is not None for i in ids):
             return
         if not DISPLAYED_ZERO_COUNTS and not self._zero_could_fail(st, rules, ids, (r, c)):
-            return                                # value-independent screen: no value needed
+            # value-independent screen: no value needed - unless a rule that cannot be evaluated (assumed
+            # off) could make a zero here fail: then a readable value is read, so the assumption is recorded
+            if (cell.is_formula_result and not cell.value_trusted) or \
+                    not self._zero_could_fail(st, rules, ids, (r, c), branch=True):
+                return
         v = self._numeric(cell, read=True)
         if v is None or (v != 0 and not DISPLAYED_ZERO_COUNTS):
             return
@@ -933,6 +925,15 @@ class C66(Check):
             "deferred_second_pass_sheets": self.deferred_second_pass,
             "hidden_sheets_with_failures": self.hidden_sheet_failures,
             "examples": self.examples,
+            # Patrick 2026-10-05: conditional formats never stop a grading - every assumption is recorded
+            "cf_assumptions": {
+                "policy": "a conditional-format rule that cannot be evaluated is OFF, and a conditional format "
+                          "whose display is not verified gives way to the cell's own number format "
+                          "(Patrick 2026-10-05)",
+                "cells": self.cf_assumed, "decisive_cells": self.cf_assumed_decisive,
+                "examples": self.cf_assumed_examples,
+                "unevaluable_rules": len(self.cf_unevaluable),
+                "unevaluable_rule_examples": list(self.cf_unevaluable.values())[:MAX_ASSUMPTION_EXAMPLES]},
             "policy": {"blank_zero_passes": BLANK_ZERO_PASSES, "hidden_zero_passes": HIDDEN_ZERO_PASSES,
                        "non_dash_text_fails": NON_DASH_TEXT_FAILS, "strict_dash": STRICT_DASH,
                        "date_time_in_scope": DATE_TIME_IN_SCOPE, "displayed_zero_counts": DISPLAYED_ZERO_COUNTS,

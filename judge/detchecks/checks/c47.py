@@ -12,7 +12,10 @@ Fail if any position of the delivered workbook is painted BRIGHT yellow, through
     yellow usage that needs documenting),
 unless the workbook's own text explains yellow as an ongoing convention (a legend line, see
 LEGEND below).  Even then, a bright-yellow cell whose own text or comment is a placeholder
-marker (TBD, to do, ...) still fails (WIP_CONTENT_OVERRIDES_LEGEND).
+marker (TBD, to do, ...) still fails (WIP_CONTENT_OVERRIDES_LEGEND).  A conditional-format fill
+whose colour cannot be resolved is not counted (Patrick 2026-10-05: "CONDITIONAL FORMATS never stop
+a grading" - the rule is taken as off for this check; recorded in stats.cf_assumptions); an
+unresolvable colour of a cell, row, column or default style is graded under every reading as before.
 
 Bright yellow = HSV hue in [47.5, 68] degrees, saturation >= 0.50, value >= 0.85 (FFFF00,
 FFFF66, FFD700, FFCC00 ...).  Pale yellows (FFFFCC, FFF2CC, FFFF99, FFEB9C, FFFFE0) and
@@ -596,14 +599,8 @@ class C47(Check):
             r._cell(cell)
 
     def sheet_end(self, head, tail):
-        for cf in tail.conditional_formats:
-            for rule in cf.rules:
-                if rule.type in ("colorScale", "dataBar", "iconSet"):
-                    continue
-                d = rule.dxf if rule.dxf is not None else self.st.dxf(rule.dxf_id)
-                if d is not None and d.fill is not None:
-                    self._admit(_paint_unknowns(self.st.fill_paint(d.fill, dxf=True)),
-                                f"a conditional format on {location(head.name, ','.join(cf.sqref.split()))}")
+        # conditional-format fills with an unresolvable colour are not readings: such a rule is OFF here
+        # (Patrick 2026-10-05: conditional formats never stop a grading), see _sheet_end
         for r in self._all():
             r._sheet_end(head, tail)
 
@@ -648,6 +645,7 @@ class C47(Check):
         self.n_swatches = 0
         self.colours = set()
         self.cf_hits: list = []               # (sheet, sqref, colour, rule type)
+        self.cf_unknown_fills: list = []      # CF rules whose fill colour cannot be resolved: not counted
         self.row_hits: list = []              # (sheet, r1, r2, colour)
         self.col_hits: list = []              # (sheet, c1, c2, colour)
         self.default_hits: list = []          # sheet names (style 0 bright)
@@ -1057,7 +1055,13 @@ class C47(Check):
                     continue
                 d = rule.dxf if rule.dxf is not None else self.st.dxf(rule.dxf_id)
                 cols, together = dxf_fill_paints(self.st, d.fill if d is not None else None)
-                cols = [x for x in ((self._subst_colour(c) if is_unknown(c) else c) for c in cols) if x is not None]
+                unknown = [c for c in cols if is_unknown(c)]
+                if unknown:
+                    # whether it paints bright yellow is unknown: the rule is OFF for this check (Patrick
+                    # 2026-10-05), recorded
+                    self.cf_unknown_fills.append(f"{location(name, ','.join(cf.sqref.split()))}: {rule.type or '?'} "
+                                                 f"rule fill {unknown[0]} - not counted"[:300])
+                cols = [c for c in cols if c is not None and not is_unknown(c)]
                 yellow = [x for x in cols if is_bright_yellow(x)]
                 if not yellow or not CF_COUNTS_ALWAYS:
                     continue
@@ -1178,6 +1182,11 @@ class C47(Check):
             "n_legend_lines": len(self.lines),
             "wip_content_cells": len(self.wip_cells),
             "band": {"hue": [HUE_MIN, HUE_MAX], "sat_min": SAT_MIN, "val_min": VAL_MIN},
+            # Patrick 2026-10-05: conditional formats never stop a grading - every assumption is recorded
+            "cf_assumptions": {
+                "policy": "a conditional-format fill whose colour cannot be resolved is not counted as bright "
+                          "yellow: the rule is taken as off (Patrick 2026-10-05)",
+                "rules": len(self.cf_unknown_fills), "examples": self.cf_unknown_fills[:10]},
         }
         any_yellow = bool(self.offenders or self.row_hits or self.col_hits or self.default_hits or self.cf_hits)
         stats["legend_blocked_by_wip"] = blocked

@@ -377,6 +377,19 @@ Trust rules:
 - The copy is opened only if a selected check has `needs_values = True`.
 - `wb.provenance.value_kind` (`cache` / `libreoffice` / `excel`) and `wb.provenance.recalc` (gaps, timings) describe what the pipeline did.
 
+### Other cells' values: `core/lookup.py` (2026-10-05)
+
+A check that needs the value of a cell it is not streaming (the conditional-format evaluator: a rule on
+`Cover!D4` reading `Checks!$D$4`) reads it through `core.lookup.cell_values(wb)`, one `CellValues` per
+workbook shared by every check.  The engine sets `wb.value_source` (the recalc copy, or None for the
+file's own caches).  `want(sheet, (r1, c1, r2, c2))` registers rectangles; the first `get(sheet, r, c)` on
+a sheet with unread rectangles streams that sheet ONCE with the same value source and trust policy as the
+checks and keeps the values inside them.  `get` returns the value a check's `cell.value` would give,
+`BLANK` (None) for an empty position, or an `Unavailable(why)`: an untrusted formula result, a member of
+an array / data-table range not written in the file, an ISO-date (`t="d"`) cell, a missing sheet, more
+than 2,000,000 kept values.  It never raises for a cell.  `checks/_cfeval.py` (`cf_env`, `prefetch`)
+registers every cell a sheet's rules can read before evaluating them.
+
 ### Rules for checks
 
 Set `needs_values = True`, and then do one of two things:
@@ -557,7 +570,7 @@ Per-cell Python work dominates, so keep `cell()` cheap:
 ## 10. Known limits
 
 - **Formats.** `.xlsb`, `.xls`, `.ods`, csv and encrypted workbooks are classified but not parsed. Every check except 77 raises `GradingError` on them.
-- **Rendering.** No number-format rendering here; use `detchecks.core.numfmt`. No CF evaluation: rules are exposed, and the check decides what they paint. No font metrics.
+- **Rendering.** No number-format rendering here; use `detchecks.core.numfmt`. No CF evaluation in the reader: rules are exposed, and the checks evaluate them with the shared `checks/_cfeval.py` (2026-10-05) and decide what they paint. No font metrics.
 - **Theme.** Only the scheme colours of the theme part are read; theme fonts are not.
 - **Tint.** The tint algorithm is verified on Office-theme swatches. Colours that are not theme colours but carry a tint use the same algorithm.
 - **Data tables.** `<f t="dataTable">` anchors have no formula text (`text` is None); see `formula.attrs`.

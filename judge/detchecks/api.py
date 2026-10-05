@@ -152,6 +152,7 @@ class Engine:
                     except Exception as e:  # noqa: BLE001
                         for c in needs:
                             self._fail(c, GradingError(f"recalc pipeline error {type(e).__name__}: {e}"))
+                pkg.value_source = value_source      # core.lookup (cells a conditional format refers to)
                 self._run_parsed(pkg, value_source)
             verdicts = self._finish(pkg)
         finally:

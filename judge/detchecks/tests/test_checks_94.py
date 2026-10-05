@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 
 import detchecks.tests.test_checks_fills as F
 from detchecks.checks.c94 import C94
-from detchecks.tests.test_checks_fills import Styles, book, c, locs, raises, run, sheet, tmp
+from detchecks.tests.test_checks_fills import Styles, book, c, locs, run, sheet, tmp
 
 
 def _w(cells, st, name, tail):
@@ -90,12 +90,21 @@ def test_94_rereview_cf_pretest_exact_signature():
     tail = _cf("A1", _cellis(e1, 1, "greaterThan", "100"), _cellis(e2, 2, "greaterThan", "0"),
                _cellis(e1, 3, "greaterThan", "0"))
     assert _grade([c("A1", 0, 5.0)], st, "x4.xlsx", tail)[:2] == ("fail", ["S!A1"])
-    # colour scale 808080 -> 909090 plus a CF grey 808080 font: grey on grey
+    # colour scale 808080 -> 909090 plus a CF grey 808080 font: grey on grey - but a colour scale is a built-in
+    # conditional format and never counts as hiding text (Patrick 2026-10-05; failed until then); the pre-test
+    # still sends the sheet to the second pass, where the cells are recorded as kept visible
     d_grey = st.dxf(font="808080")
     scale = ('<cfRule type="colorScale" priority="1"><colorScale><cfvo type="min"/><cfvo type="max"/>'
              '<color rgb="FF808080"/><color rgb="FF909090"/></colorScale></cfRule>')
-    assert _grade([c("A1", 0, 1.0), c("A2", 0, 5.0)], st, "x5.xlsx",
-                  _cf("A1:A2", scale, _cellis(d_grey, 2, "greaterThan", "0")))[:2] == ("fail", ["S!A1:A2"])
+    v = run(_w([c("A1", 0, 1.0), c("A2", 0, 5.0)], st, "x5.xlsx", _cf("A1:A2", scale, _cellis(d_grey, 2, "greaterThan", "0"))),
+            C94)
+    assert v["decision"] == "pass" and v["stats"]["cf_second_pass_sheets"] == ["S"], v["stats"]
+    assert v["stats"]["cf_builtin_visible"]["cells"] == 2, v["stats"]["cf_builtin_visible"]
+    # the same grey font over a plain dxf fill 909090 (not built-in): grey on grey, concealed
+    d_fill = st.dxf(fill="909090")
+    assert _grade([c("A1", 0, 1.0), c("A2", 0, 5.0)], st, "x5b.xlsx",
+                  _cf("A1:A2", _cellis(d_fill, 1, "greaterThan", "0"), _cellis(d_grey, 2, "greaterThan", "0")))[:2] \
+        == ("fail", ["S!A1:A2"])
     # controls: a red error-check fill under black text needs no second pass; a light CF fill cannot
     # reveal a zero blanked by its format (A1), and 7 stays visible (A2)
     d_red, d_pale = st.dxf(fill="FF0000"), st.dxf(fill="FFF2CC")
@@ -154,10 +163,17 @@ def test_94_rereview_stop_if_true_without_format():
     assert _grade([c("A1", s_w, 5.0)], st, "s05.xlsx",
                   _cf("A1", _cellis(None, 1, "greaterThan", "0", stop=True),
                       _cellis(d_black, 2, "greaterThan", "0")))[:2] == ("fail", ["S!A1"])
-    # s04: a blocker that reads another cell cannot be evaluated and decides the verdict -> raise
+    # s04: a blocker that reads another cell is evaluated through the value source (Patrick 2026-10-05; it
+    # raised 'cannot decide' until then): B1 = 1 > 0 -> it fires and blocks the white rule; B1 = -1 -> white
     tail = _cf("A1", '<cfRule type="expression" priority="1" stopIfTrue="1"><formula>$B$1&gt;0</formula></cfRule>',
                _cellis(d_white, 2, "greaterThan", "0"))
-    raises(lambda: run(_w([c("A1", 0, 5.0), c("B1", 0, 1.0)], st, "s04.xlsx", tail), C94), "cannot decide", "S!A1")
+    assert _grade([c("A1", 0, 5.0), c("B1", 0, 1.0)], st, "s04.xlsx", tail)[:2] == ("pass", [])
+    assert _grade([c("A1", 0, 5.0), c("B1", 0, -1.0)], st, "s04b.xlsx", tail)[:2] == ("fail", ["S!A1"])
+    # ... and a blocker that cannot be evaluated: the outcome is open, the text assumed visible and recorded
+    tail = _cf("A1", '<cfRule type="expression" priority="1" stopIfTrue="1"><formula>COUNTA($B:$B)&gt;0</formula>'
+                     '</cfRule>', _cellis(d_white, 2, "greaterThan", "0"))
+    v = run(_w([c("A1", 0, 5.0)], st, "s04c.xlsx", tail), C94)
+    assert v["decision"] == "pass" and v["stats"]["cf_assumptions"]["cells"] == 1, v["stats"]
     # a format-less rule WITHOUT stopIfTrue changes nothing (still dropped): the white rule applies
     assert _grade([c("A1", 0, 5.0)], st, "s06.xlsx",
                   _cf("A1", _cellis(None, 1, "greaterThan", "0"),

@@ -99,10 +99,14 @@ GradingError (no fallback).  The same holds for a conditional-format number form
 be evaluated when the possible displays disagree, and for a rendering numfmt marks uncertain.
 
 Conditional formats.  Sheets whose rules carry a number format (dxf numFmt) are streamed a second
-time: every numeric cell inside such a range is rendered under each possible outcome (c66.fires
-decides which rules fire; unknown rules branch), and the cell fails only if every outcome overflows.
-First-pass candidates inside those ranges are handed to the second pass.  (A conditional format
-does not change how text is displayed here.)
+time: every numeric cell inside such a range is rendered under the format its rules give it (c66.fires
+with the shared evaluator, checks/_cfeval.py, decides which rules fire - including expressions that
+read other cells and sheets), and fails when that display overflows.  Patrick 2026-10-05,
+"CONDITIONAL FORMATS never stop a grading": a rule that cannot be evaluated is taken as OFF, a
+conditional-format number format whose display is not verified gives way to the cell's own format,
+and an ISO-date cell (t="d") is graded by its own format; every such assumption is recorded in
+stats.cf_assumptions.  First-pass candidates inside those ranges are handed to the second pass.
+(A conditional format does not change how text is displayed here.)
 """
 from __future__ import annotations
 
@@ -116,7 +120,8 @@ from ..core.refs import MAX_COL, group_cells, index_to_col, location, make_ref, 
 from ..core.sheet import ExcelError
 from ..errors import GradingError
 from .base import Check
-from .c66 import UNKNOWN, fires
+from ._cfeval import cf_env, is_unevaluable, prefetch
+from .c66 import UNKNOWN, fires, rule_text
 from .c73 import LINE_HEIGHT_PER_PT, wrap_lines
 
 # ---------------------------------------------------------------- rule constants
@@ -131,6 +136,7 @@ INDENT_ALIGNMENTS = ("left", "right", "distributed")
 NEGATIVE_DATE_FAILS = False       # '#####' for a negative date/time is not a width defect
 GENERAL_SHORTENS = True           # General format falls back to fewer decimals / scientific before '####'
 UNTRUSTED_ONLY_IF_VERDICT_NEEDS = True   # undecided cells raise only while the verdict is still open
+MAX_ASSUMPTION_EXAMPLES = 10
 HIDDEN_ANCHOR_SPAN = True         # a merge anchor in a hidden row / column is measured against the visible span (69-F4)
 # cut-off text (Patrick 2026-10-04; replaces the two narrow text rules TEXT_NUMBER_CLIP / TEXT_HIDDEN_COL_MAX_PX)
 TEXT_CLIP = True                  # (a) unwrapped text that cannot be fully seen (blocked overflow) fails
@@ -516,6 +522,11 @@ class C69(Check):
         self.n_values_read = 0
         self.n_undecided = 0
         self.undecided = []          # [{sheet, ref, why}]
+        self._env = None
+        self.cf_assumed = 0          # numeric cells measured under a conditional-format assumption (Patrick 2026-10-05)
+        self.cf_assumed_decisive = 0
+        self.cf_assumed_examples = []
+        self.cf_unevaluable = {}     # (sheet, rule order) -> description
         self.band = []               # cells overflowing under some models only (stats)
         self.n_band = 0
         self.counts = {"numeric_cells": 0, "measured": 0, "sure_overflows": 0, "hidden_row_cells": 0,
@@ -1518,13 +1529,24 @@ class C69(Check):
     def _in_boxes(rules, r, c) -> list:
         return [i for i, x in enumerate(rules) if any(b[0] <= r <= b[2] and b[1] <= c <= b[3] for b in x.boxes)]
 
-    def _cf_formats(self, rules, ids, v, r, c) -> set:
-        """Set of number formats (None = the cell's own) the covering rules can produce."""
-        fired = [fires(rules[i].rule, v, (r, c) + rules[i].anchor) for i in ids]
+    def _cf_open(self, rules, ids, v, r, c) -> list:
+        """[(rule, why)] of the covering rules that cannot be evaluated for this cell."""
+        out = []
+        for i in ids:
+            f = fires(rules[i].rule, v, (r, c) + rules[i].anchor, self._env)
+            if is_unevaluable(f):
+                out.append((rules[i], f.why))
+        return out
+
+    def _cf_formats(self, rules, ids, v, r, c, branch: bool = False):
+        """Set of number formats (None = the cell's own) the covering rules can produce.  A rule that
+        cannot be evaluated is OFF (Patrick 2026-10-05); branch=True: it may fire too (is the assumption
+        decisive?).  None when more than 8 rules branch."""
+        fired = [fires(rules[i].rule, v, (r, c) + rules[i].anchor, self._env) for i in ids]
+        fired = [((UNKNOWN if branch else False) if is_unevaluable(f) else f) for f in fired]
         unknown = [k for k, f in enumerate(fired) if f is UNKNOWN]
         if len(unknown) > 8:
-            raise GradingError(f"{self.key}: a cell is covered by more than 8 conditional-format rules this check "
-                               f"cannot evaluate")
+            return None
         out = set()
         for combo in itertools.product((True, False), repeat=len(unknown)):
             fl = list(fired)
@@ -1568,6 +1590,9 @@ class C69(Check):
         self._flush_row()
         name = head.name
         rules = self._cf_rules(tail)
+        self._env = cf_env(self.wb, name)            # the rules' formulas read other cells through it
+        if rules:
+            prefetch(self._env, tail.conditional_formats)
         cands = self._cands
         merges = tail.merges
         # merged spans: covered cells are not displayed; an anchor has the whole span
@@ -1609,6 +1634,7 @@ class C69(Check):
             rec["hidden_rows"] = self._hidden_rows
             rec["row_info"] = (self._hidden_rows, self._custom_ht, self._zero_default, self._shown_rows)
             rec["geo"] = self.geo
+            rec["env"] = self._env
             self._pass2[name] = rec
         if rules:
             # cells inside a format-setting rule's ranges are judged in the second pass under every
@@ -1674,6 +1700,7 @@ class C69(Check):
         self._sheet_name = head.name
         if self._p2 is not None:
             self.geo = self._p2["geo"]
+            self._env = self._p2.get("env")
             self._sheet_short = self._p2["short"]      # hidden text anchors count on their own sheet
             self._p2_anchor = {(m.r1, m.c1): m for m in self._p2["merges"]}
             self._p2_merges = self._p2["merges"]
@@ -1742,31 +1769,80 @@ class C69(Check):
             self._settle(status, ov, text, cell.row, cell.col, cell.s, v, t, cell.ref, sty, p["cands"], p["uncertain"])
             return
         self.counts["cf_cells"] += 1
+        why = []
         if t == "d":
-            fmts = {None} | {rules[i].fmt for i in ids if rules[i].fmt is not None}
+            # an ISO-date cell (t="d") is not evaluated against the rules: they are OFF (Patrick 2026-10-05)
+            fmts, opened = {None}, []
+            alt_fmts = {None} | {rules[i].fmt for i in ids if rules[i].fmt is not None}
+            if len(alt_fmts) > 1:
+                why.append("rules over an ISO-date cell (t=\"d\") are not evaluated: assumed off")
         else:
             fmts = self._cf_formats(rules, ids, v, cell.row, cell.col)
-        results = {}
-        for fmt in fmts:
-            code = fmt if fmt is not None else sty.code
-            status, ov, text = self._measure(sty, v, t, code, pixels)
-            results[fmt] = (status, ov, text, code)
+            opened = self._cf_open(rules, ids, v, cell.row, cell.col)
+            alt_fmts = self._cf_formats(rules, ids, v, cell.row, cell.col, branch=True) if opened else fmts
+            if opened:
+                why.append("rule(s) assumed off: " + "; ".join(f"{rule_text(x.rule)} ({w})" for x, w in opened))
+                for x, w in opened:
+                    self._note_unevaluable(cell.sheet, x, w)
+        measured = {}
+
+        def measure(fmt):
+            if fmt not in measured:
+                code = fmt if fmt is not None else sty.code
+                status, ov, text = self._measure(sty, v, t, code, pixels)
+                measured[fmt] = (status, ov, text, code)
+            return measured[fmt]
+
+        results = {fmt: measure(fmt) for fmt in (fmts if fmts is not None else {None})}
+        decisive = False
+        if fmts is None or len({x[0] == "over" for x in results.values()}) > 1 or \
+                any(fmt is not None and x[0] == "uncertain" for fmt, x in results.items()):
+            # the conditional formatting leaves the display open (a CF format Excel's reading of which is not
+            # verified ...): graded by the cell's own format (Patrick 2026-10-05)
+            why.append("its conditional-format display is not verified (" +
+                       ", ".join(sorted(repr(x[3]) for f, x in results.items() if f is not None)) +
+                       "): graded by its own format")
+            decisive = True
+            results = {None: measure(None)}
+        if not decisive and why:
+            over_now = {x[0] == "over" for x in results.values()}
+            try:
+                alt = [measure(f) for f in (alt_fmts if alt_fmts is not None else {None})]
+                decisive = alt_fmts is None or {x[0] == "over" for x in alt} != over_now or \
+                    any(x[0] == "uncertain" for x in alt)
+            except GradingError:
+                decisive = True
+        if why:
+            self._assume(cell.sheet, cell.ref, v, "; ".join(why), decisive)
         over = [x for x in results.values() if x[0] == "over"]
-        if len(over) == len(results):
+        if over and len(over) == len(results):
             best = max(over, key=lambda x: x[1][REFERENCE_MODEL])
             note = f'conditional-format number format "{best[3]}"' if best[3] != sty.code else None
             p["cands"].append((cell.row, cell.col, cell.s, v, t, best[2], best[1][REFERENCE_MODEL], note))
-        elif over or any(x[0] == "uncertain" for x in results.values()):
-            shows = ", ".join(sorted({repr(x[2]) for x in results.values()}))
-            p["cf_undecided"].append((cell.row, cell.col, cell.ref,
-                                      f"depends on conditional formatting this check cannot evaluate "
-                                      f"(possible displays {shows})"))
+        elif any(x[0] == "uncertain" for x in results.values()):
+            # the cell's OWN format's display is not verified (not a conditional-format matter)
+            p["uncertain"].append((cell.row, cell.col, cell.ref,
+                                   f"display of {v!r} under number format {sty.code!r} is not verified"))
 
     def second_pass_end(self, head, tail):
         p = self._p2
         if p is not None:
             p["geo"] = None
         self._p2 = None
+
+    def _assume(self, sheet: str, ref: str, v, why: str, decisive: bool):
+        """Record a cell measured under a conditional-format assumption (stats.cf_assumptions)."""
+        self.cf_assumed += 1
+        self.cf_assumed_decisive += int(decisive)
+        if len(self.cf_assumed_examples) < MAX_ASSUMPTION_EXAMPLES and (decisive or len(self.cf_assumed_examples) < 3):
+            self.cf_assumed_examples.append(f"{location(sheet, ref)} = {v!r}{' (decisive)' if decisive else ''}: "
+                                            f"{why}"[:300])
+
+    def _note_unevaluable(self, sheet: str, x, why: str):
+        k = (sheet, x.order)
+        if k not in self.cf_unevaluable and len(self.cf_unevaluable) < 1000:
+            where = ",".join(range_to_str(*b) for b in x.boxes[:3]) + (",..." if len(x.boxes) > 3 else "")
+            self.cf_unevaluable[k] = f"{location(sheet, where)}: {rule_text(x.rule)} ({why})"[:300]
 
     # ------------------------------------------------------------------ verdict
     def finish(self) -> dict:
@@ -1844,6 +1920,15 @@ class C69(Check):
             "text_rows_under_half_line_examples": self.text_short_row_examples,
             "wrapped_merged_in_auto_rows_examples": self.wrapped_merged_auto_examples,
             "second_pass_sheets": sorted(self._pass2),
+            # Patrick 2026-10-05: conditional formats never stop a grading - every assumption is recorded
+            "cf_assumptions": {
+                "policy": "a conditional-format rule that cannot be evaluated is OFF, and a conditional-format "
+                          "number format whose display is not verified gives way to the cell's own format "
+                          "(Patrick 2026-10-05)",
+                "cells": self.cf_assumed, "decisive_cells": self.cf_assumed_decisive,
+                "examples": self.cf_assumed_examples,
+                "unevaluable_rules": len(self.cf_unevaluable),
+                "unevaluable_rule_examples": list(self.cf_unevaluable.values())[:MAX_ASSUMPTION_EXAMPLES]},
             "per_sheet": per_sheet,
             "options": {"negative_date_fails": NEGATIVE_DATE_FAILS, "general_shortens": GENERAL_SHORTENS,
                         "untrusted_only_if_verdict_needs": UNTRUSTED_ONLY_IF_VERDICT_NEEDS,

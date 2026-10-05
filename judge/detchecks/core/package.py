@@ -291,6 +291,8 @@ class Package:
         self.core = CoreProps()
         self.task_meta: dict = {}
         self.provenance = None                  # set by values.detect_provenance()
+        self.value_source = None                # set by the engine: the recalc copy formula values come from
+                                                # (core.lookup reads referenced cells through it)
         self._rels_cache: dict[str, list[Rel]] = {}
         self._styles = None
         self._sst = None

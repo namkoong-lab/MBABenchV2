@@ -20,14 +20,24 @@ non-space character.  Empty cells (no value, or a formula returning "") never co
 Conditional formatting counts where it fires: when some combination of the rules' dxf font
 colours / fills / number formats could flip a cell's verdict, the rules (including format-less
 'Stop If True' rules, which block lower ones) are evaluated per cell in a second pass over that sheet
-(cellIs with literal operands, text rules, blanks / errors, expressions that are literals,
-compare the cell itself with a literal, or band rows / columns; colour scales by their stop
-colours).  When a rule that matters cannot be evaluated (expression reading other cells,
-top10, average, duplicates, time period), every outcome is tried; if they disagree the cell is
-UNDECIDED.  Formula values are read only for cells whose formatting could conceal them; an
-untrusted value there makes the cell UNDECIDED too.  Undecided cells raise GradingError only
-when nothing else is certainly concealed (otherwise the verdict is fail either way and they
-are listed in stats).
+with the shared evaluator (checks/_cfeval.py: cellIs with literal or formula operands, text rules,
+blanks / errors, and expression rules - comparisons, arithmetic, &, text / IS / logical / rounding
+functions, absolute and relative references to the cell itself, to other cells of the sheet and to
+other sheets, read through the value source).  Patrick 2026-10-05, "CONDITIONAL FORMATS never stop
+a grading" / "assume the built-in Excel conditional formats always have visible text":
+  * built-in conditional formats never count as hiding text: colour scales, data bars, icon sets and
+    Excel's preset highlight styles (Light Red Fill with Dark Red Text FFC7CE/9C0006, Yellow Fill with
+    Dark Yellow Text FFEB9C/9C6500, Green Fill with Dark Green Text C6EFCE/006100, Light Red Fill, Red
+    Text, Red Border) - a cell whose font or fill comes from one is visible (its number format can still
+    blank it);
+  * a rule the evaluator cannot evaluate (COUNTIF, top10, aboveAverage, an untrusted referenced value
+    ...), and any other way a conditional format leaves the verdict open (a CF font over rich-text
+    runs, Excel's reading of a CF number format): the text is assumed VISIBLE, never a GradingError;
+    every such assumption is recorded in stats.cf_assumptions (count + examples).
+Formula values are read only for cells whose formatting could conceal them; an untrusted value
+there makes the cell UNDECIDED (not a conditional-format matter).  Undecided cells raise
+GradingError only when nothing else is certainly concealed (otherwise the verdict is fail either
+way and they are listed in stats).
 
 Not counted (see docs): fonts below a size, merged non-anchor values, data bars / icon sets
 with showValue=0, a zero hidden by the sheet option showZeros=0 (General / single-section
@@ -46,11 +56,15 @@ from collections import defaultdict
 from functools import lru_cache
 from typing import Optional
 
+from dataclasses import dataclass
+
 from ..core import numfmt as N
-from ..core.refs import location, parse_range
+from ..core.refs import location, parse_range, range_to_str
 from ..core.sheet import ExcelError
 from ..core.styles import is_unknown
 from ..errors import GradingError
+from ._cfeval import (UNKNOWN, Unevaluable, cellis_fires, cf_env, expression_fires, is_unevaluable, literal,
+                      prefetch, preset_style)
 from ._cftext import text_rule_fires
 from ._fills import dxf_fill_paints
 from .base import Check
@@ -66,11 +80,24 @@ DARK_TABLE_PROXY = "404040"  # TableStyleDark* bodies are dark; directly formatt
 MAX_UNDECIDED_IN_STATS = 10
 ZERO_BLANK_COUNTS = True   # a zero rendered blank by its number format ('0;-0;;@') counts (handoff: any value)
 SHOW_ZEROS_OFF_COUNTS = False  # sheet option showZeros=0 is not a number format: recorded, not counted
-CF_COUNTS = True           # conditional formatting counts where it fires (evaluated; raise if it cannot be)
-MAX_UNKNOWN_RULES = 8      # a cell under more unevaluable CF rules than this raises at once
+CF_COUNTS = True           # conditional formatting counts where it fires (evaluated per cell)
+CF_BUILTIN_VISIBLE = True  # Patrick 2026-10-05: built-in CFs (colour scales, data bars, icon sets, preset styles)
+                           # never count as hiding text
+CF_ASSUME_VISIBLE = True   # Patrick 2026-10-05: where a conditional format leaves the verdict open (a rule that
+                           # cannot be evaluated, ...), the text is assumed visible - recorded in stats
+MAX_UNKNOWN_RULES = 8      # a cell under more unevaluable CF rules than this: assumed visible at once (recorded)
 MAX_FLIP_COMBOS = 4000     # more reachable CF outcomes on a sheet than this: skip the flip pre-test, do the CF pass
-SCALE_SAMPLES = 10         # interpolation samples between two colour-scale stops
+MAX_ASSUMPTION_EXAMPLES = 10
 WHITE = "FFFFFF"
+
+
+@dataclass(frozen=True)
+class Visible:
+    """The text colour of a conditional-format outcome whose font or fill comes from a BUILT-IN
+    conditional format (colour scale, preset highlight style): assumed visible (Patrick 2026-10-05).
+    font = the colour the text would otherwise have (None: the cell's own), label = which built-in."""
+    font: object
+    label: str
 
 # ---------------------------------------------------------------------------- APCA
 _R, _G, _B = 0.2126729, 0.7151522, 0.0721750
@@ -186,7 +213,10 @@ def hue_exempt(text: str, bg: str) -> bool:
 def conceals(text, bgs) -> Optional[bool]:
     """Text colour is invisible against every background candidate: True / False, or None when an
     unresolvable colour (core.styles.UnknownColour, finding 47-R2-08) decides it - an unknown text colour,
-    or unknown backgrounds when every known one conceals.  Callers treat None as 'may conceal'."""
+    or unknown backgrounds when every known one conceals.  Callers treat None as 'may conceal'.
+    A Visible text colour (a built-in conditional format, Patrick 2026-10-05) never conceals."""
+    if isinstance(text, Visible):
+        return False
     if is_unknown(text):
         return None
     unknown_bg = False
@@ -208,83 +238,24 @@ def _cname(c) -> str:
     return str(c) if is_unknown(c) else c[-6:]
 
 
-def _interp(c1: str, c2: str, t: float) -> str:
-    return "".join(f"{int(round(int(c1[i:i + 2], 16) * (1 - t) + int(c2[i:i + 2], 16) * t)):02X}" for i in (0, 2, 4))
-
-
 # ---------------------------------------------------------------------------- CF evaluation
 _DARK_TABLE_RX = re.compile(r"^TableStyleDark\d+$", re.I)
-_NUM_RX = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
-UNKNOWN = object()
+parse_operand = literal            # a CF operand as a literal value, or UNKNOWN (kept for callers / tests)
 
 
-def parse_operand(f: Optional[str]):
-    """A CF operand formula as a literal value, or UNKNOWN (references, functions ...)."""
-    if f is None:
-        return UNKNOWN
-    t = f.strip()
-    if t.startswith("="):
-        t = t[1:].strip()
-    if _NUM_RX.match(t):
-        return float(t)
-    if len(t) >= 2 and t[0] == '"' and t[-1] == '"' and '"' not in t[1:-1].replace('""', ""):
-        return t[1:-1].replace('""', '"')
-    if t.upper() in ("TRUE", "FALSE"):
-        return t.upper() == "TRUE"
-    return UNKNOWN
-
-
-def _rank(v) -> int:
-    if isinstance(v, bool):
-        return 2
-    if isinstance(v, str):
-        return 1
-    return 0
-
-
-def _cmp(a, b) -> int:
-    """Excel comparison: numbers < text < logicals; text case-insensitive."""
-    ra, rb = _rank(a), _rank(b)
-    if ra != rb:
-        return -1 if ra < rb else 1
-    if ra == 1:
-        a, b = a.casefold(), b.casefold()
-    return (a > b) - (a < b)
-
-
-def _as_text(v) -> str:
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if isinstance(v, (int, float)):
-        return N.general_text(float(v))
-    return str(v)
-
-
-def eval_rule(rule, value, where=None):
-    """True / False when the rule fires / does not fire for this (populated) value, UNKNOWN
-    when it cannot be evaluated from the cell alone.  where: see eval_expression."""
+def eval_rule(rule, value, where=None, env=None):
+    """True / False when the rule fires / does not fire for this (populated) value; UNKNOWN when it
+    depends on what the caller does not know (a position-dependent rule without `where`); an
+    Unevaluable when it cannot be evaluated (checks/_cfeval.py).  where = (row, col, anchor_row,
+    anchor_col); env = the sheet's _cfeval.CfEnv (other cells' values; None: none can be read)."""
     t = rule.type
     is_err = isinstance(value, ExcelError)
     if t == "cellIs":
-        ops = [parse_operand(f) for f in rule.formulas]
-        if not ops or any(o is UNKNOWN for o in ops):
-            return UNKNOWN
-        if is_err:
-            return False                         # the comparison is an error: no format
-        op = rule.operator or "between"
-        if op in ("between", "notBetween"):
-            if len(ops) < 2:
-                return UNKNOWN
-            lo, hi = sorted(ops[:2], key=lambda x: (_rank(x), x.casefold() if isinstance(x, str) else x))
-            inside = _cmp(value, lo) >= 0 and _cmp(value, hi) <= 0
-            return inside if op == "between" else not inside
-        c = _cmp(value, ops[0])
-        return {"equal": c == 0, "notEqual": c != 0, "greaterThan": c > 0, "lessThan": c < 0,
-                "greaterThanOrEqual": c >= 0, "lessThanOrEqual": c <= 0}.get(op, UNKNOWN)
+        return cellis_fires(rule, value, env, where)
     if t in ("containsText", "notContainsText", "beginsWith", "endsWith"):
         needle = rule.text
         if needle is None:
-            return UNKNOWN
+            return Unevaluable(f"{t} rule without its text")
         if is_err:
             return t == "notContainsText"
         return text_rule_fires(t, needle, _as_text(value))     # containsText: SEARCH wildcards (Excel 2026-10-03)
@@ -298,73 +269,26 @@ def eval_rule(rule, value, where=None):
         return not is_err
     if t == "expression":
         if len(rule.formulas) != 1:
-            return UNKNOWN
-        return eval_expression(rule.formulas[0], value, where)
-    return UNKNOWN
+            return Unevaluable(f"expression rule with {len(rule.formulas)} formulas")
+        return expression_fires(rule.formulas[0], env, where, value)
+    return Unevaluable(f"rule type {t!r} is not evaluated")
 
 
-_REF = r"(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})"
-_OPS = {"=": lambda c: c == 0, "<>": lambda c: c != 0, "<": lambda c: c < 0, ">": lambda c: c > 0,
-        "<=": lambda c: c <= 0, ">=": lambda c: c >= 0}
-_SELF_CMP_RX = re.compile(r"^\s*" + _REF + r"\s*(<>|<=|>=|=|<|>)\s*(.+?)\s*$")
-_CMP_SELF_RX = re.compile(r"^\s*(.+?)\s*(<>|<=|>=|=|<|>)\s*" + _REF + r"\s*$")
-_BAND_RX = re.compile(r"^\s*MOD\(\s*(ROW|COLUMN)\(\s*\)\s*,\s*(\d+)\s*\)\s*(<>|=)\s*(\d+)\s*$", re.I)
-_EVENODD_RX = re.compile(r"^\s*(ISEVEN|ISODD)\(\s*(ROW|COLUMN)\(\s*\)\s*\)\s*$", re.I)
-_FLIP = {"<": ">", ">": "<", "<=": ">=", ">=": "<=", "=": "=", "<>": "<>"}
+def _as_text(v) -> str:
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, (int, float)):
+        return N.general_text(float(v))
+    return str(v)
 
 
-def _col_num(letters: str) -> int:
-    n = 0
-    for ch in letters.upper():
-        n = n * 26 + ord(ch) - 64
-    return n
-
-
-def eval_expression(formula: Optional[str], value, where=None):
-    """A formula-type CF rule evaluated for one cell, or UNKNOWN.  Supported (the forms agents
-    write): a literal (TRUE / 1 / 0), '<ref> <op> <literal>' (either order) where <ref> is the
-    cell itself once shifted to it, and row / column banding (MOD(ROW(),2)=0, ISEVEN(ROW())).
-    where = (row, col, anchor_row, anchor_col): the cell and the top-left cell of the rule's
-    first range (relative references in a CF formula are relative to that cell)."""
-    if formula is None:
-        return UNKNOWN
-    f = formula.strip()
-    if f.startswith("="):
-        f = f[1:].strip()
-    o = parse_operand(f)
-    if o is not UNKNOWN:
-        return UNKNOWN if isinstance(o, str) else bool(o)
-    if where is None:
-        return UNKNOWN
-    r, c, r0, c0 = where
-    m = _BAND_RX.match(f)
-    if m:
-        x = r if m.group(1).upper() == "ROW" else c
-        hit = x % int(m.group(2)) == int(m.group(4)) if int(m.group(2)) else False
-        return hit if m.group(3) == "=" else not hit
-    m = _EVENODD_RX.match(f)
-    if m:
-        x = r if m.group(2).upper() == "ROW" else c
-        return (x % 2 == 0) == (m.group(1).upper() == "ISEVEN")
-    m = _SELF_CMP_RX.match(f)
-    if m:
-        dc, col, dr, row, op, rhs = m.groups()
-    else:
-        m = _CMP_SELF_RX.match(f)
-        if not m:
-            return UNKNOWN
-        rhs, op, dc, col, dr, row = m.groups()
-        op = _FLIP[op]
-    lit = parse_operand(rhs)
-    if lit is UNKNOWN:
-        return UNKNOWN
-    rr = int(row) if dr else int(row) + (r - r0)
-    cc = _col_num(col) if dc else _col_num(col) + (c - c0)
-    if (rr, cc) != (r, c):
-        return UNKNOWN                           # the rule reads another cell
-    if isinstance(value, ExcelError):
-        return False                             # comparing an error gives an error: no format
-    return _OPS[op](_cmp(value, lit))
+def _rule_text(rule) -> str:
+    what = rule.type or "?"
+    if rule.formulas:
+        what += " " + ", ".join(repr(f) for f in rule.formulas[:2])
+    elif rule.text is not None:
+        what += f" {rule.text!r}"
+    return what
 
 
 # ---------------------------------------------------------------------------- formatting model
@@ -429,6 +353,12 @@ class C94(Check):
         self.cf_second_pass: list = []
         self.examples: dict = {}
         self.pending: dict = {}
+        self.cf_assumed = 0                     # cells assumed visible: a conditional format left the verdict open
+        self.cf_assumed_examples: list = []
+        self.cf_unevaluable: dict = {}          # rule (sheet, sqref, text) -> why it cannot be evaluated
+        self.cf_builtin_visible = 0             # cells a built-in conditional format would conceal: visible
+        self.cf_builtin_examples: list = []
+        self._builtin_seen: set = set()
         self.und_total = 0                      # cells this check cannot decide (committed sheets)
         self.und_examples: list = []            # their first reasons
         self.und_cells = array("q")             # current sheet: packed (r, c) of undecided cells
@@ -576,12 +506,41 @@ class C94(Check):
                      date1904=self.wb.date1904, indexed_palette=self.palette)
         return {r.is_blank} if r.certain else {True, False}
 
-    def _decide(self, cell, value, st: _Style, runs, effects) -> Optional[str]:
+    def _decide(self, cell, value, st: _Style, runs, effects, cf_note: Optional[str] = None) -> Optional[str]:
         """Why the populated cell is concealed, or None when it is visible.  effects: alternative
-        conditional-format outcomes [(font, bgs, bg_desc, fmt)].  Every alternative interpretation
-        must agree, otherwise GradingError (no guessing)."""
+        conditional-format outcomes [(font, bgs, bg_desc, fmt)].  Every alternative interpretation must
+        agree, otherwise the cell is undecided (no guessing) - EXCEPT where the conditional formatting
+        alone leaves it open (the cell's own formatting decides it, the CF outcomes disagree: a rule that
+        cannot be evaluated, a CF font over rich-text runs, a CF number format or colour Excel's reading
+        of which is not verified): then the text is assumed visible (Patrick 2026-10-05) and the
+        assumption recorded.  cf_note: why the CF is open (the unevaluable rules), for the record."""
         if not _populated(value):
             return None
+        outcomes = self._outcomes(cell, value, st, runs, effects, count=True)
+        if len(outcomes) <= 1:
+            return next(iter(outcomes.values()), None)
+        if CF_ASSUME_VISIBLE and effects != [_NO_EFFECT]:
+            base = self._outcomes(cell, value, st, runs, [_NO_EFFECT], count=False)
+            if len(base) == 1:
+                # the cell's own formatting decides; only the conditional formatting leaves it open
+                self._assume_visible(cell, value, cf_note or (
+                    "the conditional-format outcomes disagree and Excel's rendering of the one that conceals is "
+                    f"not verified ({outcomes[True]})"))
+                return None
+        self._undecided(cell, f"cannot decide whether {cell.sheet}!{cell.ref} (value {value!r}, format {st.fmt!r}) "
+                              f"is concealed: the outcome depends on an unresolvable colour or Excel rendering this "
+                              f"check cannot determine ({outcomes[True]})")
+        return _UNDECIDED
+
+    def _assume_visible(self, cell, value, why: str):
+        """Record a cell assumed visible because a conditional format left its verdict open."""
+        self.cf_assumed += 1
+        if len(self.cf_assumed_examples) < MAX_ASSUMPTION_EXAMPLES:
+            self.cf_assumed_examples.append(f"{location(cell.sheet, cell.ref)} = {value!r}: {why}"[:300])
+
+    def _outcomes(self, cell, value, st: _Style, runs, effects, count: bool = True) -> dict:
+        """{concealed?: reason} over every interpretation of the cell under the given CF outcomes
+        (_decide).  count=False: no statistics are updated (a second look at the same cell)."""
         vt = "e" if isinstance(value, ExcelError) else ("d" if cell.t == "d" and not cell.is_formula_result else None)
         outcomes: dict = {}
         # showZeros=0 (Excel 2026-10-03): an exact numeric 0 is hidden by the sheet option unless its
@@ -601,7 +560,15 @@ class C94(Check):
             tag = self._tag_rgb(r.color_tag) if r.color_tag else None    # the colour tag of the section used
             #                                      (text / logicals: the text section's only; errors: none) -
             #                                      Excel 2026-10-03; an UnknownColour for an invalid palette entry
-            if cf_font is not None:
+            if isinstance(cf_font, Visible):
+                # a built-in conditional format paints the font or the fill: never hides text (Patrick
+                # 2026-10-05); recorded when the text would otherwise be concealed
+                alts.append((cf_font.label, [cf_font]))
+                if count:
+                    real = [cf_font.font] if cf_font.font is not None else (runs or [st.font])
+                    if any(conceals(c, (b,)) is not False for c in real for b in bgs):
+                        self._note_builtin(cell, value, cf_font.label, bg_desc)
+            elif cf_font is not None:
                 # a conditional-format font colour beats a number-format colour tag (Excel 2026-10-03)
                 alts.append(("conditional-format font", [cf_font]))
                 if runs:                         # CF font over rich-text runs: unverified
@@ -627,7 +594,8 @@ class C94(Check):
                 if hz is None:
                     outcomes.setdefault(False, None)
                 elif hz:
-                    self.n_zero_hidden_by_sheet += 1
+                    if count:
+                        self.n_zero_hidden_by_sheet += 1
                     outcomes.setdefault(False, None)
                     continue
             for blank in blanks:
@@ -663,12 +631,17 @@ class C94(Check):
                                    f"a colour that cannot be resolved")
                         outcomes.setdefault(True, why)
                         outcomes.setdefault(False, None)
-        if len(outcomes) > 1:
-            self._undecided(cell, f"cannot decide whether {cell.sheet}!{cell.ref} (value {value!r}, format {st.fmt!r}) "
-                                  f"is concealed: the outcome depends on conditional formatting, an unresolvable "
-                                  f"colour or Excel rendering this check cannot determine ({outcomes[True]})")
-            return _UNDECIDED
-        return next(iter(outcomes.values()))
+        return outcomes
+
+    def _note_builtin(self, cell, value, label: str, bg_desc: str):
+        k = (cell.sheet, cell.row, cell.col)
+        if k in self._builtin_seen:
+            return
+        self._builtin_seen.add(k)
+        self.cf_builtin_visible += 1
+        if len(self.cf_builtin_examples) < MAX_ASSUMPTION_EXAMPLES:
+            self.cf_builtin_examples.append(f"{location(cell.sheet, cell.ref)} = {value!r}: {label} ({bg_desc}) would "
+                                            f"conceal its text; assumed visible"[:300])
 
     def _undecided(self, cell, reason: str):
         k = cell.row * _PACK + cell.col
@@ -751,12 +724,14 @@ class C94(Check):
 
     # -------------------------------------------------------------- conditional formatting
     def _cf_rules(self, tail, sheet) -> list:
-        """[(priority, order, rule, ranges, effects, scale, anchor)] of rules that can change the
-        font colour, fill or number format, or that stop lower rules (stopIfTrue, even with no
-        format or a border-only one: effects [_NO_EFFECT]).  effects = alternative outcomes [(font, bgs, bg_desc,
-        fmt)] when the rule fires (the dxf fill is what Excel paints: bgColor only, see _fills.py); scale =
-        colour-scale stop colours (fill decided by the value's rank in the range) or None;
-        anchor = top-left cell of the first range (CF formulas are relative to it)."""
+        """[(priority, order, rule, ranges, effects, scale, anchor, builtin)] of rules that can change the
+        font colour, fill or number format, or that stop lower rules (stopIfTrue, even with no format or a
+        border-only one: effects [_NO_EFFECT]).  effects = alternative outcomes [(font, bgs, bg_desc, fmt)]
+        when the rule fires (the dxf fill is what Excel paints: bgColor only, see _fills.py); scale =
+        colour-scale stop colours or None; anchor = top-left cell of the first range (CF formulas are
+        relative to it); builtin = the name of the BUILT-IN conditional format the rule is (a colour scale,
+        one of Excel's preset highlight styles) or None: its font / fill never hides text (Patrick
+        2026-10-05).  Data bars and icon sets change no font or fill (with showValue=0 they are listed)."""
         out = []
         order = 0
         for cf in tail.conditional_formats:
@@ -767,10 +742,10 @@ class C94(Check):
                 order += 1
                 prio = rule.priority if rule.priority is not None else 10 ** 9
                 if rule.type == "colorScale":
-                    # a stop without a colour reads as white (as before); an unresolvable one stays unknown
+                    # a built-in format: the fill it paints never hides text (CF_BUILTIN_VISIBLE)
                     cols = tuple(_hex6(self.st.resolve(c, "fill") or "FFFFFFFF") for c in rule.colors)
                     if cols:
-                        out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], cols, anchor))
+                        out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], cols, anchor, "a colour scale"))
                     continue
                 if rule.type in ("dataBar", "iconSet"):
                     if rule.show_value is False:
@@ -781,7 +756,7 @@ class C94(Check):
                     if rule.stop_if_true:
                         # 'Stop If True' with no format (review 2026-10-04): when it fires, lower-priority
                         # rules are not applied, so it is kept for its stop effect (as in check 66)
-                        out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], None, anchor))
+                        out.append((prio, order, rule, cf.ranges, [_NO_EFFECT], None, anchor, None))
                     continue
                 font = None
                 if d.font is not None and d.font.color is not None:
@@ -800,30 +775,59 @@ class C94(Check):
                     fmt = N.resolve_format(d.num_fmt_id, self.st.num_fmts)
                 if font is None and fills == [(None, None)] and fmt is None and not rule.stop_if_true:
                     continue                      # no visible effect (bold, border ...) and no stop
+                builtin = None
+                fill_rgb = cols[0] if cols else None
+                if CF_BUILTIN_VISIBLE and not together and len(cols) <= 1 and not is_unknown(font) \
+                        and not is_unknown(fill_rgb):
+                    name = preset_style(font, fill_rgb, fmt is not None)
+                    if name:
+                        builtin = f"Excel's preset style '{name}'"
                 effects = [(font, b, bd, fmt) for b, bd in fills]
-                out.append((prio, order, rule, cf.ranges, effects, None, anchor))
+                out.append((prio, order, rule, cf.ranges, effects, None, anchor, builtin))
         out.sort(key=lambda x: (x[0], x[1]))
         return out
 
     @staticmethod
-    def _scale_effects(scale, font=None, fmt=None) -> list:
-        samples = []
-        for a, b in zip(scale, scale[1:]):
-            if is_unknown(a) or is_unknown(b):
-                samples += [a, b]                # the colours in between depend on the unresolvable stop
+    def _compose(cover, fired, pick):
+        """One CF outcome (font, bgs, bg_desc, fmt) of the covering rules in priority order: the first firing
+        rule that sets a property wins it; a firing stopIfTrue rule ends the composition.  When a built-in
+        conditional format (colour scale, preset style) sets the font or the fill, the outcome's text is
+        Visible (Patrick 2026-10-05)."""
+        font = bgs = bg_desc = fmt = None
+        builtin = None
+        for x, f, eff in zip(cover, fired, pick):
+            if not f:
                 continue
-            samples += [_interp(a, b, k / SCALE_SAMPLES) for k in range(SCALE_SAMPLES + 1)]
-        return [(font, (c,), f"colour-scale fill {_cname(c)}", fmt) for c in (samples or list(scale))]
+            set_any = False
+            if x[5] is not None:                 # colour scale: sets the fill
+                if bgs is None:
+                    bgs, bg_desc = x[5], "colour-scale fill " + "→".join(_cname(c) for c in x[5])
+                    set_any = True
+            else:
+                if font is None and eff[0] is not None:
+                    font = eff[0]
+                    set_any = True
+                if bgs is None and eff[1] is not None:
+                    bgs, bg_desc = eff[1], eff[2]
+                    set_any = True
+                if fmt is None and eff[3] is not None:
+                    fmt = eff[3]
+            if set_any and x[7] is not None and builtin is None:
+                builtin = x[7]
+            if x[2].stop_if_true:
+                break
+        if builtin is not None and not isinstance(font, Visible):
+            font = Visible(font, builtin)
+        return (font, bgs, bg_desc, fmt)
 
     def _combos(self, cover, fired_known=None) -> Optional[list]:
-        """All CF outcomes [(font, bgs, bg_desc, fmt)] for the covering rules (priority order):
-        the first firing rule that sets a property wins it; stopIfTrue ends the evaluation.
-        fired_known: True/False/UNKNOWN per rule (None = all unknown).  Unknown rules branch on
-        firing; rules with alternative effects branch on the alternative.  None when there are
-        more than MAX_UNKNOWN_RULES unknown rules."""
+        """All CF outcomes [(font, bgs, bg_desc, fmt)] for the covering rules (priority order, _compose).
+        fired_known: True / False / UNKNOWN / an Unevaluable per rule (None = all unknown).  Unknown and
+        unevaluable rules branch on firing; rules with alternative effects branch on the alternative.  None
+        when more than MAX_UNKNOWN_RULES rules branch."""
         n = len(cover)
         known = fired_known if fired_known is not None else [UNKNOWN] * n
-        unknown = [i for i, f in enumerate(known) if f is UNKNOWN]
+        unknown = [i for i, f in enumerate(known) if f is UNKNOWN or is_unevaluable(f)]
         if len(unknown) > MAX_UNKNOWN_RULES:
             return None
         out = []
@@ -833,26 +837,7 @@ class C94(Check):
                 fired[i] = combo[k]
             choices = [x[4] if f and x[5] is None else [None] for x, f in zip(cover, fired)]
             for pick in itertools.product(*choices):
-                font = bgs = bg_desc = fmt = scale = None
-                for x, f, eff in zip(cover, fired, pick):
-                    if not f:
-                        continue
-                    if x[5] is not None:
-                        if bgs is None and scale is None:
-                            scale = x[5]
-                    else:
-                        if font is None and eff[0] is not None:
-                            font = eff[0]
-                        if bgs is None and scale is None and eff[1] is not None:
-                            bgs, bg_desc = eff[1], eff[2]
-                        if fmt is None and eff[3] is not None:
-                            fmt = eff[3]
-                    if x[2].stop_if_true:
-                        break
-                if scale is not None:
-                    out += self._scale_effects(scale, font, fmt)
-                else:
-                    out.append((font, bgs, bg_desc, fmt))
+                out.append(self._compose(cover, fired, pick))
         return list(dict.fromkeys(out))
 
     def _may_flip(self, rules) -> bool:
@@ -887,29 +872,44 @@ class C94(Check):
                 sig = self._sig(st, e)
                 if sig != base or _sig_unknown(sig):
                     return True
+                if isinstance(e[0], Visible):
+                    # a built-in format that would conceal this style is evaluated per cell too, so that every
+                    # cell it keeps visible is recorded (stats.cf_builtin_visible)
+                    real = self._sig(st, (e[0].font, e[1], None, e[3]))
+                    if real != base or _sig_unknown(real):
+                        return True
         return False
 
     def _reachable(self, rules) -> Optional[set]:
         """Every (font, bgs, fmt) outcome that some set of firing rules produces, whatever their
         conditions and ranges: rules in priority order, a firing rule fills each property not yet set
-        (its alternative effects, or a colour scale's interpolated colours, branch), a firing
-        stopIfTrue rule ends the composition.  None when more than MAX_FLIP_COMBOS outcomes."""
-        live = {(None, None, None)}               # partial outcomes still open to lower rules
+        (its alternative effects branch), a built-in format that sets the font or the fill makes the text
+        Visible, a firing stopIfTrue rule ends the composition.  None when more than MAX_FLIP_COMBOS
+        outcomes."""
+        live = {(None, None, None, None)}         # partial outcomes (font, bgs, fmt, built-in) open to lower rules
         done = set()                              # outcomes ended by a firing stopIfTrue rule
         for x in rules:
             if x[5] is not None:
-                effs = {(None, e[1], None) for e in self._scale_effects(x[5])}
+                effs = {(None, x[5], None)}
             else:
                 effs = {(e[0], e[1], e[3]) for e in x[4]}
-            fired = {(p[0] if p[0] is not None else e[0], p[1] if p[1] is not None else e[1],
-                      p[2] if p[2] is not None else e[2]) for p in live for e in effs}
+            fired = set()
+            for p in live:
+                for e in effs:
+                    builtin = p[3]
+                    if builtin is None and x[7] is not None and \
+                            ((p[0] is None and e[0] is not None) or (p[1] is None and e[1] is not None)):
+                        builtin = x[7]
+                    fired.add((p[0] if p[0] is not None else e[0], p[1] if p[1] is not None else e[1],
+                               p[2] if p[2] is not None else e[2], builtin))
             if x[2].stop_if_true:
                 done |= fired
             else:
                 live |= fired
             if len(live) + len(done) > MAX_FLIP_COMBOS:
                 return None
-        return live | done
+        # as _compose: an outcome a built-in format took part in keeps its text Visible
+        return {(Visible(f, b) if b is not None else f, bgs, fmt) for f, bgs, fmt, b in live | done}
 
     def _cover(self, r: int, c: int) -> list:
         """Rules (priority order) whose ranges contain (r, c); boxes indexed per column."""
@@ -936,9 +936,12 @@ class C94(Check):
             kept = set(und) if self.und_reasons else set()
             und_reasons = {k: v for k, v in self.und_reasons.items() if k in kept}
             self.und_cells, self.und_reasons = array("q"), {}
+            # the cells the rules' formulas read (same sheet or others): one stream per referenced sheet
+            env = cf_env(self.wb, head.name)
+            prefetch(env, tail.conditional_formats)
             self.pending[head.name] = {
                 "hits": keep, "rules": rules, "tables": self.table_boxes, "by_col": {}, "screen": {},
-                "und_cells": und, "und_reasons": und_reasons,
+                "und_cells": und, "und_reasons": und_reasons, "env": env,
                 "bbox": (min(b[0] for b in boxes), min(b[1] for b in boxes),
                          max(b[2] for b in boxes), max(b[3] for b in boxes))}
             self.cf_second_pass.append(head.name)
@@ -984,8 +987,12 @@ class C94(Check):
             visible = p["screen"].get(key)
             if visible is None:
                 combos = self._combos(cover)
-                visible = combos is not None and all(self._state(st, e) == (False, False)
-                                                     for e in combos + [_NO_EFFECT])
+                # (a built-in format's outcome is screened with the colours it masks, so that a cell it keeps
+                # visible is evaluated and recorded)
+                visible = combos is not None and all(
+                    self._state(st, e) == (False, False) and
+                    (not isinstance(e[0], Visible) or self._state(st, (e[0].font,) + tuple(e[1:])) == (False, False))
+                    for e in combos + [_NO_EFFECT])
                 p["screen"][key] = visible
             if visible and not (self.dark_boxes and self._dark_table_risk(cell, st)):
                 return
@@ -994,22 +1001,39 @@ class C94(Check):
             return
         self.n_cf_cells += 1
         fired = []
+        open_rules = []
         for x in cover:
             if x[5] is not None:      # colour scale: applies to numbers only
                 fired.append(isinstance(value, (int, float)) and not isinstance(value, bool))
             else:
-                fired.append(eval_rule(x[2], value, (r, c) + x[6]))
+                f = eval_rule(x[2], value, (r, c) + x[6], p["env"])
+                if f is UNKNOWN or is_unevaluable(f):
+                    why = f.why if is_unevaluable(f) else "it depends on what this check does not know"
+                    open_rules.append(f"{_rule_text(x[2])} ({why})")
+                    self._note_unevaluable(cell.sheet, x, why)
+                fired.append(f)
+        cf_note = (f"conditional-format rule(s) that cannot be evaluated: {'; '.join(open_rules)}"
+                   if open_rules else None)
         effects = self._combos(cover, fired)
         if effects is None:
-            self._undecided(cell, f"{cell.sheet}!{cell.ref} is covered by more than {MAX_UNKNOWN_RULES} "
-                                  f"conditional-format rules this check cannot evaluate")
+            # Patrick 2026-10-05: a conditional format never stops a grading - assumed visible, recorded
+            self.n_judged += 1
+            self._assume_visible(cell, value, f"covered by more than {MAX_UNKNOWN_RULES} conditional-format rules "
+                                              f"that cannot be evaluated ({cf_note})")
             return
-        self._judge_known(cell, st, effects, rich, value)
+        self._judge_known(cell, st, effects, rich, value, cf_note)
 
-    def _judge_known(self, cell, st, effects, rich, value):
+    def _note_unevaluable(self, sheet: str, x, why: str):
+        """Record a rule met in a judged cell that cannot be evaluated (stats.cf_assumptions)."""
+        k = (sheet, x[1])
+        if k not in self.cf_unevaluable and len(self.cf_unevaluable) < 1000:
+            where = ",".join(range_to_str(*b) for b in x[3][:3]) + (",..." if len(x[3]) > 3 else "")
+            self.cf_unevaluable[k] = f"{location(sheet, where)}: {_rule_text(x[2])} ({why})"[:300]
+
+    def _judge_known(self, cell, st, effects, rich, value, cf_note: Optional[str] = None):
         self.n_judged += 1
         runs = self._runs_colours(cell, st.font) if rich else None
-        desc = self._decide(cell, value, st, runs, effects)
+        desc = self._decide(cell, value, st, runs, effects, cf_note)
         if desc is _UNDECIDED:
             return
         if desc is None:
@@ -1059,6 +1083,20 @@ class C94(Check):
                  "show_zeros_off_sheets": self.show_zeros_off,
                  "zeros_hidden_by_show_zeros_off": self.n_zero_hidden_by_sheet,
                  "databar_iconset_value_hidden": self.hidden_value_bars[:10],
+                 # Patrick 2026-10-05: conditional formats never stop a grading - every assumption is recorded
+                 "cf_assumptions": {
+                     "policy": "where a conditional format leaves a cell's verdict open (a rule that cannot be "
+                               "evaluated, a CF font over rich-text runs, a CF format or colour Excel's reading of "
+                               "which is not verified) the text is assumed visible (Patrick 2026-10-05)",
+                     "cells": self.cf_assumed,
+                     "examples": self.cf_assumed_examples,
+                     "unevaluable_rules": len(self.cf_unevaluable),
+                     "unevaluable_rule_examples": list(self.cf_unevaluable.values())[:MAX_ASSUMPTION_EXAMPLES]},
+                 "cf_builtin_visible": {
+                     "policy": "built-in conditional formats (colour scales, data bars, icon sets, Excel's preset "
+                               "highlight styles) never count as hiding text (Patrick 2026-10-05)",
+                     "cells": self.cf_builtin_visible,
+                     "examples": self.cf_builtin_examples},
                  "examples": dict(list(self.examples.items())[:8])}
         return self.verdict("No populated cell is concealed by its formatting.",
                             "{n} block(s) of populated cells concealed by formatting "

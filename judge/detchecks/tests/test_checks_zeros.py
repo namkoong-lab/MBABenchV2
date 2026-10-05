@@ -20,6 +20,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 from detchecks.api import Engine
 from detchecks.checks import REGISTRY, c66
+from detchecks.checks._cfeval import is_unevaluable
 from detchecks.checks.c66 import (BLANK, C66, DASH, DATETIME, DIGIT, HIDDEN, NONZERO, TEXT, UNCERTAIN, UNKNOWN,
                                   classify, fails, fires, literal)
 from detchecks.core import numfmt as N
@@ -262,7 +263,8 @@ def test_cf_rule_evaluation():
     assert fires(R(type="cellIs", operator="between", formulas=["1", "-1"]), 0.0) is True     # min/max
     assert fires(R(type="cellIs", operator="greaterThan", formulas=["100"]), 0.0) is False
     assert fires(R(type="cellIs", operator="equal", formulas=['"0"']), 0.0) is False        # text is not the number
-    assert fires(R(type="cellIs", operator="equal", formulas=["$B$1"]), 0.0) is UNKNOWN
+    # another cell, no value source given (env None): cannot be evaluated - read through one in test_cfeval.py
+    assert is_unevaluable(fires(R(type="cellIs", operator="equal", formulas=["$B$1"]), 0.0))
     assert fires(R(type="containsBlanks"), 0.0) is False
     assert fires(R(type="notContainsErrors"), 0.0) is True
     assert fires(R(type="containsText", text="0"), 0.0) is True
@@ -273,10 +275,10 @@ def test_cf_rule_evaluation():
     assert fires(R(type="expression", formulas=["ABS(B2)<0.001"]), 0.0, (2, 2, 2, 2)) is True
     assert fires(R(type="expression", formulas=["ROUND($B2,2)=0"]), 0.0, (2, 2, 2, 2)) is True
     assert fires(R(type="expression", formulas=["0<>B2"]), 0.0, (2, 2, 2, 2)) is False
-    assert fires(R(type="expression", formulas=["$A$1=0"]), 0.0, (2, 2, 2, 2)) is UNKNOWN    # another cell
-    assert fires(R(type="expression", formulas=["B2=C2"]), 0.0, (2, 2, 2, 2)) is UNKNOWN
-    assert fires(R(type="expression", formulas=["B2=0"]), 0.0, None) is UNKNOWN
-    assert fires(R(type="top10", rank=10), 0.0) is UNKNOWN
+    assert is_unevaluable(fires(R(type="expression", formulas=["$A$1=0"]), 0.0, (2, 2, 2, 2)))    # another cell
+    assert is_unevaluable(fires(R(type="expression", formulas=["B2=C2"]), 0.0, (2, 2, 2, 2)))
+    assert fires(R(type="expression", formulas=["B2=0"]), 0.0, None) is UNKNOWN          # position unknown
+    assert is_unevaluable(fires(R(type="top10", rank=10), 0.0))    # Patrick 2026-10-05: taken as off
     assert fires(R(type="dataBar"), 0.0) is True
     assert literal('"a""b"') == 'a"b' and literal("1E-3") == 0.001 and literal("x") is UNKNOWN
 
@@ -405,15 +407,25 @@ def test_conditional_format_number_formats():
     # a rule that does not fire on 0 leaves the digit
     tail = cf_main("A1:A5", ("cellIs", dx, "greaterThan", ["100"], ""))
     assert locs(run(book([("S", sheet(cells, tail=tail))], st))) == ["S!A1:A2"]
-    # a rule reading another cell decides the display -> cannot decide -> GradingError (no guessing)
+    # a rule reading another cell is evaluated through the value source (Patrick 2026-10-05; until then
+    # GradingError): Z1 empty -> off -> the digits show; Z1 = 1 -> the dash shows
     tail = cf_main("A1:A5", ("expression", dx, None, ["$Z$1=1"], ""))
-    raises(lambda: run(book([("S", sheet(cells, tail=tail))], st)), "cannot decide", "S!A1")
-    # ...but if both outcomes agree (the CF format also shows a digit), it is decided
+    v = run(book([("S", sheet(cells, tail=tail))], st))
+    assert locs(v) == ["S!A1:A2"] and v["stats"]["cf_assumptions"]["cells"] == 0, v["stats"]
+    assert run(book([("S", sheet(cells + [c("Z1", 0, 1)], tail=tail))], st))["decision"] == "pass"
+    # a rule that cannot be evaluated is OFF (the cell's own format decides) and recorded as decisive
+    tail = cf_main("A1:A5", ("expression", dx, None, ["COUNTIF($Z$1:$Z$9,1)>0"], ""))
+    v = run(book([("S", sheet(cells, tail=tail))], st))
+    a = v["stats"]["cf_assumptions"]
+    assert locs(v) == ["S!A1:A2"] and a["cells"] == 2 and a["decisive_cells"] == 2, a
+    assert "COUNTIF" in a["examples"][0] and a["unevaluable_rules"] == 1, a
+    # ...not decisive when the CF format also shows a digit
     st2 = Styles()
     g2 = st2.xf("#,##0.00")
     dx2 = st2.dxf("0.0")
-    tail = cf_main("A1:A5", ("expression", dx2, None, ["$Z$1=1"], ""))
-    assert locs(run(book([("S", sheet([c("A1", g2, 0)], tail=tail))], st2))) == ["S!A1"]
+    tail = cf_main("A1:A5", ("expression", dx2, None, ["COUNTIF($Z$1:$Z$9,1)>0"], ""))
+    v = run(book([("S", sheet([c("A1", g2, 0)], tail=tail))], st2))
+    assert locs(v) == ["S!A1"] and v["stats"]["cf_assumptions"]["decisive_cells"] == 0, v["stats"]["cf_assumptions"]
 
 
 def test_conditional_format_turns_dash_into_digit_second_pass():
@@ -719,16 +731,21 @@ def test_review2_decorated_dash():
 
 def test_review2_show_zeros_off_under_cf_format():
     """66-S2: Patrick's 2026-10-03 measurement of showZeros=0 covers BASE formats only.  A zero whose
-    display is decided by a conditional format's number format on such a sheet is unmeasured: a
-    digit / text CF format raises GradingError (no guess), a dash / blank CF format passes either way."""
+    display is decided by a conditional format's number format on such a sheet is unmeasured: until
+    2026-10-05 a digit / text CF format raised GradingError; now (Patrick 2026-10-05, conditional formats
+    never stop a grading) the cell is graded by its own format and the assumption recorded.  A dash /
+    blank CF format passes either way."""
     st = Styles()
     dx_digit, dx_dash, dx_nil = st.dxf("0.00"), st.dxf('"-"'), st.dxf('0;-0;"nil"')
     three = st.xf("0.00;-0.00;0.00")
     eq0 = lambda dx: cf_main("A1:A3", ("cellIs", dx, "equal", ["0"], ""))      # noqa: E731
-    # General constant 0 (hidden by the sheet option on its own) under a firing CF '0.00'
-    raises(lambda: run(book([("S", sheet([c("A1", 0, 0)], head=HEAD_SZ, tail=eq0(dx_digit)))], st)),
-           "S!A1", "showZeros=0", "conditional-format number format '0.00'")
-    raises(lambda: run(book([("S", sheet([c("A1", 0, 0)], head=HEAD_SZ, tail=eq0(dx_nil)))], st)), "S!A1", "showZeros=0")
+    # General constant 0 (hidden by the sheet option on its own) under a firing CF '0.00': its own format
+    # hides it -> pass, recorded as a decisive assumption
+    for dx in (dx_digit, dx_nil):
+        v = run(book([("S", sheet([c("A1", 0, 0)], head=HEAD_SZ, tail=eq0(dx)))], st))
+        a = v["stats"]["cf_assumptions"]
+        assert v["decision"] == "pass" and a["cells"] == 1 and a["decisive_cells"] == 1, a
+        assert "S!A1" in a["examples"][0] and "graded by its own format" in a["examples"][0], a
     # the same CF rule on a normal sheet is decided: fail under the CF format
     v = run(book([("S", sheet([c("A1", 0, 0)], tail=eq0(dx_digit)))], st))
     assert locs(v) == ["S!A1"] and "conditional-format number format '0.00'" in v["mistakes"][0]["description"]
@@ -738,14 +755,19 @@ def test_review2_show_zeros_off_under_cf_format():
     v = run(book([("S", sheet([c("A1", 0, 0)], head=HEAD_SZ, tail=gt))], st))
     assert v["decision"] == "pass" and v["stats"]["zero_cells_by_display"] == {"base_hidden": 1}, v["stats"]
     # a base format with an explicit zero section (measured: printed) under a CF dash: pass; under a CF
-    # digit: unmeasured -> GradingError (the base alone would fail with '0.00')
+    # digit: unmeasured -> graded by its own format, which prints '0.00' -> fail (GradingError until 2026-10-05)
     assert run(book([("S", sheet([c("A1", three, 0)], head=HEAD_SZ, tail=eq0(dx_dash)))], st))["decision"] == "pass"
-    raises(lambda: run(book([("S", sheet([c("A1", three, 0)], head=HEAD_SZ, tail=eq0(dx_digit)))], st)), "showZeros=0")
+    v = run(book([("S", sheet([c("A1", three, 0)], head=HEAD_SZ, tail=eq0(dx_digit)))], st))
+    assert locs(v) == ["S!A1"] and "number format '0.00;-0.00;0.00'" in v["mistakes"][0]["description"], v["mistakes"]
     assert locs(run(book([("S", sheet([c("A1", three, 0)], head=HEAD_SZ))], st))) == ["S!A1"]
-    # an untrusted formula there is needed (and refused), not silently hidden
+    # an untrusted formula there is no longer needed: whatever its value, the CF display gives way to its own
+    # format, which hides a zero (it was refused until 2026-10-05)
     f0 = [c("A1", 0, 0, f="B1*0"), c("B1", 0, 4)]
-    raises(lambda: run(book([("S", sheet(f0, head=HEAD_SZ, tail=eq0(dx_digit)))], st, app=APP_OPX)), "S!A1")
+    assert run(book([("S", sheet(f0, head=HEAD_SZ, tail=eq0(dx_digit)))], st, app=APP_OPX))["decision"] == "pass"
     assert run(book([("S", sheet(f0, head=HEAD_SZ, tail=eq0(dx_dash)))], st, app=APP_OPX))["decision"] == "pass"
+    # ... but with a base format that prints the zero, the value is needed and refused (not a CF matter)
+    f3 = [c("A1", three, 0, f="B1*0"), c("B1", 0, 4)]
+    raises(lambda: run(book([("S", sheet(f3, head=HEAD_SZ, tail=eq0(dx_digit)))], st, app=APP_OPX)), "S!A1")
     # a non-zero value under the CF format is not a zero: pass
     assert run(book([("S", sheet([c("A1", 0, 5)], head=HEAD_SZ, tail=eq0(dx_digit)))], st))["decision"] == "pass"
 

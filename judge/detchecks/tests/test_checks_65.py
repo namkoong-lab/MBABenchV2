@@ -20,6 +20,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 from detchecks.api import Engine
 from detchecks.checks import REGISTRY, c65
+from detchecks.checks._cfeval import is_unevaluable
 from detchecks.checks.c65 import (BLANK, C65, DATETIME, HIDDEN, MINUS, MIXED, NEG, NONNEG, PARENS, TEXT, UNCERTAIN,
                                   UNKNOWN, UNSIGNED, ZERO, classify, fails, fires, fixed_pass, strip_label_literals)
 from detchecks.core.numfmt import resolve_format
@@ -304,14 +305,15 @@ def test_cf_rule_evaluation():
     assert fires(R(type="cellIs", operator="between", formulas=["-10", "-1"]), -5.0) is True
     assert fires(R(type="cellIs", operator="between", formulas=["-10", "-1"]), -50.0) is False
     assert fires(R(type="cellIs", operator="equal", formulas=['"x"']), -5.0) is False
-    assert fires(R(type="cellIs", operator="lessThan", formulas=["A1"]), -5.0) is UNKNOWN
+    assert fires(R(type="cellIs", operator="lessThan", formulas=["A1"]), -5.0) is UNKNOWN     # position unknown
     assert fires(R(type="containsText", text="5"), -5.0) is True
     assert fires(R(type="expression", formulas=["B2<0"]), -5.0, (2, 2, 2, 2)) is True
     assert fires(R(type="expression", formulas=["0>B2"]), -5.0, (3, 2, 2, 2)) is True      # B2 shifted to row 3 = the cell
-    assert fires(R(type="expression", formulas=["0>C2"]), -5.0, (2, 2, 2, 2)) is UNKNOWN   # reads another cell
-    assert fires(R(type="expression", formulas=["$B$2<0"]), -5.0, (3, 2, 2, 2)) is UNKNOWN
+    # another cell with no value source given (env None): cannot be evaluated - read through one in test_cfeval.py
+    assert is_unevaluable(fires(R(type="expression", formulas=["0>C2"]), -5.0, (2, 2, 2, 2)))
+    assert is_unevaluable(fires(R(type="expression", formulas=["$B$2<0"]), -5.0, (3, 2, 2, 2)))
     assert fires(R(type="expression", formulas=["TRUE"]), -5.0) is True
-    assert fires(R(type="top10"), -5.0) is UNKNOWN
+    assert is_unevaluable(fires(R(type="top10"), -5.0))          # Patrick 2026-10-05: taken as off
     assert fires(R(type="dataBar"), -5.0) is True
     # an unknown negative (NEG): fires for every negative / for none / depends on which
     assert fires(R(type="cellIs", operator="lessThan", formulas=["0"]), NEG) is True
@@ -490,16 +492,25 @@ def test_conditional_format_number_formats():
             f'<cfRule type="cellIs" dxfId="{dx}" priority="2" operator="lessThan"><formula>0</formula></cfRule>'
             '</conditionalFormatting>')
     assert run(book([("S", sheet(cells, tail=tail))], st))["decision"] == "fail"
-    # a rule this check cannot evaluate decides the verdict -> GradingError (no guess)
+    # a rule reading another cell is evaluated through the value source (Patrick 2026-10-05; GradingError until
+    # then): B9 empty -> 0 < 0 is false -> the base format's minus shows; B9 = 1 (a switch) -> parentheses
     tail = cf_main("A1:A5", ("expression", dx, None, ["$B$9<0"], ""))
-    raises(lambda: run(book([("S", sheet(cells, tail=tail))], st)), "cannot decide", "S!A1", "conditional formatting")
-    # ... unless every outcome agrees (the CF format also shows a minus)
+    v = run(book([("S", sheet(cells, tail=tail))], st))
+    assert v["decision"] == "fail" and locs(v) == ["S!A1:A2"] and v["stats"]["cf_assumptions"]["cells"] == 0, v["stats"]
+    tail = cf_main("A1:A5", ("expression", dx, None, ["$B$9=1"], ""))
+    assert run(book([("S", sheet(cells + [c("B9", 0, 1)], tail=tail))], st))["decision"] == "pass"
+    # a rule this check cannot evaluate is OFF: the base format decides, the assumption is recorded (decisive)
+    tail = cf_main("A1:A5", ("expression", dx, None, ["SUM($B$1:$B$9)<0"], ""))
+    v = run(book([("S", sheet(cells, tail=tail))], st))
+    a = v["stats"]["cf_assumptions"]
+    assert v["decision"] == "fail" and locs(v) == ["S!A1:A2"] and a["decisive_cells"] == 2 and "SUM" in a["examples"][0], a
+    # ... not decisive when the CF format also shows a minus
     st2 = Styles()
     g2 = st2.xf("#,##0")
     dm = st2.dxf("0.0")
-    tail = cf_main("A1:A5", ("expression", dm, None, ["$B$9<0"], ""))
+    tail = cf_main("A1:A5", ("expression", dm, None, ["SUM($B$1:$B$9)<0"], ""))
     v = run(book([("S", sheet([c("A1", g2, -5)], tail=tail))], st2))
-    assert v["decision"] == "fail"
+    assert v["decision"] == "fail" and v["stats"]["cf_assumptions"]["decisive_cells"] == 0, v["stats"]["cf_assumptions"]
 
 
 def test_conditional_format_turns_parens_into_minus_second_pass():

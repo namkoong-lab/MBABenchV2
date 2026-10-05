@@ -762,14 +762,23 @@ def test_69_conditional_formats():
                  f'operator="greaterThan"><formula>0</formula></cfRule></conditionalFormatting>')
     v = run(book([("S", ws({1: ("", [c("A1", 123456789.0, s_num)])}, cols=cols8, tail=cf_narrow))], st))
     assert v["decision"] == "pass", v["mistakes"]
-    # an expression rule the check cannot evaluate, where the two displays disagree -> GradingError
+    # an expression rule reading another cell is evaluated through the value source (Patrick 2026-10-05; it
+    # raised 'cannot decide' until then): B1 = 1 > 0 -> the wide format -> ####; B1 = -1 -> the base fits
     cf_expr = (f'<conditionalFormatting sqref="A1"><cfRule type="expression" dxfId="{d_wide}" priority="1">'
                f'<formula>$B1&gt;0</formula></cfRule></conditionalFormatting>')
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", 1234.0, s_num), c("B1", 1.0, s_num)])}, cols=cols8, tail=cf_expr))], st)),
-           "cannot decide S!A1", "conditional formatting")
-    # ... but not when both displays fit
-    v = run(book([("S", ws({1: ("", [c("A1", 1234.0, s_num), c("B1", 1.0, s_num)])}, cols=col(1, 2, stored(20.0)), tail=cf_expr))], st))
-    assert v["decision"] == "pass"
+    v = run(book([("S", ws({1: ("", [c("A1", 1234.0, s_num), c("B1", 1.0, s_num)])}, cols=cols8, tail=cf_expr))], st))
+    assert v["decision"] == "fail" and locs(v) == ["S!A1"] and v["stats"]["cf_assumptions"]["cells"] == 0, v["stats"]
+    v = run(book([("S", ws({1: ("", [c("A1", 1234.0, s_num), c("B1", -1.0, s_num)])}, cols=cols8, tail=cf_expr))], st))
+    assert v["decision"] == "pass", v["mistakes"]
+    # a rule this check cannot evaluate is OFF (the base format decides) and recorded; decisive here
+    cf_unev = (f'<conditionalFormatting sqref="A1"><cfRule type="expression" dxfId="{d_wide}" priority="1">'
+               f'<formula>COUNTIF($B:$B,"&gt;0")&gt;0</formula></cfRule></conditionalFormatting>')
+    v = run(book([("S", ws({1: ("", [c("A1", 1234.0, s_num), c("B1", 1.0, s_num)])}, cols=cols8, tail=cf_unev))], st))
+    a = v["stats"]["cf_assumptions"]
+    assert v["decision"] == "pass" and a["cells"] == 1 and a["decisive_cells"] == 1 and "COUNTIF" in a["examples"][0], a
+    # ... not decisive when both displays fit
+    v = run(book([("S", ws({1: ("", [c("A1", 1234.0, s_num), c("B1", 1.0, s_num)])}, cols=col(1, 2, stored(20.0)), tail=cf_unev))], st))
+    assert v["decision"] == "pass" and v["stats"]["cf_assumptions"]["decisive_cells"] == 0, v["stats"]["cf_assumptions"]
 
 
 def test_69_band_indent_unknown_face_negative_date():
