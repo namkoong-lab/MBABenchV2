@@ -53,6 +53,24 @@ FLAT = [(cat, c["name"]) for cat, checks in RUBRIC.items() for c in checks]
 TEMPLATE = str(JUDGE / load_env_var("SINGLE_PASS_PROMPT_TEMPLATE"))
 MODEL = load_env_var("JUDGE_DEFAULT_GRADER")
 
+try:
+    import pytest
+    _Skipped = pytest.skip.Exception
+except ImportError:  # script mode without pytest installed
+    pytest = None
+
+    class _Skipped(Exception):
+        pass
+
+
+def _skip(reason: str):
+    """Skip explicitly: pytest reports SKIPPED; the script runner prints SKIPPED and does not count
+    the test as passed."""
+    if pytest is not None:
+        pytest.skip(reason)
+    raise _Skipped(reason)
+
+
 ATTEMPT = Path(os.environ.get(
     "DETCHECKS_E2E_ATTEMPT",
     str(Path.home() / "MBABench-deterministic-checks" / "corpus" / "attempts" / "1375"
@@ -191,20 +209,22 @@ def _stage(root: Path, attempt_file: Path, delivered_name: str):
     }
 
 
-def _grade(root: Path, attempt: dict, det_mode, llm: StubLLM):
-    return gfd.grade_single_attempt(
-        attempt=attempt, client=llm, rubric_path=str(RUBRIC_PATH), template_path=TEMPLATE,
-        agentic_template_path=TEMPLATE, model=MODEL, scratch_run_dir=root / "run",
-        agentic=True, single_pass=True, max_tool_rounds=4, max_forced_rounds=1,
-        no_s3_upload=True, suitability_source_path=root / "annotation.json",
-        accuracy_check="harness", det_checks=det_mode,
-    )
+def _grade(root: Path, attempt: dict, det_mode, llm: StubLLM, run: str = "run"):
+    # PATHS_SCRATCH_PATH -> the test's temporary folder: the judge's per-call log folders
+    # (<scratch>/judge_cache/run_*) go away with it instead of piling up in judge/scratch/
+    with env(PATHS_SCRATCH_PATH=root / "judge_scratch"):
+        return gfd.grade_single_attempt(
+            attempt=attempt, client=llm, rubric_path=str(RUBRIC_PATH), template_path=TEMPLATE,
+            agentic_template_path=TEMPLATE, model=MODEL, scratch_run_dir=root / run,
+            agentic=True, single_pass=True, max_tool_rounds=4, max_forced_rounds=1,
+            no_s3_upload=True, suitability_source_path=root / "annotation.json",
+            accuracy_check="harness", det_checks=det_mode,
+        )
 
 
 def _attempt_or_skip():
     if not ATTEMPT.exists():
-        print(f"SKIP: corpus attempt not found ({ATTEMPT}); set DETCHECKS_E2E_ATTEMPT")
-        return None
+        _skip(f"corpus attempt not found ({ATTEMPT}); set DETCHECKS_E2E_ATTEMPT")
     assert ATTEMPT.stat().st_size < 1_000_000, "pick an attempt under 1 MB (maintainer: no large files)"
     return ATTEMPT
 
@@ -212,8 +232,6 @@ def _attempt_or_skip():
 # --------------------------------------------------------------------------- tests
 def test_end_to_end_live_and_recorded_only():
     attempt_file = _attempt_or_skip()
-    if attempt_file is None:
-        return
     with tempfile.TemporaryDirectory() as tmp, no_libreoffice() as lo_calls:
         root = Path(tmp)
         attempt = _stage(root, attempt_file, attempt_file.name)
@@ -392,11 +410,7 @@ def test_oversized_non_excel_file_stops_before_any_libreoffice_run():
         # LibreOffice step (recorded and refused by the stub; score-neutral) - so above, the refusal came first
         llm2 = StubLLM(root / "run2")
         with env(DET_CHECKS_LIBREOFFICE_MAX_MB=0.001), no_libreoffice() as lo_calls2:
-            gfd.grade_single_attempt(
-                attempt=attempt, client=llm2, rubric_path=str(RUBRIC_PATH), template_path=TEMPLATE,
-                agentic_template_path=TEMPLATE, model=MODEL, scratch_run_dir=root / "run2", agentic=True,
-                single_pass=True, max_tool_rounds=4, max_forced_rounds=1, no_s3_upload=True,
-                suitability_source_path=root / "annotation.json", accuracy_check="harness", det_checks="off")
+            _grade(root, attempt, "off", llm2, run="run2")
         assert [c[0] for c in lo_calls2] == ["answer_check"], lo_calls2
 
 
@@ -434,16 +448,19 @@ def test_call_sites_are_wired_before_the_llm():
 
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
-    failed = 0
+    failed = skipped = 0
     for name, fn in tests:
         try:
             fn()
             print(f"OK   {name}")
+        except _Skipped as e:
+            skipped += 1
+            print(f"SKIPPED {name}: {e}")
         except Exception as e:  # noqa: BLE001
             failed += 1
             import traceback
             traceback.print_exc()
             print(f"FAIL {name}: {e}")
     print()
-    print(f"{len(tests) - failed}/{len(tests)} passed")
+    print(f"{len(tests) - failed - skipped}/{len(tests)} passed" + (f", {skipped} SKIPPED (not passed)" if skipped else ""))
     sys.exit(1 if failed else 0)

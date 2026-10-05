@@ -201,9 +201,10 @@ def test_config_errors_refuse_to_grade():
     i = next(i for i, c in enumerate(pd) if c["name"] == "No hidden sheets")
     pd[i], pd[i + 1] = pd[i + 1], pd[i]                  # 92 and 93 swap places
     try:
-        D.configured_checks(s, drifted)
+        D.configured_checks(s, drifted, "/x/task/rubric.json")
     except D.DetChecksConfigError as e:
-        assert "numbering drift" in str(e)
+        assert "numbering drift" in str(e) and str(e).startswith("No hidden sheets (92) is pinned to (")
+        assert "the loaded rubric (/x/task/rubric.json) has ('Potential Dangers', 'No hidden rows/columns')" in str(e)
     else:
         raise AssertionError("rubric drift not refused")
     small = {"Accuracy": RUBRIC["Accuracy"][:5]}         # a v1-sized rubric: none of the checks exists
@@ -338,7 +339,83 @@ def test_task_meta_file_extension():
             raise AssertionError("missing delivered filename did not raise")
         art = strict_json((lost / D.ARTEFACT_FILENAME).read_text())
         assert art["status"] == "error" and key(77) in art["failures"]
-        assert art["task_meta"] == {"requires_external_links": False}
+        assert art["task_meta"] == {"requires_external_links": False} and art["file"]["origin_problem"] == "missing"
+
+
+def test_malformed_origin_sidecar_fails_loudly():
+    """A _attempt_origin.json that is not JSON, not an object, or has no usable 'original_filename'
+    fails File extension (.xlsx) (77) as MALFORMED (not missing), naming the sidecar file, with
+    det_checks.json written (before: a JSON list crashed with AttributeError, no artefact)."""
+    bad = {"not JSON": "{not json", "a JSON list": '["Model.xlsx"]', "a number name": '{"original_filename": 123}',
+           "an empty name": '{"original_filename": ""}', "no name": '{"source": "s3://x"}'}
+    with tempfile.TemporaryDirectory() as tmp, fake_libreoffice():
+        root = Path(tmp)
+        for what, raw in bad.items():
+            folder = make_task(root, origin=None)
+            sidecar = folder / workbook_properties.ORIGIN_FILENAME
+            sidecar.write_text(raw)
+            try:
+                run(folder)
+            except D.DetChecksError as err:
+                msg = str(err)
+                assert set(err.failures) == {key(77)}, (what, err.failures)
+                assert "File extension (.xlsx) (77)" in msg and f"{sidecar} is malformed" in msg, (what, msg)
+                assert "missing" not in msg.split(str(sidecar))[1].split(")")[0], (what, msg)
+            else:
+                raise AssertionError(f"{what}: no DetChecksError")
+            art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
+            assert art["status"] == "error" and art["stage"] == "grade" and key(77) in art["failures"], what
+            assert art["file"]["origin_problem"].startswith("malformed") and art["file"]["origin_sidecar"] is False
+        # 77 gated out for the task: nothing needs the delivered name, the grading goes on (recorded)
+        folder = make_task(root, origin=None)
+        (folder / workbook_properties.ORIGIN_FILENAME).write_text('["Model.xlsx"]')
+        stage_annotation(folder, not_applicable={77})
+        r = run(folder, benchmark="v2")
+        assert r.summary["status"] == "ok" and key(77) not in r.harness_verdicts
+        art = strict_json((folder / D.ARTEFACT_FILENAME).read_text())
+        assert art["status"] == "ok" and art["file"]["origin_problem"] == "malformed: a JSON list, not an object"
+    _, problem = D.read_origin(Path("/nonexistent/folder"))
+    assert problem == "missing"
+
+
+def test_artefact_written_in_every_case():
+    """det_checks.json is written whatever stops the run: a config error, a rubric drift in the task
+    folder's rubric.json, a suitability refusal (each re-raised as is, with the stage recorded)."""
+    with tempfile.TemporaryDirectory() as tmp, fake_libreoffice():
+        root = Path(tmp)
+        cfg = make_task(root)
+        with env(DET_CHECKS_LIVE="29,65"):
+            try:
+                run(cfg)
+            except D.DetChecksConfigError as e:
+                assert "Negatives in parentheses (65)" in str(e)
+            else:
+                raise AssertionError("bad config accepted")
+        art = strict_json((cfg / D.ARTEFACT_FILENAME).read_text())
+        assert art["status"] == "error" and art["stage"] == "config" and "DetChecksConfigError" in art["error"]
+        drift = make_task(root)
+        rb = copy.deepcopy(RUBRIC)
+        pd = rb["Potential Dangers"]
+        i = next(i for i, c in enumerate(pd) if c["name"] == "No hidden sheets")
+        pd[i], pd[i + 1] = pd[i + 1], pd[i]
+        (drift / "rubric.json").write_text(json.dumps(rb))
+        try:
+            run(drift)
+        except D.DetChecksConfigError as e:
+            assert str(e).startswith("No hidden sheets (92) is pinned to (") and str(drift / "rubric.json") in str(e), e
+        else:
+            raise AssertionError("drift in the task folder's rubric.json accepted")
+        art = strict_json((drift / D.ARTEFACT_FILENAME).read_text())
+        assert art["status"] == "error" and art["stage"] == "config" and art["rubric"] == str(drift / "rubric.json")
+        unsuit = make_task(root)
+        try:
+            run(unsuit, benchmark="v2")                      # v2 without an annotation
+        except rubric_suitability.SuitabilityError:
+            pass
+        else:
+            raise AssertionError("no SuitabilityError")
+        art = strict_json((unsuit / D.ARTEFACT_FILENAME).read_text())
+        assert art["status"] == "error" and art["stage"] == "gate" and "SuitabilityError" in art["error"]
 
 
 def test_recalc_reads_the_delivered_file_with_the_configured_policy():

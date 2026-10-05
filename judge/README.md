@@ -612,8 +612,11 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   LibreOffice recalculation, and the attempt fails the way the formula-cache
   refusal does: `grade_from_db` logs
   `FAILED`, returns `success: False`, writes no DB row and the batch continues,
-  with no API spend. `det_checks.json` (status `error`, the failures) stays in
-  the task folder. `judge.py --single-pass` raises.
+  with no API spend. `det_checks.json` is written in every case and stays in
+  the task folder: status `error` with the failures, or - when a config error,
+  a rubric drift (named by title and rubric file) or a suitability refusal
+  stops the run first - with the stage and the error. `judge.py --single-pass`
+  raises.
 - **Recalculation**: structure and styles come from the delivered
   `ai_attempt.xlsx` (never `temp_recalculated/`); formula values from an
   Excel-saved file's own caches, otherwise from a LibreOffice recalculation of
@@ -638,7 +641,11 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   (seconds to minutes) for a file not saved by Excel.
 - **Task metadata**: File extension (.xlsx) (77) judges the delivered file name
   from the `_attempt_origin.json` sidecar (`original_filename`); without it the
-  check raises, so a local folder needs the sidecar. No external links (95) runs
+  check raises, so a local folder needs the sidecar. A malformed sidecar (not
+  JSON, a JSON value that is not an object, no non-empty `original_filename`)
+  raises the same way, the error naming the file as malformed; where File
+  extension (.xlsx) (77) is not graded for the task, nothing depends on the
+  sidecar and the problem is only recorded. No external links (95) runs
   with `requires_external_links: false` (no task requires them).
 - **Switches**: `--det-checks harness|llm|off` on `grade_from_db`,
   `grade_with_orchestration`, `grade_toy` and `judge.py --single-pass`; the
@@ -678,9 +685,11 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   `test_det_checks_single_pass.py` (`grade_single_attempt` end to end on a real
   Excel-saved attempt with a stub LLM, all three switch values, the failure
   path that stops before the LLM call, and an oversized non-Excel attempt that
-  stops before the answer check with no LibreOffice run; the end-to-end case is skipped
-  where the corpus attempt is absent, `DETCHECKS_E2E_ATTEMPT` points it at
-  another Excel-saved file under 1 MB).
+  stops before the answer check with no LibreOffice run; the end-to-end case is
+  reported SKIPPED - by pytest and by the script runner, never counted as passed
+  - where the corpus attempt is absent, `DETCHECKS_E2E_ATTEMPT` points it at
+  another Excel-saved file under 1 MB; the judge's log folders go to the test's
+  temporary folder, not `judge/scratch/judge_cache/`).
 
 ### Latest-prompt guard (2026-09-10)
 

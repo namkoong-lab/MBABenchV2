@@ -65,12 +65,16 @@ Values (detchecks/docs/recalc.md)
 Task metadata
   delivered_filename       from the _attempt_origin.json sidecar (original_filename); without
                            it File extension (.xlsx) (77) raises: the staged name is not the
-                           delivered one.
+                           delivered one. A malformed sidecar (read_origin: not JSON, not an
+                           object, no non-empty original_filename) raises the same way, named
+                           as malformed; when 77 is not graded it is only recorded.
   requires_external_links  always False (maintainer: no task requires external links).
 
 Artefacts
   task_folder/det_checks.json  everything (config, gate, task_meta, the full verdicts and the
-                               full recalculation block, or the failure);
+                               full recalculation block, or the failure and its stage);
+                               written in every case, also when a config error, a rubric
+                               drift or a suitability refusal stops the run;
                                judge._finalize_case copies it into the output dir
   scored_results.det_checks    compact block (status, mode, per-check engine / decision / live /
                                n_mistakes / summary capped at DB_SUMMARY_CAP characters) and the
@@ -265,10 +269,11 @@ def add_det_checks_arg(parser) -> None:
     )
 
 
-def configured_checks(settings: DetChecksSettings, rubric: dict) -> dict:
+def configured_checks(settings: DetChecksSettings, rubric: dict, rubric_src=None) -> dict:
     """{number: live?} for the configured checks, validated against the pins, the loaded
-    rubric and the detchecks registry. Positions beyond the rubric (v1's 17-check rubric_8)
-    are dropped: those checks do not exist there. Raises DetChecksConfigError."""
+    rubric (read from `rubric_src`, named in the errors) and the detchecks registry. Positions
+    beyond the rubric (v1's 17-check rubric_8) are dropped: those checks do not exist there.
+    Raises DetChecksConfigError."""
     from detchecks.checks import REGISTRY
 
     overlap = sorted(set(settings.live) & set(settings.recorded_only))
@@ -276,26 +281,29 @@ def configured_checks(settings: DetChecksSettings, rubric: dict) -> dict:
         raise DetChecksConfigError(
             f"det_checks: {[label(n) for n in overlap]} listed as both live and recorded_only")
     flat = [(cat, c["name"]) for cat, checks in rubric.items() for c in checks]
+    where = f"the loaded rubric ({rubric_src})" if rubric_src else "the loaded rubric"
     plan = {}
     for no in list(settings.live) + list(settings.recorded_only):
         live = no in settings.live
         pin = DET_CHECK_NAMES.get(no)
         if pin is None:
+            named = f"{flat[no - 1][1]} ({no})" if 0 < no <= len(flat) else f"check {no} (beyond {where})"
             raise DetChecksConfigError(
-                f"det_checks names check {no}, which has no entry in DET_CHECK_NAMES "
+                f"det_checks names {named}, which has no entry in DET_CHECK_NAMES "
                 f"(utils/det_checks.py) - add the (category, name) pin first")
         cls = REGISTRY.get(no)
         if cls is None:
             raise DetChecksConfigError(f"det_checks names {label(no)}, which detchecks does not implement")
         if cls.key != f"{pin[0]}/{pin[1]}":
             raise DetChecksConfigError(
-                f"{label(no)} is pinned to {pin!r} but detchecks registers {cls.key!r} under {no} - refusing to grade")
+                f"{label(no)} is pinned to {pin!r} but detchecks registers {cls.key!r} under that number "
+                f"- refusing to grade")
         if no > len(flat):
             continue
         if flat[no - 1] != pin:
             raise DetChecksConfigError(
-                f"check {no} is pinned to {pin!r} but the loaded rubric has {flat[no - 1]!r} at that "
-                f"position - numbering drift; refusing to grade")
+                f"{label(no)} is pinned to {pin!r} but {where} has {flat[no - 1]!r} at that position "
+                f"- numbering drift; refusing to grade")
         if live and not getattr(cls, "live", True):
             raise DetChecksConfigError(
                 f"det_checks.live lists {label(no)}, but detchecks marks it not live (Check.live = False); "
@@ -316,7 +324,7 @@ def startup_check(rubric_path, mode: str | None = None) -> str:
         return mode
     _install_termination_reaper()
     rubric = json.loads(Path(rubric_path).read_text(encoding="utf-8"))
-    plan = configured_checks(settings, rubric)
+    plan = configured_checks(settings, rubric, rubric_path)
     logger.info(
         f"det_checks: mode={mode}; live: {[label(n) for n, live in sorted(plan.items()) if live]}; "
         f"recorded only: {[label(n) for n, live in sorted(plan.items()) if not live]}; "
@@ -586,8 +594,40 @@ def _delivered_text(delivered) -> str:
     return f"delivered as {delivered!r}" if delivered else "delivered file name unknown"
 
 
+def read_origin(task_folder) -> tuple:
+    """(sidecar, problem) for task_folder/_attempt_origin.json: problem None (it names the
+    delivered file), "missing" (no sidecar) or "malformed: <why>" (unreadable or not JSON, a JSON
+    value that is not an object, or no non-empty string 'original_filename'). The sidecar dict
+    is returned whenever it is an object."""
+    p = Path(task_folder) / workbook_properties.ORIGIN_FILENAME
+    if not p.exists():
+        return None, "missing"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        return None, f"malformed: not readable as JSON ({type(e).__name__}: {str(e)[:120]})"
+    if not isinstance(data, dict):
+        return None, f"malformed: a JSON {type(data).__name__}, not an object"
+    name = data.get("original_filename")
+    if "original_filename" not in data:
+        return data, "malformed: no 'original_filename'"
+    if not isinstance(name, str) or not name.strip():
+        return data, f"malformed: 'original_filename' is {name!r}, not a file name"
+    return data, None
+
+
+def _origin_note(task_folder: Path, problem: str | None) -> str:
+    sidecar = Path(task_folder) / workbook_properties.ORIGIN_FILENAME
+    if problem == "missing":
+        why = f"no {workbook_properties.ORIGIN_FILENAME} in {task_folder}"
+    else:
+        why = f"{sidecar} is {problem}"
+    return (f"({why}: the delivered file name is unknown, so {label(_FILE_EXTENSION_CHECK)} cannot be "
+            f"graded)")
+
+
 def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Path,
-                     selected: list, settings: DetChecksSettings) -> str:
+                     selected: list, settings: DetChecksSettings, origin_problem: str | None = None) -> str:
     failures = dict(getattr(e, "failures", None) or {})
     head = (f"deterministic checks could not grade {attempt} ({_delivered_text(delivered)}): "
             f"{len(failures) or 'one or more'} of {len(selected)} check(s) failed; no fallback "
@@ -599,9 +639,7 @@ def _failure_message(e: GradingError, attempt: Path, delivered, task_folder: Pat
         lines.append(f"  - {e}")
     key77 = "/".join(DET_CHECK_NAMES[_FILE_EXTENSION_CHECK])
     if delivered is None and key77 in failures:
-        lines.append(
-            f"  (no {workbook_properties.ORIGIN_FILENAME} with 'original_filename' in {task_folder}: "
-            f"the delivered file name is unknown, so {label(_FILE_EXTENSION_CHECK)} cannot be graded)")
+        lines.append("  " + _origin_note(task_folder, origin_problem or "missing"))
     if any("LibreOffice" in str(m) for m in (list(failures.values()) or [e])):
         lines.append(
             f"  (LibreOffice binary: {settings.libreoffice_path}, from project_configs.yaml "
@@ -621,16 +659,35 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
 
     Returns a DetChecksRun; raises DetChecksError (no fallback) when a check cannot grade the
     file, DetChecksConfigError on a config/rubric/registry mismatch, and SuitabilityError where
-    the judge itself would. Writes task_folder/det_checks.json in every case."""
+    the judge itself would. Writes task_folder/det_checks.json in every case: the verdicts, the
+    "off" / "no_applicable_checks" record, or status "error" with the stage that failed
+    (config, gate, grade) and the error - whatever the exception, which is then re-raised as is."""
     t0 = time.perf_counter()
     task_folder = Path(task_folder)
+    artefact = task_folder / ARTEFACT_FILENAME
+    ctx = {"stage": "config", "record": {"status": None, "mode": mode, "file": {"path": str(task_folder / ATTEMPT_FILENAME)}},
+           "written": False}
+    try:
+        return _run_det_checks(task_folder, artefact, rubric_path, weights_path, mode, benchmark, t0, ctx)
+    except BaseException as e:
+        if not ctx["written"]:              # the grade stage writes its own, fuller record
+            rec = dict(ctx["record"])
+            rec.update(status="error", stage=ctx["stage"], error=f"{type(e).__name__}: {e}",
+                       seconds=round(time.perf_counter() - t0, 3))
+            _write_artefact(artefact, rec)
+        raise
+
+
+def _run_det_checks(task_folder: Path, artefact: Path, rubric_path, weights_path, mode, benchmark, t0,
+                    ctx: dict) -> DetChecksRun:
     settings = load_settings()
     mode = resolve_mode(mode, settings)
+    ctx["record"]["mode"] = mode
     attempt = task_folder / ATTEMPT_FILENAME
-    artefact = task_folder / ARTEFACT_FILENAME
     if mode == "off":
         summary = {"status": "off", "mode": "off"}
         _write_artefact(artefact, {**summary, "note": "det_checks off: the LLM decides every check"})
+        ctx["written"] = True
         logger.info("  [det_checks] off: nothing graded, the LLM decides every check")
         return DetChecksRun("off", {}, summary, artefact)
 
@@ -638,7 +695,9 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
     from detchecks.core.recalc import RecalcPolicy
 
     rubric, rubric_src = _judge_rubric(task_folder, rubric_path)
-    plan = configured_checks(settings, rubric)
+    ctx["record"]["rubric"] = str(rubric_src)
+    plan = configured_checks(settings, rubric, rubric_src)
+    ctx["stage"] = "gate"
     weights = json.loads(Path(weights_path).read_text(encoding="utf-8"))
     if benchmark is _UNSET:
         benchmark = current_benchmark(required=False)
@@ -646,11 +705,16 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
     selected = [no for no in sorted(plan) if DET_CHECK_NAMES[no] in scored]
     not_applicable = [no for no in sorted(plan) if no not in selected]
 
-    origin = workbook_properties.load_origin(task_folder)
-    delivered = (origin or {}).get("original_filename") or None
+    origin, origin_problem = read_origin(task_folder)
+    delivered = None if origin_problem else origin["original_filename"]
     task_meta = {"requires_external_links": False}
     if delivered:
         task_meta["delivered_filename"] = delivered
+    if origin_problem and _FILE_EXTENSION_CHECK in selected:
+        logger.warning(f"  [det_checks] {_origin_note(task_folder, origin_problem)}")
+    elif origin_problem and origin_problem != "missing":
+        logger.warning(f"  [det_checks] {task_folder / workbook_properties.ORIGIN_FILENAME} is {origin_problem}; "
+                       f"{label(_FILE_EXTENSION_CHECK)} is not graded for this task, so nothing depends on it")
     workdir = task_folder / RECALC_DIRNAME
     policy = RecalcPolicy(
         workdir=str(workdir),
@@ -668,7 +732,8 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
             "bytes": attempt.stat().st_size if attempt.exists() else None,
             "sha256": _file_sha256(attempt),
             "delivered_filename": delivered,
-            "origin_sidecar": origin is not None,
+            "origin_sidecar": origin_problem is None,
+            "origin_problem": origin_problem,
         },
         "config": {
             "live": list(settings.live),
@@ -685,6 +750,8 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
         "graded": selected,
         "not_applicable": not_applicable,
     }
+    ctx["record"] = record
+    ctx["stage"] = "grade"
     base_summary = {"mode": mode, "code_sha": record["code_sha"], "delivered_filename": delivered,
                     "graded": selected, "not_applicable": not_applicable, "artefact": ARTEFACT_FILENAME}
 
@@ -692,6 +759,7 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
         record["status"] = "no_applicable_checks"
         record["seconds"] = round(time.perf_counter() - t0, 3)
         _write_artefact(artefact, record)
+        ctx["written"] = True
         logger.info(f"  [det_checks] mode={mode}: no configured check is applicable for this task "
                     f"({len(not_applicable)} not applicable)")
         summary = {"status": "no_applicable_checks", **base_summary, "checks": {},
@@ -709,20 +777,24 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
                                path=str(attempt), failures={k: "no verdict returned" for k in missing})
     except GradingError as e:
         record["status"] = "error"
+        record["stage"] = "grade"
         record["error"] = str(e)
         record["failures"] = dict(e.failures or {})
         record["finished_verdicts"] = dict(e.verdicts or {})
         record["seconds"] = round(time.perf_counter() - t0, 3)
         _write_artefact(artefact, record)
-        msg = _failure_message(e, attempt, delivered, task_folder, selected, settings)
+        ctx["written"] = True
+        msg = _failure_message(e, attempt, delivered, task_folder, selected, settings, origin_problem)
         logger.error(f"  [det_checks] {msg}")
         raise DetChecksError(msg, check=e.check, path=str(attempt), failures=e.failures,
                              verdicts=e.verdicts) from e
     except Exception as e:  # noqa: BLE001 - anything else is just as loud, with the artefact written
         record["status"] = "error"
+        record["stage"] = "grade"
         record["error"] = f"{type(e).__name__}: {e}"
         record["seconds"] = round(time.perf_counter() - t0, 3)
         _write_artefact(artefact, record)
+        ctx["written"] = True
         msg = (f"deterministic checks could not grade {attempt} ({_delivered_text(delivered)}): "
                f"{type(e).__name__}: {e}; no fallback (judge v13), the grading stops before the LLM call")
         logger.error(f"  [det_checks] {msg}")
@@ -760,6 +832,7 @@ def run_det_checks(task_folder, *, rubric_path, weights_path, mode: str | None =
     seconds = round(time.perf_counter() - t0, 3)
     record.update(status="ok", seconds=seconds, values=values, verdicts=verdicts)
     _write_artefact(artefact, record)
+    ctx["written"] = True
     summary = json_safe({"status": "ok", **base_summary, "values": _db_values(values), "checks": checks_block,
                          "db_list_cap": DB_LIST_CAP, "seconds": seconds})
     fails = [label(e["check_no"]) + ("" if e["live"] else " [recorded only]")
