@@ -561,13 +561,16 @@ each; twelve rows exist under 11, so everything lands here.
   twelve attempts 99 flipped (7.2%), 53 of them on checks no judge change
   touched (3.8%) — 99 (6 of 12), 76 (5), 26 and 115 (4 each).
 
-### judge v14 — single-pass 14 / template_8 (in progress, 2026-10-06)
+### judge v14 — single-pass 14 / template_8 (2026-10-06)
 
-Cut for the task author's alternate accepted answers (received 2026-10-06):
-seven tasks — PastaInc (41), RoadtoZero (50), Telecom (59), TheInterestGame
-(60), TheLiquidityEngine (61), ThePayoffPlan (64), HouseorFlat (86) — have 85
-Questions-sheet questions with TWO acceptable values. v13 rows graded them
-against the golden alone; v14 rows are not comparable on those tasks.
+Rows record `judge_version` 14 / `prompt_version` 8 (template, rubric, evidence
+and CSV caches unchanged; the LLM side is v13's). Cut for the task author's
+alternate accepted answers (received 2026-10-06): seven tasks — PastaInc (41),
+RoadtoZero (50), Telecom (59), TheInterestGame (60), TheLiquidityEngine (61),
+ThePayoffPlan (64), HouseorFlat (86) — have 85 Questions-sheet questions with
+TWO acceptable values. v13 rows graded them against the golden alone, so v14
+rows are not comparable with v13 rows on those tasks, nor on the checks the
+rulings below touch. Existing gradings are not re-scored.
 
 - **Alternate accepted answers** (`judge/alternate_answers.yaml`, keyed by
   `tasks.id`; answer rules v6.7). The harness answer check
@@ -604,8 +607,10 @@ against the golden alone; v14 rows are not comparable on those tasks.
   A cell whose base font is wrong is excused when a conditional format covering
   it paints a colour its class accepts, whether or not the rule fires; a
   conditional format never makes a cell fail. Recorded in `stats.cf_excused`.
-- The judge version is not bumped yet; further v14 changes may follow today.
-  Bump `single_pass.version` in `project_configs.yaml` to 14 when cutting.
+- **Regrading**: v13's 2,588 reuse rows (v12 LLM verdicts + v13 Python
+  checks) predate every item above. A v14 pass over the same attempts re-runs
+  the deterministic checks and, for the seven alternate-answer tasks, the
+  answer check, reusing the LLM verdicts.
 
 ### judge v13 — single-pass 13 / template_8 (2026-10-04)
 
@@ -815,15 +820,17 @@ re-scored, so v12 rows keep the LLM's verdicts on those checks.
   only, never `run_det_checks`.
 - **Versions**: `scripts/export_good_attempts.py` and the coverage / plan code
   (`report_grading_coverage.py`, `generate_judge_plan.py`) match the exact
-  `judge_version`, so after the bump to 13 every existing v12 grading shows as
-  another version (not counted, re-planned) until it is regraded. Rows graded
-  with `--det-checks llm` or `off` are also stamped 13; only
+  `judge_version`, so after each bump (13, then 14) every existing grading of an
+  older version shows as another version (not counted, re-planned) until it is
+  regraded. Rows graded with `--det-checks llm` or `off` are also stamped with
+  the current version; only
   `scored_results.det_checks.mode` (mirrored in
   `accuracy_engine.det_checks_mode`) tells them apart from `harness` rows.
 - Not changed: the paper scripts still read `judge_version >= 12`
   (`MIN_JUDGE_VERSION`) and `pass_rule.DETERMINISTIC_CHECKS` lists Final
-  calculation accuracy only, so a cohort mixing v12 and v13 rows mixes LLM and
-  Python verdicts on these checks.
+  calculation accuracy only, so a cohort mixing v12 with v13 / v14 rows mixes
+  LLM and Python verdicts on these checks (open item: pin the paper scripts to
+  the final judge version and the Sol grader).
   Tests: `test_det_checks.py` (the adapter on openpyxl workbooks: live and
   recorded-only verdicts, the gate, the delivered name and malformed sidecars,
   `det_checks.json` in every case, JSON safety, the LibreOffice policy, no size

@@ -244,7 +244,7 @@ def test_end_to_end_live_and_recorded_only():
         assert llm.calls == 2, llm.calls
         assert lo_calls == [], lo_calls
         assert not res["hard_parse_failures"] and not res["missing_scores"] and not res["has_scoring_warnings"]
-        assert res["versions"]["JUDGE_VERSION"] == "13" and res["versions"]["PROMPT_VERSION"] == "8"
+        assert res["versions"]["JUDGE_VERSION"] == "14" and res["versions"]["PROMPT_VERSION"] == "8"
 
         out = Path(res["output_dir"])
         task_folder = Path(res["task_folder"])

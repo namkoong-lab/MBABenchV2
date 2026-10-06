@@ -294,8 +294,9 @@ from utils.misc_utils import load_env_var  # noqa: E402
 
 check(str(load_env_var("AGENTIC_JUDGE_VERSION")) == "4",
       "config: agentic (12-category) judge version is 4")
-check(str(load_env_var("SINGLE_PASS_VERSION")) == "13",
-      "config: single_pass version is 13 (judge v13: deterministic rubric checks decide 19 checks, 22/65 recorded only)")
+check(str(load_env_var("SINGLE_PASS_VERSION")) == "14",
+      "config: single_pass version is 14 (judge v14: alternate accepted answers, the 2026-10-06 detchecks rulings; "
+      "v13's deterministic rubric checks decide 19 checks, 22/65 recorded only)")
 check(str(load_env_var("SINGLE_PASS_PROMPT_VERSION")) == "8",
       "config: single_pass prompt_version is 8")
 check(str(load_env_var("JUDGE_VERSION")) != str(load_env_var("SINGLE_PASS_VERSION")),

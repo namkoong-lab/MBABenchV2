@@ -191,7 +191,17 @@ single_pass:
   # every check, blind to Python; prompt, evidence and CSV caches unchanged.
   # Existing gradings are not re-scored: rows graded under 13 are not
   # comparable with version 12 rows.
-  version: 13
+  # 14 (2026-10-06): the task author's alternate accepted answers in the
+  # harness answer check (judge/alternate_answers.yaml, answer rules v6.7:
+  # 85 questions over tasks 41, 50, 59, 60, 61, 64, 86 accept a second
+  # value); the deterministic checks grade the 7 attempts v13 refused
+  # (62: the last selection of the active pane decides; 49: INDIRECT
+  # addresses built from text; 65/66/69/70/94: an unreadable number format
+  # is General, as Excel shows after repair); a conditional-format font
+  # colour excuses a wrong base font in 49/50/51. Prompt, template, rubric
+  # and the LLM side unchanged. Rows graded under 14 are not comparable
+  # with version 13 rows on those tasks and checks.
+  version: 14
   prompt_template: "prompts/agentic_judge_template_8.yaml"
   prompt_version: "8"
   max_rounds: 500
