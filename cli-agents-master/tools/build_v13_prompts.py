@@ -32,9 +32,9 @@ Harness-necessitated translations on top of v12's rules:
     structure advice  ->  answer in the 'Questions' sheet's reserved cells
     (it contradicted the ANSWERS convention this version adds).
 Everything from the "== FULL RUBRIC" marker onward is copied byte-exact.
-Since the 2026-08 rubric revision (in-place update from the canonical
-checklist xlsx via judge/operation_scripts/build_rubric_9_from_xlsx.py) the
-v13 rubric deliberately DIFFERS from frozen v12's; tests/test_v13_prompts.py
+Since the 2026-08 rubric revision (an in-place update of rubric_9 and the
+prompts_v3 text from the canonical checklist workbook) the v13 rubric
+deliberately DIFFERS from frozen v12's; tests/test_v13_prompts.py
 asserts byte-equality with prompts_v3, divergence from frozen prompts_v2,
 and the 132-check count.
 

@@ -1659,8 +1659,7 @@ def tag_check_graders(score_results: dict) -> dict:
     true (the deterministic rubric checks and the answer-check items the
     harness could measure). "llm": every other item, including the
     recorded-only checks and a Python check that fell back to the LLM.
-    Idempotent; also used by operation_scripts/backfill_check_grader.py on
-    existing rows. Returns {"deterministic": n, "llm": n}."""
+    Idempotent. Returns {"deterministic": n, "llm": n}."""
     applied = ((score_results.get("accuracy_engine") or {}).get("checks")) or {}
     decided = {
         key for key, v in applied.items()

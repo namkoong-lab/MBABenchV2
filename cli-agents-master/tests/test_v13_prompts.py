@@ -55,8 +55,7 @@ def main() -> int:
     step2_v2 = STEP2_V2.read_text()
     assert expected != step2_v2[step2_v2.index(RUBRIC_MARKER):].rstrip("\n"), (
         "prompts_v3 rubric matches frozen prompts_v2 — the 2026-08 revision "
-        "text is missing (rerun judge/operation_scripts/build_rubric_9_from_xlsx.py "
-        "and tools/build_v13_prompts.py)"
+        "text is missing (rerun tools/build_v13_prompts.py against the live prompts_v3 text)"
     )
     n_checks = len(re.findall(r"\n\s*Good:", rubric))
     assert n_checks == 132, f"expected 132 checks, found {n_checks}"

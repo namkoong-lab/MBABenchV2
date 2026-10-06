@@ -7,11 +7,11 @@ against Flexibility? The guidance notes answer exactly those scope
 questions so the judge applies one consistent rule instead of coin-flipping.
 
 Why it is a separate file and NOT part of rubric_9.json:
-  - rubric_9.json is generated from the canonical checklist workbook
-    (operation_scripts/build_rubric_9_from_xlsx.py), which also rewrites the
-    agent-facing prompt blocks, so the rubric agents see and the rubric the
-    judge grades can never drift apart. Editing the JSON by hand gets
-    silently wiped by the next regeneration.
+  - rubric_9.json was generated from the canonical checklist workbook
+    together with the agent-facing prompt blocks (prompts_v3/step2_build.txt
+    and its mirrors carry the same text), so the rubric agents see and the
+    rubric the judge grades cannot drift apart. The JSON is frozen: tests
+    pin its text against the prompts.
   - Putting the guidance in the agents' prompt instead would change what
     agents are told — new prompt versions, re-run waves. These notes change
     how the JUDGE reads the rubric, not what agents are asked to do.

@@ -26,7 +26,6 @@ dependencies = [
 [project.optional-dependencies]
 langfuse = ["langfuse>=2.0.0"]
 langchain = ["langchain>=0.2.0", "langchain-openai>=0.1.0"]
-dev = ["pytest", "pytest-cov", "ruff"]
 
 [tool.setuptools.packages.find]
 include = ["excel_cli_agent*", "excel_mcp_server*"]
@@ -46,4 +45,3 @@ select = ["E", "F", "W", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=excel_cli_agent --cov=excel_mcp_server --cov-report=term-missing"

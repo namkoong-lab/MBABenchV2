@@ -502,10 +502,8 @@ def test_call_sites_are_wired_before_the_llm():
     assert "_gfd.retry_later_report(orch.results)" in orch and "_gfd.retry_later_ids(results)" in orch
     assert "except LibreOfficeUnavailable:" in main.split("run_answer_check(")[1].split("single_pass_judge_case(")[0]
     assert "det_checks=args.det_checks" in orch
-    toy = (JUDGE / "main_scripts" / "grade_toy.py").read_text()
-    assert "det_checks=args.det_checks" in toy and "add_det_checks_arg(ap)" in toy
     # every DB driver refuses a bad det_checks config before grading anything
-    for src in (gfd_src.split("def main(args)")[1], orch.split("def main()")[1], toy.split("def main()")[1]):
+    for src in (gfd_src.split("def main(args)")[1], orch.split("def main()")[1]):
         assert "startup_check(rubric_path, args.det_checks)" in src
 
 

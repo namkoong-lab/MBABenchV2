@@ -116,7 +116,7 @@ def test_202_rubric_body_revised_from_200():
     v2_2 = (MEMBER_ROOT / "tasks_configs/prompts/v2_2.txt").read_bytes()
     assert v3[v3.index(marker):] == v2_2[v2_2.index(marker):], (
         "the 202 (prompts_v3) and 203 (v2_2.txt) rubric bodies diverged — "
-        "rerun judge/operation_scripts/build_rubric_9_from_xlsx.py"
+        "the two files must carry the same rubric text"
     )
     assert v2[v2.index(marker):] != v3[v3.index(marker):], (
         "the live 202 rubric matches the frozen 200 rubric — the 2026-08 "
