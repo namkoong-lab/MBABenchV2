@@ -1,8 +1,7 @@
 """Regression tests for No white-on-white hiding (94), second review (2026-10-04).  The first-round
 tests live in test_checks_fills.py (test_94_*); this module reuses its workbook builder.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_94
+    cd judge && python -m detchecks.tests.test_checks_94
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/fills/.
 """

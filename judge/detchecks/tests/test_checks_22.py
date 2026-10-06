@@ -2,8 +2,7 @@
 zips labelled as saved by Excel, so their caches are the display; openpyxl-labelled where cache
 trust matters).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_22
+    cd judge && python -m detchecks.tests.test_checks_22
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/errors22/.
 The workbook builder here is shared with test_recalc.py.

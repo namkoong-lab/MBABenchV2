@@ -1,6 +1,6 @@
 """Tests for detchecks.core.formula (plain asserts, no test framework).
 
-Run:  /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_formula
+Run:  cd judge && python -m detchecks.tests.test_formula
 
 Real formula strings below were copied from the toy workbooks
 (~/Downloads/drive-download-20261001T230033Z-1-001/<check>/{Pass,Fail}/...) - the toy

@@ -1,8 +1,7 @@
 """Unit tests for checks 47 (No bright-yellow highlighting) and 94 (No white-on-white hiding)
 on synthetic micro-workbooks (raw SpreadsheetML zips, plus openpyxl where its labelling matters).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_fills
+    cd judge && python -m detchecks.tests.test_checks_fills
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/fills/.
 """

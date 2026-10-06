@@ -1,8 +1,7 @@
 """Unit tests for check 66 (Zeros as dashes) on synthetic micro-workbooks (raw SpreadsheetML
 zips; an openpyxl-labelled app.xml where cache trust matters).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_zeros
+    cd judge && python -m detchecks.tests.test_checks_zeros
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/zeros/.
 """

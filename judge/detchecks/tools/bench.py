@@ -1,7 +1,6 @@
-"""Performance probe for one workbook (run through heavy_run.py; wrap in /usr/bin/time -l for RSS).
+"""Performance probe for one workbook (wrap in /usr/bin/time -l for RSS).
 
-    python3 heavy_run.py -- /usr/bin/time -l /Users/patrick/MBABenchV2/.venv/bin/python \
-        -m detchecks.tools.bench <path> [--full]
+    cd judge && /usr/bin/time -l python -m detchecks.tools.bench <path> [--full]
 
 1. grade(path) with every registered check (what production would run today).
 2. --full: a synthetic check that streams EVERY row and cell of every worksheet and touches

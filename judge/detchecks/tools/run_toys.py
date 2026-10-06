@@ -1,7 +1,6 @@
 """Toy gate: grade every toy of each check with THAT check only and compare.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    python3 heavy_run.py -- /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tools.run_toys --checks 92,74
+    cd judge && python -m detchecks.tools.run_toys --toys-root <toy workbooks dir> --checks 92,74
 
 For each check NN, the toy folder is the one in --toys-root whose name starts with 'NN_'.
 Every file in its Pass/ and Fail/ folders is graded (lock files '~$...' skipped; any
@@ -29,7 +28,7 @@ from ..core.package import Package
 from ..core.recalc import DEFAULT_WORKDIR, RecalcPolicy
 from ..errors import GradingError
 
-DEFAULT_ROOT = "/Users/patrick/Downloads/drive-download-20261001T230033Z-1-001"
+DEFAULT_ROOT = os.environ.get("DETCHECKS_TOYS_ROOT")   # the toy workbooks are not in the repository
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(os.path.dirname(HERE), "out")
 
@@ -109,14 +108,15 @@ def load_expected(path: str) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checks", default=None, help="comma-separated rubric numbers (default: all registered)")
-    ap.add_argument("--toys-root", default=DEFAULT_ROOT)
+    ap.add_argument("--toys-root", default=DEFAULT_ROOT, required=DEFAULT_ROOT is None,
+                    help="folder of per-check toy folders ('NN_<name>/Pass/', 'NN_<name>/Fail/')")
     ap.add_argument("--expected", default=os.path.join(HERE, "expected.json"))
     ap.add_argument("--out", default=None, help="JSON output path (default detchecks/out/toys_<checks>.json)")
     ap.add_argument("--no-recalc", action="store_true",
                     help="grade from the files' caches only (default: the recalc pipeline decides; every toy is "
                          "Excel-saved, so no office application is launched)")
     ap.add_argument("--no-excel", action="store_true", help="pipeline: never reroute to Excel")
-    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default; Patrick 2026-10-04: agents never launch Excel)")
+    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default: agents never launch Excel)")
     ap.add_argument("--workdir", default=DEFAULT_WORKDIR)
     args = ap.parse_args(argv)
     recalc = None if args.no_recalc else RecalcPolicy(workdir=args.workdir, excel_allowed=bool(args.allow_excel and not args.no_excel))

@@ -1,8 +1,7 @@
 """Unit tests for check 29 (Clean Name Manager): synthetic micro-workbooks for every trap in
 the toys / handoff / report §4b.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_names
+    cd judge && python -m detchecks.tests.test_checks_names
 """
 from __future__ import annotations
 

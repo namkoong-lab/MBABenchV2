@@ -1,6 +1,6 @@
 """Tests for detchecks.core.numfmt (plain asserts, no test framework).
 
-Run:  /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_numfmt
+Run:  cd judge && python -m detchecks.tests.test_numfmt
 
 The TOY_FORMATS table lists every custom <numFmt> found in the styles.xml of the toy
 workbooks (all 22 check folders, read once with detchecks/scratch/extract_numfmts.py),

@@ -1,9 +1,8 @@
 """Sanity run over delivered attempts (step 3 of the per-check sequence: look for crashes and
 surprising fail rates; not a gate).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    python3 heavy_run.py -- /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tools.run_corpus \
-        --checks 92,74 [--touch] [--glob 'corpus/attempts/*/'] [--recalc [--no-excel] [--lo-timeout 600]]
+    cd judge && python -m detchecks.tools.run_corpus --root <corpus dir> \
+        --checks 92,74 [--touch] [--glob 'attempts/*/'] [--recalc [--no-excel] [--lo-timeout 600]]
         [--excel-saved-only] [--llm-check 22] [--out detchecks/out/sanity_22.json]
 
 Grades every spreadsheet file directly inside each matched attempt folder (the delivered file;
@@ -36,7 +35,7 @@ from ..core.values import detect_writer
 from ..errors import GradingError
 from .bench import TouchAll, peak_rss_mb
 
-BASE = "/Users/patrick/MBABench-deterministic-checks"
+BASE = os.environ.get("DETCHECKS_CORPUS_ROOT", "")   # set by --root; relative --glob patterns resolve against it
 EXTS = (".xlsx", ".xlsm", ".xlsb", ".xls", ".xltx", ".xltm", ".csv", ".ods")
 # verdict stats kept in the output rows (No formula errors (22): error cells; Reasonable column widths (70): the
 # switches and what decided; Sufficient column widths (69): which rule decided - '####' numbers or cut-off text,
@@ -108,13 +107,15 @@ def writer_of(path: str) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", default=BASE or None, required=not BASE,
+                    help="folder holding the delivered attempts (relative --glob patterns resolve against it)")
     ap.add_argument("--checks", default=None)
-    ap.add_argument("--glob", default="corpus/attempts/*/")
+    ap.add_argument("--glob", default="attempts/*/")
     ap.add_argument("--touch", action="store_true")
     ap.add_argument("--out", default=None)
     ap.add_argument("--recalc", action="store_true", help="run the recalculation pipeline for value checks")
     ap.add_argument("--no-excel", action="store_true", help="pipeline: never reroute to Excel")
-    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default; Patrick 2026-10-04: agents never launch Excel)")
+    ap.add_argument("--allow-excel", action="store_true", help="pipeline: allow the Excel reroute (OFF by default: agents never launch Excel)")
     ap.add_argument("--workdir", default=DEFAULT_WORKDIR)
     ap.add_argument("--lo-timeout", type=float, default=600.0)
     ap.add_argument("--excel-timeout", type=float, default=600.0)
@@ -124,6 +125,8 @@ def main(argv=None) -> int:
     numbers = sorted(REGISTRY) if not args.checks else [int(x) for x in args.checks.split(",")]
     recalc = (RecalcPolicy(workdir=args.workdir, excel_allowed=bool(args.allow_excel and not args.no_excel), lo_timeout_s=args.lo_timeout,
                            excel_timeout_s=args.excel_timeout) if args.recalc else None)
+    global BASE
+    BASE = os.path.abspath(args.root)
     files = delivered_files(args.glob)
     rows = []
     errors = 0

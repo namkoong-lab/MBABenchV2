@@ -15,7 +15,7 @@ import openpyxl
 import openpyxl.worksheet._reader as _openpyxl_reader
 
 from .logger import logger
-from .misc_utils import load_env_var
+from .misc_utils import load_env_var, libreoffice_path as _libreoffice_path
 from .sheet_extent import iter_rows_kwargs
 from . import theme_palette as _theme
 
@@ -1688,7 +1688,7 @@ def process_all_worksheets(
         except ImportError:  # imported as a bare module (utils/ on sys.path)
             from det_checks import run_libreoffice
 
-        soffice = load_env_var("PATHS_LIBREOFFICE_PATH", required=True)
+        soffice = _libreoffice_path()
         expected = Path(outdir) / (Path(filepath).stem + ".xlsx")
 
         def _once(timeout_s):

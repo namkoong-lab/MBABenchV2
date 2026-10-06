@@ -40,7 +40,7 @@ Excel becomes available). Default workdir `detchecks/out/recalc_cache/`.
   real LibreOffice 25.8 on folders with a space, `%`, `%41`, `%25` and `é` (profile used, stale cached
   value recalculated, nothing written outside the folder).
 - **A conversion never outlives its grading**: soffice runs in the grader's process group (no new
-  session), so a signal to the grader's group (Ctrl-C, `heavy_run.py`'s group kill) reaches it; it runs
+  session), so a signal to the grader's group (Ctrl-C, a process-group kill) reaches it; it runs
   under `core/lo_watchdog.py` (`python -I -S lo_watchdog.py <grader pid> 0.5 -- soffice ...`), which
   passes soffice's exit code through and, when the grader disappears (SIGKILL, a crash: anything that
   runs no clean-up) or the watchdog itself gets SIGTERM / SIGINT / SIGHUP, kills soffice and everything
@@ -102,7 +102,7 @@ adapter does the same - nothing here in `core/` changes:
 - without `--run-calculation`: `grade()` runs on the delivered file as before and every check but 77 fails
   loudly; the error adds that an .xls delivery is graded only with `--run-calculation`.
 
-Tests: `tests_offline/test_det_checks_xls.py` (the real LibreOffice; run it through `heavy_run.py`).
+Tests: `tests_offline/test_det_checks_xls.py` (the real LibreOffice; skipped where it is not installed).
 
 ## Gap classification (`classify_lo_error`)
 
@@ -184,8 +184,8 @@ gaps, genuine errors, reroute to Excel, not allowed / not available, caching, en
 failure, classification table). No test there launches LibreOffice or Excel.
 
 `detchecks/tests/test_recalc_libreoffice.py`: ONE test runs the real LibreOffice on a 3-cell file in a
-folder named with a space, `%41`, `%` and `é` (skipped, reported SKIP, where LibreOffice is absent;
-run the module through `heavy_run.py`); the others use stand-in soffice scripts that keep a tagged
+folder named with a space, `%41`, `%` and `é` (skipped, reported SKIP, where LibreOffice is
+absent); the others use stand-in soffice scripts that keep a tagged
 child: the watchdog's normal and failing runs, the timeout tree kill, SIGTERM and SIGKILL to a stand-in
 grader (nothing survives), the watchdog alone when its parent is SIGKILLed, the handler's rules, and the
 profile sweep (URL and raw forms, never a sibling folder).

@@ -1,8 +1,8 @@
 """Unit tests for Reasonable column widths (70) on synthetic micro-workbooks (raw SpreadsheetML zips
 written here).
 
-    cd /Users/patrick/MBABenchV2-detchecks/judge
-    python3 /Users/patrick/MBABench-deterministic-checks/heavy_run.py -- /Users/patrick/MBABenchV2/.venv/bin/python \
+    cd judge
+    python3 /Users/patrick/MBABench-deterministic-checks/heavy_run.py -- python \
         -m detchecks.tests.test_checks_70
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/colwidths70/.

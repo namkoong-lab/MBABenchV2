@@ -5,7 +5,7 @@ core/recalc.libreoffice_recalc does not start soffice itself. It starts this fil
     <python> -I -S lo_watchdog.py <grader pid> <poll seconds> -- <soffice> <arguments ...>
 
 which runs soffice as its own child, in the grader's process group (so a signal sent to the
-grader's group - Ctrl-C, heavy_run's group kill - reaches soffice too), and passes soffice's exit
+grader's group - Ctrl-C, a process-group kill - reaches soffice too), and passes soffice's exit
 code through.  Every <poll seconds> it checks that the grader is still its parent: when the grader
 is gone (killed with SIGKILL, crashed - anything that runs no clean-up), the wrapper is re-parented,
 notices, and kills soffice and everything soffice started (kill_tree), then exits.  SIGTERM, SIGINT

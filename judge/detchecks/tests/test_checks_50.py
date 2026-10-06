@@ -3,8 +3,7 @@
 The shared colour-rule tests (49 / 50 / 51) live in test_checks_colours.py; this module reuses
 its micro-workbook helpers and only holds what is specific to 50.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_50
+    cd judge && python -m detchecks.tests.test_checks_50
 
 Plain asserts; also collectable by pytest.
 """

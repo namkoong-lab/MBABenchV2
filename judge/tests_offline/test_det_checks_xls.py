@@ -1,9 +1,9 @@
 """judge v13 with an attempt delivered in the legacy binary .xls format (the maintainer, 2026-10-05: "just
 keep doing whatever v12 did or does"; utils/det_checks.py, "Legacy .xls deliveries").
 
-Run from judge/ THROUGH heavy_run.py - it starts the REAL LibreOffice (paths.libreoffice_path), one run at a
+Run from judge/ - it starts the REAL LibreOffice (paths.libreoffice_path), one run at a
 time under the machine-wide guard:
-    python3 ~/MBABench-deterministic-checks/heavy_run.py -- <python> tests_offline/test_det_checks_xls.py
+    python tests_offline/test_det_checks_xls.py
 (or pytest). Every test is SKIPPED (reported, never counted as passed) where LibreOffice is absent.
 
 The .xls is built once per run: a small openpyxl workbook (a hidden sheet, a merged block, B3 = B1 - B2 = 0)

@@ -1,12 +1,12 @@
 """LibreOffice process tests for core/recalc.py and core/lo_watchdog.py: encoded paths, and a
 LibreOffice conversion that can never outlive the grading that started it.
 
-    cd judge && /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_recalc_libreoffice
+    cd judge && python -m detchecks.tests.test_recalc_libreoffice
 
 ONE test launches the REAL LibreOffice (DETCHECKS_SOFFICE, default ~/.local/bin/soffice) on a
 3-cell workbook in a temporary folder whose path holds a space, '%', '%41' and a non-ASCII letter;
 it is skipped (and reported SKIP, not passed) where LibreOffice is absent.  On the shared 16 GB
-grading Mac run this module through heavy_run.py like every LibreOffice job.  The other tests use
+grading machine run this module on its own, like every LibreOffice job.  The other tests use
 stand-in 'soffice' scripts (Python, with a tagged child process), run in-process or inside a
 stand-in grader process that is then sent SIGTERM / SIGKILL; the memory guard of 2026-10-05
 (core/lo_guard.py) is exercised with them too: a soffice that crashes twice and then converts (retry

@@ -231,7 +231,7 @@ rubric's list; checks decide), `TRIM_FUNCTIONS`, `ERROR_LITERALS`, `REFERENCE_KI
 
 Review fixes (LET/LAMBDA scope, `_xlpm.` binding, adjacency/pairing errors, area pairing,
 `mask_strings`, table sheets, NameTable validation), re-checked old vs new parser
-(`detchecks/scratch/review_fix/formula_corpus_diff.py`, `real_diff.py`, via `heavy_run.py`):
+(`detchecks/scratch/review_fix/formula_corpus_diff.py`, `real_diff.py`, not in the repository):
 all 1,623,195 distinct toy formulas — 0 parse errors, 0 changes in operands, calls, names or
 params, 0 pre-filter misses (both filters); 6,168,637 distinct formulas of 101 real attempts —
 no new parse errors, one changed formula (attempt 2487 A33: plain `me(` inside an
@@ -240,7 +240,7 @@ no new parse errors, one changed formula (attempt 2487 A33: plain `me(` inside a
 Original validation:
 
 All 1,623,195 distinct formulas of the 29/49/50/51/66/73/80/87/94/95 toys
-(`detchecks/scratch/diff_corpus.py`, via `heavy_run.py`): 0 parse errors; function names
+(`detchecks/scratch/diff_corpus.py`): 0 parse errors; function names
 and operand texts identical to openpyxl's Tokenizer on every formula (after accounting for
 its known `A1:FUNC(` glue); `translate` identical to openpyxl's Translator on 200,000
 formulas it handles; on 202,900 of them, translating to three targets kept every

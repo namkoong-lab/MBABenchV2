@@ -137,11 +137,11 @@ from detchecks.errors import GradingError
 
 try:
     from .logger import logger
-    from .misc_utils import current_benchmark, load_env_var
+    from .misc_utils import current_benchmark, load_env_var, libreoffice_path as _libreoffice_path
     from . import rubric_suitability, workbook_properties
 except ImportError:  # imported as a bare module (utils/ on sys.path)
     from logger import logger
-    from misc_utils import current_benchmark, load_env_var
+    from misc_utils import current_benchmark, load_env_var, libreoffice_path as _libreoffice_path
     import rubric_suitability
     import workbook_properties
 
@@ -328,9 +328,7 @@ def _read_settings() -> DetChecksSettings:
         live=_numbers("DET_CHECKS_LIVE"),
         recorded_only=_numbers("DET_CHECKS_RECORDED_ONLY"),
         excel_recalc=_as_bool(load_env_var("DET_CHECKS_EXCEL_RECALC", default="false")),
-        libreoffice_path=str(load_env_var(
-            "PATHS_LIBREOFFICE_PATH",
-            default="/Applications/LibreOffice.app/Contents/MacOS/soffice")),
+        libreoffice_path=_libreoffice_path(required=False),
         libreoffice_timeout_s=_config_number("DET_CHECKS_LIBREOFFICE_TIMEOUT_SECONDS", 600),
         libreoffice_max_mb=_config_number("DET_CHECKS_LIBREOFFICE_MAX_MB", 0),
         libreoffice_retries=_config_number("DET_CHECKS_LIBREOFFICE_RETRIES", 3, int),

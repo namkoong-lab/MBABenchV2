@@ -53,7 +53,15 @@ from .values import ValueSource, detect_provenance, make_context
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_WORKDIR = os.path.join(os.path.dirname(HERE), "out", "recalc_cache")
-DEFAULT_SOFFICE = os.environ.get("DETCHECKS_SOFFICE") or "/Users/patrick/.local/bin/soffice"
+def _default_soffice() -> str:
+    """The LibreOffice binary for the standalone tools: $DETCHECKS_SOFFICE, else `soffice` on
+    PATH, else the macOS app bundle. The judge passes its own paths.libreoffice_path explicitly."""
+    import shutil
+    return (os.environ.get("DETCHECKS_SOFFICE") or shutil.which("soffice")
+            or "/Applications/LibreOffice.app/Contents/MacOS/soffice")
+
+
+DEFAULT_SOFFICE = _default_soffice()
 MAX_GAPS_LISTED = 25
 
 # Excel functions LibreOffice (25.8, the build on this Mac) cannot evaluate.  A LibreOffice
@@ -250,7 +258,7 @@ def file_url(path: str) -> str:
 
 # ---- LibreOffice processes never outlive their grading ------------------------------------------
 # 1. soffice runs in the grader's process group (no new session): a signal to the grader's group
-#    (Ctrl-C, heavy_run's group kill) reaches it.
+#    (Ctrl-C, a process-group kill) reaches it.
 # 2. soffice runs under core/lo_watchdog.py, which kills it (and everything it started) when the
 #    grader disappears, SIGKILL included.
 # 3. SIGTERM / SIGHUP to the grader: a handler (install_termination_reaper, main thread, only where

@@ -1,8 +1,7 @@
 """Unit tests for the font-colour checks 49 / 50 / 51 (group "colours") on synthetic
 micro-workbooks (raw OOXML zips, so every colour form and formula kind is under control).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_colours
+    cd judge && python -m detchecks.tests.test_checks_colours
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/colours/.
 """

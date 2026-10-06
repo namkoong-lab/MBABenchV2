@@ -2,8 +2,7 @@
 and 77 (File extension (.xlsx)) on synthetic micro-workbooks (raw SpreadsheetML zips and
 hand-built OLE2 / CSV / zip bytes for 77).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_views
+    cd judge && python -m detchecks.tests.test_checks_views
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/views/.
 """

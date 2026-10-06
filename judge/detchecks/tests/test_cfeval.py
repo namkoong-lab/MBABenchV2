@@ -3,7 +3,7 @@ cells through (core/lookup.py) and the conditional-format policy of the checks t
 (Patrick 2026-10-05: "CONDITIONAL FORMATS never stop a grading"; "assume the built-in Excel
 conditional formats always have visible text").
 
-    cd judge && /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_cfeval
+    cd judge && python -m detchecks.tests.test_cfeval
 
 Synthetic micro-workbooks only (the builders of test_checks_fills / test_checks_zeros), no LibreOffice.
 Plain asserts; also collectable by pytest.

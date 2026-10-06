@@ -2,7 +2,7 @@
 LibreOffice at a time on the machine, started only when memory is free, a failed run retried with the
 timeout doubled, then a loud failure to re-run later).
 
-    cd judge && /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_lo_guard
+    cd judge && python -m detchecks.tests.test_lo_guard
 
 No LibreOffice: run_once callables and fake memory readers.  The lock tests start two Python processes
 that share a lock file in a temporary folder (never the machine-wide default).  Plain asserts; also

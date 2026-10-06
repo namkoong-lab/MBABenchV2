@@ -1,8 +1,7 @@
 """Unit tests for checks 93 (No hidden rows/columns) and 73 (Reasonable row heights) on
 synthetic micro-workbooks (raw SpreadsheetML zips written here).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_rowscols
+    cd judge && python -m detchecks.tests.test_checks_rowscols
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/rowscols/.
 """

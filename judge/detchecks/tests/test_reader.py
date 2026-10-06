@@ -1,7 +1,6 @@
 """Reader / engine tests on synthetic workbooks (openpyxl-built and raw XML zips).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_reader
+    cd judge && python -m detchecks.tests.test_reader
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/.
 """

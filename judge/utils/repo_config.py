@@ -161,6 +161,39 @@ API_KEYS = {
 }
 
 
+# macOS default install location; `soffice` is not on PATH there by default.
+_MACOS_SOFFICE = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+
+
+def resolve_libreoffice_path() -> Optional[str]:
+    """Locate the LibreOffice binary, or None. Same order as the CLI pipeline:
+
+      1. LIBREOFFICE_PATH env var (explicit override)
+      2. `libreoffice_path` in <MBABenchV2>/config/config.yaml
+      3. `soffice` on PATH (Linux: apt-get install libreoffice-calc)
+      4. the macOS app bundle, when it exists
+
+    An explicitly configured path (1 or 2) is returned as-is even if it does
+    not exist, so a typo is reported as such instead of silently falling
+    through to another binary.
+    """
+    import shutil
+    import sys
+
+    env_path = os.environ.get("LIBREOFFICE_PATH")
+    if env_path:
+        return env_path
+    repo_path = repo_value("libreoffice_path")
+    if repo_path:
+        return repo_path
+    on_path = shutil.which("soffice")
+    if on_path:
+        return on_path
+    if sys.platform == "darwin" and os.path.exists(_MACOS_SOFFICE):
+        return _MACOS_SOFFICE
+    return None
+
+
 def resolve_api_key(provider: str, required: bool = True) -> Optional[str]:
     """API key for `provider`: environment first, then config keys.*.
 

@@ -3,8 +3,7 @@
 The first-round tests live in test_checks_formulascan.py (test_80_*); this module reuses its
 micro-workbook builder.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_80
+    cd judge && python -m detchecks.tests.test_checks_80
 """
 from __future__ import annotations
 

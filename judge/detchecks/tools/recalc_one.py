@@ -1,7 +1,7 @@
 """Run the recalculation pipeline on one workbook and print the plan (for testing the
-LibreOffice and Excel steps on this machine; run through heavy_run.py).
+LibreOffice and Excel steps on this machine).
 
-    python3 heavy_run.py -- /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tools.recalc_one <path>
+    cd judge && python -m detchecks.tools.recalc_one <path>
         [--workdir DIR] [--no-excel] [--no-cache] [--lo-timeout 600] [--excel-timeout 600]
         [--force-excel]   # skip LibreOffice and the gap scan: Excel copy of this file (test of the Excel step)
 

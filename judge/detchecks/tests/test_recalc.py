@@ -1,8 +1,7 @@
 """Unit tests for the recalculation pipeline (core/recalc.py) with FAKE LibreOffice / Excel
 runners (no office application is launched), plus the per-check live switch.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_recalc
+    cd judge && python -m detchecks.tests.test_recalc
 
 Plain asserts; also collectable by pytest.  Workbooks are built with test_checks_22's builder;
 the recalc cache goes to a temporary workdir under detchecks/scratch/errors22/.

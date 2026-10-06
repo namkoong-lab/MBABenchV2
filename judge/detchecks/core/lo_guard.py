@@ -110,7 +110,7 @@ _MEMORY_PRESSURE = "/usr/bin/memory_pressure"
 
 def free_memory_pct() -> Optional[float]:
     """The machine's free memory in percent, or None when it cannot be read.  macOS: `memory_pressure -Q`
-    ('System-wide memory free percentage: 63%', the figure heavy_run.py uses); Linux: MemAvailable /
+    ('System-wide memory free percentage: 63%'); Linux: MemAvailable /
     MemTotal from /proc/meminfo."""
     if sys.platform == "darwin":
         exe = _MEMORY_PRESSURE if os.path.exists(_MEMORY_PRESSURE) else "memory_pressure"

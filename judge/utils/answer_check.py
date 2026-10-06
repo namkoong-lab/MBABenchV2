@@ -77,11 +77,11 @@ from detchecks.errors import LibreOfficeUnavailable
 try:
     from . import answer_rules as rules
     from .logger import logger
-    from .misc_utils import load_env_var
+    from .misc_utils import load_env_var, libreoffice_path as _libreoffice_path
 except ImportError:  # imported as a bare module (utils/ on sys.path)
     import answer_rules as rules
     from logger import logger
-    from misc_utils import load_env_var
+    from misc_utils import load_env_var, libreoffice_path as _libreoffice_path
 
 HEADER_SCAN_ROWS = 10
 HEADER_SCAN_COLS = 8  # A-H
@@ -515,7 +515,7 @@ def _recalculate_copy(xlsx_path: Path, outdir: Path) -> Path:
     except ImportError:  # imported as a bare module (utils/ on sys.path)
         from det_checks import run_libreoffice
 
-    soffice = load_env_var("PATHS_LIBREOFFICE_PATH", required=True)
+    soffice = _libreoffice_path()
     out = outdir / xlsx_path.name
 
     def _once(timeout_s: float) -> Path:

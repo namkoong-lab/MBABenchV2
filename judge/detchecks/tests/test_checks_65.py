@@ -1,8 +1,7 @@
 """Unit tests for check 65 (Negatives in parentheses) on synthetic micro-workbooks (raw
 SpreadsheetML zips; an openpyxl-labelled app.xml where cache trust matters).
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_65
+    cd judge && python -m detchecks.tests.test_checks_65
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/negs/.
 """

@@ -14,7 +14,11 @@ project:
 
 paths:
   scratch_path: "scratch"   # relative to judge/
-  libreoffice_path: "/Applications/LibreOffice.app/Contents/MacOS/soffice"  # for --run-calculation and det_checks (judge v13)
+  # The soffice binary for --run-calculation, the answer check's recalculation
+  # and the deterministic checks (judge v13). null = find it: LIBREOFFICE_PATH,
+  # then libreoffice_path in <MBABenchV2>/config/config.yaml, then soffice on
+  # PATH, then the macOS app bundle. Set a path here only for an unusual install.
+  libreoffice_path: null
 
 miscs:
   logger_name: "bizbench_judge"

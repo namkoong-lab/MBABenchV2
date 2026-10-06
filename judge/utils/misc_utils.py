@@ -218,6 +218,16 @@ def load_project_configs(verbose=False, benchmark=None):
                 value = str((JUDGE_ROOT / str(value)).resolve())
             loaded_configs[env_key] = value
 
+    # paths.libreoffice_path left null in project_configs.yaml means "find it":
+    # LIBREOFFICE_PATH, config/config.yaml libreoffice_path, soffice on PATH,
+    # the macOS app bundle (repo_config.resolve_libreoffice_path). An explicit
+    # value in the yaml is kept as written.
+    lo_key = f"{prefix}_PATHS_LIBREOFFICE_PATH"
+    if lo_key not in loaded_configs:
+        found = repo_config.resolve_libreoffice_path()
+        if found:
+            loaded_configs[lo_key] = found
+
     if benchmark is not None:
         if benchmark not in BENCHMARKS:
             raise ValueError(f"benchmark must be one of {sorted(BENCHMARKS)}, got {benchmark!r}")
@@ -237,6 +247,25 @@ def load_project_configs(verbose=False, benchmark=None):
             print(f"Database: {repo_config.describe_database_target(benchmark)}")
         print("*" * 126)
     return loaded_configs, prefix
+
+
+LIBREOFFICE_HELP = (
+    "No LibreOffice binary found. Install LibreOffice (Linux: apt-get install "
+    "libreoffice-calc; macOS: LibreOffice.app) and, if it is not `soffice` on "
+    "PATH, point `libreoffice_path` in <MBABenchV2>/config/config.yaml, the "
+    "LIBREOFFICE_PATH environment variable, or `paths.libreoffice_path` in "
+    "judge/project_configs.yaml at the soffice binary."
+)
+
+
+def libreoffice_path(required=True) -> str:
+    """The soffice binary the judge runs (resolved by load_project_configs), or ""
+    when none was found and `required` is False. Raises EnvironmentError with
+    install guidance otherwise."""
+    value = load_env_var("PATHS_LIBREOFFICE_PATH", default="") or ""
+    if not value and required:
+        raise EnvironmentError(LIBREOFFICE_HELP)
+    return str(value)
 
 
 def load_env_var(var_name: str, default=None, prefix=None, required=False):

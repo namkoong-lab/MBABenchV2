@@ -1,8 +1,7 @@
 """Unit tests for checks 80 (volatile functions), 87 (whole-column references) and 95
 (external links): synthetic micro-workbooks for every trap in the toys / handoff.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    /Users/patrick/MBABenchV2/.venv/bin/python -m detchecks.tests.test_checks_formulascan
+    cd judge && python -m detchecks.tests.test_checks_formulascan
 """
 from __future__ import annotations
 

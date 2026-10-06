@@ -1,6 +1,6 @@
 # detchecks reader and engine: API reference
 
-This is the reference for writing a deterministic check. You should not need to read the code first. Everything lives in `/Users/patrick/MBABench-deterministic-checks/detchecks/`, a Python package. Run all commands from `/Users/patrick/MBABench-deterministic-checks` with `/Users/patrick/MBABenchV2/.venv/bin/python` (3.12; stdlib plus openpyxl).
+This is the reference for writing a deterministic check. You should not need to read the code first. Everything lives in `judge/detchecks/`, a Python package. Run all commands from `judge/` with the workspace's `python` (3.12; stdlib plus openpyxl).
 
 ## 0. Ground rules
 
@@ -9,20 +9,20 @@ This is the reference for writing a deterministic check. You should not need to 
 - **Whole delivered workbook.** Every sheet counts, including tabs inherited from the starting file and hidden sheets. There is no starting-file diff.
 - **Streaming only.** Check code never calls `openpyxl.load_workbook`. The engine streams each sheet once, and checks see it through hooks. Buffer candidates, not every cell; some toys have 10 million cells.
 - **Validation.** Use the toys and hand-inspection of real attempts only. Never use the starting files or goldens in `corpus/tasks/`.
-- **The guard.** Anything that opens more than one workbook, or any workbook over 5 MB, runs through `python3 heavy_run.py -- <python> ...` (one job at a time).
+- **The guard.** Anything that opens more than one workbook, or any workbook over 5 MB, runs through `<python> ...` (one job at a time).
 
 ## 1. Commands
 
 | What | Command |
 |---|---|
 | Grade one file (prints verdict JSON; exit 2 on GradingError) | `.venv/bin/python -m detchecks.tools.grade_one <path> [--checks 92,74] [--value-path copy.xlsx] [--recalc [--no-excel]]` |
-| Toy gate (matrix, JSON in `detchecks/out/toys_<checks>.json`, exit 1 on mismatch or error; pipeline on by default, `--no-recalc` off) | `python3 heavy_run.py -- <python> -m detchecks.tools.run_toys --checks 92,74` |
-| Sanity run over delivered attempts (`--touch` also streams every cell; `--recalc` runs the pipeline: LibreOffice / Excel, one at a time; `--excel-saved-only`; `--llm-check N`) | `python3 heavy_run.py --max-min 240 -- <python> -m detchecks.tools.run_corpus --checks 92,74 [--touch] [--recalc]` |
-| Recalc pipeline on one file (prints the plan; `--force-excel` tests the Excel step) | `python3 heavy_run.py -- <python> -m detchecks.tools.recalc_one <path> [--no-excel] [--force-excel]` |
+| Toy gate (matrix, JSON in `detchecks/out/toys_<checks>.json`, exit 1 on mismatch or error; pipeline on by default, `--no-recalc` off) | `<python> -m detchecks.tools.run_toys --checks 92,74` |
+| Sanity run over delivered attempts (`--touch` also streams every cell; `--recalc` runs the pipeline: LibreOffice / Excel, one at a time; `--excel-saved-only`; `--llm-check N`) | `<python> -m detchecks.tools.run_corpus --checks 92,74 [--touch] [--recalc]` |
+| Recalc pipeline on one file (prints the plan; `--force-excel` tests the Excel step) | `<python> -m detchecks.tools.recalc_one <path> [--no-excel] [--force-excel]` |
 | Reader tests | `<python> -m detchecks.tests.test_reader` |
-| Performance probe | `python3 heavy_run.py -- /usr/bin/time -l <python> -m detchecks.tools.bench <path> --full` |
+| Performance probe | `/usr/bin/time -l <python> -m detchecks.tools.bench <path> --full` |
 
-In this table, `<python>` is `/Users/patrick/MBABenchV2/.venv/bin/python`.
+In this table, `<python>` is `python`.
 
 `run_toys` has two more behaviours:
 - It finds a check's folder by its number prefix (`62_*`) and grades every file in `Pass/` and `Fail/` with that check only. It skips `~$` lock files and accepts any extension.
@@ -554,7 +554,7 @@ with SheetStream(pkg, pkg.sheet("Big")) as ss:          # streaming
 
 ## 9. Performance
 
-Measured 2026-10-02 through `heavy_run`, with `/usr/bin/time -l`:
+Measured 2026-10-02 with `/usr/bin/time -l`:
 
 | workbook | registered checks (92, 74; skeleton mode) | full stream touching every cell (`bench --full`) | peak RSS |
 |---|---|---|---|
