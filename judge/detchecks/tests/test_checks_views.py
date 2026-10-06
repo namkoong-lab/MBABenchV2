@@ -517,11 +517,15 @@ def test_62_unverified_shapes():
     # ... but activeCell B2 outside D10 is non-A1 under both readings -> fail
     v = run(book(tmp("c_out2.xlsx"), [S("X", view(sels=[(None, "B2", "D10")]))]), 62)
     assert locs(v) == ["X!B2"] and "or D10" in v["mistakes"][0]["description"], v
-    # duplicate selections of the active pane: all A1 -> pass; A1 and C5 -> cannot decide
+    # duplicate selections of the active pane: the LAST one decides (Patrick in Excel 2026-10-06,
+    # attempts 2379 / 2402: A1 then B9 opens on B9, A1 then A4 on A4)
     dup = [("bottomRight", "A1", "A1"), ("bottomRight", "A1", "A1")]
     assert run(book(tmp("c_dup.xlsx"), [S("X", view(pane=(2, 9, "C10", "bottomRight", "frozen"), sels=dup))]), 62)["decision"] == "pass"
     dup = [("bottomRight", "A1", "A1"), ("bottomRight", "C5", "C5")]
-    raises(book(tmp("c_dup2.xlsx"), [S("X", view(pane=(2, 9, "C10", "bottomRight", "frozen"), sels=dup))]), 62, "2 selections")
+    v = run(book(tmp("c_dup2.xlsx"), [S("X", view(pane=(2, 9, "C10", "bottomRight", "frozen"), sels=dup))]), 62)
+    assert locs(v) == ["X!C5"] and "2 selections" in v["stats"]["cursors"]["X"]["notes"][0], v
+    dup = [("bottomRight", "C5", "C5"), ("bottomRight", "A1", "A1")]
+    assert run(book(tmp("c_dup3.xlsx"), [S("X", view(pane=(2, 9, "C10", "bottomRight", "frozen"), sels=dup))]), 62)["decision"] == "pass"
     # unreadable cursor data raises
     raises(book(tmp("c_badac.xlsx"), [S("X", view(sels=[(None, "Q", "Q")]))]), 62, "not a cell reference")
     raises(book(tmp("c_badpane.xlsx"), [S("X", view(pane=(0, 3, "A4", "middle", "frozen")))]), 62, "not a pane name")
@@ -530,9 +534,8 @@ def test_62_unverified_shapes():
 def test_62_undecidable_sheet_with_certain_fail():
     # review 2026-10-03 (62-raises-although-already-failing): S1 fails for certain at D10, so an
     # undecidable S2 is recorded, not raised
+    # (duplicate active-pane selections are decided since 2026-10-06: the last one; see test_62_unverified_shapes)
     shapes = {"outside": view(sels=[(None, "A1", "D10:F12")]),
-              "dup": view(pane=(2, 9, "C10", "bottomRight", "frozen"), sels=[("bottomRight", "A1", "A1"),
-                                                                             ("bottomRight", "C5", "C5")]),
               "badac": view(sels=[(None, "Q", "Q")]),
               "badpane": view(pane=(0, 3, "A4", "middle", "frozen")),
               "default_sqref": view(sels=[(None, "D10", None)])}

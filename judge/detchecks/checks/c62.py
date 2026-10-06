@@ -32,11 +32,16 @@ cursor sits on the first unfrozen cell (A4, F4, ...) fails too.
   candidate next to the topLeft reading (default A1), because Excel's resolution is not
   measured (re-review 2026-10-04, `62-stray-pane-label-silent-a1`; 0 corpus sheets).  Listed
   in stats.selections_labelled_without_pane.
-* Shapes whose cursor Excel resolves in an unverified way (several selections for the
-  active pane; a selection without activeCell whose sqref starts elsewhere; an activeCell
-  outside its own sqref, explicit or default; the three shapes above) keep every plausible
-  cursor as a candidate.  All candidates A1 -> the sheet passes; none A1 -> it fails
-  (location = the primary reading); mixed -> the sheet is undecidable.
+* Several <selection> elements for the active pane: the LAST one decides (Patrick, in Excel,
+  2026-10-06: attempt 2379 'Income Statement' stores bottomRight A1 then B9 and opens on B9;
+  attempt 2402 'Balance Sheet' stores A1 then A4 and opens on A4).  The earlier ones are
+  noted (stats.notes "N selections for the active pane"), not candidates.  The shape comes
+  from openpyxl: `ws.freeze_panes` appends the pane's selection after one the agent set.
+* Shapes whose cursor Excel resolves in an unverified way (a selection without activeCell
+  whose sqref starts elsewhere; an activeCell outside its own sqref, explicit or default;
+  the three shapes above) keep every plausible cursor as a candidate.  All candidates A1 ->
+  the sheet passes; none A1 -> it fails (location = the primary reading); mixed -> the
+  sheet is undecidable.
 * Counted sheets: worksheets, dialog sheets and macro sheets, hidden and very hidden ones
   included (whole workbook; INCLUDE_HIDDEN_SHEETS).  Chart sheets have no cell cursor:
   listed in stats only.
@@ -208,11 +213,14 @@ def cursor(view, sheet: str) -> dict:
                              f"(A1 by Excel's default, or the pane's top-left cell {alt}; not measured)")
     else:
         if len(matching) > 1:
-            notes.append(f"{len(matching)} selections for the active pane {ap}")
-        for s in matching:
-            cc, nn = _selection_cells(s, sheet)
-            cands += cc
-            notes += nn
+            # Patrick in Excel, 2026-10-06 (attempts 2379, 2402): the LAST stored selection of the active
+            # pane is the one Excel opens on; the earlier ones are noted, not candidates
+            notes.append(f"{len(matching)} selections for the active pane {ap}; Excel opens on the last one "
+                         f"(measured 2026-10-06), earlier: "
+                         + ", ".join(s.active_cell or s.sqref or DEFAULT_SQREF for s in matching[:-1]))
+            matching = matching[-1:]
+        cands, nn = _selection_cells(matching[0], sheet)
+        notes += nn
         how = f"selection of the active pane {ap}"
     # re-review 2026-10-04 (62-stray-pane-label-silent-a1): selections labelled for a pane that does not
     # exist (no <pane>; openpyxl keeps the labels after ws.freeze_panes = None) are candidates too
