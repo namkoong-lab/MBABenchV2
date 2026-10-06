@@ -1085,6 +1085,11 @@ def test_finalize_case_switches():
             # live checks follow Python only when det_checks counts
             hid = sr["check_scores"]["Potential Dangers"]["No hidden sheets"]["score"]
             assert hid == (1.0 if det == "harness" else 0.0), (acc, det, hid)
+            # maintainer 2026-10-06: every rubric item says which grader decided it (readable from Neon)
+            graders = {f"{c}/{n}": it["grader"] for c, items in sr["check_scores"].items() for n, it in items.items()}
+            assert set(graders.values()) <= {"deterministic", "llm"} and len(graders) >= 100, len(graders)
+            assert {k for k, g in graders.items() if g == "deterministic"} == counted, (acc, det)
+            assert graders["Formatting/Negatives in parentheses"] == "llm" == graders["Error Checks/No formula errors"]
             assert sr["det_checks"]["mode"] == det and (out / "det_checks.json").exists()
             meta = json.loads((out / "_metadata.json").read_text())
             assert meta["det_checks"]["mode"] == det and meta["det_checks"]["graded"] == summary["graded"]

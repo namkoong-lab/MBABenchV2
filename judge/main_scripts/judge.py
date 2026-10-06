@@ -1649,6 +1649,34 @@ def _resolve_category_score(criteria_scores: dict, *names) -> float | None:
     return None
 
 
+def tag_check_graders(score_results: dict) -> dict:
+    """Write `grader` ("deterministic" | "llm") on every rubric item of
+    score_results["check_scores"] (maintainer 2026-10-06: which grader decided
+    each item must be readable from Neon alone, no S3).
+
+    "deterministic": the Python verdict is the one scored - the item is in
+    scored_results.accuracy_engine.checks with engine "harness" and counted
+    true (the deterministic rubric checks and the answer-check items the
+    harness could measure). "llm": every other item, including the
+    recorded-only checks and a Python check that fell back to the LLM.
+    Idempotent; also used by operation_scripts/backfill_check_grader.py on
+    existing rows. Returns {"deterministic": n, "llm": n}."""
+    applied = ((score_results.get("accuracy_engine") or {}).get("checks")) or {}
+    decided = {
+        key for key, v in applied.items()
+        if isinstance(v, dict) and v.get("engine") == "harness" and v.get("counted")
+    }
+    counts = {"deterministic": 0, "llm": 0}
+    for category, checks in (score_results.get("check_scores") or {}).items():
+        for name, item in (checks or {}).items():
+            if not isinstance(item, dict):
+                continue
+            grader = "deterministic" if f"{category}/{name}" in decided else "llm"
+            item["grader"] = grader
+            counts[grader] += 1
+    return counts
+
+
 def _apply_harness_verdicts(all_responses, harness_verdicts, weights_data):
     """Overlay the harness's measured decisions onto a COPY of the judgement.
 
@@ -1920,6 +1948,7 @@ def _finalize_case(
                     "— LLM verdicts stand (reasons in scored_results.accuracy_engine)"
                 )
         score_results["accuracy_engine"] = engine_block
+        tag_check_graders(score_results)
         if det_checks is not None:
             score_results["det_checks"] = det_checks.get("summary")
         if suitability_provenance is not None:

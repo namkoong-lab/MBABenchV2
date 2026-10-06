@@ -613,6 +613,15 @@ rulings below touch. Existing gradings are not re-scored.
   (passes); yellow on the row above or below the yellow legend line stays a
   mistake; a conditional-format review flag whose legend quotes the flag's name
   is a documented convention, not unfinished work (`detchecks/docs/checks/47.md`).
+- **`grader` on every rubric item** (maintainer 2026-10-06: which grader
+  decided an item must be readable from Neon alone, no S3):
+  `scored_results.check_scores[<category>][<item>].grader` is
+  `"deterministic"` where the Python verdict is the one scored (the item is in
+  `accuracy_engine.checks` with `engine: "harness"` and `counted: true`) and
+  `"llm"` otherwise (the recorded-only checks included). Written by
+  `judge.tag_check_graders` in `_finalize_case`; existing v13 / v14 rows get it
+  from `operation_scripts/backfill_check_grader.py` (re-runnable, skips tagged
+  rows). `grader_response` stays the pure LLM judgement.
 - **Regrading**: v13's 2,588 reuse rows (v12 LLM verdicts + v13 Python
   checks) predate every item above. A v14 pass over the same attempts re-runs
   the deterministic checks and, for the seven alternate-answer tasks, the
