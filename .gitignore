@@ -27,3 +27,6 @@ judge/*.log
 scripts/good_attempts_stage5.json
 scripts/good_gradings_stage5.json
 scripts/leaderboard_ids.json
+
+# Local-only: v13 reuse regrade driver (kept out of git)
+judge/operation_scripts/regrade_v13_reuse_llm.py
