@@ -507,6 +507,61 @@ def test_47_swatches():
     assert v["decision"] == "fail" and locs(v) == ["S!A4:B4"], locs(v)
 
 
+def test_47_legend_swatch_rulings_2026_10_06():
+    """Patrick 2026-10-06 on the 23 check-47 failures of the v13 run (all legend artefacts): (A) a legend
+    sample that holds a short text beside a label mentioning yellow (anywhere in it) is documentation
+    (1605, 1800, 1924, 1886, 1622 and 9 more: PASS); (B) yellow on the row above / below the yellow legend
+    line stays a mistake (1647 and 7 more: FAIL); (C) a conditional-format review flag whose legend quotes
+    the flag's name ('"review me" flag', 'nothing unfinished') is a documented convention (4026: PASS)."""
+    st = Styles()
+    yb = st.xf(fill=st.fill("FFFF00"))
+    # A: text sample, label to the right starting with the colour word (1605)
+    v = run(_y47([c("B55", yb, "Unfinished / review me"),
+                  c("C55", 0, "Yellow fill — reserved for unfinished items; none present in the delivered file")],
+                 st, name="rl1.xlsx"), C47)
+    assert v["decision"] == "pass" and v["stats"]["swatches"] == 1, (locs(v), v["stats"]["legend_lines"])
+    # A: label two columns to the right, sample text 'Sample' (1800)
+    v = run(_y47([c("B52", yb, "Sample"), c("D52", 0, "Yellow = unfinished / review me - none in the delivered file")],
+                 st, name="rl2.xlsx"), C47)
+    assert v["decision"] == "pass" and v["stats"]["swatches"] == 1, locs(v)
+    # A: label two columns to the LEFT with the colour word mid-text, sample 'none' (1924)
+    v = run(_y47([c("B22", 0, "Unfinished / review me (yellow fill) - none in the delivered file"), c("D22", yb, "none")],
+                 st, name="rl3.xlsx"), C47)
+    assert v["decision"] == "pass" and v["stats"]["swatches"] == 1, locs(v)
+    # A: self-labelled sample with the colour word in parentheses (1886)
+    v = run(_y47([c("C28", yb, "Unfinished / review me (yellow) — none in this file")], st, name="rl4.xlsx"), C47)
+    assert v["decision"] == "pass" and v["stats"]["swatches"] == 1, locs(v)
+    # A: 'Yellow = ...' | 'review' sample | explanation (1622)
+    v = run(_y47([c("B73", 0, "Yellow = unfinished / review me"), c("C73", yb, "review"), c("D73", 0, "None left in this file")],
+                 st, name="rl5.xlsx"), C47)
+    assert v["decision"] == "pass" and v["stats"]["swatches"] == 1, locs(v)
+    # a LONG yellow text beside a legend line is a note, not a sample
+    v = run(_y47([c("B5", yb, "Discount rate assumption still to be confirmed with the client before the final board pack"),
+                  c("C5", 0, "Yellow fill = inputs")], st, name="rl6.xlsx"), C47)
+    assert v["decision"] == "fail" and locs(v) == ["S!B5"], locs(v)
+    # the label line still governs the rest of the yellow: a WIP line excuses nothing elsewhere
+    v = run(_y47([c("B55", yb, "Unfinished / review me"), c("C55", 0, "Yellow fill = unfinished"), c("H10", yb, 1.0)],
+                 st, name="rl7.xlsx"), C47)
+    assert v["decision"] == "fail" and locs(v) == ["S!H10"] and v["stats"]["swatches"] == 1, locs(v)
+    # B: yellow on the row below the yellow legend line (1647): a misplaced swatch is still a mistake
+    v = run(_y47([c("B29", 0, "Yellow fill"), c("C29", 0, "Unfinished / review - none in the delivered file"),
+                  c("B30", yb, "Abbreviations"), c("C30", 0, "A = actual, E = estimate")], st, name="rl8.xlsx"), C47)
+    assert v["decision"] == "fail" and locs(v) == ["S!B30"], locs(v)
+    # C: a conditional-format review flag documented as a flag (4026): DEFINES, excused
+    dy = st.dxf(fill="FFFF00")
+    cf = (f'<conditionalFormatting sqref="D5:D26"><cfRule type="expression" dxfId="{dy}" priority="1">'
+          f'<formula>$D5="REVIEW"</formula></cfRule></conditionalFormatting>')
+    note = ('REVIEW flags (yellow) mark sense-band breaches or a changed assumption — "review me", nothing unfinished; '
+            'FAIL (red) feeds the master count in C2')
+    v = run(book(tmp("rl9.xlsx"), [("S", sheet([c("A28", 0, note)], tail=cf))], st), C47)
+    assert v["decision"] == "pass" and v["stats"]["legend_lines"][0]["class"] == "DEFINES", (locs(v), v["stats"]["legend_lines"])
+    assert classify_legend('yellow fill = "review me" flag on the Checks tab only (REVIEW = sense-band breach)') == "DEFINES"
+    # ... a soft marker that names no flag convention is still unfinished work
+    v = run(book(tmp("rl10.xlsx"), [("S", sheet([c("A28", 0, "Yellow = needs review")], tail=cf))], st), C47)
+    assert v["decision"] == "fail" and v["stats"]["legend_lines"][0]["class"] == "WIP", v["stats"]["legend_lines"]
+    assert classify_legend('Yellow = "TBD"') == "WIP"
+
+
 # ============================================================================ 94: pure functions
 def test_94_contrast_anchors():
     assert apca_lc("FFFFFF", "FFFFFF") == 0.0
@@ -1440,6 +1495,7 @@ TESTS = [test_47_colour_band, test_47_legend_classifier, test_47_own_fill_pale_a
          test_94_contrast_anchors, test_94_cf_rule_evaluation, test_94_font_against_own_background,
          test_94_number_formats, test_94_rich_text_runs, test_94_conditional_formatting,
          test_94_values_needed_only_where_formatting_could_conceal, test_94_table_style_and_hidden_row,
+         test_47_legend_swatch_rulings_2026_10_06,
          test_47_review_wip_vocab, test_47_review_hex_colour_label, test_47_review_swatch_label_promotion,
          test_47_review_selflabel_wip_note, test_47_review_positive_legends, test_47_review_left_and_self_keys,
          test_47_review_ambiguous_cf_only_when_decisive, test_47_review_replaced_and_wip_blocks,

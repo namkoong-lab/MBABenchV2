@@ -607,6 +607,12 @@ rulings below touch. Existing gradings are not re-scored.
   A cell whose base font is wrong is excused when a conditional format covering
   it paints a colour its class accepts, whether or not the rule fires; a
   conditional format never makes a cell fail. Recorded in `stats.cf_excused`.
+- **No bright-yellow highlighting (47), legend swatches** (maintainer rulings on
+  the 23 check-47 failures of the v13 run, all legend artefacts): a legend sample
+  holding a short text beside a label that mentions yellow is documentation
+  (passes); yellow on the row above or below the yellow legend line stays a
+  mistake; a conditional-format review flag whose legend quotes the flag's name
+  is a documented convention, not unfinished work (`detchecks/docs/checks/47.md`).
 - **Regrading**: v13's 2,588 reuse rows (v12 LLM verdicts + v13 Python
   checks) predate every item above. A v14 pass over the same attempts re-runs
   the deterministic checks and, for the seven alternate-answer tasks, the

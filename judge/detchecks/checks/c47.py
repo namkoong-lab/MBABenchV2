@@ -251,11 +251,23 @@ _XREF_RX = re.compile(r"\(\s*(?:see|refer(?:\s+to)?|cf\.?|as\s+per|per|details?(
                       r"(?:[,–—]|\s-)\s*(?:see|refer\s+to|cf\.?)\b[^.;]*", re.I)
 
 
+# Patrick 2026-10-06 (attempt 4026, Checks!A28 'REVIEW flags (yellow) mark sense-band breaches ... -
+# "review me", nothing unfinished'; rubric: yellow for "flagging assumptions that require periodic
+# review" is an allowed, documented purpose): a soft marker that is the QUOTED name of what the colour
+# shows ('"review me" flag'), or that sits in a clause describing a flag / check convention, is an
+# ongoing convention, not unfinished work.  Hard markers (TBD, unfinished, placeholder) are unchanged.
+_QUOTED_RX = re.compile(r"\"[^\"]*\"|“[^”]*”|'[^']{1,40}'")
+_FLAG_RX = re.compile(r"\b(?:flags?|flagged|flagging|breach\w*|alerts?|warnings?|exceptions?|sense[\s-]?bands?|"
+                      r"tolerance|threshold\w*|error[\s-]?checks?)\b", re.I)
+
+
 def _wip(cl: str) -> bool:
     c2 = _NEG_WIP_RX.sub(" ", _XREF_RX.sub(" ", cl))
     if _WIP_HARD_RX.search(c2):
         return True
-    return bool(_WIP_SOFT_RX.search(c2)) and not _PERIODIC_RX.search(c2) and not _CONDITIONAL_RX.search(c2)
+    c3 = _QUOTED_RX.sub(" ", c2)
+    return bool(_WIP_SOFT_RX.search(c3)) and not _PERIODIC_RX.search(c3) and not _CONDITIONAL_RX.search(c3) \
+        and not _FLAG_RX.search(c3)
 
 
 _SEP = r"\s*(?:=|:|–|—|->|→|\s-\s)\s*"
@@ -767,13 +779,22 @@ class C47(Check):
             isolated = not (lft and lft[3]) and not (rgt and rgt[3])
             if kind == K_EMPTY and isolated:
                 cand = self._swatch_label(c, c, by_col, texts)
-            elif kind == K_TEXT and isolated and _LEADS_RX.search(text) and mentions_yellow(text) and \
+            elif kind == K_TEXT and isolated and mentions_yellow(text) and \
                     (_BARE_LABEL_RX.match(text) or classify_legend(text) in ("DEFINES", "TEMPLATE", "NEGATED")):
                 # self-labelled sample: the yellow cell's own text is its legend line ('Yellow fill =
-                # ...'); that line was classified in step 1 and decides whether yellow is excused.  A yellow
-                # note that defines nothing or marks unfinished work ('Yellow flag: rate TBD') is not one.
+                # ...', 'Unfinished / review me (yellow) - none in this file': the colour word may sit
+                # anywhere, Patrick 2026-10-06); that line was classified in step 1 and decides whether
+                # yellow is excused.  A yellow note that defines nothing or marks unfinished work
+                # ('Yellow flag: rate TBD') is not one.
                 self.n_swatches += 1
                 continue
+            elif kind == K_TEXT and isolated and len(text) <= KEY_LABEL_MAX_LEN and \
+                    (lab := self._swatch_label(c, c, by_col, texts)) is not None and lab["mentions"]:
+                # Patrick 2026-10-06 (attempt 1605 and 13 more): a legend sample that holds a short text
+                # ('Unfinished / review me', 'sample', 'none', 'n/a') beside a label that mentions yellow
+                # is documentation like an empty sample, whatever its text says; the label line decides
+                # whether the rest of the yellow is excused
+                cand = lab
             elif kind == K_TEXT and isolated and is_key_label(text) and self._right_clear(c, by_col):
                 # self-labelled sample without the colour word ([yellow 'Key output'] under a legend header; a
                 # description may follow it, a number / formula may not)
@@ -831,14 +852,16 @@ class C47(Check):
             t = x[2]
             after = by_col.get(c2 + d + 1)
             alone = after is None or (after[1] == K_EMPTY and not after[3])
-            right = {"label": t, "mentions": bool(_LEADS_RX.search(t)) and mentions_yellow(t), "lc": c2 + d,
+            # Patrick 2026-10-06: the colour word may sit anywhere in the label ('Unfinished / review me
+            # (yellow fill) - none in the delivered file', attempt 1924), not only at its start
+            right = {"label": t, "mentions": mentions_yellow(t), "lc": c2 + d,
                      "side": "right", "alone": alone, "left_is_data": left_is_data,
                      "clear": self._right_clear(c2 + d, by_col)}
             break
         if right is not None and right["mentions"]:
             return right
         for cc, t in reversed(texts):
-            if c1 - SWATCH_LABEL_MAX_DIST_LEFT <= cc < c1 and _LEADS_RX.search(t) and mentions_yellow(t):
+            if c1 - SWATCH_LABEL_MAX_DIST_LEFT <= cc < c1 and mentions_yellow(t):
                 return {"label": t, "mentions": True, "lc": cc, "side": "left", "alone": True, "left_is_data": False,
                         "clear": True}
         if right is not None:
