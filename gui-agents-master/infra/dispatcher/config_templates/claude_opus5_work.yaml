@@ -1,13 +1,13 @@
 # Spin-up config template: Claude provider, Opus 5 in cowork mode at max
 # effort with Extended Thinking on.
 #
-# Pass to spinup.sh via:
+# Pass to `dispatch spinup` via:
 #   dispatch spinup \
 #       --alias claude_opus5_work \
 #       --config-template infra/dispatcher/config_templates/claude_opus5_work.yaml
 #
 # Deep-merges on top of infra/configs/configs.default.yaml; every key here is an
-# override. DB URL and AWS creds intentionally absent - spinup.sh synthesizes
+# override. DB URL and AWS creds intentionally absent - `dispatch spinup` synthesizes
 # /etc/gui-agents/secrets.env from the operator's env, read by the worker via
 # the EnvironmentFile in gui-agents-worker.service.
 #

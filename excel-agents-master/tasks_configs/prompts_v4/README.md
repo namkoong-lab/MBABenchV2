@@ -1,29 +1,25 @@
-# V2 benchmark prompts, House Standards revision (rubric-v9)
+# V2 benchmark prompts, House Standards revision (rubric-free)
 
-`prompts_v3/` + one addition: the house financial-modelling conventions in
-`<repo>/house_standards/House_Standards_v1.md` are attached with the case
-files, and the prompts tell the agent to follow them. Nothing else changed:
-the 132-check rubric body is **byte-identical** to `prompts_v2/step2_build.txt`
-from the `== FULL RUBRIC ==` marker onward, so scores stay comparable and any
-delta is attributable to the house standards alone.
+Byte-identical copies of `gui-agents-master/tasks_configs/prompts_v4/` (the
+3-step House Standards set, **prompt_version 204**) and, for the single-turn
+variant, `tasks_configs/prompts/v2_3.txt` (**205**, the default): the agent is
+handed the house financial-modelling conventions
+(`<repo>/house_standards/House_Standards_v1.md`, attached with the case files)
+instead of the grading rubric. Every rubric passage of the 202/203 text was
+removed and the house-standards directives added; the ANSWERS / Questions-sheet
+mechanics, the no-code-interpreter rule, the Summary-sheet plan and the
+download closing are kept. The gui README of the same folder has the
+step-by-step delta.
 
-| File | Step | Delta vs prompts_v3 |
-|---|---|---|
-| `step1_analyze.txt` | 1 — Analyze & plan | one sentence: read the attached House_Standards_v1.md now; the plan follows its structure conventions |
-| `step2_build.txt` | 2 — Build | new HOUSE STANDARDS block after ANSWERS, before the conventions; rubric untouched |
-| `step3_qa.txt` | 3 — QA + download | new QA item 9 (workbook follows the standards; departures noted on the cover) |
+| File | Step |
+|---|---|
+| `step1_analyze.txt` | 1 — Analyze & plan; read the attached House_Standards_v1.md first |
+| `step2_build.txt` | 2 — Build; HOUSE STANDARDS block after ANSWERS, no rubric |
+| `step3_qa.txt` | 3 — Verify + download: workbook loads, Questions sheets intact and answered with live formulas, house standards followed |
 
-This set is **prompt_version 204** in `tasks_configs/prompts/registry.yaml`,
-whose entry also declares the attachment (`attachments:`), so the version
-selects the text and the file together. The matching single-pass variant is
-`tasks_configs/prompts/v2_3.txt` (**205**): v2_2 with the HOUSE STANDARDS
-block before the graded-rubric sentence and the same QA item 9.
-
-Precedence is stated in the text: the case instructions and this prompt
-(including the rubric) govern over the house standards.
-
-`excel-agents-master/tasks_configs/prompts_v4/` holds byte-identical copies
-under the same number 204 (guarded by its `tests/test_prompt_parity.py`);
-the cli v14 (later scrubbed to v15) and coding template v12 sets are generated from these files by
-their `tools/build_*` scripts. Do not edit any of them in place — new text =
-new number, here and in every mirror.
+`tasks_configs/prompts/registry.yaml` declares the attachment on both entries,
+so the version selects the text and the file together. The byte parity with the
+gui copies is enforced by `tests/test_prompt_parity.py`; regenerate both from
+the gui builder (`gui-agents-master/tools/build_house_standards_prompts.py`),
+never hand-edit. Precedence is stated in the text: the case instructions and
+the prompt govern over the house standards; departures are noted on the cover.

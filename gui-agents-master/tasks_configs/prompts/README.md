@@ -72,8 +72,9 @@ already carries), `2xx` is v2.
 
 ## Where the files live
 
-Only new prompt sets live in this directory. The existing sets stay where
-they are — `tasks_configs/prompts_v2/` and `tasks_configs/prompts_pv9/`,
-both of which carry READMEs documenting their provenance — and the registry
-references them by repo-relative path. They are frozen records of what
-production runs have already sent, so they are not moved.
+The single-turn texts (`v000_test.txt`, `v2_1.txt`, `v2_2.txt`, `v2_3.txt`) live
+in this directory. The multi-turn sets stay in their own folders —
+`tasks_configs/prompts_pv9/` (v1), `prompts_v2/` (200), `prompts_v3/` (202)
+and `prompts_v4/` (204), each with a README documenting its provenance — and
+the registry references them by repo-relative path. They are frozen records of
+what recorded runs were sent, so they are never moved or edited.

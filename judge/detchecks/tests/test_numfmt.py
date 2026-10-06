@@ -66,8 +66,8 @@ TOY_BUILTIN_IDS = (0, 1, 3, 4, 9, 10, 14, 16, 17, 40, 43, 44, 49)
 
 def test_toy_table_matches_extract_when_available():
     """The embedded TOY_FORMATS must list exactly the codes extracted from the toys
-    (detchecks/scratch/toy_numfmts.json, written by scratch/extract_numfmts.py via
-    heavy_run).  Skipped silently when the scratch extract is absent."""
+    (detchecks/scratch/toy_numfmts.json, written by a scratch extraction script that is
+    not in the repository).  Skipped silently when the scratch extract is absent."""
     import json
     import os
     path = os.path.join(os.path.dirname(__file__), "..", "scratch", "toy_numfmts.json")

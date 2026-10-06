@@ -56,8 +56,8 @@ def _repo_value(*path: str) -> str | None:
     resolves it from any cwd. This wrapper adds the three things that import
     does not give you:
 
-    * It never raises. Worker boxes install only
-      gui-agents-master/requirements.txt and never rsync config/, so the
+    * It never raises. Worker boxes install only gui-agents-master's own
+      dependencies (from its pyproject.toml) and never rsync config/, so the
       import fails there — and that failure IS the signal to fall through to
       /etc/gui-agents/secrets.env, not an error.
     * It never writes. Config.load() defaults to create_missing=True, which

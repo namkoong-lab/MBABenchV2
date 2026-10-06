@@ -1,9 +1,7 @@
 """Unit tests for Reasonable column widths (70) on synthetic micro-workbooks (raw SpreadsheetML zips
 written here).
 
-    cd judge
-    python3 /Users/patrick/MBABench-deterministic-checks/heavy_run.py -- python \
-        -m detchecks.tests.test_checks_70
+    cd judge && python -m detchecks.tests.test_checks_70
 
 Plain asserts; also collectable by pytest.  Temporary files go to detchecks/scratch/colwidths70/.
 The judge-port parity test imports judge/utils/workbook_properties.py (run from judge/).

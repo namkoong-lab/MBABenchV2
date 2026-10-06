@@ -519,7 +519,7 @@ checks:
       not the first tab.
 
   # --- 2026-09-16 judge v9: toy-reliability runs 2-3 walkthrough --------------
-  # Decisions log: JUDGE_DECISIONS_2026-09-16.md (maintainer + Claude). Every
+  # Decisions log: the maintainers' JUDGE_DECISIONS_2026-09-16.md (not in the repository). Every
   # note below was checked against the 101 golden solutions before adoption.
 
   - category: Structure

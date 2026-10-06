@@ -312,8 +312,8 @@ Every script under `operation_scripts/` that touches the database or S3 takes
 
 ## Tests
 
-Offline; each file runs on its own and prints `OK`/`FAIL` per test (they are
-also pytest-collectable one file at a time):
+Offline; each `tests_offline/` file runs on its own and prints `OK`/`FAIL` per
+test; the detchecks suite is pytest:
 
 ```bash
 cd judge

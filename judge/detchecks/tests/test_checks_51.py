@@ -1,7 +1,6 @@
 """Regression tests for Red font for external links (51): second review, 2026-10-04.
 
-    cd /Users/patrick/MBABench-deterministic-checks
-    python3 heavy_run.py -- python -m detchecks.tests.test_checks_51
+    cd judge && python -m detchecks.tests.test_checks_51
 
 Builders and the shared colour constants come from test_checks_colours (same synthetic
 workbook format).  Findings covered:

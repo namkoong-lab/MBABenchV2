@@ -163,7 +163,7 @@ sink:
 #   1. `url` below — an explicit override. On EC2 boxes this whole file is
 #      the pushed run profile, so the escape hatch stays available.
 #   2. <repo>/config/config.yaml -> database.v{1,2}_url  (benchmark-selected)
-#   3. the env var named by `url_env`. This is the box path: spinup.sh writes
+#   3. the env var named by `url_env`. This is the box path: `dispatch spinup` writes
 #      /etc/gui-agents/secrets.env and boxes never see the monorepo config.
 #      NOTE it is a single blind url — it cannot tell v1 from v2.
 database:

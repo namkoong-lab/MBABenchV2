@@ -1,12 +1,12 @@
 # Spin-up config template: ChatGPT provider, GPT-5.6 Sol on the Chat surface.
 #
-# Pass to spinup.sh via:
+# Pass to `dispatch spinup` via:
 #   dispatch spinup \
 #       --alias chatgpt-sol56-chat-1 \
 #       --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
 #
 # Deep-merges on top of infra/configs/configs.default.yaml; every key here
-# is an override. DB URL and AWS creds intentionally absent — spinup.sh
+# is an override. DB URL and AWS creds intentionally absent — `dispatch spinup`
 # synthesizes /etc/gui-agents/secrets.env from the operator's env, and the
 # worker reads those via the EnvironmentFile in gui-agents-worker.service.
 
