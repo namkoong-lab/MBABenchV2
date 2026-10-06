@@ -851,10 +851,19 @@ def test_69_default_widths_and_grouping():
     assert locs(v) == ["'Solution Model'!J7:J9", "'Solution Model'!J12"]
     assert v["stats"]["sure_overflows"] == 4 and v["stats"]["n_mistakes"] == 2
     assert v["stats"]["per_sheet"][0]["sure_overflows"] == 4
-    # a formula whose number format is undefined (id 25 without <numFmt>) raises, no fallback
+    # a number whose format is undefined (id 25 without <numFmt>) is General (Patrick 2026-10-06, attempt
+    # 2777, measured in Excel: the format is dropped on repair), recorded; it raised until then
     st2 = Styles()
     st2.xfs.append('<xf numFmtId="25" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>')
-    raises(lambda: run(book([("S", ws({1: ("", [c("A1", 5.0, len(st2.xfs) - 1)])}))], st2)), "number format cannot be read")
+    v = graded("unreadable_number_format", lambda: run(book([("S", ws({1: ("", [c("A1", 5.0, len(st2.xfs) - 1)])}))], st2)), "S!A1")
+    assert v["decision"] == "pass", v
+    # an invalid code (unterminated quoted literal, attempt 2777) likewise: the width is judged on General
+    st3 = Styles()
+    st3.numfmts[200] = '#,##0.00;\\-#,##0.00;"-""'
+    st3.xfs.append('<xf numFmtId="200" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>')
+    v = graded("unreadable_number_format", lambda: run(book([("S", ws({1: ("", [c("A1", 27643.237, len(st3.xfs) - 1)])},
+                                                                  cols=col(1, 1, stored(3.0))))], st3)), "S!A1")
+    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v
 
 
 # ============================================================================ second review (2026-10-04)

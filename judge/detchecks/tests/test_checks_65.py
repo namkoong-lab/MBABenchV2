@@ -614,7 +614,10 @@ def test_unreadable_formats_raise_only_when_needed():
     st = Styles()
     bad = st.xf(65)                     # numFmtId 65: no <numFmt> and no built-in meaning
     assert run(book([("S", sheet([c("A1", bad, "text"), c("A2", bad, 5)]))], st))["decision"] == "pass"
-    raises(lambda: run(book([("S", sheet([c("A1", bad, -5)]))], st)), "number format cannot be read")
+    # Patrick 2026-10-06 (attempt 2777, measured in Excel): an unreadable format is General, so the
+    # negative shows as -5 and fails; recorded (it raised until then)
+    v = graded("unreadable_number_format", lambda: run(book([("S", sheet([c("A1", bad, -5)]))], st)), "S!A1")
+    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v
 
 
 def test_array_members_missing_from_the_file():

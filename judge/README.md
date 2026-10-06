@@ -587,6 +587,17 @@ against the golden alone; v14 rows are not comparable on those tasks.
   listed, grades on the golden alone. The LLM judge is not told about the
   alternates: its Final calculation accuracy verdict is overlaid by the
   harness's at scoring (`--accuracy-check harness`), as since v6.
+- **The seven attempts judge v13 could not grade** (a deterministic check raised
+  `GradingError`; `detchecks/CHANGELOG_core.md` 2026-10-06, each ruling by the
+  maintainer with Excel open): Active cell reset to A1 (62) — several
+  `<selection>` elements for the active pane: the last one decides (measured on
+  2379 / 2402; 2379, 2402, 3390, 3505 now fail 62); Black font for calculations
+  (49) — a green INDIRECT whose address is built from text decides by the sheet its
+  literals or address cells name, a computed sheet name is assumed cross-sheet
+  (1458 passes the cell, 1725 passes with 2,980 cells recorded under
+  `stats.defaults.indirect_sheet_unverified`); number formats that cannot be read
+  (65, 66, 69, 70, 94) are General, as Excel shows after repairing the file (2777
+  now grades; `unreadable_number_format`).
 - The judge version is not bumped yet; further v14 changes may follow today.
   Bump `single_pass.version` in `project_configs.yaml` to 14 when cutting.
 

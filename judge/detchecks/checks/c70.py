@@ -388,7 +388,9 @@ class C70(Check):
         v.fmt_err = None
         try:
             v.code = N.resolve_format(xf.num_fmt_id, st.num_fmts)
+            N.parse_format(v.code)               # an unreadable code raises here, not at a cell
         except GradingError as e:
+            # Patrick 2026-10-06 (attempt 2777, measured in Excel): an unreadable format is General
             v.code, v.fmt_err = "General", str(e)
         self._styles[s] = v
         return v
@@ -483,7 +485,7 @@ class C70(Check):
         placeholders) - the cell is then undecided like an untrusted value."""
         if kind in ("number", "date"):
             if sty.fmt_err:
-                raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.fmt_err}")
+                self.note_default("unreadable_number_format", f"{cell.sheet}!{cell.ref}: {sty.fmt_err}")
             r = N.render(v, sty.code, value_type=("d" if kind == "date" else None), date1904=self.date1904)
             if not r.certain:
                 # Patrick 2026-10-05 (every attempt graded): the engine's best rendering is measured

@@ -52,6 +52,9 @@ DEFAULT_RULES = {
                                  "('<name>'!...) with the sheet name computed is taken to read another sheet",
     "indirect_address_unknown": "a green INDIRECT formula whose address is built from cell contents that no "
                                 "literal or constant cell resolves to a sheet is skipped for this check",
+    # Patrick 2026-10-06 (attempt 2777, measured in Excel): Excel repairs the file by dropping the format
+    "unreadable_number_format": "a cell number format that cannot be read (an invalid code, an undefined "
+                                "numFmtId) is General, as Excel shows it after dropping the format on repair",
 }
 MAX_DEFAULT_EXAMPLES = 10
 

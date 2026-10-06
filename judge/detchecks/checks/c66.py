@@ -321,8 +321,11 @@ class C66(Check):
                 x.code = N.resolve_format(self.st.num_fmt_id(s), self.st.num_fmts)
                 x.zcls, x.ztext = self._zclass(x.code)
                 x.err = None
-            except GradingError as e:             # NumFmtError: raised only if a zero needs this format
-                x.code, x.zcls, x.ztext, x.err = None, UNCERTAIN, "", str(e)
+            except GradingError as e:
+                # Patrick 2026-10-06 (attempt 2777, measured in Excel): an unreadable format is General
+                # (Excel drops it on repair); recorded when a zero is judged under it
+                x.code, x.err = "General", str(e)
+                x.zcls, x.ztext = self._zclass("General")
             other = DISPLAYED_ZERO_COUNTS and x.zcls != DATETIME
             x.needs_value = x.err is not None or x.zcls == UNCERTAIN or fails(x.zcls) or other
             hz = _hide(x.zcls, x.code)
@@ -446,8 +449,7 @@ class C66(Check):
         if v != 0 and not DISPLAYED_ZERO_COUNTS:
             return
         if st.err is not None:
-            raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref} holds the number {v!r} but its number "
-                               f"format cannot be read: {st.err}")
+            self.note_default("unreadable_number_format", f"{cell.sheet}!{cell.ref} = {v!r}: {st.err}")
         if v != 0:
             cls = self._value_class(v, st)[0]
             if cls != UNCERTAIN and not fails(cls):
@@ -897,8 +899,7 @@ class C66(Check):
         if v is None or (v != 0 and not DISPLAYED_ZERO_COUNTS):
             return
         if st.err is not None:
-            raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref} holds the number {v!r} but its number "
-                               f"format cannot be read: {st.err}")
+            self.note_default("unreadable_number_format", f"{cell.sheet}!{cell.ref} = {v!r}: {st.err}")
         if p["merges"] and self._hidden_by_merge(p["merges"], r, c):
             self.counts["merged_non_anchor"] += 1
             return

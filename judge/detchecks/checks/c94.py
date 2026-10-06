@@ -295,8 +295,8 @@ def _rule_text(rule) -> str:
 class _Style:
     """Per style index: font colour, background candidates, number format, risk flags; defaulted = why an
     unresolvable colour of the style was read as Excel's default (None: none was)."""
-    __slots__ = ("font", "bgs", "bg_desc", "fmt", "colour_conceal", "fmt_risky", "risky", "no_own_fill", "direct_font",
-                 "defaulted")
+    __slots__ = ("font", "bgs", "bg_desc", "fmt", "fmt_err", "colour_conceal", "fmt_risky", "risky", "no_own_fill",
+                 "direct_font", "defaulted")
 
 
 def _bg_of_paint(p) -> tuple[list, str]:
@@ -442,7 +442,13 @@ class C94(Check):
             x.defaulted = "; ".join(why) or None
             x.bgs, x.bg_desc = _bg_of_paint(fill)
             x.bgs = tuple(x.bgs)
-            x.fmt = N.resolve_format(self.st.num_fmt_id(s), self.st.num_fmts)
+            x.fmt_err = None
+            try:
+                x.fmt = N.resolve_format(self.st.num_fmt_id(s), self.st.num_fmts)
+                N.parse_format(x.fmt)            # an unreadable code raises here, not at a cell
+            except GradingError as e:
+                # Patrick 2026-10-06 (attempt 2777, measured in Excel): an unreadable format is General
+                x.fmt, x.fmt_err = "General", str(e)
             x.colour_conceal = conceals(x.font, x.bgs)        # None: an unresolvable colour decides
             x.fmt_risky = self._fmt_risky(x.fmt, x.bgs)
             x.risky = x.colour_conceal is not False or x.fmt_risky
@@ -743,6 +749,8 @@ class C94(Check):
         self.styles_seen.add(s)
         if st.defaulted:
             self.note_default("unresolved_colour", f"{location(cell.sheet, cell.ref)}: {st.defaulted}")
+        if st.fmt_err:
+            self.note_default("unreadable_number_format", f"{location(cell.sheet, cell.ref)}: {st.fmt_err}")
         rich = (cell.t == "s" or cell.t == "inlineStr") and self._is_rich(cell)
         if rich:
             self.has_rich = True

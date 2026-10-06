@@ -488,7 +488,10 @@ def test_unreadable_formats_raise_only_when_needed():
     st = Styles()
     bad = st.xf(65)                     # numFmtId 65: no <numFmt> and no built-in meaning
     assert run(book([("S", sheet([c("A1", bad, "text"), c("A2", bad, 5)]))], st))["decision"] == "pass"
-    raises(lambda: run(book([("S", sheet([c("A1", bad, 0)]))], st)), "number format cannot be read")
+    # Patrick 2026-10-06 (attempt 2777, measured in Excel): an unreadable format is General, so the
+    # zero shows as 0 and fails; recorded (it raised until then)
+    v = graded("unreadable_number_format", lambda: run(book([("S", sheet([c("A1", bad, 0)]))], st)), "S!A1")
+    assert v["decision"] == "fail" and locs(v) == ["S!A1"], v
     st = Styles()
     e = st.xf("")                       # empty formatCode = General (Excel 2026-10-03): a '0', no raise
     assert locs(run(book([("S", sheet([c("A1", e, 0)]))], st))) == ["S!A1"]

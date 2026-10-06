@@ -24,6 +24,12 @@ N.render(0, 8, custom_formats={8: '#,##0.00\\ "€";[Red]\\-#,##0.00\\ "€"'}).
 `<numFmt>` definition and no built-in meaning (23–26, 63–66, ≥ 82 undefined), malformed
 codes (unterminated `"` or `[`, more than 4 sections), non-finite numbers, a numeric cell
 value that is not a number, an unknown `value_type`. Do not catch it to skip a cell.
+Since 2026-10-06 the checks that render cell values (65, 66, 69, 70, 94) validate a cell's
+format once per style (`resolve_format` + `parse_format`) and read an unreadable one as
+**General**, recorded per cell under `stats.defaults.unreadable_number_format` (Patrick,
+attempt 2777 measured in Excel: Excel repairs the file by dropping the format). A
+conditional-format (dxf) number format that cannot be read still gives way to the cell's own
+format in 65 / 66 and raises elsewhere.
 
 Where Excel's behaviour is **not verified**, `render` still answers but sets
 `certain=False` (see Known limits). A check that would decide pass/fail on such a cell

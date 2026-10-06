@@ -465,8 +465,11 @@ class C65(Check):
                 x.code = N.resolve_format(self.st.num_fmt_id(s), self.st.num_fmts)
                 x.cls, x.text, x.value_free = self._fmt(x.code)
                 x.err = None
-            except GradingError as e:             # NumFmtError: raised only if a negative needs this format
-                x.code, x.cls, x.text, x.err, x.value_free = None, UNCERTAIN, "", str(e), False
+            except GradingError as e:
+                # Patrick 2026-10-06 (attempt 2777, measured in Excel): an unreadable format is General
+                # (Excel drops it on repair); recorded when a negative is judged under it
+                x.code, x.err = "General", str(e)
+                x.cls, x.text, x.value_free = self._fmt("General")
             self._styles[s] = x
         return x
 
@@ -563,8 +566,7 @@ class C65(Check):
         if v is None or v > NEG_THRESHOLD:
             return
         if st.err is not None:
-            raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref} holds the negative number {v!r} but its "
-                               f"number format cannot be read: {st.err}")
+            self.note_default("unreadable_number_format", f"{cell.sheet}!{cell.ref} = {v!r}: {st.err}")
         self.cand.append((cell.row, cell.col, cell.s, v))
 
     # -------------------------------------------------------------- conditional formats

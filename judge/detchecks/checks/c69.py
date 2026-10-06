@@ -574,7 +574,10 @@ class C69(Check):
         v.fmt_err = None
         try:
             v.code = N.resolve_format(xf.num_fmt_id, st.num_fmts)
+            N.parse_format(v.code)               # an unreadable code raises here, not at a cell
         except GradingError as e:
+            # Patrick 2026-10-06 (attempt 2777, measured in Excel): Excel drops an unreadable format on
+            # repair, so the cell shows General; recorded per cell (unreadable_number_format)
             v.code, v.fmt_err = "General", str(e)
         # an untrusted formula result is "not displayed whatever its value" only when the format prints
         # nothing for numbers AND text (';;;'); under ';;' a text result would show (cut-off text rule)
@@ -606,7 +609,7 @@ class C69(Check):
             v.text_kind = "spill_right"          # general / left (/ unknown): overflows to the right
         v.text_mode, v.text_err = "plain", None
         if v.fmt_err is not None:
-            v.text_mode, v.text_err = "error", v.fmt_err     # raises when a displayed text needs the format
+            v.text_err = v.fmt_err               # General: text shows plain; recorded when a text needs it
         else:
             try:
                 f = N.parse_format(v.code)
@@ -862,7 +865,7 @@ class C69(Check):
         if not sty.known:
             self.unknown_faces[sty.face or "(none)"] = self.unknown_faces.get(sty.face or "(none)", 0) + 1
         if sty.fmt_err:
-            raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.fmt_err}")
+            self.note_default("unreadable_number_format", f"{location(cell.sheet, cell.ref)}: {sty.fmt_err}")
         if kind == "untrusted":
             # settled at sheet_end: dropped when never displayed (covered merged cell) or blank
             # whatever the value (';;;' outside conditional-format ranges), else undecided
@@ -1077,8 +1080,8 @@ class C69(Check):
     def _display_text(self, cell, sty: _Style, s: str):
         """What a text shows under the cell's number format (a text section can add to it or blank it),
         or None when nothing visible is shown."""
-        if sty.text_mode == "error":
-            raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.text_err}")
+        if sty.text_err:
+            self.note_default("unreadable_number_format", f"{location(cell.sheet, cell.ref)}: {sty.text_err}")
         disp = s
         if sty.text_mode == "format":
             r = N.render(s, sty.code, value_type="s")
@@ -1740,7 +1743,7 @@ class C69(Check):
                 return
             self.counts["hidden_anchor_cells"] += 1
             if sty.fmt_err:
-                raise GradingError(f"{self.key}: {cell.sheet}!{cell.ref}: number format cannot be read: {sty.fmt_err}")
+                self.note_default("unreadable_number_format", f"{location(cell.sheet, cell.ref)}: {sty.fmt_err}")
             if kind == "untrusted":
                 if sty.always_blank and not self._in_boxes([x for x in rules if x.fmt is not None], *key):
                     self.counts["undecided_not_displayed"] += 1
