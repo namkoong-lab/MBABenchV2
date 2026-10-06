@@ -1,6 +1,6 @@
 # infra — quick start
 
-> **Audience: MBABenchV2 internal team.** This guide assumes access to our private Postgres database, our `mbabenchv2` S3 bucket, and our internal AWS account. **External users:** the local quickstart in [`../README.md`](../README.md) is the supported turnkey path. The dispatcher code below is reusable against your own AWS / Postgres / S3, but you'd need to provision those yourself — see "BYO infrastructure" in the main README.
+> **Audience: MBABenchV2 internal team.** This guide assumes access to a Postgres database, the `mbabench` S3 bucket, and an AWS account for the EC2 fleet. **External users:** the local quickstart in [`../README.md`](../README.md) is the supported turnkey path. The dispatcher code below is reusable against your own AWS / Postgres / S3, but you'd need to provision those yourself — see "BYO infrastructure" in the main README.
 
 Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
 [dispatcher/common_commands.md](dispatcher/common_commands.md) (the full
@@ -49,7 +49,7 @@ Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
 ### Per box
 
 1. **Spin up** — launches, installs, registers in
-   [dispatcher/boxes.yaml](dispatcher/):
+   `dispatcher/boxes.yaml` (gitignored; the command writes it):
 
    ```bash
    dispatch spinup --alias chatgpt-pro-1 \

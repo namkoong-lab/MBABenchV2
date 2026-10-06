@@ -8,7 +8,7 @@ is the name the prompt directive uses.
 
 | Version | File | Introduced in |
 |---|---|---|
-| 1 | `House_Standards_v1.md` | gui/excel prompt versions 204/205, cli v14 then v15 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed), coding template v11/v12 then v13 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed, the v2 default) (2026-09-10) |
+| 1 | `House_Standards_v1.md` | gui/excel prompt versions 204/205; cli v14, then v15 and v16 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed; v16 is the v2 default); coding template v11/v12, then v13 (delivered as `HOUSE_STANDARDS.md`, rubric-scrubbed, the v2 default) (2026-09-10) |
 
 ## Copies
 

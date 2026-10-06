@@ -74,9 +74,9 @@ The agent core is the heart of the system. It doesn't know or care where tasks c
 
 Prompts are the single highest-leverage customization point. Small changes to the system prompt or task template can dramatically change agent behavior.
 
-**System Prompt** (`prompts/system_prompt_v{N}.txt`) — Defines the agent's role, tool usage rules, quality standards, formatting criteria, and the expected JSON response schema. Currently ~866 lines (v10). Contains the rubric criteria the agent is evaluated against.
+**System Prompt** (`prompts/system_prompt_v{N}.txt`) — Defines the agent's role, tool usage rules, quality standards, formatting criteria, and the expected JSON response schema. The v1 prompts (v1..v11) state the 17-check v1 rubric; v12..v14 embed the 132-check v2 rubric; v15 and v16 (the v2 default) are rubric-free and rely on the attached House Standards.
 
-**Task Template** (`prompts/task_template_{source}_v{N}.txt`) — Injected per-task to frame the specific work. Kept intentionally short (~56 lines) — heavier templates consistently degraded performance by encouraging one-shot mega-batches instead of iterative reasoning.
+**Task Template** (`prompts/task_template_{source}_v{N}.txt`, `task_template_shared_v{N}.txt` from v12) — Injected per-task to frame the specific work. Kept intentionally short — heavier templates consistently degraded performance by encouraging one-shot mega-batches instead of iterative reasoning.
 
 > **To customize:** Create new versioned files (never edit existing ones used in production). Register in `prompt_versions.py`. Key lessons from optimization:
 > - Keep the task template under 60 lines
@@ -161,6 +161,9 @@ excel-cli-agent/
 │   ├── mcp_client.py             # MCP subprocess management
 │   ├── models_config.py          # Model pricing, defaults, slugs
 │   ├── prompt_versions.py        # Shared prompt version registry
+│   ├── agent_identity.py         # agent_model_name -> pinned settings (agent_identities.yaml)
+│   ├── agent_identities.yaml     # THE cohort registry
+│   ├── repo_config.py            # <MBABenchV2>/config/config.yaml reader
 │   ├── db/                       # Database models (bundled)
 │   │   ├── database.py           # SQLAlchemy engine, lazy connection
 │   │   └── models.py             # Task, TaskAttempt ORM models
@@ -192,13 +195,12 @@ excel-cli-agent/
 │       └── type_inference.py     # Cell type detection
 │
 ├── pyproject.toml                # Package config, deps, entry point
+├── tools/                        # build_v12..v16_prompts.py: prompt-set generators
+├── tests/                        # offline pytest suite
 └── examples/
     ├── batch_config_template_auto.yaml  # Auto mode template, all options
     ├── local/
     │   └── test_local.yaml       # Local mode (no DB/S3 needed)
-    ├── v1/                       # benchmark: v1 configs
-    │   ├── test_quick.yaml       # Auto mode, single task, 3 iters
-    │   └── test_mini_batch.yaml  # Auto mode, 3 tasks, 3 iters
     └── v2/                       # benchmark: v2 configs
         └── v2_task_corpbond_haiku45.yaml
 ```
@@ -232,7 +234,7 @@ No database, no S3, no cloud credentials needed. Just an API key and local folde
                 Filter by task_source, trial count, deprecated
                     │
 3. S3 DOWNLOAD  Download starting files (PDFs, xlsx) to workspace
-                s3://mbabench/BizbenchV1/...
+                s3://<bucket>/<BizbenchV1|MBABenchV2>/tasks/...
                     │
 4. EXECUTE      TaskExecutor runs AI reasoning loop:
                   a. Build system prompt + task template
@@ -342,7 +344,7 @@ task_attempts (WRITE)
 ### S3 Structure
 
 ```
-s3://mbabench/BizbenchV1/
+s3://<bucket>/<BizbenchV1|MBABenchV2>/
 ├── prompts/{model}_openpyxl/
 │   ├── {timestamp}_system_prompt_v{N}.txt
 │   ├── {timestamp}_task_template_fmwc_v{N}.txt
@@ -364,7 +366,7 @@ The combined version stored in the database:
 prompt_version = system_v * 100 + template_v
 ```
 
-Example: system prompt v10 + task template v4 = version 1004.
+Example: system prompt v10 + task template v4 = version 1004; the v2 default v16 (system v16 + shared template v9) is 1609.
 
 **Rule:** Never edit a versioned file once used in production. Always create a new `_v{N+1}.txt`.
 
@@ -394,12 +396,12 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `task_filter` | object | — | auto | Auto-discover: `{task_source: "fmwc", missing_for_model: true}` |
 | `task_type` | string | `fmwc` | local | Template selection: `fmwc` or `wsp` |
 | **Execution** | | | | |
-| `max_iterations` | int | 30 | both | Max agent iterations per task |
-| `prompt_version` | string | `v10` (v1) / `v15` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
+| `max_iterations` | int | 40 | both | Max agent iterations per task (`models_config.DEFAULT_MAX_ITERATIONS`) |
+| `prompt_version` | string | `v10` (v1) / `v16` (v2) | both | Prompt version (see `prompt_versions.py`); must match the `benchmark` rubric. v14+ also selects the attachments (house standards) shipped with every workspace |
 | `fresh_context_mode` | bool | — | registry | Reload xlsx each iteration. Pinned by the agent identity |
 | `enhanced_excel_context` | bool | — | registry | Grid format for Excel context. Pinned by the agent identity |
 | `recent_history_count` | int | — | registry | Recent tool calls replayed in fresh context. Pinned by the agent identity |
-| `api_timeout_seconds` | int | 180 | both | API call timeout |
+| `api_timeout_seconds` | int | by effort | both | API call timeout: 60 min for `max`/`xhigh` effort, 240 s for `high`, 180 s otherwise |
 | **Output** | | | | |
 | `workspace_base_dir` | string | required | both | Where fresh workspaces are created |
 | `results_dir` | string | `./results` | local | Where results + attempts.jsonl are saved |
@@ -470,7 +472,6 @@ for standalone runs where the monorepo config isn't installed.
 
 - **Max 4 concurrent processes per machine** — each spawns its own LibreOffice conversion per recalc (no resident soffice between recalcs, but peak memory during concurrent conversions still adds up).
 - **Credentials**: `<MBABenchV2>/config/config.yaml`; `.env` only for overrides / standalone runs (see Credentials above).
-- **After code changes**: always `pip install .` to update the installed package.
 - **Killing a stuck run**: `kill <PID>`. LibreOffice only lives for the duration of one conversion; a lingering `soffice` after a kill is at most one process.
 - **Logs**: `batch_logs/batch_<timestamp>/` (per-batch reports).
 - **Disk**: workspaces cleaned by default (`cleanup_workspace: true`). Set `false` to inspect solution.xlsx before S3 upload.

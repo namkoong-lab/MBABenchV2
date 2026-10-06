@@ -4,7 +4,7 @@ How to configure, identify, and launch a run of each pipeline. One-time setup: `
 (uv workspace, installs every member). Secrets (DB URLs, AWS keys, API keys) live in the
 gitignored `config/config.yaml` (template: `config/config_default.yaml`). Every run sets
 `benchmark: v1|v2`, which selects DB + S3 root + prompts + rubric **together**; guards refuse
-mismatches. Every v2 prompt version (gui/excel 204/205, cli v15, coding v13) also attaches
+mismatches. Every v2 prompt version (gui/excel 204/205, cli v15/v16, coding v13) also attaches
 `house_standards/House_Standards_v1.md` with the starting files — the version, not the run
 config, selects it — always check the logged `Database:` line (e.g. `Database: MBABenchV2 (from
 config/config.yaml database.v2_url)`) before letting a run proceed. All registries are
@@ -50,8 +50,8 @@ cd gui-agents-master && uv run python -m infra.run --run-config infra/configs/ru
 
 - **Config**: one self-contained batch YAML, no layering — copy
   `examples/batch_config_template_auto.yaml` (keep `auto_mode: true`, the DB/S3 pipeline); it
-  sets `benchmark`, `agent_model_name`, `prompt_version`, task selection (`tasks:` or
-  `task_filter:`), `max_trials`.
+  sets `benchmark`, `agent_model_name`, `prompt_version` (default v16 for v2, v10 for v1), task
+  selection (`tasks:` or `task_filter:`), `max_trials`.
 - **Identity**: the config names only `agent_model_name`; that label's stanza in the YAML
   registry pins model, reasoning effort, token limits, base_url and context settings, and the
   run refuses to start if the config sets any of them. Files:
@@ -60,10 +60,10 @@ cd gui-agents-master && uv run python -m infra.run --run-config infra/configs/ru
 - **Run** (no `--dry-run` — verify the startup banner's database + resolved identity):
 
 ```bash
-cd cli-agents-master && excel-agent --batch-config my_config.yaml
+cd cli-agents-master && uv run excel-agent --batch-config my_config.yaml
 ```
 
-  Long runs: `nohup excel-agent --batch-config my.yaml > run.log 2>&1 &`. Everything else comes
+  Long runs: `nohup uv run excel-agent --batch-config my.yaml > run.log 2>&1 &`. Everything else comes
   from the YAML; `EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate cross-benchmark pairing.
   Needs LibreOffice (`soffice`) installed for formula recalc — startup fails loudly without it.
 
@@ -78,7 +78,7 @@ cd cli-agents-master && excel-agent --batch-config my_config.yaml
 - **Run**: one invocation = **one attempt** (batching is deliberately left to you); Docker must be running:
 
 ```bash
-cd coding-agents-master && python -m coding_agent.run_task --config run_configs/example_v2_claude.yaml --task-id 11
+cd coding-agents-master && uv run python -m coding_agent.run_task --config run_configs/example_v2_claude.yaml --task-id 11
 ```
 
   Key args: `--config` (required), `--task-id` (internal/DB mode); `--task-dir` + `--results-dir`
@@ -107,10 +107,10 @@ cd excel-agents-master && uv run python -m infra.run --run-config my_run.yaml --
 
 ## Judge — `judge/`
 
-- **Config**: no run config — CLI flags + `judge/project_configs.yaml` (defaults/limits,
-  env-overridable as `BIZBENCHJUDGE_*`) + repo `config/config.yaml` (DB/AWS/keys).
-  `--benchmark` picks DB + S3 + rubric: `judge/prompts/rubrics/rubric_8.json` (v1, classic
-  3-stage judge) / `rubric_9.json` (v2 — must be graded with `--agentic`).
+- **Config**: no run config — CLI flags + `judge/project_configs.yaml` (judge versions, limits,
+  deterministic-check settings) + repo `config/config.yaml` (DB/AWS/keys). `--benchmark` picks
+  DB + S3 + rubric: `judge/prompts/rubrics/rubric_8.json` (v1, classic 3-stage judge) /
+  `rubric_9.json` (v2 — graded with `--single-pass`, the production judge).
 - **Identity**: `--model <label>` resolves in the YAML registry, pinning provider (endpoint),
   wire model id, and reasoning effort; the label is stored verbatim in `gradings.grader_model`.
   Files: `judge/judge_identities.yaml` (resolver `judge/utils/judge_identity.py`). To add:
@@ -119,12 +119,14 @@ cd excel-agents-master && uv run python -m infra.run --run-config my_run.yaml --
 - **Run** (single attempts vs. parallel batch):
 
 ```bash
-python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 123
-python judge/main_scripts/grade_from_db.py --benchmark v2 --agentic --attempt-ids 123 124
-python judge/main_scripts/grade_with_orchestration.py --benchmark v2 --agentic --all-tasks --workers 4
+uv run python judge/main_scripts/grade_from_db.py --benchmark v1 --attempt-ids 123
+uv run python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass --attempt-ids 123 124 --model openai/gpt-5.6-sol
+uv run python judge/main_scripts/grade_with_orchestration.py --benchmark v2 --single-pass --all-tasks --workers 4 --models <agent_model_name ...>
 ```
 
   grade_from_db: `--attempt-ids | --task-ids` (one required), `--model <label>`, `--dry-run`,
-  `--no-db-write`, `--run-calculation` (LibreOffice recalc first), `--reasoning-effort` (override pin).
-  Orchestration: `--all-tasks | --task-ids`, `--workers N`, `--models` (agent cohorts to grade);
-  dedups to the latest attempt per (task, model, prompt_version) unless `--no-dedup`.
+  `--no-db-write`, `--run-calculation` (LibreOffice recalc first), `--det-checks harness|llm|off`,
+  `--accuracy-check harness|llm`, `--reasoning-effort` (override pin). Orchestration: `--all-tasks |
+  --task-ids`, `--workers N`, `--models` (agent cohorts to grade); dedups to the latest attempt per
+  (task, model, prompt_version) unless `--no-dedup`. Neither driver skips attempts that already
+  have a grading: a relaunch grades them again.

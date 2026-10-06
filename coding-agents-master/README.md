@@ -50,16 +50,15 @@ coding_agent/            The single-task runner package
   prompts/               System wrapper + task templates (see Prompts)
 docker/                  Sandbox image: pinned CLIs + default-deny egress firewall
 run_configs/             Example YAML configs (prod configs are untracked)
-tools/                   build_v8/v9/v12/v13_template.py + build_v10_v11_templates.py (v2 template generators), validate_trajectory.py
+tools/                   build_v8/v9/v12/v13_template.py, build_v10_v11_templates.py, build_v14_v15_templates.py (template generators), validate_trajectory.py
 tests/                   Offline tests (no Docker/DB/keys needed)
 ```
 
 ## Setup
 
 1. **Docker** (Docker Desktop on macOS) — the sandbox runtime.
-2. Python deps: `pip install -e .` — or, from the MBABenchV2 root, the
-   workspace install (`setup.sh`), which also makes the shared `config`
-   module importable.
+2. Python deps: from the MBABenchV2 root, `./setup.sh` (the uv workspace
+   install, which also makes the shared `config` module importable).
 3. Build the sandbox image (pin CLI versions for a wave):
 
 ```bash
@@ -69,6 +68,16 @@ cd docker && docker build -t mbabench-coding-agent:v2 \
 
    The tag is recorded per attempt (`extra_configs.sandbox_image`) as the
    CLI-version pin — use a new tag whenever a rebuild changes the contents.
+   The recorded cohorts ran on these tags, all from the same `Dockerfile`:
+
+   | tag | `CLAUDE_CODE_VERSION` | `CODEX_VERSION` | why |
+   |---|---|---|---|
+   | `mbabench-coding-agent:v2` | 2.1.251 | 0.150.1 | the 2026-09 production image (run-config default) |
+   | `mbabench-coding-agent:v3` | 2.1.251 | 0.155.1 | Codex with native GPT-6 Astra metadata (0.150.1 ran it on fallback metadata) |
+   | `mbabench-coding-agent:v4` | 2.1.280 | 0.150.1 | Claude Code that accepts Claude Opus 5.5 (2.1.251 refuses the model) |
+
+   `INCLUDE_LIBREOFFICE=false` skips LibreOffice Calc in the image (the agents
+   use it to recalculate their own workbooks).
 
 4. Secrets — never in run configs, never written into workspaces:
    - **DB URLs + AWS creds**: `<MBABenchV2>/config/config.yaml`
@@ -343,9 +352,20 @@ boto3's default ten streams let S3 time out an idle part and lose a finished
 attempt's row. A recording failure is an `infra_failure`: no row, the attempt
 folder is kept.
 
-Registered cohorts:
-`claudecode_anthropic/claude-fable-5-max` · `codex_openai/gpt-5.6-sol-xhigh`
-(v1 wave) · `claudecode_anthropic/claude-haiku-4-5` (pipeline shakeout only).
+Registered cohorts (`coding_agent/agent_identities.yaml`):
+
+| label | cli | model | effort |
+|---|---|---|---|
+| `claudecode_anthropic/claude-fable-5-1-max` (v2 production) | claude | claude-fable-5-1 | max |
+| `claudecode_anthropic/claude-fable-5-1-high`, `.../claude-fable-5-1-low` (effort ablation) | claude | claude-fable-5-1 | high / low |
+| `claudecode_anthropic/claude-opus-5-max` | claude | claude-opus-5 | max |
+| `claudecode_anthropic/claude-opus-5-5-max`, `-high`, `-low` (image `:v4`) | claude | claude-opus-5-5 | max / high / low |
+| `claudecode_anthropic/claude-fable-5-max` (v1 wave) | claude | claude-fable-5 | max |
+| `claudecode_anthropic/claude-haiku-4-5` (pipeline shakeout) | claude | claude-haiku-4-5-20251001 | - |
+| `codex_openai/gpt-6-astra-xhigh` (v2 production) | codex | gpt-6-astra | xhigh |
+| `codex_openai/gpt-5.6-sol-xhigh` (v1 wave) | codex | gpt-5.6-sol | xhigh |
+| `codex_tensorblock/grok-4.6-xhigh`, `.../kimi-k3-max`, `.../gemini-3.8-flash-high`, `.../qwen3.8-max-xhigh`, `.../glm-5.3-max` | codex via the Forge gateway | the named model | as labelled |
+| `codex_tensorblock/claude-fable-5-1-max`, `.../claude-opus-5-max` | codex via the Forge gateway | Claude models through Codex (prompt ablation and Opus 5 cohorts) | max |
 
 ## Judging
 
@@ -367,10 +387,11 @@ any others (V1 rubric for v1 rows; the agentic judge + rubric_9 for v2 — see
 ## Tests
 
 ```bash
-python3 tests/test_smoke.py             # config, prompts, validation verdicts, telemetry
-python3 tests/test_benchmark_config.py  # v1/v2 switch + v8/v9/v12/v13 template guards + attachment/extra seeding
-python3 tests/test_agent_identity.py    # identity registry rules
-python3 tests/test_repo_config.py       # config/config.yaml resolution ladder
-python3 -m pytest tests/test_relay.py   # trajectory relay
+cd coding-agents-master && uv run pytest tests     # or run any file directly: uv run python tests/test_smoke.py
 ```
-Offline. No Docker, DB, S3, or keys required.
+
+Offline, no Docker, DB, S3 or keys: config and prompt assembly, validation
+verdicts and telemetry (`test_smoke`), the v1/v2 switch and the template
+checksum guards plus attachment seeding (`test_benchmark_config`), the identity
+registry rules (`test_agent_identity`), the `config/config.yaml` resolution
+ladder (`test_repo_config`) and the trajectory relay (`test_relay`).

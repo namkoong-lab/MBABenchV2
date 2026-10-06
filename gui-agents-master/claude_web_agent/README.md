@@ -99,15 +99,16 @@ Chrome with Chrome DevTools Protocol is recommended because it:
 
 ## Output Files
 
-After running tasks, you'll find:
+Every run gets one working directory (`create_run_directory` in
+`claude_web_engine.py`): under `paths.scratch_dir` (`scratch/gui-agents/attempts/<ts>_<task>/`)
+when `infra.run` drives the engine, or a date-stamped folder named with
+`<provider>_web.output.folder_prefix` under `output.base_dir` for a standalone `--config` run.
 
 ```
-claude_web_logs/
-├── claude_web_20260119_123456_task-name.log  # Execution log
-├── json_logs/
-│   └── completion_claude_web_20260119_123456_task-name.json  # Timing data
-└── conversations/
-    └── conversation_20260119_123456_task-name.json  # Full conversation
+<run dir>/
+├── solutions/      # the downloaded workbooks
+├── json_logs/      # completion_*.json, one per agent attempt (status, timing, prompt version)
+└── logs/           # the runtime .log and conversations/ (the chat transcript)
 ```
 
 ## Troubleshooting

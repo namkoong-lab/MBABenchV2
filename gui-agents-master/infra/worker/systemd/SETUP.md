@@ -1,7 +1,7 @@
 # Box setup — EC2 worker
 
-> **`spinup.sh` automates all of this.** Prefer
-> `./infra/dispatcher/spinup.sh --alias <name> --config-template <path>`
+> **`dispatch spinup` automates all of this.** Prefer
+> `python -m infra.dispatcher.dispatch spinup --alias <name> --config-template <path>`
 > and re-run it against an existing alias to push code/config updates.
 > This doc is the manual fallback — useful for diagnosis or when rebuilding
 > a box from scratch without the dispatcher.
@@ -13,7 +13,7 @@ One-time install per box. Run as root (or wrap with `sudo`).
 ```bash
 sudo git clone <your-fork-url> /opt/gui-agents-master
 cd /opt/gui-agents-master
-sudo pip3 install -r requirements.txt  # or a pinned subset: boto3 psycopg2-binary pyyaml
+sudo pip3 install <the [project].dependencies of gui-agents-master/pyproject.toml>   # what dispatch spinup installs
 ```
 
 ## 2. Drop the queue CLI wrapper onto PATH
@@ -66,7 +66,7 @@ sudo systemctl status gui-agents-worker.service
 
 ## 6. Verify from the laptop
 
-`spinup.sh` has already registered the box in [../../dispatcher/boxes.yaml](../../dispatcher/boxes.yaml) (if you used it). Verify:
+`dispatch spinup` has already registered the box in `infra/dispatcher/boxes.yaml` (gitignored) if you used it. Verify:
 ```bash
 python -m infra.dispatcher.dispatch status
 python -m infra.dispatcher.dispatch assign --tasks <known-good-task-id> --box <alias>

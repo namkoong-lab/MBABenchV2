@@ -7,14 +7,12 @@
 # infra.run (e.g. --dry-run, -y).
 #
 # Prereqs:
-#   1. Edit infra/configs/configs.yaml and set:
-#        database.url   — the MBABenchV2 Postgres connection string
-#        chatgpt_web.project_id / project_slug — from your
-#          https://chatgpt.com/g/g-p-{id}-{slug}/project URL
-#      (Or export MBABENCHV2JUDGE_KEYS_DATABASE_URL in the env instead of
-#      setting database.url.)
-#   2. AWS credentials resolvable by boto3 (e.g. ~/.aws/credentials) with
-#      GetObject permission on the biz-bench bucket.
+#   1. Set database.v2_url and aws.* in <repo>/config/config.yaml (the run
+#      config's `benchmark: v2` selects the v2 url), and in
+#      infra/configs/configs.yaml set chatgpt_web.project_id / project_slug
+#      from your https://chatgpt.com/g/g-p-{id}-{slug}/project URL.
+#   2. AWS credentials resolvable by boto3 (config.yaml aws.*, ~/.aws/credentials
+#      or AWS_* env vars) with GetObject permission on the task bucket.
 #   3. Have Chrome running on the ChatGPT CDP port (default 9333) with a
 #      logged-in chatgpt.com session.
 #   4. (Optional) Edit infra/configs/run_configs/mbabenchv2_run_examples/sample_mbabenchv2.yaml

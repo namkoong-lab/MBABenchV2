@@ -1,7 +1,7 @@
 # Dispatcher — common commands
 
 All commands run from the repo root as `python -m infra.dispatcher.dispatch <...>`.
-`<alias>` refers to a box alias defined in [boxes.yaml](boxes.yaml).
+`<alias>` refers to a box alias in `boxes.yaml` (gitignored; written by `dispatch spinup`).
 
 `status` / `show` / `assign` check whether your current public IP is in the
 dispatcher security group before fanning out over SSH. If it isn't, they print
@@ -37,7 +37,7 @@ dispatch teardown --all
 
 ## Rename a box
 
-Changes the alias in [boxes.yaml](boxes.yaml) **and** the instance's `alias` /
+Changes the alias in `boxes.yaml` **and** the instance's `alias` /
 `Name` EC2 tags, which is why it's a command rather than an edit: `teardown
 --all` and spinup's recovery path filter on `tag:alias`, so a hand-edited
 registry leaves the box unfindable under the name you now use.

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Export the two pointer manifests behind an MBABenchV2 leaderboard.
+"""Export the pointer manifests behind an MBABenchV2 leaderboard.
 
   good_attempts_v2.json   one entry per (cohort, task): the task_attempts row
                           that counts, with the S3 paths of its files.
   good_gradings_v2.json   every gradings row that counts for those attempts,
                           with its S3 folder.
+  leaderboard_ids.json    the compact id view of the two: per cohort and task,
+                          the attempt id and its grading ids.
   good_attempts_stage5.json / good_gradings_stage5.json
                           the same two files for STAGE5_COHORTS, the coding
                           prompt ablation. Separate because its arms run other
@@ -61,7 +63,8 @@ Scope defaults to every non-deprecated jp task in the table (101 as of
 2026-09-05: the original 68 plus 33 added 2026-09-04). Pass --max-task-id 68
 to restrict to the original study corpus.
 
-Read-only. Writes all four files next to this script (paths are overridable).
+Read-only. Writes all five files next to this script (paths are overridable; all
+five are gitignored).
 
     uv run python scripts/export_good_attempts.py [--out PATH] [--gradings-out PATH]
                                                   [--stage5-out PATH] [--stage5-gradings-out PATH]

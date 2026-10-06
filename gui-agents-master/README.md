@@ -2,7 +2,7 @@
 
 Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT. The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads the Excel workbooks the model produces.
 
-> **Looking at the MBABenchV2 repo as a whole?** See [`../AGENTS.md`](../AGENTS.md) for an orientation across all agent suites in this repo.
+> **Looking at the MBABenchV2 repo as a whole?** The [repository README](../README.md) describes how the four pipelines and the judge fit together.
 
 ---
 
@@ -14,10 +14,8 @@ The sibling repo, [`excel-agents-master/`](../excel-agents-master/), runs AI age
 |---|---|---|
 | **Where the AI runs** | Web chat UI (claude.ai, chatgpt.com) | Excel Online add-in panel |
 | **Required account** | Claude.ai login or ChatGPT Plus/Pro subscription | Microsoft 365 + OneDrive |
-| **Browsers** | Regular Chrome | Chrome Canary + Firefox (TabAI) |
+| **Browsers** | Regular Chrome | Regular Chrome, signed in to Microsoft 365 |
 | **Cloud orchestration** | Full EC2 dispatcher in `infra/` for multi-box scaling | None — runs only on your local machine |
-
-→ See [`../AGENTS.md`](../AGENTS.md) for the full feature matrix and the "which suite should I pick?" guide.
 
 ---
 
@@ -196,7 +194,7 @@ python -m infra.dispatcher.dispatch logs <alias> --task 42 -f   # tail a task's 
 python -m infra.dispatcher.dispatch login <alias>         # re-login when session expires
 ```
 
-Per-box bring-up (spin up an EC2 instance, install the worker, register it in `dispatcher/boxes.yaml`):
+Per-box bring-up (spin up an EC2 instance, install the worker, register it in `dispatcher/boxes.yaml`, a gitignored registry the command writes):
 
 ```bash
 dispatch spinup --alias chatgpt-pro-1 \
@@ -226,6 +224,7 @@ The prompt text the agent receives is **not** written in the run config. A run s
 | Version | What it sends |
 |---|---|
 | `0` | Infrastructure smoke test — one turn, returns the workbook plus a `TEST SHEET`. Never grade its output. |
+| `1` | Version 0 plus the House Standards attachment, to exercise the attachment path in seconds. Never grade its output. |
 | `9` | The BizbenchV1 (benchmark v1) single-turn payload with the 17-check rubric. |
 | `200` | The v2 3-step set: analyze → build (132-check rubric) → QA + download. |
 | `201` | The same v2 deliverables and rubric folded into one large turn. |
@@ -267,7 +266,7 @@ The pre-registry keys `prompts_file` and `prompts` are **deprecated** and no lon
 
 Both providers support model selection through the provider's own UI picker. If omitted or `null`, the runner uses whatever is currently active in your session — benchmark runs must pin it, and v2 preflight refuses `null` for Claude.
 
-**Claude** (`claude_web.model`) — `opus_4_8`, `opus_4_6`, `sonnet_4_6`, `haiku_4_5`, `fable_5`. Selection matches on the base family name (`opus`, `sonnet`, `haiku`, `fable`) against the claude.ai dropdown, so the version suffix is for your reference — the runner picks whichever build of that family the UI currently offers.
+**Claude** (`claude_web.model`) — the labels the agent knows (`MODEL_LABELS` in `claude_web_agent/claude_web_agent.py`): `fable_5_1`, `fable_5`, `opus_5_5`, `opus_5`, `opus_4_8`, `opus_4_7`, `opus_4_6`, `sonnet_5`, `sonnet_4_6`, `haiku_4_5`. Selection matches the whole model token in the claude.ai model menu, so `fable_5` never selects "Fable 5.1". A benchmark run must also name a registered identity (`infra/configs/agent_identity.py`); for v2 those exist for chat `sonnet_4_6` / `opus_4_6` / `opus_4_8` / `haiku_4_5` / `fable_5` and cowork `fable_5` / `fable_5_1` / `opus_5` / `opus_5_5`, all at effort `max`.
 
 `claude_web.effort` (`low` | `medium` | `high` | `xhigh` | `max`) drives the reasoning-effort submenu; `claude_web.mode` (`chat` | `cowork`) drives the Chat/Cowork toggle, which persists across sessions and is therefore asserted on every task.
 
@@ -275,8 +274,8 @@ Both providers support model selection through the provider's own UI picker. If 
 
 | `mode` | Keys that apply | Values |
 |---|---|---|
-| `chat` | `model` + `intelligence` | `model`: `gpt_5_6_sol`, `gpt_5_5`, `gpt_5_4`, `gpt_5_3`, `o3` · `intelligence`: `instant`, `medium`, `high`, `xhigh`, `pro` |
-| `work` | `model` + `effort` + `speed` | `model`: `gpt_5_6_sol`, `gpt_5_6_terra`, `gpt_5_6_luna`, `gpt_5_5` · `effort`: `light`…`ultra` · `speed`: `standard`, `fast` |
+| `chat` | `model` + `intelligence` | `model`: `gpt_5_6_sol`, `gpt_5_5`, `gpt_5_4`, `gpt_5_3`, `o3`, or `gpt_6` (the picker's "Latest" radio; the pill must then read `6Pro`) · `intelligence`: `instant`, `medium`, `high`, `xhigh`, `pro` |
+| `work` | `model` + `effort` + `speed` | `model`: `gpt_6_astra`, `gpt_5_6_sol`, `gpt_5_6_terra`, `gpt_5_6_luna`, `gpt_5_5` · `effort`: `light`, `medium`, `high`, `xhigh`, `max`, `ultra` · `speed`: `standard`, `fast` |
 
 Setting the other mode's key is a misconfiguration; preflight rejects it in `work` mode and the agent warns in `chat` mode.
 
@@ -450,7 +449,8 @@ gui-agents-master/
 │   ├── file_validator.py             # Excel file validation
 │   ├── task_status.py                # status enums
 │   └── web_agent.py                  # abstract base class
-├── tasks_configs/prompts{,_v2,_pv9}/ # prompt payloads + registry.yaml
+├── tasks_configs/prompts{,_pv9,_v2,_v3,_v4}/  # prompt payloads + registry.yaml
+├── tools/                            # build_house_standards_prompts.py (generates the 204/205 text)
 ├── tests/                            # offline pytest checks
 ├── docs/                             # architecture diagram + ARCHITECTURE.md
 └── pyproject.toml

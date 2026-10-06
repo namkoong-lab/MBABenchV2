@@ -1,15 +1,15 @@
 # excel-agents — Excel Online add-in pipeline
 
-Drives AI add-ins *inside Excel Online* — the Claude add-in ("Opus 4.6" /
-"Sonnet 4.6") and the ChatGPT add-in (Thinking effort Fast/Standard/Heavy) —
-through a real Microsoft 365/OneDrive browser session, and records attempts
-to the benchmark DB exactly like the gui / cli / coding pipelines
+Drives AI add-ins *inside Excel Online* — the Claude add-in (model picked by
+its dropdown label, e.g. "Fable 5.1", "Opus 5") and the ChatGPT add-in (model
+and thinking-effort pills, e.g. "GPT-5.6 Sol" at "Extra High") — through a real
+Microsoft 365/OneDrive browser session, and records attempts to the benchmark
+DB exactly like the gui / cli / coding pipelines
 (`task_attempts.agent_model_type = "excel"`).
 
-Ported 2026-08-26 from the original public MBABench excel-agents tree
-(@ e17a27e) with the V2 conventions and the verified correctness fixes —
-see `plan/excel_agents_port.md` at the repo root for the full decision and
-fix record. TabAI/Firefox support was dropped in the port.
+The pipeline drives regular Google Chrome over CDP, like `gui-agents-master/`;
+the task workbooks live in the signed-in account's OneDrive, which
+`scripts/provision_onedrive.py` populates from the benchmark stores.
 
 ## How a task runs
 
@@ -37,7 +37,7 @@ runner deadman) are retried in place up to `runner.max_infra_tries` and
 ## One-time setup
 
 ```bash
-uv sync && uv run playwright install   # from the repo root, once
+./setup.sh                             # from the repo root, once (uv workspace + Playwright Chromium)
 
 # 1. Chrome + Microsoft 365 session (interactive; handles 2FA).
 #    Port/profile/binary come from infra/configs — the engine reads the
@@ -71,7 +71,7 @@ A run config names its cohort and (optionally) narrows the task set —
 nothing else about the model:
 
 ```yaml
-agent_model_name: "claude_excel_opus_4_6"
+agent_model_name: "claude_excel_fable_5_1"
 sink:
   kind: postgres_s3
   schema: mbabenchv2
@@ -90,6 +90,18 @@ setting a pinned key refuses to run, and an unknown label prints a
 paste-ready stanza. The resolved settings are stamped into
 `task_attempts.extra_configs` (probe + raw SQL — the column is never mapped
 in an ORM model) so every row records what it actually ran under.
+
+| label | add-in | UI selection |
+|---|---|---|
+| `claude_excel_fable_5_1` (v2 production) | Claude | model "Fable 5.1" |
+| `claude_excel_opus_5` (v2 production) | Claude | model "Opus 5" |
+| `claude_excel_fable_5` | Claude | model "Fable 5" |
+| `claude_excel_opus_4_6`, `claude_excel_sonnet_4_6` | Claude | model "Opus 4.6" / "Sonnet 4.6" |
+| `chatgpt_excel_gpt_5_6_sol_xhigh` (v2 production) | ChatGPT | model "GPT-5.6 Sol", thinking "Extra High" |
+| `chatgpt_excel_heavy` | ChatGPT | thinking "Heavy" (the add-in's earlier effort pill) |
+
+The engine selects the identity's model / effort in the panel **and re-reads
+it from the UI**; a mismatch aborts the attempt as an infra failure, unrecorded.
 
 ## Prompts
 
