@@ -384,6 +384,68 @@ check(r["harness_verdicts"]["Accuracy/Final calculation accuracy"]["engine"] == 
 check(art.exists() and json.loads(art.read_text())["status"] == "ok", "artifact written")
 check("rules_version" in sb and sb["fraction_correct"] == 1.0, "summary carries rules_version + fraction_correct")
 
+# ---------------------------------------------------------------------------
+# 10. Alternate accepted answers (judge v14, rules v6.7)
+# ---------------------------------------------------------------------------
+# q2's golden is 1000.004; the author also accepts 2500. q4 lists an alternate
+# under a label that does NOT match the golden question -> never applied.
+ALT = TMP / "alternates.yaml"
+ALT.write_text(
+    "tasks:\n"
+    "  77:\n"
+    "    task_name: Toy\n"
+    "    questions:\n"
+    f"    - {{qid: 2, label: '{QUESTIONS[1][0]}', golden: 1000.004, alternate: 2500}}\n"
+    "    - {qid: 4, label: 'Some other question text?', golden: -500.25, alternate: 1}\n"
+)
+# task id read from the staged folder name
+STAGED = TMP / "Toy__task_77__attempt_5__agent_model=x"
+STAGED.mkdir()
+A_ALT = STAGED / "ai_attempt.xlsx"
+write_attempt_standard(A_ALT, [-1890487.505, 2500.004, 42.13, 1, "yes", "N/A"])
+r = AC.run_answer_check(A_ALT, GOLD, alternates_path=ALT)
+q2 = next(q for q in r["questions"] if q["qid"] == 2)
+q4 = next(q for q in r["questions"] if q["qid"] == 4)
+check(r["task_id"] == 77 and r["n_alternates"] == 2, "task id read from the folder name; both alternates loaded")
+check(q2["verdict"] == "match" and q2["matched_alternate"] and "alternate_answer" in q2["flags"]
+      and q2["expected"] == 1000.004 and q2["alternate"] == 2500,
+      "alternate value matches under the same tolerance; golden kept as expected")
+check(q4["verdict"] == "mismatch" and not q4["matched_alternate"]
+      and "alternate_label_mismatch" in q4["flags"],
+      "alternate under a non-matching label is not applied")
+check(r["n_match_alternate"] == 1 and r["n_match"] == 5, "n_match counts the alternate match once")
+fa = r["harness_verdicts"]["Accuracy/Final calculation accuracy"]
+check(fa["n_match_alternate"] == 1 and len(fa["mistakes"]) == 1 and "operating expenses" in fa["mistakes"][0]["description"],
+      "harness verdict cites only the real mismatch")
+check(AC.summary_block(r)["n_match_alternate"] == 1, "summary carries n_match_alternate")
+
+# the alternate typed as a constant is still hardcoded
+A_ALT_HC = STAGED / "ai_attempt_hc.xlsx"
+write_attempt_standard(A_ALT_HC, [-1890487.505, 2500, 42.13, -500.25, "yes", "N/A"], hardcode=True)
+r = AC.run_answer_check(A_ALT_HC, GOLD_F, alternates_path=ALT)
+q2 = next(q for q in r["questions"] if q["qid"] == 2)
+check(q2["verdict"] == "match" and q2["matched_alternate"] and q2["hardcoded"],
+      "a hardcoded alternate value matches but is still hardcoded")
+check(r["harness_verdicts"]["Accuracy/Final calculation accuracy"]["decision"] == "fail",
+      "hardcoded alternate still fails Final calculation accuracy")
+
+# the golden still wins on its own; explicit task_id overrides the folder name
+r = AC.run_answer_check(A1, GOLD, task_id=77, alternates_path=ALT)
+q2 = next(q for q in r["questions"] if q["qid"] == 2)
+check(q2["verdict"] == "match" and not q2["matched_alternate"] and r["task_id"] == 77,
+      "golden match is recorded as a plain match, not an alternate")
+r = AC.run_answer_check(A_ALT, GOLD, task_id=78, alternates_path=ALT)
+check(r["n_alternates"] == 0 and r["n_match"] == 4, "a task with no alternates grades on the golden alone")
+r = AC.run_answer_check(A_ALT, GOLD, alternates_path=TMP / "missing.yaml")
+check(r["status"] == "ok" and r["n_alternates"] == 0, "missing alternates file -> no alternates, never a failure")
+
+# the shipped file: every task id and question exists in the DB-side list
+shipped = AC.load_alternate_answers()
+check(sorted(shipped) == [41, 50, 59, 60, 61, 64, 86] and sum(len(v) for v in shipped.values()) == 85,
+      "shipped alternate_answers.yaml: 7 tasks, 85 questions")
+check(all(q["alternate"] != q["golden"] for t in shipped.values() for q in t.values()),
+      "shipped alternates all differ from their golden")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S)")

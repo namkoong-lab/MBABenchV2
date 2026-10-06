@@ -698,7 +698,12 @@ def _compare_numbers(e: Scalar, g: Scalar, ctx: AnswerContext, out: dict) -> dic
 # final output a reader sees, and a number format counts as rounding. Rule
 # 11 now only keeps rounding out of Accuracy; the per-answer rounding
 # statistics stay recorded for audit.
-RULES_VERSION = "v6.6"
+# v6.7 (2026-10-06, judge v14): alternate accepted answers. The task author
+# lists a second acceptable value for 85 questions over 7 tasks
+# (judge/alternate_answers.yaml); utils/answer_check.py accepts an attempt
+# that matches EITHER value under the same rules. Comparison rules unchanged;
+# a constant typed in place of a formula is hardcoded whichever value it holds.
+RULES_VERSION = "v6.7"
 
 
 def render_rules_text() -> str:

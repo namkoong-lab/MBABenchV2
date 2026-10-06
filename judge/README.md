@@ -561,6 +561,35 @@ each; twelve rows exist under 11, so everything lands here.
   twelve attempts 99 flipped (7.2%), 53 of them on checks no judge change
   touched (3.8%) — 99 (6 of 12), 76 (5), 26 and 115 (4 each).
 
+### judge v14 — single-pass 14 / template_8 (in progress, 2026-10-06)
+
+Cut for the task author's alternate accepted answers (received 2026-10-06):
+seven tasks — PastaInc (41), RoadtoZero (50), Telecom (59), TheInterestGame
+(60), TheLiquidityEngine (61), ThePayoffPlan (64), HouseorFlat (86) — have 85
+Questions-sheet questions with TWO acceptable values. v13 rows graded them
+against the golden alone; v14 rows are not comparable on those tasks.
+
+- **Alternate accepted answers** (`judge/alternate_answers.yaml`, keyed by
+  `tasks.id`; answer rules v6.7). The harness answer check
+  (`utils/answer_check.py`) compares an attempt's answer to the golden as before
+  and, on a mismatch, to the alternate under the same rules and context
+  (tolerance, sign lexicon, percent form, the golden's ROUND precision). A match
+  either way is a match; the per-question record carries `alternate`,
+  `matched_alternate` and the flag `alternate_answer`, and the result /
+  `scored_results.answer_check` / the Final calculation accuracy stats carry
+  `n_match_alternate` and `n_alternates`. The alternate is applied only when
+  the golden question's text equals the recorded label (flag
+  `alternate_label_mismatch`, logged, not applied), so a re-ordered golden
+  cannot mis-key it. A numeric constant typed in place of a formula is still
+  `hardcoded` whichever value it holds (maintainer ruling 2026-10-06). The task
+  id comes from the DB row (`grade_from_db.py`) or the staged folder name
+  (`<name>__task_<id>__attempt_...`); a local folder without one, or a task not
+  listed, grades on the golden alone. The LLM judge is not told about the
+  alternates: its Final calculation accuracy verdict is overlaid by the
+  harness's at scoring (`--accuracy-check harness`), as since v6.
+- The judge version is not bumped yet; further v14 changes may follow today.
+  Bump `single_pass.version` in `project_configs.yaml` to 14 when cutting.
+
 ### judge v13 — single-pass 13 / template_8 (2026-10-04)
 
 Rows record `judge_version` 13 / `prompt_version` 8 (template unchanged) and are

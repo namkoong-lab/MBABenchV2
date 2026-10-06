@@ -45,6 +45,13 @@ Per answer the checker also records whether the cell holds a live formula;
 a numeric answer typed as a constant is `hardcoded` — the rubric's Final
 calculation accuracy check rejects those even when the value is right.
 
+Alternate accepted answers (judge v14, rules v6.7): the task author lists a
+second acceptable value for some questions (judge/alternate_answers.yaml,
+keyed by tasks.id; the id is read from the staged folder name or passed in).
+An answer that mismatches the golden is re-compared against the alternate
+under the same rules; a match is recorded as `matched_alternate` and counted
+in `n_match_alternate`. Hardcoding is judged the same way for either value.
+
 Never raises out of run_answer_check(): any failure is status "error" and the
 judge grades on with the LLM verdicts.
 """
@@ -92,6 +99,40 @@ MEASURE_MIN_LOCATED_SHARE = 0.5
 CHECK_FINAL_ACCURACY = ("Accuracy", "Final calculation accuracy")
 CHECK_COMPLETENESS = ("Accuracy", "Deliverable completeness")
 CHECK_ROUNDED_OUTPUTS = ("Rounding", "Rounded outputs")   # v6.4
+
+# Alternate accepted answers (judge v14, task author 2026-10-06): seven tasks
+# have questions with TWO acceptable values. Keyed by tasks.id; see the file.
+ALTERNATE_ANSWERS_PATH = Path(__file__).resolve().parents[1] / "alternate_answers.yaml"
+_TASK_ID_IN_FOLDER = re.compile(r"__task_(\d+)__")
+
+
+def load_alternate_answers(path: Optional[Path] = None) -> dict[int, dict[int, dict]]:
+    """{task_id: {qid: {"label", "alternate", "golden"}}} from alternate_answers.yaml.
+    A missing or unreadable file means "no alternates" (logged), never a failure."""
+    path = Path(path) if path else ALTERNATE_ANSWERS_PATH
+    try:
+        import yaml
+        raw = yaml.safe_load(path.read_text()) or {}
+    except Exception as e:  # noqa: BLE001 — never blocks grading
+        logger.warning(f"  [answer_check] alternate answers not loaded from {path}: {e}")
+        return {}
+    out: dict[int, dict[int, dict]] = {}
+    for tid, task in (raw.get("tasks") or {}).items():
+        out[int(tid)] = {
+            int(q["qid"]): {"label": q["label"], "alternate": q["alternate"], "golden": q.get("golden")}
+            for q in (task.get("questions") or [])
+        }
+    return out
+
+
+def task_id_from_path(p) -> Optional[int]:
+    """tasks.id from a staged task folder name (`<name>__task_<id>__attempt_...`,
+    main_scripts/grade_from_db.py) anywhere on the path; None for other layouts."""
+    for part in reversed(Path(p).resolve().parts):
+        m = _TASK_ID_IN_FOLDER.search(part)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def _is_number(v) -> bool:
@@ -525,7 +566,15 @@ def _recalc_reload(xlsx_path: Path, wb_v, side: str):
 # ---------------------------------------------------------------------------
 
 
-def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
+def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers,
+                        alternates: Optional[dict] = None) -> dict:
+    """`alternates` = {qid: {"label", "alternate"}} for THIS task (judge v14):
+    a question whose attempt answer mismatches the golden is re-compared
+    against its alternate under the same rules and context; a match is
+    recorded with `matched_alternate`. The alternate is applied only when
+    the golden question's text equals the recorded label, so a re-ordered
+    golden cannot mis-key it (flag `alternate_label_mismatch`, not applied)."""
+    alternates = alternates or {}
     questions = []
     for q in golden.questions:
         prec = rules.Precision(**golden.precision.get(q.sheet, {"dp": None}))
@@ -540,6 +589,21 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
         if got_formula:
             ctx.got_formula = got_formula
         cmp = rules.compare(q.value, got, ctx)
+        alt = alternates.get(q.qid)
+        matched_alternate = False
+        alt_flags = []
+        if alt is not None:
+            if rules.norm_text(alt.get("label")) != q.norm_label:
+                alt_flags.append("alternate_label_mismatch")
+                logger.warning(
+                    f"  [answer_check] alternate for qid {q.qid} not applied: golden question "
+                    f"text {q.label!r} != recorded {alt.get('label')!r}")
+            elif cmp["verdict"] == "mismatch":
+                cmp_alt = rules.compare(alt["alternate"], got, ctx)
+                if cmp_alt["verdict"] == "match":
+                    cmp = cmp_alt
+                    matched_alternate = True
+                    alt_flags.append("alternate_answer")
         item = {
             "qid": q.qid,
             "label": q.label,
@@ -548,11 +612,13 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
             "located": loc is not None,
             "match_kind": loc.match_kind if loc else None,
             "expected": _jsonable(q.value),
+            "alternate": _jsonable(alt["alternate"]) if alt is not None else None,
+            "matched_alternate": matched_alternate,
             "got": _jsonable(got),
             "unit": _jsonable(q.unit),
             "verdict": cmp["verdict"],
             "rule": cmp["rule"],
-            "flags": cmp["flags"],
+            "flags": cmp["flags"] + alt_flags,
             "detail": cmp["detail"],
             "tolerance": cmp.get("tolerance"),
             "abs_delta": cmp.get("abs_delta"),
@@ -592,6 +658,8 @@ def compare_answer_sets(golden: GoldenAnswers, attempt: AttemptAnswers) -> dict:
         "rules_version": rules.RULES_VERSION,
         "n_questions": n_q,
         "n_match": n_match,
+        "n_match_alternate": sum(1 for q in questions if q["matched_alternate"]),
+        "n_alternates": len(alternates),
         "n_mismatch": verdicts.count("mismatch"),
         "n_missing": verdicts.count("missing"),
         "n_unlocated": len(attempt.unlocated_qids),
@@ -659,6 +727,7 @@ def harness_verdicts(result: dict, hardcoded_counts: bool = True) -> dict:
     stats = {
         "n_questions": n_q,
         "n_match": result["n_match"],
+        "n_match_alternate": result.get("n_match_alternate", 0),
         "n_mismatch": result["n_mismatch"],
         "n_missing": result["n_missing"],
         "n_unlocated": result["n_unlocated"],
@@ -772,10 +841,20 @@ def _short(s: Any, n: int = 90) -> str:
 
 
 def run_answer_check(attempt_xlsx, solution_xlsx, output_json_path=None,
-                     hardcoded_counts: bool = True) -> dict:
+                     hardcoded_counts: bool = True, task_id: Optional[int] = None,
+                     alternates_path: Optional[Path] = None) -> dict:
     """Full check: extract both sides, compare, derive harness verdicts,
-    optionally write the artifact. Never raises."""
+    optionally write the artifact. Never raises.
+
+    `task_id` keys the alternate accepted answers (judge v14); when None it is
+    read from the staged folder name (`__task_<id>__`). No id, or a task with
+    no alternates, means the golden alone decides, as before."""
     try:
+        if task_id is None:
+            task_id = task_id_from_path(attempt_xlsx)
+        alternates = load_alternate_answers(alternates_path).get(task_id, {}) if task_id is not None else {}
+        if alternates:
+            logger.info(f"  [answer_check] task {task_id}: {len(alternates)} question(s) accept an alternate answer")
         golden = extract_golden(Path(solution_xlsx), allow_recalc=True)
         if golden.status != "ok":
             result = {
@@ -797,7 +876,8 @@ def run_answer_check(attempt_xlsx, solution_xlsx, output_json_path=None,
                     "recalc_used": golden.recalc_used or attempt.recalc_used,
                 }
             else:
-                result = compare_answer_sets(golden, attempt)
+                result = compare_answer_sets(golden, attempt, alternates)
+                result["task_id"] = task_id
                 result["recalc_used"] = bool(golden.recalc_used or attempt.recalc_used)
                 result["solution_recalc_used"] = golden.recalc_used
                 result["attempt_recalc_used"] = attempt.recalc_used
@@ -824,7 +904,8 @@ def run_answer_check(attempt_xlsx, solution_xlsx, output_json_path=None,
 
 def summary_block(result: dict) -> dict:
     """The compact block recorded in scored_results.answer_check."""
-    keys = ("status", "reason", "n_questions", "n_match", "n_mismatch", "n_missing",
+    keys = ("status", "reason", "n_questions", "n_match", "n_match_alternate", "n_alternates",
+            "n_mismatch", "n_missing",
             "n_unlocated", "n_answered", "n_hardcoded", "n_unrounded", "rounding_directive",
             "fraction_correct", "rules_fired", "flags", "recalc_used", "rules_version")
     out = {k: result.get(k) for k in keys if k in result}

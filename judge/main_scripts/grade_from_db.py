@@ -807,6 +807,7 @@ def grade_single_attempt(
                 solution_xlsx,
                 output_json_path=ac_artifact,
                 hardcoded_counts=hardcoded_counts,
+                task_id=attempt["task_id"],   # alternate accepted answers (judge v14)
             )
             logger.info(f"  [answer_check] {summary_block(ac_result)}")
         except LibreOfficeUnavailable:
