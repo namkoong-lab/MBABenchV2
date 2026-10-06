@@ -1,22 +1,36 @@
 #!/usr/bin/env python3
 """Self-contained tests for the Python two-tiered config loader.
 
-No third-party test runner — just run it:
+No third-party test runner — just run it from anywhere:
 
-    python python/test_config.py
+    python config/python/test_config.py
 
-Each test uses a temp dir, so the repo's real config.yaml is never touched.
+Each test builds its own defaults file in a temp dir, so neither the repo's
+config_default.yaml nor its real config.yaml is touched.
 """
 
 import os
-import shutil
 import tempfile
 from pathlib import Path
 
 from config import Config, deep_merge, get, load_config
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULTS = REPO_ROOT / "config_default.yaml"
+# A small defaults file with the shapes the loader must handle: nested
+# sections, an ${env:VAR:-default} reference, a list, and a null.
+DEMO_DEFAULTS = """\
+app:
+  name: my-app
+  log_level: info
+  workers: 4
+database:
+  host: localhost
+  port: 5432
+  password: "${env:DB_PASSWORD:-changeme}"
+features:
+  - alpha
+  - beta
+venv_path: null
+"""
 
 _passed = 0
 _failed = 0
@@ -33,9 +47,9 @@ def check(label, expected, actual):
 
 
 def new_config_dir():
-    """A fresh temp config dir seeded with only config_default.yaml."""
+    """A fresh temp config dir seeded with only a demo config_default.yaml."""
     d = Path(tempfile.mkdtemp())
-    shutil.copyfile(DEFAULTS, d / "config_default.yaml")
+    (d / "config_default.yaml").write_text(DEMO_DEFAULTS)
     return d
 
 
@@ -47,6 +61,7 @@ def test_creates_config_yaml_on_first_run():
     check("config.yaml created", True, (d / "config.yaml").exists())
     check("app.name from defaults", "my-app", get(cfg, "app.name"))
     check("app.workers from defaults", 4, get(cfg, "app.workers"))
+    check("null stays None", None, get(cfg, "venv_path"))
 
 
 def test_partial_override_falls_back():
@@ -129,6 +144,21 @@ def test_config_require_and_set():
     check("set creates nested path", True, cfg["new.nested.flag"])
 
 
+def test_required_placeholder_aborts_load():
+    print("Test 9: __REQUIRED__ placeholder aborts the load until filled in")
+    d = new_config_dir()
+    (d / "config_default.yaml").write_text(DEMO_DEFAULTS + "aws:\n  region: __REQUIRED__\n")
+    raised = False
+    try:
+        load_config(d)
+    except Exception as e:  # ConfigRequiredError
+        raised = "aws.region" in str(e)
+    check("load aborts naming the field", True, raised)
+    (d / "config.yaml").write_text("aws:\n  region: us-east-1\n")
+    cfg = load_config(d)
+    check("load succeeds once filled in", "us-east-1", get(cfg, "aws.region"))
+
+
 def main():
     for test in (
         test_creates_config_yaml_on_first_run,
@@ -139,6 +169,7 @@ def main():
         test_deep_merge_replaces_lists,
         test_config_class_api,
         test_config_require_and_set,
+        test_required_placeholder_aborts_load,
     ):
         test()
 

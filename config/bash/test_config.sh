@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # test_config.sh — self-contained tests for the bash config loader.
-# Runs in a temp dir so it never touches the repo's real config.yaml.
+# Runs in a temp dir with its own defaults, so the repo's config files are never touched.
+#
+#     bash config/bash/test_config.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$HERE/.."
-
 PASS=0
 FAIL=0
 check() { # check <label> <expected> <actual>
@@ -20,7 +20,21 @@ check() { # check <label> <expected> <actual>
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-cp "$REPO_ROOT/config_default.yaml" "$TMP/config_default.yaml"
+# A small defaults file with the shapes the loader must handle (nested
+# sections, ${env:VAR:-default}, a list); the repo's own config is not used.
+cat > "$TMP/config_default.yaml" <<'EOF'
+app:
+  name: my-app
+  log_level: info
+  workers: 4
+database:
+  host: localhost
+  port: 5432
+  password: "${env:DB_PASSWORD:-changeme}"
+features:
+  - alpha
+  - beta
+EOF
 
 source "$HERE/config.sh"
 

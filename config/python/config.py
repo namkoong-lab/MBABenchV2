@@ -36,7 +36,7 @@ remain as backward-compatible wrappers around :class:`Config`.
 
 Note: this loader expands ``${env:VAR}`` / ``${env:VAR:-default}`` references
 (mirroring yaml_parser.sh) but does NOT resolve ``${var}`` cross-references —
-those are left as literal strings. See the README.
+those are left as literal strings (the bash loader resolves them).
 """
 
 from __future__ import annotations

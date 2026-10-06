@@ -2,7 +2,8 @@
 # setup.sh — set up the unified MBABenchV2 Python environment.
 #
 # Everything is driven by uv: the root pyproject.toml declares the workspace
-# (judge/, cli-agents-master/, coding-agents-master/, gui-agents-master/) and
+# (judge/, cli-agents-master/, coding-agents-master/, gui-agents-master/,
+# excel-agents-master/) and
 # uv.lock pins the exact resolution. `uv sync` creates the environment,
 # installs the locked dependencies, and installs every workspace member in
 # editable mode.

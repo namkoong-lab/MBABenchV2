@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# example.sh — minimal demo of the bash two-tiered config loader.
+# example.sh — minimal demo of the bash two-tiered config loader, against this
+# repository's own config (config_default.yaml + the gitignored config.yaml).
+#
+#     bash config/bash/example.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/config.sh"
 
-# Load from the repo root (creates config.yaml from defaults on first run).
+# Load from the repo root (creates config.yaml from the defaults on first run).
+# Unset ${env:VAR} references print a warning on stderr and resolve to "".
 config_load
 
-echo "app.name      = $(config get app.name)"
-echo "app.log_level = $(config get app.log_level)"
-echo "app.workers   = $(config get app.workers)"
-echo "paths.cache   = $(config get paths.cache_dir)"   # ${data_dir} resolved
-echo "db.password   = $(config get database.password)" # ${env:DB_PASSWORD:-...} resolved
-echo "features:"
-config get features | sed 's/^/  - /'
+echo "aws.s3_bucket    = $(config get aws.s3_bucket)"
+echo "venv_path        = $(config get venv_path)"          # null prints "null"
+echo "libreoffice_path = $(config get libreoffice_path)"
+echo "keys present:"
+config keys | grep '^keys\.' | sed 's/^/  - /'
 
-config get multiline_literal
 config destroy

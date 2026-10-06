@@ -69,7 +69,7 @@ _config_scan_required() {
                 val = clean(substr(s, RLENGTH + 1))
                 while (top > 0 && ind <= indents[top]) top--
                 if (val == "") { top++; indents[top] = ind; keys[top] = key }
-                else print (val == sentinel ? "R " : ". ") path() "." key
+                else print (val == sentinel ? "R " : ". ") (top > 0 ? path() "." : "") key
             }
         }
     ' "$file"
