@@ -1,0 +1,839 @@
+# Judge version history
+
+What changed in each judge version, oldest first. Rows in `gradings` record
+`judge_version` (and `prompt_version`, the template), and rows of different
+versions are not comparable: a version is cut whenever evidence, rulings or
+scoring change. The current version and how to run the judge are in
+[README.md](README.md); the deterministic checks' own changelog is
+[detchecks/CHANGELOG_core.md](detchecks/CHANGELOG_core.md).
+
+Attempt and grading ids quoted below are rows of the maintainers' database;
+rubric checks are quoted by their rubric_9 number and name.
+
+## v2 agentic regime (judge_version 3, 2026-08)
+
+Since the 2026-08 update (rubric_9 revised in place from the canonical
+checklist xlsx via `operation_scripts/build_rubric_9_from_xlsx.py`; weights
+adopted from the same sheet), a v2 agentic grading additionally:
+
+- **Gates checks by per-task suitability** (`utils/rubric_suitability.py`):
+  the latest complete julian annotation from
+  `s3://<bucket>/MBABenchV2/rubric_suitability/` is fetched by grade_from_db,
+  staged as `<task folder>/rubric_suitability.json`, and validated against
+  the rubric; `not_applicable` checks are never prompted or scored, weights
+  renormalize within category, CategoryWeights stay fixed. A v2 grading
+  without an annotation refuses (`JUDGE_SKIP_SUITABILITY=1` grades ungated);
+  provenance lands in `scored_results.rubric_suitability`.
+- **Refuses workbooks whose formulas were never calculated**
+  (`utils/formula_cache.py`): the judge reads *cached* formula results, so a
+  workbook saved without calculation reaches it as formulas with no values and
+  Accuracy cannot be graded from evidence. Both the attempt and the golden
+  solution are censused — from the staged workbook's XML when it is on disk
+  (since 2026-09-03: a formula whose calculated result is the empty string is
+  stored as `t="str"` with an empty value and counts as cached; only an
+  untyped empty/absent value is uncached, which is what openpyxl writes for a
+  never-calculated cell), falling back to the extracted CSVs when no workbook
+  is available; the deciding basis, both censuses and the empty-string count
+  are recorded. A workbook at or above `judge.uncached_formula_max_ratio`
+  (default 0.5) refuses before any API call. Fix with `--run-calculation`, or
+  set `JUDGE_SKIP_FORMULA_CACHE_CHECK=1` to grade anyway — the skip and the
+  per-workbook counts are recorded in `scored_results.formula_cache`. Enforced
+  in `_prepare_case`, so it applies to every mode (classic and agentic alike,
+  and both benchmarks).
+- **Runs the score-neutral answer check** (`utils/answer_check.py`): the
+  Questions-sheet answers of attempt vs golden solution, compared with
+  tolerance `|a-b| <= max(1e-9, 1e-6*max(|a|,|b|))`; full artifact
+  `answer_check.json` rides with the raw files, summary in
+  `scored_results.answer_check`. Never affects the 0-100 score. Side-by-side
+  view: `operation_scripts/report_accuracy_engine.py`.
+- **Serves category-keyed context views** (template 5): extraction writes a
+  format-stripped `<sheet>_data.csv` beside every `<sheet>_full.csv`;
+  `read_file` serves the data view except in Formatting, and attaches
+  merged-cells/frozen-panes metadata once per sheet in Formatting and
+  Structure. Listings show dimensions only, and the per-category user
+  message keeps static blocks first so consecutive categories share a
+  prompt-cache prefix. CSV caches live in the `*_csv_cache_v2` generation (now `_v6`, see judge v7).
+
+## judge_version 4 / single-pass 5 (2026-09)
+
+The 2026-09 update layers three things onto the v2 agentic regime (grades
+are NOT comparable to judge_version 3 rows):
+
+- **Grading guidance** (`prompts/rubrics/rubric_9_guidance.yaml`, loader
+  `utils/rubric_guidance.py`): judge-only scope rules — a general
+  don't-penalize-inherited-content rule, category notes, and per-check
+  notes — rendered under the affected checks in BOTH modes. Validated
+  against rubric_9.json at load (a renamed check refuses to grade). Never
+  fold these into rubric_9.json (regenerated) or the agent prompts.
+- **The starting workbook as a third readable source**: grade_from_db
+  stages the task's starting xlsx as `starting/starting_workbook.xlsx`;
+  `read_file` serves it as `source='starting'` so inherited-vs-agent-authored
+  questions are checked, not guessed. Cached per task in
+  `starting_csv_cache_v2`.
+- **Single-pass mode** (`--single-pass` on grade_from_db and
+  grade_with_orchestration — the judge v4 experiment): one conversation
+  over every applicable check (globally numbered 1..132 in the rubric's
+  flattened order — the suitability annotations' numbering; gating leaves
+  gaps, never renumbers) instead of 12 per-category loops. Template
+  `agentic_judge_template_7.yaml`; `read_file` gains a `view` parameter
+  (`data`/`formatting`/`structure`) replacing the category key; rows record
+  `single_pass.version` (5) / prompt_version 7, so they never mix with
+  12-category rows (version 4 / template_6 / prompt_version 6) in the dedup
+  key. Round budget `single_pass.max_rounds` (500 — effectively unbound for
+  canaries; set the production value from measured usage).
+
+## judge v6 — single-pass 6 / template_8 (2026-09-02)
+
+The pipeline update after the v4/v5 canaries (single-pass only; the
+12-category path is frozen at version 4). Rows record `judge_version` 6 /
+`prompt_version` 8 and are not comparable to version 5 rows.
+
+- **Harness-decided answer accuracy** (`utils/answer_check.py`, rulebook
+  `utils/answer_rules.py`): the Questions-sheet answers are checked
+  deterministically BEFORE the judge runs, and the checker's verdict on
+  `Accuracy / Final calculation accuracy` (and the zero-answers case of
+  `Deliverable completeness`) is overlaid onto the judge's at the scoring
+  layer. `--accuracy-check harness|llm` (default `harness`, both drivers)
+  picks which engine's decision lands in the recorded total; BOTH are
+  always scored — `scored_results.accuracy_engine` carries
+  `total_score_llm`, `total_score_harness`, and per-check provenance
+  (engine, decision, rule fired, fallback reason, agreement with the LLM),
+  and `ai_judgement_harness.json` sits beside the pure-LLM
+  `ai_judgement.json`. The harness fails closed to the LLM verdict wherever
+  it cannot measure (no answer sheet, layout not trusted), with the reason
+  recorded. A numeric answer typed as a constant where the golden uses a
+  formula is `hardcoded` and counts as a mistake
+  (`single_pass.hardcoded_counts`).
+- **Answer-equivalence rulebook** — one module, two consumers: the checker
+  applies it and template_8 renders it verbatim under the Accuracy category
+  standard (`RULES_VERSION`, recorded per grading). Rules v6.5 (2026-09-10):
+  loan-schedule "payment" / "principal" rows join the extended outflow
+  lexicon (House Standards attempts sign them negative, goldens are
+  positive; "balance" rows stay guarded). Rules v6.4 (2026-09-02,
+  after a $0 sweep of the checker over all 454 v2 attempts): an attempt is
+  THE SAME number when it ROUNDS TO the golden — half a unit of the last
+  decimal the golden carries, whether or not the agent rounded (the old
+  "unrounded attempt gets only the noise band" clause failed 22 correct
+  attempts on presentation alone); a full unit only when both sides are
+  rounded figures. The decimals come from the golden's own `ROUND(...,n)`
+  when present — read from openpyxl ArrayFormula objects, which every golden
+  answer formula is (before v6.4 no golden ever counted as rounded) — else
+  from the header phrase. Sign flips accepted on outflow rows: the core
+  lexicon (expense/cost/spend/outflow/depreciation/amortization/capex/tax)
+  unconditionally, an extended P&L list (energy, raw materials, SG&A/G&A,
+  wages, R&D, marketing, interest, repayments, ...) unless an inflow/net/
+  change/balance word marks the row. Percent and fraction forms equal, values
+  not rendered strings, sentinel synonyms, dates, zero forms; unit-scale
+  (x1000) differences are flagged, never accepted.
+- **Rounding compliance is its own harness verdict** (v6.4): when the
+  Questions sheet states a precision, an answer whose STORED value carries
+  more decimals than asked (a display format alone does not round) fails
+  `Rounding / Rounded outputs` — overlaid like the Accuracy checks, with
+  `n_unrounded` and the directive recorded in `scored_results.accuracy_engine`.
+  It never touches Final calculation accuracy.
+- **Name-agnostic answer finder**: sheets are validated by the golden
+  question TEXTS they contain (named Questions*/Answers* sheets win ties,
+  decoys like "Answer Map" lose), rows are paired by text, the answer column
+  is the header cell starting with "answer" in the block's header row.
+- **Workbook properties block** (`utils/workbook_properties.py`,
+  `_workbook_properties.json` beside the CSVs; caches moved to
+  `*_csv_cache_v3`, now `_v4`): true tab order (file listings now follow it), hidden
+  sheets/rows/cols, data validation, column widths / row heights, comments,
+  conditional formats, hyperlinks, defined names, calc mode, print setup —
+  rendered for attempt / solution / starting workbooks in the seed.
+- **Standards + strictness** (template_8): guidance notes render as
+  `Standard:` lines that are part of each check's definition; absence of
+  evidence is not a pass; genuinely undecided after inspection = fail with
+  the ambiguity described.
+- **Native Anthropic path** (`utils/anthropic_native.py`): provider
+  `anthropic` graders use the Messages API directly — real `effort` tiers
+  (the OpenAI-compat endpoint ignores `reasoning_effort`), prompt caching
+  (system-prefix breakpoint + automatic tail marker), thinking-block replay.
+  Cached input is priced on every path (`token_tracking.total_cached_tokens`
+  / `cache_savings`; OpenAI reads at 25%, Anthropic reads 10% / writes 125%).
+
+  `grade_with_orchestration` also stages suitability annotations itself now
+  (before 2026-09 it never passed them through, so it could not grade v2 at
+  all) and shares the CSV cache generation with grade_from_db (`_v6` today).
+
+## judge v7 — single-pass 7 / template_8 (2026-09-09)
+
+Rows record `judge_version` 7 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 6 rows. Frozen 2026-09-14 when version 8 was cut.
+
+- **Evidence the rubric grades on is now served** (2026-09-09, caches move
+  to `*_csv_cache_v4`, properties schema 2). Properties block: cell
+  hyperlinks (check 14 — `ws._hyperlinks` is empty after a load, links live
+  on `cell.hyperlink`), manual page breaks (76), row/column outline groups
+  with hidden ranges marked `(grouped)` (93), the style each
+  conditional-format rule applies (32, 57), `(hidden)` defined names (29),
+  VBA detected from the zip listing (96, 97), and the attempt's delivered
+  filename from the `_attempt_origin.json` sidecar `setup_task_folder`
+  writes (77). Cell extractor: dates/times rendered like Excel under their
+  number format (45 — `2027-01-01`, `Jan-27`, `2:07 PM`, never a spurious
+  timestamp), accounting padding `_x` / `*x` / `?` so zeros read `-` and
+  negatives `(12,346)` (66, 65), populated cells blanked by their format
+  served as `[ref]<raw> [FORMAT:<pattern>] [HIDDEN BY FORMAT]` for numbers
+  and text (94), a formula cell always carries its `[ref]` even with an
+  empty display (uncached or returning `""`), what-if data tables tagged
+  on every member cell as `[DATA TABLE ref: {=TABLE(r,c)} anchored at X]`
+  (90, 91, 99), and `wrap` restored in the formatting view (70). Test:
+  `tests_offline/test_judge_v7_evidence.py`.
+- **Tier 2 evidence sweep** (2026-09-10, caches move to `*_csv_cache_v5`, then `_v6` the same day when the canaries showed light yellows (`FFFFCC`) named `olive` at the 60° hue boundary — now `light_yellow`;
+  properties schema 3; same test file). Cell extractor: multi-cell array /
+  dynamic-array spills tagged on the anchor as `[SPILL C6:C1025]` and on
+  every filled cell as `[SPILLED FROM C6]` — those cells used to read as
+  hardcodes, or as `FORMULA:=` where Excel wrote `<f ca="1"/>` (41, 48-50,
+  81, 83, 85-86, 129, 21, 27); the standard `[Red]` / `[$$-409]` number
+  formats render like any other (zero `-`, negative `(1,235)`) instead of
+  punting the whole format (45, 46, 65-67); theme-palette colours are
+  resolved from the workbook's own `theme1.xml` (`utils/theme_palette.py`,
+  tint applied in HLS) and emitted as ordinary `textcolor:` / `bgcolor:`
+  tokens — before this every theme-coloured cell read as default black on
+  no fill (43, 47-56, 59); the default text slot (theme 1, no tint) stays
+  untokenised, matching the "missing key = Excel default" convention; blue
+  hues 200-260° are named `blue` / `light_blue` / `muted_blue` /
+  `dark_blue` instead of `pale_blue` / `muted_purple` / `slate_blue` (48,
+  52, 55). Properties block: `styled empty cells in used range: N (e.g. …)`
+  per sheet (28; left out while 28 is retired, see judge v9/v11); hidden defined names leave the listed set for the
+  footnote `[+N add-in/system, +M hidden names not listed]` (9, 29); the
+  true `active cell` per sheet, read from the selection of the view's
+  active pane on frozen sheets (62); `N spill/array ranges` in each sheet's
+  header and a bare `=` no longer counted as a formula. Numbers stored as
+  text: a typed constant that reads like a number (`2024`, `1,234.50`,
+  `(1,234)`, `45%`) is served as `[A4]2024 [TEXT]` (23, 63, 64) — a fact,
+  not a verdict: version labels and list numbers are text on purpose, and
+  the judge decides from context; formula results are never marked (the
+  formula is visible). Measured cost: 13 marked cells across 6 sample
+  attempts, 0 across 4 goldens.
+- **Cover sheet is graded content** (2026-09-09): `--ignore-sheets` now
+  defaults to nothing on both drivers. The port's `["cover"]` default deleted
+  the `Cover` sheet's CSV before grading while rubric_9 grades cover content
+  directly (cover sheet first, version history, master error flag, and any
+  glossary / how-to / purpose / scope / design notes placed there); 669 of
+  784 attempts name that sheet exactly `Cover`. The production orchestration
+  runs (2026-09-05/07) were launched with `--no-ignore-sheets` and saw the
+  cover; the 2026-09-08 rubric-effect `grade_from_db` run (attempts
+  1175-1236) was not and judged those checks with no evidence — each grade
+  log's parameter header records `"ignore_sheets"`. Ignoring is opt-in
+  (`--ignore-sheets NAME ...`); `--no-ignore-sheets` is a kept no-op.
+
+## judge v8 — single-pass 8 / template_8 (2026-09-14)
+
+Rows record `judge_version` 8 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 7 rows. Cut from the toy-reliability run-1 walkthrough (an internal study of the judge's per-check reliability on synthetic Pass/Fail workbooks)
+(19 misses on 18 checks); every further judge change lands here until version 9.
+
+- **Harness verdict for Rounding / Rounded outputs retired** (rulebook v6.6).
+  The check covers every final output a reader sees, not only the Questions
+  answers, and a number format now counts as rounding, so the judge decides
+  it; the harness could reverse a correct judge fail (toy 104). The rounding
+  statistics (`n_unrounded`, `rounding_directive`, per-question
+  `attempt_rounded`) are still measured and recorded in `answer_check.json`
+  and `scored_results.answer_check` for audit. Final calculation accuracy and
+  Deliverable completeness keep their harness handling.
+- **OVERSIZED RANGE tag** (check 25): the properties block's per-sheet line
+  flags a sheet declared at Excel's full width or height whose content ends
+  far earlier. Extreme-only by design — a ratio rule flagged 59 of 471 cached
+  real workbooks, goldens included. Rendered from stored properties; no cache
+  generation bump. Test: `tests_offline/test_oversized_range.py`.
+- **Guidance 27 → 36 notes**: edits to checks 16, 49, 55, 64, 82; new notes
+  for 2, 11, 25, 37, 65, 66, 67, 104, 107.
+
+## judge v9 — single-pass 9 / template_8 (2026-09-16)
+
+Rows record `judge_version` 9 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 8 rows. Cut from the toy-reliability runs 2-3
+walkthrough (the decision log and implementation brief of that date are
+maintainers' documents, not in the repository).
+
+- **Checks 37 and 101 retired by rule** (`judge.retired_checks: "37,101"` in
+  `project_configs.yaml`; `utils/rubric_suitability.py`). The rubric keeps its
+  132-position numbering — toys, suitability annotations and every grading to
+  date are keyed by position — so nothing is deleted or renumbered: the two
+  checks are forced `not_applicable` on every task (with or without an
+  annotation, and under `JUDGE_SKIP_SUITABILITY=1`), never prompted, never
+  scored, and their categories rescale around them exactly as suitability
+  gating does. `RETIRED_CHECK_NAMES` pins the (category, name) each number must
+  carry; a regenerated rubric that moved them refuses to grade. Recorded per
+  grading in `scored_results.rubric_suitability.retired_checks`. the toy-reliability driver
+  skipped toys for retired checks. Effective rubric: 130 items.
+  - **Check 28 No unused formatting retired the same way** (judge v11,
+    2026-09-19, folded into 11 because nothing had been graded under it):
+    `judge.retired_checks: "28,37,101"`, effective rubric 129 items. The
+    colleague's review of the 12 jv9 GUI gradings showed the check cannot be
+    graded as served: Excel's Check Performance counts formatting on empty
+    cells beyond the last row/column of content, the judge's `styled empty
+    cells in used range` count looks only inside the content rectangle, and
+    the LeaseorKeys / NestQuest goldens carry ~69k trailing formatted cells
+    themselves. 28 is 3.28% of Error Checks (0.43% of the total); the other
+    14 Error Checks items rescale by 1.034, the category stays at 13%. The
+    suitability annotations in S3 are not edited for a retirement (28 is
+    `applicable` in all 101, as 101 still is): the rule overrides them at
+    load time, and an annotation that is not an exact 132/132 match refuses
+    to grade.
+  - **Reversible by config alone.** 28 is meant to return once redefined
+    (rubric 10 queue below). Taking a number off `judge.retired_checks`
+    un-retires it: its `RETIRED_CHECK_NAMES` pin stays (a pin permits, the
+    list decides), and evidence that exists for that check alone is rendered
+    again — `workbook_properties.STYLED_EMPTY_CHECK` leaves the `styled empty
+    cells in used range` line out of all three properties blocks only while
+    28 is on the list (`render_properties_text(..., retired_checks=…)`,
+    passed from the grading's provenance). Render-time only: the properties
+    JSON always keeps the count, so neither direction needs a schema or CSV
+    cache bump. Test: `test_retired_check_evidence_line_follows_the_config`.
+- **Evidence flags in the properties block** (`utils/workbook_properties.py`,
+  schema 4; CSV caches move to `*_csv_cache_v7`; judge v11 adds schema 5 and
+  `*_csv_cache_v8`, see the last bullet; judge v12 schema 6 and `_v9`). Each is rendered per sheet:
+  - `WIDE OUTLIER` (check 70): a run of ≥ 2 equal-width columns ≥ 2.5× wider
+    than the nearest equal-width run on each side (length ≥ 2, width ≥ 4 so
+    spacers do not count). Lone columns are never compared; Instructions /
+    Questions sheets are skipped. Render-time from stored widths.
+  - `period series` (checks 108/123/124/125): every run of ≥ 3 period labels
+    (years, dates, `Qn YYYY`, `Mon-YY`, `FYyyyy`; plain numeric years only as
+    a monotonic run) in a row, with `PERIOD SERIES OUT OF ORDER`, `unlabeled
+    gap at …` (blank header over a value-bearing column inside the run),
+    `VERTICAL PERIOD SERIES` (down rows on a sheet that has a horizontal
+    timeline, only when the cells beside are formulas — typed-input registers
+    stay silent), and `content continues N rows past the "End Sheet" marker`.
+    Extraction-time; needs the data-only workbook.
+  - `content fit` (check 69): from the display strings the extractor already
+    renders — `NUMERIC exceeds width (would render ###)` is the one problem
+    label (number at least 1.5 characters wider than its column; the golden
+    sweep put two goldens' borderline cells inside that band). Text wider
+    than its column beside a non-empty neighbour is cut off on screen and is
+    served as information with examples — 43 of 98 goldens carry such
+    header labels, so the rubric decides, not the flag. Text overflowing
+    into an empty neighbour is counted as normal. Width estimate is coarse
+    (character classes of the default font, font size and bold scaling;
+    numbers are measured in their own face since judge v12);
+    wrapped, shrink-to-fit, centre-across-selection, merged and
+    General-format cells are excluded.
+  - **Column-width bug fixed in the extractor** while calibrating: a `<col
+    min=9 max=308>` run wider than 200 columns was collapsed to its first
+    column, so every timeline column of a wide model was served at the
+    default width (8.43 instead of, say, 12.9). Widths served since judge v6
+    were wrong for those sheets; v7 caches carry the corrected runs.
+  - `formulas with a typed date-like string literal` (checks 2/10/81):
+    `"12.12.2028"`, `"2028-12-12"`, `"12/12/2028"` inside formula text.
+  - `IMPLICIT INTERSECTION` (check 22; judge v11, 2026-09-18,
+    `utils/implicit_intersection.py`): plain formulas (no `t="array"`
+    marker) that use a multi-cell range as a single value — operand of an
+    operator or argument of a single-value function such as ABS/ROUND —
+    from a cell outside that range. Excel evaluates them by implicit
+    intersection and shows #VALUE!; LibreOffice and the Python engines that
+    write the cached values do block arithmetic instead, so the served
+    number looks fine (grading 1075, `Sens_Engine!D448`, cached 4.9e-08).
+    The walker's context rules were probed against Excel for Mac 16.112 on
+    166 formulas (0 false flags; the probe set is the test fixture). Unprobed
+    constructs (OFFSET, CHOOSE, TRANSPOSE, names, tables, IFERROR-wrapped
+    expressions, dynamic-array functions) are never flagged. Goldens: 0 of
+    101 flagged; the 12 jv9 GUI gradings: only 1075/D448. Guidance note on
+    check 22 tells the judge to fail on the listed cells only.
+    Test: `tests_offline/test_implicit_intersection.py`.
+  - `data validation` line (check 44; judge v11): every validation now
+    renders its full rule and error-alert state — `D7 whole between 1 and
+    50 — alert OFF (any entry accepted)` — under a per-sheet tally ("13
+    (error alert OFF for ALL …)"). Before, the line showed only the cell,
+    the type and the first bound, and the alert flag was never extracted;
+    8 of the 12 jv9 GUI attempts had every validation alert-off (both
+    vendors) and the judge passed 7 of them. Guidance note on 44: alert-off
+    equals absent; key inputs are drivers, not data blocks. Goldens: 4 of
+    101 carry validation, all alert-on. Rubric 10 queue: add "with the
+    error alert enabled" to the check text.
+    Test: `tests_offline/test_data_validation_alert.py`.
+  - `[actual …]` tag in the cell views (check 66; judge v11,
+    `excel_utils._actual_value_tag`): a cell that displays like zero (0,
+    0.00, (0.00), -0.0, 0.00%) while its value is not zero is served as
+    `0.00 [actual 3.64e-12]` in both the full and the data view — when the
+    value is a floating-point leftover (below 1e-6) or the cell carries a
+    dash format (a true zero would have shown the dash). Ordinary small
+    numbers rounded away by the display (0.0025 as 0.00 under #,##0.00)
+    are not tagged: they would have added 102k tags across 36 goldens with
+    nothing to decide. The judge
+    was shown the same "0.00" for a floating-point leftover under a correct
+    dash format as for a true zero and failed check 66 on 5 of the 12 jv9
+    GUI gradings for leftovers (1075, 1078, 1083, 1084, 1085). Exact zeros
+    are untouched; the tag is added after the width-fit measurement and
+    the hidden-by-format test, so no other evidence changes. Guidance 66
+    extended: a tagged cell is never a zero. The four reviewed goldens use
+    no dash format at all (thousands of true zeros shown as 0.00), which
+    the rubric as written fails — task-creator item.
+    Test: `tests_offline/test_actual_value_tag.py`.
+  - `rounding statements` line (check 105; judge v11): each sheet's typed
+    rounding statements ("USD, rounded to $0.01") beside the number of
+    formulas on that sheet using ROUND/ROUNDUP/ROUNDDOWN/MROUND. the maintainer's
+    ruling 2026-09-18: a "rounded to" label over figures that are only
+    displayed to that precision misdescribes the model (the colleague's
+    point on 1084 `Owning model!B3` and 1085 `Owning!B4`); "shown to" /
+    "displayed to" or "carried unrounded" is the accurate wording. Display
+    precision stays acceptable for Rounded outputs (104). The House
+    Standards prescribed the "rounded to" wording until the same day: v1
+    was amended in place, version unchanged (`house_standards/README.md`,
+    Amendments), so attempts built under the earlier text fail 105 for
+    following it. Rubric 10 queue: 105 reads "rounded or shown to", label
+    must match what the model does.
+    Test: `tests_offline/test_rounding_statements.py`.
+  - `freeze panes` extent (check 122; judge v11): the detail line now reads
+    `freeze panes: A35 (34 rows ≈ 660 pt frozen, 0 columns) EXCESSIVE: …`.
+    The judge was shown only the cell and never cited an excessive freeze:
+    of the 12 jv9 GUI attempts four lock 306-660 pt of rows (1085 Checks
+    A35, 1078 Checks D25, 1086 Assumption A26, 1083 Owning/Renting E18)
+    and all passed or failed for missing panes only. Thresholds
+    (`FREEZE_MAX_ROWS_PT` 300, `FREEZE_MAX_COLS_CHARS` 200; the column
+    threshold was 130 until the golden sweep found three goldens freezing
+    141-156 characters of label columns) apply at render
+    time from the stored extent; hidden rows are not counted. Guidance note
+    on 122: an EXCESSIVE tag fails the check; no tag, no fail for excess.
+    Test: `tests_offline/test_freeze_extent.py`.
+  - Check 50 note extended (judge v11, text only): grading 1084 failed
+    Consistent color coding (52) on `Checks!D6, D20:D29` — black where the
+    identical formulas beside them are green — and passed Green font for
+    cross-sheet links (50) one tool call earlier. The judge had read the
+    cells; it booked the slip once. The note now keeps the two checks in
+    step. Across the 12 jv9 GUI attempts only 1084 has a black cell whose
+    identical neighbouring formula is green; larger black blocks elsewhere
+    are calculations those models colour black on purpose. A stricter rule
+    (any black formula naming another sheet fails 50) was considered and
+    shelved: it fails every golden and needs the House Standards colour
+    line to say so first.
+  - Check 88 note (judge v11, text only): grading 1084 passed a "sense
+    check" (`Checks!B38:F42`) whose three benchmarks are links to the very
+    assumptions that drive the compared figures (3.0% appreciation vs the
+    3% growth input, to 1e-8), while 1085 — same agent, same pattern,
+    "no external market benchmark is assumed" — and 1086 were failed.
+    the maintainer's ruling 2026-09-19: an input or assumption that is part of the
+    model is never a valid benchmark, and one isolated outside comparison
+    among unchecked key outputs does not pass. 1075 (typed EV/EBITDA, P/E,
+    WACC ranges) and 1076 (peer percentiles) are the passing shape. The
+    four reviewed goldens carry no sense-check section at all.
+  Golden/toy-Pass sweep counts are in the maintainers' session notes for 2026-09-16.
+  Tests: `tests_offline/test_evidence_flags_v9.py`.
+- **Guidance 36 → 42 notes**: replaced 50, 70, 126; extended 2, 4, 55, 66,
+  82; new 7, 33, 108, 112, 115, 129; general block gains "similarity to the
+  solution is never evidence".
+- Rubric 10 queue (not implemented): 115 and 129 rewritten so clearly
+  distinguishable sections / a visible single-formula roll-forward are
+  acceptable; 70's "Bad" line led by "wider than content requires"; 28 No
+  unused formatting redefined before it returns (what counts as unused —
+  Excel's Check Performance looks beyond the last content row/column, net of
+  the starting file — with evidence to match; the agent-facing build prompts
+  still carry the item, as they do 37 and 101).
+
+## judge v12 — single-pass 12 / template_8 (2026-09-20)
+
+Rows record `judge_version` 12 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 11 rows. Cut from the colleague's second review: he
+re-annotated four of the twelve jv11 GUI gradings (1087 LeaseorKeys, 1091 Bosch,
+1092 ApfelInc, 1097 NestQuest) and disagreed on 11 decisions. the maintainer ruled on
+each; twelve rows exist under 11, so everything lands here.
+
+- **Numbers are measured in their own font** (check 69; properties schema 6,
+  CSV caches `*_csv_cache_v9`). `display_width` measured every face as Calibri
+  scaled by size/11, so Arial 10 — whose digits are 7.4 px, the same as
+  Calibri 11 — came out 9% narrow: grading 1092's `WACC!C31:C39`
+  ("3,276,619.94", column 9.0, `###` in Excel) needed "9.55" characters against
+  a 9.0 + 1.5 threshold, nothing was listed, and the note on 69 then forces a
+  pass. `workbook_properties.numeric_display_width` sums the glyph widths of
+  the cell's own face (`_FACE_EM`, read from the font files with fontTools;
+  unknown faces are measured as Calibri, the narrowest common one, so they
+  miss rather than flag falsely) and divides by the column-width unit, the
+  Normal font's digit in whole pixels (`normal_font`, `column_unit_px`: 7 px
+  for Calibri 11, Aptos Narrow 11 and Arial 10 alike). Bold leaves the digits
+  of most faces unchanged. The rule and its 1.5-character band are unchanged,
+  and text is still measured by `display_width` (that class is not rendered).
+  The rebuilt scan lists exactly `C31:C39` on 1092 (`C30` fits).
+  Golden sweep: 2 of 101 listed, both on case-given sheets the agents inherit
+  (CashNiagara `Assumptions!AN18/BP18`, ### confirmed in Excel; Volkswagen
+  `Comp!H11/K11`, 11 characters in a default-width column) — task-creator items.
+  Tests: `test_numeric_width_uses_the_cell_font`,
+  `test_numeric_fit_end_to_end_arial_10`.
+- **IMPLICIT INTERSECTION lists who references the cell** (check 32;
+  `implicit_intersection.find_dependents`, one workbook-wide pass that runs
+  only when something was flagged). The cached value of a flagged cell looks
+  fine, so everything downstream looked fine too: on 1092
+  `Sens_Engine!D448` feeds `Checks!D19/F19`, the roll-up
+  `Checks!D46 =COUNTIF(F6:F42,FALSE)` skips the erroring row and
+  `Summary!D3` stays "OK". The line now ends "referenced by Sensitivity!D94,
+  Checks!D19, Checks!F19: these cells show the error in Excel too". Only
+  single-cell operands are listed; a range that merely contains the cell is
+  not, because whether it passes the error on depends on the function around
+  it. New note on 32: a master flag that stays OK while a check row is in
+  error fails, and only then (8 of the 10 roll-ups among the twelve attempts
+  count failures and would skip an error; a by-design rule was not adopted).
+  the maintainer's ruling: no cascade. One formula costs 22 and 32; 23 (No unresolved
+  cell warnings) and 31 (Error-check sheet) stand as graded.
+  Test: `test_dependents_of_a_flagged_cell_are_listed`.
+- **Print estimate per sheet** (check 76; `_print_estimate`, stored as
+  `print_estimate`, rendered under the page-breaks line). Excel's automatic
+  page breaks are stored nowhere, so the judge had to guess which sheets run
+  past a page: 76 flipped on 5 of the 12 attempts between jv9 and jv11, every
+  one a workbook with breaks on some long sheets and none on others (1092:
+  `Summary`, 133 rows, fit to one page wide, no breaks; the colleague's note
+  is the jv9 judge's own fail text). The line gives pages tall and wide — the
+  print area, else the used range, from row heights and column widths against
+  paper, orientation, margins and the fit or scale settings, with print-title
+  rows repeated — and the manual breaks inside it, tagged `MULTI-PAGE, NO
+  MANUAL BREAKS` above `PRINT_MULTI_PAGE_MIN` (1.3 pages, the estimate's error
+  band). The case's Instructions / Questions sheets are skipped. On the twelve
+  attempts the tag falls on exactly the six Fable workbooks and none of the
+  six Astra ones, which settles all five flips. New note on 76: decide per
+  sheet from the tag; breaks elsewhere do not cover a tagged sheet; inherited
+  sheets are not the agent's print setup; no tag, no fail for missing breaks.
+  Goldens: 100 of 101 carry the tag, none has a manual break and one has any
+  print setup at all — they fail 76 as written (task-creator item).
+  Test: `test_print_estimate_tags_multi_page_sheets_without_breaks`.
+- **Guidance 49 → 53 notes.** New 76, above. New 111 Best-fit structure: brute-force
+  replication of one calculation block where a data table, iterative
+  calculation or one parameterised block would do is the articulable better
+  alternative (grading 1092: `Sens_Engine!B78:Y445`, ten stacked 33x10 blocks,
+  7,639 formulas; the golden needs 54 with iteration and one data table; jv9
+  failed it in those words, jv11 passed it, no note existed). New 63 Text
+  left-aligned: text with no `halign`
+  token IS left-aligned, and a FORMAT field with no `[ref]` is an empty cell
+  (grading 1087 booked the `halign:right` of the empty `Assumptions!E26:E28`
+  to the text in `D26:D28`); the same `[ref]` sentence joins 64. New 32, above.
+  Extended 99: a plausible change scales or shifts a driver; zero, negative,
+  blank or out-of-list values of an input that must be positive, and a
+  perpetuity growth rate at or above the discount rate, are invalid inputs for
+  data validation, not stress cases (five of the ten 99 fails across the 24
+  GUI gradings rested on one; explicit-period growth above the discount rate
+  stays an ordinary stress). Extended 81: constants that reconcile a labelling
+  convention are technical remnants (grading 1097,
+  `Assumptions!H45:H61 =(F45-0.01)*$D$83`, the cent between "12,348.01 –
+  14,000" labels). Extended 108: a monthly or daily engine of hundreds of
+  periods is conventionally vertical and passes either way when consistent
+  (same workbooks, same note: jv9 passed all four such attempts, jv11 failed
+  three; the goldens of tasks 19, 32 and 38 are vertical).
+  Reworded 88: the jv11 note ("the model's own inputs are never a benchmark",
+  "a typed bound whose basis is stated") took 88 from 2 to 11 fails of 12, and
+  failed 1092 — the workbook this README names as the passing shape — by
+  reading the benchmark bounds typed in `Inputs!D56:D63` (source "Judgment")
+  as model inputs. the maintainer's ruling: a bound typed for the sense check is an
+  outside comparison wherever it sits, and the modeller's judgment is basis
+  enough (the rubric says "against intuition"); only an input that DRIVES the
+  model is never a benchmark.
+- Noise floor measured on the way: of 1,380 paired jv9/jv11 decisions on the
+  twelve attempts 99 flipped (7.2%), 53 of them on checks no judge change
+  touched (3.8%) — 99 (6 of 12), 76 (5), 26 and 115 (4 each).
+
+## judge v13 — single-pass 13 / template_8 (2026-10-04)
+
+Rows record `judge_version` 13 / `prompt_version` 8 (template unchanged) and are
+not comparable to version 12 rows. Cut for the deterministic rubric checks
+(the maintainer's rulings of 2026-10-02/04): Python grades the delivered workbook
+before the LLM runs and decides 19 checks at scoring. Existing gradings are not
+re-scored, so v12 rows keep the LLM's verdicts on those checks.
+
+- **Python-decided checks** (`utils/det_checks.py` runs the graders in
+  `judge/detchecks/`, documented in `detchecks/docs/`): Clean Name Manager (29),
+  No bright-yellow highlighting (47), Black font for calculations (49), Green
+  font for cross-sheet links (50), Red font for external links (51), Consistent
+  zoom level (61), Active cell reset to A1 on all sheets (62), Zeros as dashes
+  (66), Sufficient column widths (69), Reasonable column widths (70), Reasonable
+  row heights (73), No merged cells (74), File extension (.xlsx) (77), Avoid
+  volatile functions (80), Avoid whole-column references (87), No hidden sheets
+  (92), No hidden rows/columns (93), No white-on-white hiding (94), No external
+  links (95). Their verdicts join `harness_verdicts` beside the answer check's
+  (`family: "det_checks"`) and are overlaid at the scoring layer exactly like
+  Final calculation accuracy since v6: the LLM's verdict stays on the item as
+  `llm_*` in `ai_judgement_harness.json`, and `ai_judgement.json` stays the pure
+  LLM judgement. The LLM still grades every check, blind to Python (prompt,
+  evidence and CSV caches `*_csv_cache_v9` unchanged), so agreement stays
+  measurable: `scored_results.accuracy_engine.checks["<Category>/<name>"]`
+  carries `engine`, the Python `decision`, `llm_decision`, `agreed`, `live`,
+  `counted`, `check_no`, `n_mistakes` and the check's `stats` (see Artefacts for
+  what is shortened there). A live check the LLM never recorded (even after the
+  forced rounds) is inserted from Python under its rubric number, so the recorded
+  total scores Python's verdict; but the LLM's output for that category is still
+  incomplete, so the category is a hard parse failure and the grading is written
+  with `failed = true` (`failed_reason` "Parse failed for categories: ...") -
+  kept on purpose: the LLM output is malformed, and Python does not repair it.
+- **Recorded only**: No formula errors (22) and Negatives in parentheses (65)
+  (the "v3 bucket"; detchecks marks both `Check.live = False`) run and are
+  recorded the same way with `engine: "llm"`, `live: false` and
+  `fallback_reason: "recorded only; the LLM verdict stands at scoring"`, so the
+  LLM's verdict counts. No unresolved cell warnings (23) and Automatic
+  calculation mode (100) stay LLM-only (not built).
+- **Which checks run**: `det_checks.live` / `det_checks.recorded_only` in
+  `project_configs.yaml`, rubric numbers pinned by name in
+  `utils/det_checks.DET_CHECK_NAMES` and checked against the rubric and the
+  detchecks registry like `judge.retired_checks` (a mismatch refuses to grade),
+  then gated per task exactly as the LLM is: rubric suitability (retired checks
+  never run) and the effective weights. Red font for external links (51) is
+  not applicable to any task today, so it is configured live but graded nowhere
+  yet.
+- **No fallback**: a check that cannot grade the file raises
+  (`detchecks.errors.GradingError`, re-raised as `utils.det_checks.DetChecksError`
+  naming every failing check by title and the file). The checks run first in
+  every driver - before the answer check and the LLM, outside the answer
+  check's score-neutral `try` - so a file they refuse never reaches the answer
+  check's own LibreOffice recalculation, and the attempt fails the way the
+  formula-cache refusal does: `grade_from_db` logs `FAILED`, returns
+  `success: False`, writes no DB row and the batch continues, with no API spend. `det_checks.json` is written in every case and stays in
+  the task folder: status `error` with the failures, or - when a config error,
+  a rubric drift (named by title and rubric file) or a suitability refusal
+  stops the run first - with the stage and the error. `judge.py --single-pass`
+  raises.
+- **Recalculation**: structure and styles come from the delivered
+  `ai_attempt.xlsx` (never `temp_recalculated/`; a legacy .xls delivery is the
+  one exception, below); formula values from an
+  Excel-saved file's own caches, otherwise from a LibreOffice recalculation of
+  the delivered file (`paths.libreoffice_path`, private profile, threaded
+  calculation off, `det_checks.libreoffice_timeout_seconds` 600) written to
+  `<task folder>/det_checks_recalc/`, which `run_det_checks` deletes itself
+  (copy and profiles) as soon as the checks return or raise, in every driver
+  (`grade_with_orchestration` never prunes); `det_checks.json` stays.
+  Excel recalculation is off (`det_checks.excel_recalc: false`); cells
+  LibreOffice cannot compute are used as displayed. LibreOffice never outlives
+  its grading: its paths are passed as encoded file
+  URLs (a task folder with a space or `%` works), it runs in the grader's
+  process group under a watchdog (`detchecks/core/lo_watchdog.py`) that kills
+  it when the grader dies, SIGKILL included; SIGTERM / SIGHUP to the grader
+  kill it first and the grader then dies of the signal as before; a timeout or
+  an exception kills its whole process tree, and the attempt's private profiles
+  are swept when the checks return or raise. Cost: no API spend; the Python
+  pass took ~3 s median (38 s worst) per attempt in the 374-file sanity run,
+  plus the LibreOffice run (seconds to minutes) for a file not saved by Excel.
+- **Legacy .xls deliveries** (the maintainer's decision of 2026-10-05: "just
+  keep doing whatever v12 did or does"): `grade_from_db` stages the first
+  .xlsx / .xlsm / .xls delivery as `ai_attempt.xlsx` without converting it
+  (.xlsb is never staged). When the staged bytes are a legacy binary Excel
+  workbook (an OLE2 compound file with a Workbook / Book stream:
+  `utils/det_checks.legacy_xls`, from the content, whatever the name):
+  - with `--run-calculation` (v12 grades LibreOffice's re-saved copy):
+    LibreOffice converts it to .xlsx through the checks' own LibreOffice step
+    (memory guard, private profile, watchdog) into
+    `det_checks_recalc/xls_converted/`, and every check except File extension
+    (.xlsx) (77) grades that copy: structure, styles and values (LibreOffice
+    recalculates every formula of an .xls it loads; the values are taken from
+    the copy, no second LibreOffice run). File extension (.xlsx) (77) grades
+    the delivered file and its delivered name, and fails. `det_checks.json`
+    (`xls_conversion`: the copy, its size and hash, the conversion time, which
+    checks graded which file), `scored_results.det_checks.xls_conversion` and
+    each check's `stats.graded_on` (`libreoffice_xlsx_conversion` /
+    `delivered_file`) record it; the copy goes with `det_checks_recalc/`. The
+    judge's own `--run-calculation` re-save (`temp_recalculated/`, after the
+    checks and the answer check) converts the file a second time, as in v12;
+    the checks never read it.
+  - without `--run-calculation`: the checks other than File extension (.xlsx)
+    (77) cannot read .xls bytes, so the grading fails loudly before the LLM
+    (`FAILED`, no DB row; the error says to re-run with `--run-calculation`);
+    v12 fails too (openpyxl cannot open the file).
+  Every .xlsx / .xlsm delivery is graded exactly as before.
+- **Every attempt is graded, whatever its size** (the maintainer's decision of
+  2026-10-05): `det_checks.libreoffice_max_mb` is `0` = no limit in production
+  (a positive value is a test-run setting: a larger file not saved by Excel then
+  fails "not graded: too large"). Memory is protected instead, for EVERY
+  LibreOffice run of a grading - the det-checks recalculation, the answer
+  check's recalculation and `--run-calculation`
+  (`detchecks/core/lo_guard.py`, `utils/det_checks.run_libreoffice`; details in
+  `detchecks/docs/recalc.md`, "Memory safety"):
+  - one LibreOffice at a time on the machine, across all grading processes and
+    worker threads: an exclusive lock on `det_checks.libreoffice_lock_path`
+    (null = `/tmp/mbabench_libreoffice.lock`, the system temp dir; a waiting
+    grader logs who holds it; the kernel releases it when a grader dies), waited for at most
+    `det_checks.libreoffice_max_lock_wait_minutes` (180), so one stuck file cannot stall a run;
+  - holding the lock, wait until `det_checks.libreoffice_min_free_pct` (25) of
+    the machine's memory is free (macOS `memory_pressure`, Linux
+    `/proc/meminfo`), logging while it waits, for at most
+    `det_checks.libreoffice_max_wait_minutes` (60);
+  - a run that fails (crash, no copy, timeout) is retried
+    `det_checks.libreoffice_retries` (3) times, the timeout doubled each time
+    (600, 1200, 2400, 4800 s for the det checks; from 300 s for the answer
+    check, from `JUDGE_RECALC_TIMEOUT_SECONDS` 1800 s for `--run-calculation`),
+    each try waiting for the lock and for memory again.
+  When the wait times out or the last retry fails, the grading fails loudly
+  (`LibreOfficeUnavailable`, `retry_later`): `FAILED`, no DB row, the batch
+  continues, `det_checks.json` records `retry_later`, and `grade_from_db` /
+  `grade_with_orchestration` list those attempts at the end of the
+  run ("LIBREOFFICE: n attempt(s) NOT graded ... Re-run them when the machine
+  has memory to spare: --attempt-ids ...", also `retry_later_attempt_ids` in
+  `run_summary.json`). The answer check stays score-neutral for every other
+  error, but never swallows this one (it would read uncomputed answers as
+  unanswered).
+- **Every attempt graded: defaults instead of "cannot decide"** (the maintainer, 2026-10-05):
+  an unresolvable colour is Excel's default for its slot (font black, fill none); an unverified
+  number format is graded by its best rendering; a table-style-dependent cell in No white-on-white
+  hiding (94) is visible; unwritten array members and untrusted formula values are skipped; an
+  unknown delivered name makes File extension (.xlsx) (77) judge the format from the content;
+  unparsable formula text is skipped. Each use is in the verdict's `stats.defaults` (count +
+  examples); the list of paths that still raise is in `detchecks/CHANGELOG_core.md`.
+- **Conditional formats never stop a grading** (the maintainer, 2026-10-05):
+  Negatives in parentheses (65), Zeros as dashes (66), Sufficient column widths
+  (69) and No white-on-white hiding (94) evaluate conditional-format rules with
+  one shared evaluator (`detchecks/checks/_cfeval.py`: cellIs with literal or
+  formula operands, text / blank / error rules, expressions - comparisons,
+  arithmetic, `&`, LEFT RIGHT MID LEN UPPER LOWER TRIM VALUE TEXT, IS* tests,
+  AND OR NOT IF, ABS ROUND and a few more - with absolute and relative
+  references to the cell itself, other cells and other sheets read through the
+  grading's value source, `detchecks/core/lookup.py`). Built-in conditional
+  formats (colour scales, data bars, icon sets, Excel's preset highlight
+  styles) never count as hiding text in No white-on-white hiding (94). A rule
+  the evaluator cannot evaluate (COUNTIF, top10, an untrusted referenced value
+  ...) never raises: No white-on-white hiding (94) assumes the text is visible,
+  the other checks grade the cell by its own formatting as if the rule were
+  off; No bright-yellow highlighting (47) does not count a conditional-format
+  fill whose colour cannot be resolved. Every such assumption is in the
+  check's `stats.cf_assumptions` (count + examples). Corpus attempt 2924
+  (`Cover!D4`, rule `LEFT($D$4,4)="FAIL"`) is now graded.
+- **Task metadata**: File extension (.xlsx) (77) judges the delivered file name
+  from the `_attempt_origin.json` sidecar (`original_filename`). Without it, or
+  with a malformed sidecar (not JSON, a JSON value that is not an object, no
+  non-empty `original_filename`), it judges the format from the file's content
+  (maintainer 2026-10-05: every attempt graded; recorded as
+  `delivered_name_unknown` with why, `missing` or `malformed: ...`). No external links (95) runs
+  with `requires_external_links: false` (no task requires them).
+- **Switches**: `--det-checks harness|llm|off` on `grade_from_db`,
+  `grade_with_orchestration` and `judge.py --single-pass`; the
+  default comes from `det_checks.enabled` (true = `harness`). `harness`: the
+  live verdicts count. `llm`: everything runs and is recorded, the LLM's
+  verdicts count (a shadow run; `total_score_harness` still shows the v13
+  total). `off`: nothing runs. A check that cannot grade fails the attempt in
+  `harness` and `llm` alike. `--accuracy-check` keeps deciding the answer check
+  alone. `accuracy_engine.effective` is `harness` when every measured live
+  verdict counted (`total_score == total_score_harness`), `llm` when none did
+  (`total_score == total_score_llm`) and `mixed` when only one family did;
+  `accuracy_engine.det_checks_mode` records the switch and each check's
+  `counted` whether its Python verdict is in the recorded total. The DB drivers
+  refuse to start when the `det_checks` config does not match the rubric
+  (`startup_check`), before any download.
+- **Reports**: `operation_scripts/report_accuracy_engine.py` prints each row's
+  recorded total beside the LLM and harness totals and spells out `mixed`
+  (e.g. "mixed: answer check llm, det checks harness": one family counted, the
+  other did not, so the recorded total is neither).
+- **Artefacts**: `det_checks.json` in the bundle (config, gate, task metadata,
+  the full verdicts with the recalculation plan, `code_sha` = a fingerprint of
+  the grading code: `detchecks/__init__.py`, `api.py`, `errors.py`, `core/` and
+  `checks/` only, so the same commit always records the same value) and
+  `scored_results.det_checks` (status, mode, graded and not-applicable numbers,
+  per-check engine / decision / live / n_mistakes / Python summary capped at 300
+  characters, and the recalculation block `values` stored ONCE: each value
+  check's `stats.values` in `accuracy_engine.checks` is the reference
+  `{"ref": "det_checks.values"}`). In `scored_results` every list longer than 10
+  items (gaps, examples, per-sheet lists) keeps its first 10, the original
+  lengths under `db_capped`; `det_checks.json` keeps everything. Per row this
+  took the LibreOffice attempts 388 / 2121 from ~107 / 106 KB of
+  `scored_results` to ~50 / 55 KB (v12: ~20 KB); Excel-saved 1375 stays ~47 KB.
+  A compact copy in `_metadata.json`.
+- **Whole workbook**: Python always grades the whole delivered workbook, even
+  when `--ignore-sheets` / `--attempt-sheet-name-filter` narrow the LLM's view
+  (the maintainer's whole-workbook rule): those flags reach the LLM's evidence
+  only, never `run_det_checks`.
+- **Versions**: `scripts/export_good_attempts.py` matches the exact
+  `judge_version`, so after each bump (13, then 14) every existing grading of an
+  older version shows as another version (not counted, re-planned) until it is
+  regraded. Rows graded with `--det-checks llm` or `off` are also stamped with
+  the current version; only
+  `scored_results.det_checks.mode` (mirrored in
+  `accuracy_engine.det_checks_mode`) tells them apart from `harness` rows.
+- Not changed: the paper scripts still read `judge_version >= 12`
+  (`MIN_JUDGE_VERSION`) and `pass_rule.DETERMINISTIC_CHECKS` lists Final
+  calculation accuracy only, so a cohort mixing v12 with v13 / v14 rows mixes
+  LLM and Python verdicts on these checks (open item: pin the paper scripts to
+  the final judge version and the Sol grader).
+  Tests: `test_det_checks.py` (the adapter on openpyxl workbooks: live and
+  recorded-only verdicts, the gate, the delivered name and malformed sidecars,
+  `det_checks.json` in every case, JSON safety, the LibreOffice policy, no size
+  limit in production and the test-run size limit, the memory guard - retries
+  then graded, every retry failing (retry_later, the end-of-run report), the
+  answer check and `--run-calculation` waiting for the machine-wide lock, the
+  answer check never swallowing `LibreOfficeUnavailable` - `det_checks_recalc/`
+  removed, the reaper on encoded profile URLs, SIGTERM
+  and SIGKILL to a grading whose LibreOffice hangs, `code_sha`, the DB payload,
+  the scoring switches), `test_det_checks_single_pass.py` (`grade_single_attempt`
+  end to end on a real Excel-saved attempt with a stub LLM, all three switch
+  values, the failure path that stops before the LLM call, LibreOffice
+  unavailable (det checks and answer check: `retry_later`, no LLM call), and an
+  oversized non-Excel attempt under a test-run size limit that stops before the
+  answer check with no LibreOffice run;
+  where the corpus attempt is absent the end-to-end case is reported SKIPPED by
+  pytest and by the script runner, never counted as passed, and
+  `DETCHECKS_E2E_ATTEMPT` points it at another Excel-saved file under 1 MB; the
+  judge's log folders go to the test's temporary folder, not
+  `judge/scratch/judge_cache/`), `test_det_checks_reports.py` (the accuracy-engine report) and `detchecks/tests/test_recalc_libreoffice.py`
+  (the real LibreOffice on a 3-cell file in a folder named with a space, `%41`,
+  `%` and `é`; stand-in soffice processes for the watchdog, the timeout,
+  SIGTERM / SIGKILL to the grader, a retry after two crashes, every try failing,
+  and two graders sharing the lock; it starts the real LibreOffice),
+  `test_det_checks_xls.py` (a legacy .xls delivery with the real LibreOffice,
+  skipped where it is absent: with
+  `run_calculation` one conversion, every check but File extension (.xlsx)
+  (77) graded on the copy with LibreOffice's values - a stale cached result in
+  the .xls is recalculated - 77 failing on the delivered file, the records,
+  nothing left behind; without it a loud failure and no LibreOffice run; an
+  OLE2 file without a workbook stream never converted; `grade_single_attempt`
+  end to end with a stub LLM in both modes, the checks' conversion before the
+  judge's own re-save), `detchecks/tests/test_lo_guard.py` (the lock across
+  two processes and threads, the memory wait - low then enough, and the
+  maximum wait - the retries with doubled timeouts) and
+  `detchecks/tests/test_cfeval.py` (every
+  operator, function and rule type, cross-sheet and relative references,
+  attempt 2924's rule, built-in formats, unevaluable rules: visible in No
+  white-on-white hiding (94), off and recorded in the others).
+
+## judge v14 — single-pass 14 / template_8 (2026-10-06)
+
+Rows record `judge_version` 14 / `prompt_version` 8 (template, rubric, evidence
+and CSV caches unchanged; the LLM side is v13's). Cut for the task author's
+alternate accepted answers (received 2026-10-06): seven tasks — PastaInc (41),
+RoadtoZero (50), Telecom (59), TheInterestGame (60), TheLiquidityEngine (61),
+ThePayoffPlan (64), HouseorFlat (86) — have 85 Questions-sheet questions with
+TWO acceptable values. v13 rows graded them against the golden alone, so v14
+rows are not comparable with v13 rows on those tasks, nor on the checks the
+rulings below touch. Existing gradings are not re-scored.
+
+- **Alternate accepted answers** (`judge/alternate_answers.yaml`, keyed by
+  `tasks.id`; answer rules v6.7). The harness answer check
+  (`utils/answer_check.py`) compares an attempt's answer to the golden as before
+  and, on a mismatch, to the alternate under the same rules and context
+  (tolerance, sign lexicon, percent form, the golden's ROUND precision). A match
+  either way is a match; the per-question record carries `alternate`,
+  `matched_alternate` and the flag `alternate_answer`, and the result /
+  `scored_results.answer_check` / the Final calculation accuracy stats carry
+  `n_match_alternate` and `n_alternates`. The alternate is applied only when
+  the golden question's text equals the recorded label (flag
+  `alternate_label_mismatch`, logged, not applied), so a re-ordered golden
+  cannot mis-key it. A numeric constant typed in place of a formula is still
+  `hardcoded` whichever value it holds (maintainer ruling 2026-10-06). The task
+  id comes from the DB row (`grade_from_db.py`) or the staged folder name
+  (`<name>__task_<id>__attempt_...`); a local folder without one, or a task not
+  listed, grades on the golden alone. The LLM judge is not told about the
+  alternates: its Final calculation accuracy verdict is overlaid by the
+  harness's at scoring (`--accuracy-check harness`), as since v6.
+- **The seven attempts judge v13 could not grade** (a deterministic check raised
+  `GradingError`; `detchecks/CHANGELOG_core.md` 2026-10-06, each ruling by the
+  maintainer with Excel open): Active cell reset to A1 (62) — several
+  `<selection>` elements for the active pane: the last one decides (measured on
+  2379 / 2402; 2379, 2402, 3390, 3505 now fail 62); Black font for calculations
+  (49) — a green INDIRECT whose address is built from text decides by the sheet its
+  literals or address cells name, a computed sheet name is assumed cross-sheet
+  (1458 passes the cell, 1725 passes with 2,980 cells recorded under
+  `stats.defaults.indirect_sheet_unverified`); number formats that cannot be read
+  (65, 66, 69, 70, 94) are General, as Excel shows after repairing the file (2777
+  now grades; `unreadable_number_format`).
+- **Conditional-format excuse for the colour checks 49 / 50 / 51** (maintainer
+  ruling of the v13 spot check, case 20: attempt 2348 `Cover!C5`, a black
+  pointer painted green when "OK" and red when "FAIL", "counts as compliant").
+  A cell whose base font is wrong is excused when a conditional format covering
+  it paints a colour its class accepts, whether or not the rule fires; a
+  conditional format never makes a cell fail. Recorded in `stats.cf_excused`.
+- **No bright-yellow highlighting (47), legend swatches** (maintainer rulings on
+  the 23 check-47 failures of the v13 run, all legend artefacts): a legend sample
+  holding a short text beside a label that mentions yellow is documentation
+  (passes); yellow on the row above or below the yellow legend line stays a
+  mistake; a conditional-format review flag whose legend quotes the flag's name
+  is a documented convention, not unfinished work (`detchecks/docs/checks/47.md`).
+- **`grader` on every rubric item** (maintainer 2026-10-06: which grader
+  decided an item must be readable from the database alone, no S3):
+  `scored_results.check_scores[<category>][<item>].grader` is
+  `"deterministic"` where the Python verdict is the one scored (the item is in
+  `accuracy_engine.checks` with `engine: "harness"` and `counted: true`) and
+  `"llm"` otherwise (the recorded-only checks included). Written by
+  `judge.tag_check_graders` in `_finalize_case`; existing v13 / v14 rows were
+  backfilled once with the same derivation. `grader_response` stays the pure LLM judgement.
+- **Regrading**: v13's 2,588 reuse rows (v12 LLM verdicts + v13 Python
+  checks) predate every item above. A v14 pass over the same attempts re-runs
+  the deterministic checks and, for the seven alternate-answer tasks, the
+  answer check, reusing the LLM verdicts.
+

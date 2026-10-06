@@ -202,7 +202,7 @@ review's proposal): that would raise for colours no verdict depends on.
 ### Corpus effect (the runs described in the overlapping `<col>` entry below)
 - The only unresolvable references in the corpus's styles.xml, sharedStrings.xml rich runs, conditional formats
   and theme / palette parts are `indexed="81"` font colours of fonts no cellXf uses (44 in 21 files; 212 in 78 toy
-  files; `scratch/core_fixes/scan_core.py`). 0 verdict changes for 47, 49, 50, 51 and 94; the wording of 94's undecided
+  files; `scratch/core_fixes/scan_core.py`, a working script not in the repository). 0 verdict changes for 47, 49, 50, 51 and 94; the wording of 94's undecided
   reason changed in attempts 2924 (raises before and after: a conditional white font, unchanged) and 211 (stats).
 
 ## 2026-10-04 — number formats mixing placeholders with unquoted date letters are unverified (finding 66-S3)
@@ -233,7 +233,7 @@ words as date codes) and 66.md question 13; until now only Zeros as dashes (66) 
 
 ### Corpus effect (the runs described in the overlapping `<col>` entry below)
 - 0 of the 392 distinct custom codes of the corpus and toys (cellXfs and dxf `<numFmt>`) and 0 built-ins are
-  unverified (`scratch/core_fixes/codes_letters.py`); 0 verdict changes for 65, 66, 69, 70, 73 and 94; nothing
+  unverified (`scratch/core_fixes/codes_letters.py`, not in the repository); 0 verdict changes for 65, 66, 69, 70, 73 and 94; nothing
   newly raises, so no Excel check workbook was needed.
 
 ## 2026-10-04 — overlapping `<col>` entries: one rule in the reader (Sufficient column widths (69), Reasonable column widths (70), Reasonable row heights (73))
@@ -261,7 +261,7 @@ Excel does (no toy has overlapping entries; docs/excel_measurements.md has nothi
   2279, 2496, 4091; GPT-6 1322, 1335, 1379, 1476, 1545, 1557 (10.1 MB), 1599, 1600, 1601, 1736, 1744, 1749, 1750,
   1767, 1778, 1781, 1810, 1834, 2576, 2603, 2617, 2621, 2681).
 - 125 graded files (151 sheets) read some columns differently; 7 have content in such columns, all widened from
-  the 8.43 default (`scratch/core_fixes/overlap_effect.py`): attempts 1408 and GPT-6 1408 `Assumption!G:H`
+  the 8.43 default (`scratch/core_fixes/overlap_effect.py`, not in the repository): attempts 1408 and GPT-6 1408 `Assumption!G:H`
   (17.89), GPT-6 1329 `Assumption!G` (17.89), 2245 `Assumption!G:H` (17.89), 1331 `Questions!E` (8.89), 2004
   `Questions!D:E` (8.89), 2479 `Assumptions!L:S` (10.22).
 - 69, 70 and 73: **0 verdict changes**, 0 changes in mistake locations, descriptions or kept stats.
@@ -310,7 +310,7 @@ behaves differently.
 
 ## 2026-10-03 — Patrick's rulings and Excel-session measurements
 
-Source: handoff.md rulings of 2026-10-03 and `out/excel_session_answers.md`.
+Source: the maintainer's rulings of 2026-10-03 and the Excel measurements in `docs/excel_measurements.md`.
 
 ### core/styles.py
 - `Styles.fill_paint(fill, dxf=True)`: a conditional-format (dxf) **solid fill paints bgColor
