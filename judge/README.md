@@ -598,6 +598,12 @@ against the golden alone; v14 rows are not comparable on those tasks.
   `stats.defaults.indirect_sheet_unverified`); number formats that cannot be read
   (65, 66, 69, 70, 94) are General, as Excel shows after repairing the file (2777
   now grades; `unreadable_number_format`).
+- **Conditional-format excuse for the colour checks 49 / 50 / 51** (maintainer
+  ruling of the v13 spot check, case 20: attempt 2348 `Cover!C5`, a black
+  pointer painted green when "OK" and red when "FAIL", "counts as compliant").
+  A cell whose base font is wrong is excused when a conditional format covering
+  it paints a colour its class accepts, whether or not the rule fires; a
+  conditional format never makes a cell fail. Recorded in `stats.cf_excused`.
 - The judge version is not bumped yet; further v14 changes may follow today.
   Bump `single_pass.version` in `project_configs.yaml` to 14 when cutting.
 

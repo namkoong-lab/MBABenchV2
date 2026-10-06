@@ -198,6 +198,11 @@ class C49(ColourCheck):
     def describe(self, why: str, argb: str) -> str:
         return f"{_WHAT[why]} in {describe_colour(argb)} font; {_RULE[why]}"
 
+    def required_families(self, why) -> frozenset:
+        # Patrick 2026-10-06: a conditional format painting the cell black (or green for a calculation
+        # that reads another sheet) excuses a wrong base font
+        return frozenset({"black", "green"}) if why == CROSS else frozenset({"black"})
+
     def finish(self) -> dict:
         st = self.base_stats()
         st["green_cells_accepted_by_direct_reference"] = self.n_green_direct

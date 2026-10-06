@@ -48,6 +48,10 @@ class C50(ColourCheck):
         return (f"link to another sheet (the formula only points at another sheet's cell or range) in "
                 f"{describe_colour(argb)} font; cross-sheet links must be green")
 
+    def required_families(self, why) -> frozenset:
+        # Patrick 2026-10-06 (attempt 2348 Cover!C5): a conditional format painting the pointer green excuses it
+        return frozenset({"green"})
+
     def finish(self) -> dict:
         st = self.base_stats()
         n_ptr_bad = st["offending_cells"]

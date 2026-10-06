@@ -53,6 +53,10 @@ class C51(ColourCheck):
         return (f"formula reading another workbook in {describe_colour(argb)} font; external links "
                 f"must be red")
 
+    def required_families(self, why) -> frozenset:
+        # Patrick 2026-10-06: a conditional format painting the external link red excuses a wrong base font
+        return frozenset({"red"})
+
     def finish(self) -> dict:
         st = self.base_stats()
         st["external_link_parts"] = [{"index": e.index, "kind": e.kind, "target": e.target}

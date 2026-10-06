@@ -61,7 +61,22 @@ STYLES = ("<fonts count=\"%d\">%s</fonts>" % (len(FONTS), "".join(f"<font><sz va
           + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
           + '<cellXfs count="%d">%s</cellXfs>' % (len(FONTS), "".join(
               f'<xf numFmtId="0" fontId="{i}" fillId="0" borderId="0" xfId="0" applyFont="1"/>' for i in range(len(FONTS))))
-          + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>')
+          + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+          # dxfs for the conditional-format excuse (Patrick 2026-10-06): 0 green "Good" font, 1 red "Bad"
+          # font, 2 black font, 3 unresolvable font colour, 4 fill only (no font colour)
+          + '<dxfs count="5"><dxf><font><color rgb="FF006100"/></font><fill><patternFill><bgColor rgb="FFC6EFCE"/></patternFill></fill></dxf>'
+          + '<dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>'
+          + '<dxf><font><color rgb="FF000000"/></font></dxf><dxf><font><color theme="99"/></font></dxf>'
+          + '<dxf><fill><patternFill><bgColor rgb="FFFFFF00"/></patternFill></fill></dxf></dxfs>')
+DXF_GREEN, DXF_RED, DXF_BLACK, DXF_BAD, DXF_FILL = range(5)
+
+
+def cf(sqref, *dxf_ids, op="equal", values=('"OK"',)):
+    """<conditionalFormatting> with one cellIs rule per dxf id (each comparing to the given values)."""
+    rules = "".join(f'<cfRule type="cellIs" dxfId="{d}" priority="{i + 1}" operator="{op}">'
+                    + "".join(f"<formula>{esc(v)}</formula>" for v in values) + "</cfRule>"
+                    for i, d in enumerate(dxf_ids))
+    return f'<conditionalFormatting sqref="{sqref}">{rules}</conditionalFormatting>'
 
 _TMP = None
 
@@ -915,7 +930,49 @@ def test_unresolvable_colours_2026_10_04():
         STYLES = saved
 
 
+def test_conditional_format_font_colour_excuses():
+    """Patrick 2026-10-06 (spot-check case 20, attempt 2348 Cover!C5 =Checks!F32, black, CF green when
+    "OK" / red when "FAIL"): a conditional-format font colour in a family the cell's class accepts
+    excuses a wrong base font, fires or not; it never makes a base-correct cell fail."""
+    inputs = ("Inputs", sheet(), None)
+    # 50: a black pointer painted green by one of two rules -> excused; only a red rule -> still fails;
+    # a rule on another range excuses nothing; a fill-only dxf excuses nothing
+    data = sheet((5, [c("C5", BLACK, "Inputs!F32"), c("D5", BLACK, "Inputs!F33"), c("E5", BLACK, "Inputs!F34"),
+                      c("F5", BLACK, "Inputs!F35")]))
+    p = book("cf_50.xlsx", [("Cover", data + cf("C5", DXF_GREEN, DXF_RED) + cf("D5", DXF_RED) + cf("A1:B9", DXF_GREEN)
+                             + cf("F5", DXF_FILL), None), inputs])
+    v = run(p, 50)
+    assert set(locs(v)) == {"Cover!D5:F5"}, locs(v)
+    assert v["stats"]["cf_excused"]["count"] == 1 and "Cover!C5" in v["stats"]["cf_excused"]["examples"][0], v["stats"]
+    # 49: an own-sheet formula in blue painted black -> excused; painted green -> not (OWN needs black);
+    # a CROSS calculation in blue painted green -> excused (black or green accepted)
+    data = sheet((1, [c("A1", BLUE, "B1*2"), c("B1", BLUE, "C1*2"), c("C1", BLUE, "Inputs!B5*2")]))
+    p = book("cf_49.xlsx", [("Calc", data + cf("A1", DXF_BLACK) + cf("B1", DXF_GREEN) + cf("C1", DXF_GREEN), None), inputs])
+    v = run(p, 49)
+    assert locs(v) == ["Calc!B1"], locs(v)
+    assert v["stats"]["cf_excused"]["count"] == 2, v["stats"]
+    # one-directional: a base-correct green pointer painted red by a CF rule still passes 50
+    p = book("cf_onedir.xlsx", [("Cover", sheet((1, [c("A1", GREEN, "Inputs!B5")])) + cf("A1", DXF_RED), None), inputs])
+    v = run(p, 50)
+    assert v["decision"] == "pass" and v["stats"]["cf_excused"]["count"] == 0, v
+    # an unresolvable dxf font colour excuses nothing and is recorded
+    p = book("cf_bad.xlsx", [("Cover", sheet((1, [c("A1", BLACK, "Inputs!B5")])) + cf("A1", DXF_BAD), None), inputs])
+    v = run(p, 50)
+    assert locs(v) == ["Cover!A1"] and v["stats"]["cf_unresolved_font_colours"]["count"] == 1, v["stats"]
+    # 51: a black external link painted red -> excused
+    p = book("cf_51.xlsx", [("Calc", sheet((1, [c("A1", BLACK, "[1]Prices!A1"), c("B1", BLACK, "[1]Prices!A2")]))
+                             + cf("A1", DXF_RED), None)], ext_links=1)
+    v = run(p, 51)
+    assert locs(v) == ["Calc!B1"] and v["stats"]["cf_excused"]["count"] == 1, (locs(v), v["stats"])
+    # the INDIRECT second pass goes through the same excuse: green =INDIRECT(A20) with A20 'C5' (own) painted black
+    data = sheet((1, [c("A1", GREEN, "INDIRECT(A20)*2")]), (20, [cstr("A20", "C5")]))
+    p = book("cf_pending.xlsx", [("Calc", data + cf("A1", DXF_BLACK), None), inputs])
+    v = run(p, 49)
+    assert v["decision"] == "pass" and v["stats"]["cf_excused"]["count"] == 1, v
+
+
 TESTS = [test_colour_families, test_classifier_kinds, test_prefilters_are_conservative, test_49_rules,
+         test_conditional_format_font_colour_excuses,
          test_49_arrays_shared_datatable_hidden, test_49_pass_and_contract, test_49_no_fallback, test_50_rules,
          test_50_shared_child_off_grid_and_pass, test_51_rules, test_51_default_pass, test_all_three_together,
          test_rubric_keys, test_structured_refs_with_commas_are_pointers, test_leading_equals_pointer,

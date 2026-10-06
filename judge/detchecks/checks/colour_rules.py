@@ -19,8 +19,12 @@ EXTERNAL (red).  A blue pointer therefore fails 50 only, a blue external link 51
 
 The colour that counts is the cell's FONT colour (cellXfs -> fonts -> color, resolved with
 the workbook's theme / indexed palette / tint by detchecks.core.styles).  Number-format colour
-tags ([Blue]0) and conditional-format font colours do not change it (see the constants and
-docs/checks/49.md).  Colour families (HSV bands on the resolved RGB) are defined here once.
+tags ([Blue]0) do not change it (see the constants and docs/checks/49.md).  A conditional-format
+font colour EXCUSES a cell whose base font is wrong when a rule covering it paints a family the
+cell's class accepts, fires or not (Patrick 2026-10-06, attempt 2348: a black pointer shown green
+when "OK" / red when "FAIL" is compliant; CF_FONT_COLOUR_EXCUSES, ColourCheck._cf_excuse,
+stats.cf_excused); it never makes a base-correct cell fail.  Colour families (HSV bands on the
+resolved RGB) are defined here once.
 
 HYPERLINK cells (Patrick's ruling 2026-10-03: navigation links may be any colour, "not a
 calculation"): a navigation cell is ignored by 49, 50 and 51 (is_hyperlink_formula).  After
@@ -64,7 +68,7 @@ import weakref
 from typing import Optional
 
 from ..core import formula as F
-from ..core.refs import group_cells, index_to_col, location, range_to_str
+from ..core.refs import group_cells, in_bounds, index_to_col, location, range_to_str
 from ..core.styles import is_unknown
 from ..errors import GradingError
 from .base import Check
@@ -73,7 +77,12 @@ from .base import Check
 # The colour that counts is the font colour.  The displayed-colour variants are NOT implemented;
 # ColourCheck.start() raises if one of these is switched on (see docs/checks/49.md).
 NUMFMT_COLOUR_COUNTS = False      # [Blue]/[Red]/[ColorN] number-format tags change the colour
-CF_FONT_COLOUR_COUNTS = False     # conditional-format font colours change the colour (check 57's topic)
+# Patrick 2026-10-06 (spot-check case 20, attempt 2348 Cover!C5: a black pointer whose conditional
+# formats paint it green when "OK" and red when "FAIL" is compliant): a conditional-format font
+# colour EXCUSES a cell whose base font is wrong when some rule covering the cell paints a colour
+# the cell's class accepts - whether or not the rule fires now.  It never makes a base-correct cell
+# fail (check 57's topic).  An unresolvable dxf font colour excuses nothing (recorded).
+CF_FONT_COLOUR_EXCUSES = True
 
 # One-argument functions that only pass a reference through (no calculation): a formula that is
 # nothing but one of these around an other-sheet reference is still a POINTER.  ANCHORARRAY /
@@ -1056,10 +1065,12 @@ class ColourCheck(Check):
 
     def start(self, wb):
         super().start(wb)
-        if NUMFMT_COLOUR_COUNTS or CF_FONT_COLOUR_COUNTS:
-            raise GradingError(f"{self.key}: the displayed-colour variant (number-format / conditional-"
-                               f"format colours) is not implemented; see docs/checks/49.md")
+        if NUMFMT_COLOUR_COUNTS:
+            raise GradingError(f"{self.key}: the displayed-colour variant (number-format colour tags) is not "
+                               f"implemented; see docs/checks/49.md")
         self.st = wb.styles
+        self.cf_excused: dict = {"count": 0, "examples": []}          # cells excused by a CF font colour
+        self.cf_unresolved: dict = {"count": 0, "examples": []}       # dxf font colours that could not be read
         self.clf = Classifier.of(wb)
         self._fam_cache: dict = {}
         self.n_formula_cells = 0
@@ -1237,8 +1248,62 @@ class ColourCheck(Check):
         raise NotImplementedError
 
     def sheet_end(self, head, tail):
-        self._emit(head, self._cand, self._fkeys)
+        self._emit(head, self._cf_excuse(head, tail, self._cand), self._fkeys)
         self._cand, self._fkeys, self._shared = {}, {}, {}
+
+    # ------------------------------------------------------------ conditional-format excuse
+    def required_families(self, why) -> frozenset:
+        """Font families the cell's class accepts (its base font is in none of them, else it would
+        not be a candidate); a conditional-format font colour in one of them excuses the cell."""
+        raise NotImplementedError
+
+    def _cf_font_rules(self, sheet: str, tail) -> list:
+        """[(ranges, family)] for every conditional-format rule on the sheet whose dxf sets a font
+        colour that resolves; an unresolvable one is recorded and excuses nothing."""
+        out = []
+        for cf in getattr(tail, "conditional_formats", None) or []:
+            for rule in cf.rules:
+                if rule.type in ("colorScale", "dataBar", "iconSet"):
+                    continue
+                d = rule.dxf if rule.dxf is not None else self.st.dxf(rule.dxf_id)
+                if d is None or d.font is None or d.font.color is None:
+                    continue
+                argb = self.st.resolve(d.font.color, "font")
+                if argb is None or is_unknown(argb):
+                    self.cf_unresolved["count"] += 1
+                    if len(self.cf_unresolved["examples"]) < 10:
+                        self.cf_unresolved["examples"].append(
+                            f"{location(sheet, ','.join(cf.sqref.split()))}: conditional-format font colour {argb}")
+                    continue
+                out.append((cf.ranges, family(argb)))
+        return out
+
+    def _cf_excuse(self, head, tail, cand: dict) -> dict:
+        """Drop candidate cells that a conditional format covering them paints in a family their
+        class accepts (CF_FONT_COLOUR_EXCUSES, Patrick 2026-10-06); records them in cf_excused."""
+        if not CF_FONT_COLOUR_EXCUSES or not cand:
+            return cand
+        rules = self._cf_font_rules(head.name, tail)
+        if not rules:
+            return cand
+        out = {}
+        for (why, argb), cells in cand.items():
+            ok = self.required_families(why)
+            keep = {}
+            for rc, fkey in cells.items():
+                painted = next((fam for ranges, fam in rules
+                                if fam in ok and any(in_bounds(rc[0], rc[1], b) for b in ranges)), None)
+                if painted is not None:
+                    self.cf_excused["count"] += 1
+                    if len(self.cf_excused["examples"]) < 10:
+                        self.cf_excused["examples"].append(
+                            f"{location(head.name, f'{index_to_col(rc[1])}{rc[0]}')}: {describe_colour(argb)} base "
+                            f"font, a conditional format paints it {painted}")
+                else:
+                    keep[rc] = fkey
+            if keep:
+                out[(why, argb)] = keep
+        return out
 
     def second_pass_start(self, head):
         self._addr = {}
@@ -1257,7 +1322,7 @@ class ColourCheck(Check):
                 cand.setdefault((why, argb), {})[rc] = fkey
                 if fkey not in fkeys and info is not None:
                     fkeys[fkey] = info
-        self._emit(head, cand, fkeys)
+        self._emit(head, self._cf_excuse(head, tail, cand), fkeys)
         self._addr = {}
 
     def _emit(self, head, cand: dict, fkeys: dict):
@@ -1302,7 +1367,10 @@ class ColourCheck(Check):
                 "offending_cells": sum(self.bad_counts.values()),
                 "offending_cells_by_reason": dict(self.bad_counts),
                 "offending_cells_by_sheet": dict(self.bad_by_sheet),
-                "colour_basis": "font colour (number-format colour tags and conditional formats not applied)"}
+                "colour_basis": "font colour (number-format colour tags not applied; a conditional-format font "
+                                "colour the class accepts excuses a cell, Patrick 2026-10-06)",
+                "cf_excused": dict(self.cf_excused),
+                "cf_unresolved_font_colours": dict(self.cf_unresolved)}
 
 
 def _short(text: Optional[str], n: int = 90) -> str:
