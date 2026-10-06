@@ -47,6 +47,11 @@ DEFAULT_RULES = {
     "delivered_name_unknown": "the delivered file name is unknown (no or a malformed _attempt_origin.json): the "
                               "format is judged from the file's content",
     "unparsable_formula": "formula text this check cannot parse (or read) is skipped for this check",
+    # Patrick 2026-10-06: green INDIRECT formulas whose target sheet is only knowable from text or a value
+    "indirect_sheet_unverified": "a green INDIRECT formula whose address is sheet-qualified in form "
+                                 "('<name>'!...) with the sheet name computed is taken to read another sheet",
+    "indirect_address_unknown": "a green INDIRECT formula whose address is built from cell contents that no "
+                                "literal or constant cell resolves to a sheet is skipped for this check",
 }
 MAX_DEFAULT_EXAMPLES = 10
 

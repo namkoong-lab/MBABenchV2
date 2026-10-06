@@ -371,10 +371,11 @@ def test_49_no_fallback():
         assert v["decision"] == "pass" and v["stats"]["font_families"]["unresolved"] == 1, v
         d = v["stats"]["defaults"]["unresolved_colour"]
         assert d["count"] == 1 and "'Calc'!A1" in d["examples"][0] and "automatic (black)" in d["examples"][0], d
-    # green formula whose INDIRECT address is computed (not one cell's content): cannot be decided -> raise
+    # green formula whose INDIRECT address is computed from empty cells: nothing names a sheet -> skipped
+    # (Patrick 2026-10-06, every attempt graded; it raised until then), recorded in stats.defaults
     p = book("49_indirect.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "INDIRECT(A20&B20)*2")])), None),
                                   ("Inputs", sheet(), None)])
-    raises(lambda: run(p, 49), "INDIRECT address is built from cell contents")
+    graded("indirect_address_unknown", lambda: run(p, 49))
     # ... but a BLUE one is wrong whatever it reads, and a black one is fine
     p = book("49_indirect2.xlsx", [("Calc", sheet((1, [c("A1", BLUE, "INDIRECT(A20)*2"),
                                                        c("B1", BLACK, "INDIRECT(A20)*2")])), None)])
@@ -636,6 +637,21 @@ def test_indirect_addresses():
             assert k(t).kind == CR.OWN and k(t).indirect_unresolved and k(t).indirect_cells is None, (t, k(t))
         assert k("INDIRECT($A$20)+INDIRECT(Calc!B3)").indirect_cells == ((20, 1), (3, 2))
         assert k('INDIRECT(A20)+INDIRECT(B1&"x")').indirect_cells is None
+        # Patrick 2026-10-06 (attempts 1458, 1725): a literal anywhere in the address that names another
+        # sheet decides (CROSS); a literal '!' qualifier with a computed name is assumed CROSS; own-sheet
+        # cells that are parts of an unknown address are read in the second pass
+        r = k('IFERROR(INDIRECT(MID($I33,FIND("Inputs!",$I33),LEN($I33))),"")')
+        assert r.kind == CR.CROSS and not r.indirect_assumed and r.other_sheets == ("Inputs",), r
+        r = k('INDIRECT(MID($I33,FIND("Calc!",$I33),LEN($I33)))')
+        assert r.kind == CR.OWN and not r.indirect_unresolved, r
+        r = k('INDIRECT("\'"&B3&"\'!"&ADDRESS(22,D3))')
+        assert r.kind == CR.CROSS and r.indirect_assumed and r.other_sheets == (), r
+        r = k('INDIRECT(B3&"!"&ADDRESS(22,D3))')
+        assert r.kind == CR.CROSS and r.indirect_assumed, r
+        r = k('INDIRECT(MID(I33,FIND("!",I33)+1,99))')          # "!" inside FIND locates text: not a qualifier
+        assert r.kind == CR.OWN and r.indirect_unresolved and r.indirect_cells is None \
+            and r.indirect_part_cells == ((33, 9),), r
+        assert k('INDIRECT("B"&A1)').indirect_part_cells == ((1, 1),)
     finally:
         pkg.close()
     data = sheet((1, [c("A1", GREEN, 'INDIRECT(ADDRESS(ROW(),2,4,TRUE,"Inputs"))*1'),
@@ -655,10 +671,30 @@ def test_indirect_addresses():
     v = run(p, 49)
     assert set(locs(v)) == {"Calc!B1:C1", "Calc!F1"}, locs(v)
     assert v["stats"]["indirect_address_cells_read"] == 6, v["stats"]
-    # the address comes from a formula cell: its value would be needed -> raise
+    # the address comes from a formula cell: its value would be needed -> skipped, recorded (Patrick
+    # 2026-10-06, every attempt graded; it raised until then)
     data = sheet((1, [c("A1", GREEN, "INDIRECT(A20)*2")]), (20, [c("A20", BLACK, '"Inputs!B"&2', t="str", v="Inputs!B2")]))
     p = book("49_indirect_formula_cell.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
-    raises(lambda: run(p, 49), "formula cell A20")
+    v = graded("indirect_address_unknown", lambda: run(p, 49), "Calc!A20")
+    assert v["decision"] == "pass", v
+    # Patrick 2026-10-06 (attempts 1458 / 1725): A1 reads a sheet named in a literal inside MID/FIND
+    # (passes, no default); B1's address is sheet-qualified with the name computed (passes, default
+    # indirect_sheet_unverified); C1's address is cut from a constant cell whose text names Inputs
+    # (passes); D1's from one that names no sheet (skipped, default); E1 is a plain own-sheet
+    # address in green (fails, as before)
+    data = sheet((1, [c("A1", GREEN, 'IFERROR(INDIRECT(MID($A$20,FIND("Inputs!",$A$20),LEN($A$20))),"")'),
+                      c("B1", GREEN, "INDIRECT(\"'\"&B20&\"'!\"&ADDRESS(22,3))"),
+                      c("C1", GREEN, "INDIRECT(MID(A20,5,99))"),
+                      c("D1", GREEN, "INDIRECT(MID(C20,1,2))"),
+                      c("E1", GREEN, 'INDIRECT("B"&ROW())*2')]),
+                 (20, [cstr("A20", "see Inputs!B2"), c("B20", BLACK, '"Inp"&"uts"', t="str", v="Inputs"),
+                       cstr("C20", "C5")]))
+    p = book("49_indirect_text.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
+    v = run(p, 49)
+    assert locs(v) == ["Calc!E1"], locs(v)
+    d = v["stats"]["defaults"]
+    assert d["indirect_sheet_unverified"]["count"] == 1 and "B1" in d["indirect_sheet_unverified"]["examples"][0], d
+    assert d["indirect_address_unknown"]["count"] == 1 and "no address part" in d["indirect_address_unknown"]["examples"][0], d
 
 
 def test_49_green_direct_reference_needs_no_parse():

@@ -385,10 +385,12 @@ class Cls:
                          but OWN / CROSS / POINTER cannot be told apart.  classify() raises `note`
                          for such a result unless the caller passes sheets_needed=False (51).
     """
-    __slots__ = ("kind", "other_sheets", "indirect_unresolved", "indirect_cells", "unsure", "unsure_ext",
-                 "direct_other", "direct_ext", "pure_name", "note", "sheets_unknown")
+    __slots__ = ("kind", "other_sheets", "indirect_unresolved", "indirect_cells", "indirect_part_cells",
+                 "indirect_assumed", "unsure", "unsure_ext", "direct_other", "direct_ext", "pure_name", "note",
+                 "sheets_unknown")
 
-    def __init__(self, kind, other_sheets=(), indirect_unresolved=False, *, indirect_cells=None, unsure=None,
+    def __init__(self, kind, other_sheets=(), indirect_unresolved=False, *, indirect_cells=None,
+                 indirect_part_cells=None, indirect_assumed=False, unsure=None,
                  unsure_ext=False, direct_other=False, direct_ext=False, pure_name=False, note=None,
                  sheets_unknown=False):
         self.sheets_unknown = sheets_unknown
@@ -396,6 +398,12 @@ class Cls:
         self.other_sheets = tuple(sorted(other_sheets))
         self.indirect_unresolved = indirect_unresolved
         self.indirect_cells = indirect_cells
+        # Patrick 2026-10-06 (every attempt graded): own-sheet cells that are PARTS of an unknown
+        # INDIRECT address (=INDIRECT(MID(I33,...)); 49 reads them for a sheet qualifier), and
+        # whether a CROSS class rests on a sheet-qualified address whose sheet name is computed
+        # ("'"&B3&"'!"&ADDRESS(22,D3): taken to read another sheet, recorded as a default)
+        self.indirect_part_cells = indirect_part_cells
+        self.indirect_assumed = indirect_assumed
         self.unsure = unsure
         self.unsure_ext = unsure_ext
         self.direct_other = direct_other
@@ -659,7 +667,9 @@ class Classifier:
         if named:
             other |= self._other_sheets(named, own, problems)
         unresolved = False
+        assumed = False
         cells: Optional[list] = []
+        part_cells: list = []
         if "INDIRECT" in reach.functions:
             toks: dict = {}
             for via, call in reach.calls:
@@ -675,25 +685,30 @@ class Classifier:
                     cell = None if via else indirect_cell_arg(fx, call, own)
                     if cell is None:
                         cells = None
+                        if not via:
+                            part_cells += indirect_arg_cells(fx, call, own)
                     elif cells is not None:
                         cells.append(cell)
                     continue
-                r_ext, r_other = res
+                r_ext, r_other, r_assumed = res
                 ext = ext or r_ext
                 other |= r_other
+                assumed = assumed or r_assumed
                 if not via:
                     direct_ext = direct_ext or r_ext
-                    direct_other = direct_other or bool(r_other)
+                    direct_other = direct_other or bool(r_other) or r_assumed
         unsure = bad[0][1] if bad else None
         unsure_ext = any(self._bad_ext.get(ident, True) for ident, _ in bad)
         # pure reference: needed for POINTER (other sheets read) and for pure_name (unsure only)
         pr = f.pure_reference(transparent=POINTER_WRAPPERS) if len(f.operands) == 1 and (other or unsure) else None
-        extra = dict(indirect_cells=tuple(cells) if (unresolved and cells) else None, unsure=unsure,
+        extra = dict(indirect_cells=tuple(cells) if (unresolved and cells) else None,
+                     indirect_part_cells=tuple(dict.fromkeys(part_cells)) if (unresolved and part_cells) else None,
+                     indirect_assumed=assumed, unsure=unsure,
                      unsure_ext=unsure_ext, direct_other=direct_other or direct_ext, direct_ext=direct_ext,
                      pure_name=pr is not None and pr.kind == "name")
         if ext:                                 # certain whatever the tables are (a table without [n]! is this workbook's)
             return Cls(EXTERNAL, other, unresolved, note=problems[0] if problems else None, **extra)
-        if not problems and other:
+        if not problems and (other or assumed):
             try:
                 tgt = self._pointer_sheets(f, own, own, 0, pr) if pr is not None else None
             except GradingError as e:           # a table reached only here (defensive: _other_sheets saw it first)
@@ -716,33 +731,45 @@ class Classifier:
         lit = literal_text(fx, call, 0, toks)
         if lit is not None:
             iops = self.indirect_operands(lit, own, bad, problems)
-            return any(self._is_external(o) for o in iops), self._other_sheets(iops, own, problems)
+            return any(self._is_external(o) for o in iops), self._other_sheets(iops, own, problems), False
         q = indirect_literal_qualifier(fx, call, toks)
         if q is not None:
             try:
                 qual = F.parse_qualifier(q)
             except F.FormulaError:
-                return False, set()                  # INDIRECT returns #REF!: reads nothing
+                return False, set(), False           # INDIRECT returns #REF!: reads nothing
             if qual.external is not None or (qual.ambiguous_book and qual.sheet.lower() not in self._sheets_low):
-                return True, set()
+                return True, set(), False
             if qual.workbook_scoped:
-                return False, set()
-            return False, {sh for sh in (qual.sheet, qual.sheet_end) if sh is not None and sh.lower() != own.lower()}
+                return False, set(), False
+            return (False, {sh for sh in (qual.sheet, qual.sheet_end) if sh is not None and sh.lower() != own.lower()},
+                    False)
         sample = indirect_sample(fx, call, toks)
-        if sample is None:
-            return None
-        try:
-            fs = F.parse(sample)
-        except F.FormulaError:
-            return None
-        if fs.functions or len(fs.operands) != 1:
-            return None
-        o = fs.operands[0]
-        if o.kind in _LITERAL_KINDS:
-            return False, set()                      # not a reference: INDIRECT returns #REF!
-        if o.kind not in _SHEET_REF_KINDS or o.kind == "structured":
-            return None                              # a name / table spelled from parts: unknown
-        return self._is_external(o), self._other_sheets([o], own, problems)
+        res = None
+        if sample is not None:
+            try:
+                fs = F.parse(sample)
+            except F.FormulaError:
+                fs = None
+            if fs is not None and not fs.functions and len(fs.operands) == 1:
+                o = fs.operands[0]
+                if o.kind in _LITERAL_KINDS:
+                    return False, set(), False       # not a reference: INDIRECT returns #REF!
+                if o.kind in _SHEET_REF_KINDS and o.kind != "structured":
+                    res = self._is_external(o), self._other_sheets([o], own, problems), False
+        if res is not None:
+            return res
+        # Patrick 2026-10-06 (every attempt graded): an address the parts cannot stand in for.  Its string
+        # literals, wherever they sit in the argument (inside MID / FIND too), decide when they name a
+        # sheet: "Assumptions!" names another sheet of this workbook -> reads it; a literal '!' whose
+        # name is computed ("'"&B3&"'!"&ADDRESS(22,D3)) -> taken to read another sheet (assumed; 49
+        # records the default).  No sheet qualifier in any literal -> unknown (None).
+        kind, sheets = indirect_literal_sheets(fx, call, toks, own, self._sheets_low)
+        if kind == "known":
+            return False, sheets, False
+        if kind == "assumed":
+            return False, set(), True
+        return None
 
     def indirect_operands(self, lit: str, own: str, bad: Optional[list] = None, problems: Optional[list] = None) -> list:
         """Reference operands of a literal INDIRECT address ("Inputs!B5", "'[B.xlsx]S'!A1",
@@ -941,12 +968,80 @@ def indirect_cell_arg(f, call, own: str) -> Optional[tuple]:
     return o.bounds[0], o.bounds[1]
 
 
-class Pending:
-    """49: a cell decided after the second pass reads its INDIRECT address cells."""
-    __slots__ = ("targets",)
+def indirect_arg_cells(f, call, own: str) -> list:
+    """(row, col) of every own-sheet single-cell operand inside INDIRECT's address argument
+    (=INDIRECT(MID($I33, FIND("!", $I33), 99)) -> I33): the cells whose constant text may
+    name the sheet the address reaches (Patrick 2026-10-06)."""
+    a, b = call.arg_spans[0]
+    out = []
+    for o in f.operands:
+        if not (a <= o.start and o.end <= b) or o.kind != "cell" or o.external is not None \
+                or o.sheet_end is not None:
+            continue
+        if o.sheet is not None and o.sheet.lower() != own.lower():
+            continue
+        out.append((o.bounds[0], o.bounds[1]))
+    return out
 
-    def __init__(self, targets):
+
+_RE_QUALIFIER_IN_TEXT = re.compile(r"(?:'((?:[^']|'')+)'|([A-Za-z0-9_.][^!'\"\[\]:;,&()\s]*))!")
+
+
+def sheets_named_in_text(text: str) -> list:
+    """Sheet names that appear as a qualifier ("Assumptions!E6", "'Case 03'!X22") anywhere in
+    `text` (a string literal or a constant cell's text), in order."""
+    out = []
+    for m in _RE_QUALIFIER_IN_TEXT.finditer(text or ""):
+        out.append((m.group(1) or m.group(2)).replace("''", "'"))
+    return out
+
+
+def indirect_literal_sheets(f, call, toks: list, own: str, sheets_low) -> tuple:
+    """What the string literals inside INDIRECT's address argument say about the sheet it
+    reaches (Patrick 2026-10-06, every attempt graded).  ("known", {other sheets}) when a
+    literal names a sheet of this workbook as a qualifier ("Assumptions!" inside MID / FIND
+    counts; only the own sheet named -> ("known", set())); ("assumed", None) when the literals
+    hold a '!' qualifier whose name is computed ("'"&B3&"'!"&ADDRESS(22,D3)); (None, None)
+    when no literal carries a qualifier."""
+    tk = _arg_tokens(call, 0, toks)
+    lits = [t[1][1:-1].replace('""', '"') for t in tk if t[0] == "str"]
+    if not lits:
+        return None, None
+    named = []
+    for lit in lits:
+        for name in sheets_named_in_text(lit):
+            if name.lower() in sheets_low:
+                named.append(name)
+    if named:
+        return "known", {n for n in named if n.lower() != own.lower()}
+    # "assumed" needs the '!' in a literal that is a top-level '&' part of the address itself
+    # ("'"&B3&"'!"&...), not one inside a function call (FIND("!", I33) locates text)
+    parts, cur, depth = [], [], 0
+    for t in tk:
+        if t[0] in ("(", "{"):
+            depth += 1
+        elif t[0] in (")", "}"):
+            depth -= 1
+        if depth == 0 and t[0] == "op" and t[1] == "&":
+            parts.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    parts.append(cur)
+    top = [p[0][1][1:-1].replace('""', '"') for p in parts if len(p) == 1 and p[0][0] == "str"]
+    if _bang_outside_quotes("".join(top)) >= 0:
+        return "assumed", None
+    return None, None
+
+
+class Pending:
+    """49: a cell decided after the second pass reads its INDIRECT address cells.  `parts`:
+    the targets are parts of the address (=INDIRECT(MID(I33,...))), not the whole address."""
+    __slots__ = ("targets", "parts")
+
+    def __init__(self, targets, parts: bool = False):
         self.targets = tuple(targets)
+        self.parts = parts
 
 
 # ----------------------------------------------------------------------------- base check
@@ -1080,7 +1175,7 @@ class ColourCheck(Check):
             return
         if isinstance(why, Pending):
             self.n_pending += 1
-            self._pending.setdefault(own, []).append(((cell.row, cell.col), argb, fkey, info, why.targets))
+            self._pending.setdefault(own, []).append(((cell.row, cell.col), argb, fkey, info, why))
             self.request_second_pass(own, why.targets)
             return
         self._cand.setdefault((why, argb), {})[(cell.row, cell.col)] = fkey
@@ -1138,7 +1233,7 @@ class ColourCheck(Check):
     def describe(self, why: str, argb: str) -> str:
         raise NotImplementedError
 
-    def pending_is_mistake(self, sheet: str, targets: tuple) -> Optional[str]:
+    def pending_is_mistake(self, sheet: str, targets: tuple, parts: bool = False) -> Optional[str]:
         raise NotImplementedError
 
     def sheet_end(self, head, tail):
@@ -1156,8 +1251,8 @@ class ColourCheck(Check):
 
     def second_pass_end(self, head, tail):
         cand, fkeys = {}, {}
-        for rc, argb, fkey, info, targets in self._pending.pop(head.name, []):
-            why = self.pending_is_mistake(head.name, targets)
+        for rc, argb, fkey, info, pend in self._pending.pop(head.name, []):
+            why = self.pending_is_mistake(head.name, pend.targets, pend.parts)
             if why is not None:
                 cand.setdefault((why, argb), {})[rc] = fkey
                 if fkey not in fkeys and info is not None:

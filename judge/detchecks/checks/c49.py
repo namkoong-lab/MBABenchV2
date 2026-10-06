@@ -35,6 +35,7 @@ from typing import Optional
 
 from ..errors import GradingError
 from .colour_rules import (CROSS, EXTERNAL, OWN, POINTER, UNCLASSIFIED, ColourCheck, Pending, describe_colour,
+                           sheets_named_in_text,
                            quick_reads_other_sheet)
 
 # Colour families allowed per JUDGED class under check 49 (POINTER -> 50, EXTERNAL -> 51).
@@ -119,6 +120,10 @@ class C49(ColourCheck):
                                       f"whether it reads another sheet (green allowed) cannot be decided")
                 if cls.kind in NOT_JUDGED:
                     self.n_left[cls.kind] += 1
+                elif cls.indirect_assumed and not cls.other_sheets:
+                    # Patrick 2026-10-06: sheet-qualified INDIRECT address whose sheet name is computed
+                    self.note_default("indirect_sheet_unverified",
+                                      f"'{cell.sheet}'!{cell.ref}: {str(cell.formula_text)[:120]}")
                 return None
             if cls.unsure:
                 self._raise(cell, f"green formula using a {cls.unsure}; whether it reads another sheet "
@@ -132,9 +137,12 @@ class C49(ColourCheck):
                     return None
                 if INDIRECT_READ_ADDRESS_CELL and tc.indirect_cells:
                     return Pending(tc.indirect_cells)
-                self._raise(cell, "green formula whose INDIRECT address is built from cell contents; whether it "
-                                  "reads another sheet (green allowed) or only its own sheet (must be black) cannot "
-                                  "be decided without evaluating it")
+                if INDIRECT_READ_ADDRESS_CELL and tc.indirect_part_cells:
+                    return Pending(tc.indirect_part_cells, parts=True)
+                # Patrick 2026-10-06 (every attempt graded): no literal and no cell names the sheet -> skipped
+                self.note_default("indirect_address_unknown",
+                                  f"'{cell.sheet}'!{cell.ref}: {str(cell.formula_text)[:120]}")
+                return None
             return OWN
         # red, blue, grey, white ...: wrong for OWN and CROSS; pointers -> 50, externals -> 51
         if cls.kind == EXTERNAL:
@@ -155,23 +163,36 @@ class C49(ColourCheck):
             return INDIRECT_UNKNOWN     # own sheet, or another sheet through the address: wrong either way
         return cls.kind                 # OWN or CROSS (a computed INDIRECT never reaches another workbook)
 
-    def pending_is_mistake(self, sheet: str, targets: tuple) -> Optional[str]:
+    def pending_is_mistake(self, sheet: str, targets: tuple, parts: bool = False) -> Optional[str]:
         """A green =INDIRECT(A20)-style cell: fine when any address cell's text is a reference
-        to another sheet or workbook; else an own-sheet formula in green."""
+        to another sheet or workbook; else an own-sheet formula in green.  `parts` (Patrick
+        2026-10-06): the cells are only parts of the address (=INDIRECT(MID(I33,...))): fine
+        when any one's text names another sheet as a qualifier ("... Assumptions!E6"); else the
+        address is unknown and the cell is skipped (default indirect_address_unknown).  An
+        address held in a formula cell is unknown too (49 never reads formula values): skipped."""
+        unknown = None
         for rc in targets:
             self.n_address_cells += 1
             st = self._addr.get(rc)
             if st is None:
                 continue                                  # empty cell: INDIRECT("") is #REF!
             if st[0] == "formula":
-                raise GradingError(f"{self.key}: a green INDIRECT formula on '{sheet}' takes its address from "
-                                   f"formula cell {st[1]}; the formula's value would be needed to decide "
-                                   f"whether it reads another sheet")
+                unknown = f"'{sheet}'!{st[1]} holds a formula; its value would be needed"
+                continue
             v = st[1]
             if isinstance(v, str) and v.strip():
+                if parts:
+                    if any(n.lower() in self.clf._sheets_low and n.lower() != sheet.lower()
+                           for n in sheets_named_in_text(v)):
+                        return None
+                    continue
                 ops = self.clf.indirect_operands(v, sheet)
                 if any(self.clf._is_external(o) for o in ops) or self.clf._other_sheets(ops, sheet):
                     return None
+        if unknown or parts:
+            self.note_default("indirect_address_unknown",
+                              f"green INDIRECT on '{sheet}': {unknown or 'no address part names a sheet'}")
+            return None
         return OWN
 
     def describe(self, why: str, argb: str) -> str:

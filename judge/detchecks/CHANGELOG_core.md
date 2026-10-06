@@ -1,5 +1,16 @@
 # Core changelog (`detchecks/core/` and shared check modules)
 
+## 2026-10-06 — judge v14: the attempts v13 could not grade
+
+Source: Patrick, 2026-10-06, walking through the 7 attempts judge v13 refused (det_checks GradingError), one check at a time.
+
+| check | before | now |
+|---|---|---|
+| 62 Active cell reset to A1 | several `<selection>` elements for the active pane: undecidable (raised when no other sheet failed for certain) | the LAST one decides — measured in Excel on attempts 2379 and 2402 (docs/excel_measurements.md item 11); 2379, 2402, 3390, 3505 now fail 62 |
+| 49 Black font for calculations | a green INDIRECT whose address is built from cell contents in any way other than one own-sheet constant cell raised | `colour_rules.indirect_literal_sheets`: a literal anywhere in the address naming a sheet of the workbook decides (1458 `Summary!G33`: `MID($I33,FIND("Assumptions!",$I33),...)` reads Assumptions); a top-level literal `!` qualifier with a computed name is taken to read another sheet (1725 `Holdings!B5`: `"'"&B3&"'!"&ADDRESS(22,D3)`), recorded as the new default `indirect_sheet_unverified`; own-sheet cells that are parts of the address (`Cls.indirect_part_cells`) are read in the second pass for a qualifier; an address no literal or constant resolves (a formula address cell too) is skipped under the new default `indirect_address_unknown`. `Pending` carries `parts`; `pending_is_mistake(sheet, targets, parts)` |
+
+New `DEFAULT_RULES` kinds: `indirect_sheet_unverified`, `indirect_address_unknown` (49). Tests: `test_62_unverified_shapes` (c_dup2 / c_dup3), `test_indirect_addresses`, `test_49_no_fallback`.
+
 ## 2026-10-05 — every attempt graded: fixed defaults instead of GradingError
 
 Source: Patrick, 2026-10-05: "For production runs, every attempt must be graded." Where a check could not decide it
