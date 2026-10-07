@@ -28,10 +28,10 @@ chatgpt_web:
   # The model itself, from the pill's nested submenu (label "GPT-5.6 Sol").
   # NOT model: "pro" — that is a one-axis value naming an intelligence level,
   # which the agent routes to `intelligence` and which leaves the model at
-  # whatever the session last used (verified live 2026-08-21).
+  # whatever the session last used.
   model: "gpt_5_6_sol"
-  # Chat's reasoning tier, the pill's top-level radios (the UI renamed these
-  # "Effort" 2026-08-12). Ceiling: instant < medium < high < xhigh < pro.
+  # Chat's reasoning tier, the pill's top-level radios (labelled
+  # "Effort" in the UI). Ceiling: instant < medium < high < xhigh < pro.
   intelligence: "pro"
   # Work-mode pickers. Null in chat mode, or preflight rejects the config.
   effort: null

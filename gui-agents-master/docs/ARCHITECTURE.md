@@ -69,8 +69,8 @@ Anything from `configs.default.yaml` can be overridden here. A file with task fi
 task_name: "Q1-Revenue-Analysis"
 task_source: "my_tasks"
 upload_files:
-  - "data/Q1/q1_data.csv"
-  - "data/Q1/problem_statement.pdf"
+  - "/path/to/Q1/starting_file.xlsx"
+  - "/path/to/Q1/problem_statement.pdf"
 solution_name: "Q1_Revenue_Solution"    # optional
 
 benchmark: v2
@@ -88,6 +88,8 @@ claude_web:
   effort: "max"
   project_id: null
 ```
+
+The workbook under `upload_files` is yours — the repo ships none.
 
 Use a top-level `tasks:` list instead of the single-task fields to bundle several tasks in one file.
 
@@ -139,7 +141,7 @@ Steps 3 and 4 are not optional bookkeeping: without them a run either fails the 
 
 Provider UIs change often. Two conventions keep that survivable:
 
-- A selector carries a `verified live <date>` note, so its age is visible.
+- A selector carries a `verified live <date>` note in the source, so its age is visible.
 - A fallback branch states the condition under which it fires, not the era it came from — "no element carries `data-message-author-role`", not "legacy DOM".
 
 `claude_web_agent/dom_diagnostics.py` dumps the final message's DOM when extraction fails, which is the fastest way to see what the provider is actually serving.
@@ -151,7 +153,7 @@ Provider UIs change often. Two conventions keep that survivable:
 One attempt = one working directory + one destination prefix:
 
 ```
-scratch/gui-agents/attempts/{ts}_{task}/
+scratch/gui-agents/attempts/{ts}_{task}_p{pid}/
 ├── solutions/                     # downloaded .xlsx
 ├── json_logs/                     # one completion_*.json per agent attempt
 ├── logs/                          # runtime log + chat transcript
@@ -160,7 +162,7 @@ scratch/gui-agents/attempts/{ts}_{task}/
 
 The prompts JSON records text, not paths — a path stops being evidence the moment the file changes.
 
-The working directory is deleted once the sink reports it has taken custody (`retains_files`). The `local` sink does not copy files elsewhere, so it leaves them in place.
+The `postgres_s3` sink takes custody (`retains_files = True`) and the working directory is deleted after upload. The `local` sink copies nothing, so the directory is kept and `attempts.ndjson` records its paths.
 
 **JSON logs** carry `task_name`, `task_status` (`success` / `agent_failure` / `pipeline_failure`), `duration_seconds`, `attempt_number`, per-prompt timing, the agent name, and the prompt version.
 

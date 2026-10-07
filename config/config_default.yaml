@@ -6,9 +6,14 @@
 #
 # Secrets are NOT stored here. They are pulled from the environment at load
 # time via ${env:VAR} so they never get committed — set them in your shell
-# (DATABASE_URL and GEMINI_API_KEY; see the ${env:...} references below).
+# (V1_DATABASE_URL / V2_DATABASE_URL and the keys.* variables below), or
+# write the values into config.yaml directly.
+#
+# Local runs (tasks from folders, results to folders) need no database and
+# no AWS key: leave database.* and aws.* unset and set only the keys.* for
+# the model(s) you run. See docs/data_stores.md to link your own stores.
 
-# Neon Postgres connection for the database.
+# Postgres connection per benchmark (benchmark: v1|v2 selects one).
 database:
   v1_url: "${env:V1_DATABASE_URL}"
   v2_url: "${env:V2_DATABASE_URL}"

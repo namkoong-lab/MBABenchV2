@@ -1,15 +1,14 @@
 # v2 - task CorpBondII (id 11) on Claude Haiku 4.5, iteration-capped.
 #
-# The v2 counterpart of v1_task64_haiku45.yaml: the config to run when the
-# question is "does the v2 pipeline work end to end" (MBABenchV2 DB row +
-# S3 artifacts under MBABenchV2/), not "how good is the model". CorpBondII
-# has the smallest AI time estimate of the 68 v2 tasks (20 min); all v2
-# tasks have task_source "jp".
+# The config to run when the question is "does the v2 pipeline work end to
+# end" (MBABenchV2 DB row + S3 artifacts under MBABenchV2/), not "how good is
+# the model". CorpBondII has the smallest AI time estimate of the v2 tasks;
+# all v2 tasks have task_source "jp".
 #
 # benchmark: v2 selects everything together: the MBABenchV2 DB
 # (database.v2_url in <MBABenchV2>/config/config.yaml), the
-# s3://mbabench/MBABenchV2/ root, and the v15 prompt default. prompt_version
-# is pinned explicitly below anyway; only v12..v15 are v2 prompt sets, so
+# s3://mbabench/MBABenchV2/ root, and the v16 prompt default. prompt_version
+# is pinned explicitly below anyway; only v12..v16 are v2 prompt sets, so
 # v1..v11 would refuse to start.
 #
 # Identity — agent_model_name is the ONLY model key. Its entry in
@@ -41,9 +40,9 @@ benchmark: "v2"                               # MBABenchV2 DB + s3://mbabench/MB
 #          the workspace as HOUSE_STANDARDS.md and embedded in the context
 #          (declared on the version, recorded in extra_configs.house_standards
 #          and prompt_files)
-# Recorded in the DB as prompt_version 1509 (system*100 + template). Same
-# value the benchmark would default to; pinned so a future default change
-# can't silently move this cohort.
+# Recorded in the DB as prompt_version 1509 (system*100 + template). The
+# benchmark's default is v16 (1609, the recorded v2 runs); v15 is pinned here
+# so a default change can't silently move this cohort.
 prompt_version: "v15"
 
 max_trials: 7

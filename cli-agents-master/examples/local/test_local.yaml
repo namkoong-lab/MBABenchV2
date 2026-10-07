@@ -1,36 +1,39 @@
-# Local mode — no DB, no S3. Reads from local folders, saves results locally.
-# Usage: excel-agent --batch-config examples/local/test_local.yaml
+# Local mode: no database, no S3. Task folders in, results_dir out.
+# Runs the v2 experiment settings (prompt v16, 40 iterations) against your own task folder.
 #
-# 1. Put task files (PDFs, xlsx) in a folder
-# 2. Point workspaces[].path to that folder
-# 3. Results saved to results_dir with attempts.jsonl log
+# Usage (from cli-agents-master/, API key in .env or the shell):
+#   uv run excel-agent --batch-config examples/local/test_local.yaml
+#
+# Task folder: one folder per task holding the starting workbook (*.xlsx, any
+# name except solution.xlsx), the case PDFs (*.pdf) and optional notes (*.md).
+# Only those three kinds reach the model; other files are copied but ignored.
+# A rerun of the same folder overwrites results_dir/<folder-name>/solution.xlsx.
 
-batch_name: "local-test"
+batch_name: "local-v2"                # FILL IN: run label (also the batch_logs/ folder name)
 local_mode: true
 
-# Cohort label from excel_cli_agent/agent_identities.yaml. Its entry supplies
-# model, reasoning_effort, thinking_budget_tokens, max_completion_tokens,
-# base_url, fresh_context_mode, enhanced_excel_context and
-# recent_history_count; setting any of them here refuses to run. To run a
+# FILL IN: cohort label from excel_cli_agent/agent_identities.yaml. Its entry
+# supplies model, reasoning_effort, thinking_budget_tokens,
+# max_completion_tokens, base_url, fresh_context_mode, enhanced_excel_context
+# and recent_history_count; setting any of them here refuses to run. To run a
 # different model or endpoint, register a new identity there.
 agent_model_name: "openpyxl_openai/gpt-4o-mini"
 
-# Input: folders containing task files
+# FILL IN: one entry per task folder (folder name = task name in the results)
 workspaces:
   - path: "./my_task_files/"
 
-# Where fresh workspaces are created (agent works here)
-workspace_base_dir: "./workspaces"
+workspace_base_dir: "./workspaces"    # FILL IN: where fresh working copies are created (default ./workspaces)
+results_dir: "./results"              # FILL IN: where solution.xlsx, transcript and attempts.jsonl land (default ./results)
 
-# Where final results are saved + attempts.jsonl log
-results_dir: "./results"
-
-# Task type: "fmwc" (default) or "wsp" — selects the task template
+# Task template family. Irrelevant for v16 (one shared template); leave as is.
 task_type: "fmwc"
 
-# Execution settings
-max_iterations: 3
-prompt_version: "v10"
-api_timeout_seconds: 120
-cleanup_workspace: false              # Keep workspace for inspection
+# v2 experiment settings. prompt_version v16 = system_prompt_v16.txt +
+# task_template_shared_v9.txt + house_standards/House_Standards_v1.md
+# delivered into the workspace as HOUSE_STANDARDS.md (recorded as 1609).
+prompt_version: "v16"
+max_iterations: 40                    # model calls per task (recorded runs: 40)
+api_timeout_seconds: 3600             # per model call (recorded runs: 3600); omit for the effort-tier default
+cleanup_workspace: false              # keep the workspace for inspection (default false)
 verbose: true

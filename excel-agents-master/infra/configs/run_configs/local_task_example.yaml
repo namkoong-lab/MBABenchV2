@@ -1,0 +1,40 @@
+# Local run — your own workbook, no database.
+#
+# Run from excel-agents-master/ (dry-run first):
+#   uv run python -m infra.run --dry-run --run-config infra/configs/run_configs/local_task_example.yaml
+#   uv run python -m infra.run -y        --run-config infra/configs/run_configs/local_task_example.yaml
+#
+# Because the top level has task fields (task_name, upload_files, ...),
+# --run-config treats this file as the task list and forces
+# source.kind: yaml. Every other key is overlaid on the project-wide config.
+#
+# Before running, put the workbook in OneDrive by hand at
+#   My files / mbabench_tasks / <task_source> / <task_name> / Task / <workbook>.xlsx
+# (onedrive_base_path + task_source + task_name + "Task").
+
+task_name: "My_Task"                 # = the OneDrive task folder name
+task_source: "my_tasks"              # = the OneDrive folder above it
+
+# You supply the starting files. The workbook is used for its NAME — the
+# engine opens the file of that name in the OneDrive Task/ folder (first
+# .xlsx/.xlsm without "solution" in its name). Every other file is uploaded
+# into the add-in panel and must exist locally. Absolute paths are simplest;
+# relative paths resolve against the working directory.
+upload_files:
+  - "/path/to/My_Task/starting_file.xlsx"
+  - "/path/to/My_Task/case.pdf"      # optional
+
+solution_name: "My_Task_Solution"    # optional; base name of the saved copy
+
+# The ONLY model-selecting key. The label's entry in agent_identities.yaml
+# pins provider, UI model label and thinking effort.
+agent_model_name: "claude_excel_fable_5_1"
+
+# Prompt text comes from tasks_configs/prompts/registry.yaml. 205 is the
+# default (single pass + Questions-sheet answers + house standards; attaches
+# House_Standards_v1.md). 0 is the cheap smoke-test prompt.
+prompt_version: 205
+
+sink:
+  kind: local                        # keeps scratch/excel-agents/attempts/<ts>_<task>/
+  output_dir: "outputs"              # + outputs/attempts.ndjson, one line per attempt

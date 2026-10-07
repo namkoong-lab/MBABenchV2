@@ -1,7 +1,6 @@
 # TUTORIAL EXAMPLE — benchmark v1, ChatGPT GPT-5.6 Sol in Work mode.
 # DB identity resolves to: chatgpt_web_work_gpt5.6_sol_ultra
-# Settings copied from bizbenchv1_run_examples/gapfill_gui_sol_remaining.yaml
-# (the config used for the recent Sol gap-fill runs), project id blanked.
+# Same shape as bizbenchv1_run_examples/sample_bizbenchv1_chatgpt.yaml.
 #
 # Run (from gui-agents-master/, Chrome already running + logged in):
 #   python -m infra.run --run-config \
@@ -26,12 +25,12 @@ sink:
 provider:
   kind: "chatgpt"
 
-# 9 = the single pv9 payload used on the whole v1 wave.
+# 9 = the single-prompt v1 payload (tasks_configs/prompts_pv9/).
 prompt_version: 9
 
 chatgpt_web:
   project_id: "your-chatgpt-project-id"  # from the project URL on chatgpt.com
-  # 4h budgets (copied from the gap-fill runs — long tasks failed at the 2h default).
+  # 4h budgets — long tasks exceed the 2h default.
   max_sec_per_task: 14400
   max_wait_per_prompt_seconds: 14400
   retry:
@@ -42,5 +41,5 @@ chatgpt_web:
   speed: "standard"
   intelligence: null                 # chat-mode knob; unused in work mode
   browser:
-    cdp_port: 9222                   # ChatGPT lane runs on its own Chrome + port
+    cdp_port: 9222                   # the runner auto-launches Chrome on 9222 only; any other port: start Chrome yourself
     profile_dir: "browser_profiles/chrome-chatgpt"

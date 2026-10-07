@@ -59,9 +59,9 @@ agent:
 # ---- Where task files land on disk -----------------------------------------
 paths:
   # Downloaded starting_files land here, as does `attempts/`, where each
-  # attempt gets a working directory for the engine's solutions/, json_logs/
-  # and general_logs/. That directory is deleted once the sink has uploaded
-  # its contents, so nothing under here is a lasting record.
+  # attempt gets a working directory (<ts>_<task>) for the engine's
+  # solutions/, json_logs/ and general_logs/. The postgres_s3 sink deletes
+  # it after upload; the `local` sink keeps it (it records paths only).
   scratch_dir:
     value: "scratch/excel-agents"
     required: true
@@ -231,7 +231,7 @@ aws:
 # delta is attributable to the interface. A version's `attachments:` are
 # uploaded into the panel after the case files on every run (run.py refuses
 # to start if one is missing) and stamped into extra_configs.house_standards.
-# 200/202/203 remain registered; new runs should not use 200. Must equal
+# 200/202/203 remain registered for comparison runs. Must equal
 # agent.prompt_version if that is also set; run.py refuses a mismatch rather
 # than picking one.
 prompt_version:
@@ -242,9 +242,9 @@ prompt_version:
 # ---- OneDrive layout --------------------------------------------------------
 # The OneDrive folder segments the engine clicks through to reach a task:
 #     onedrive_base_path + task_source + task_name + "Task"
-# The provisioning script (scripts/provision_onedrive.py) creates exactly
-# this layout from the tasks table + S3, so the engine and the provisioner
-# can never disagree about where a task lives.
+# For a local run, create this layout by hand in OneDrive web and upload the
+# workbook into Task/. scripts/provision_onedrive.py creates the same layout
+# from the tasks table + S3 for DB-backed runs.
 onedrive_base_path:
   value: ["My files", "mbabench_tasks"]
   required: true
@@ -306,8 +306,7 @@ claude_excel_agent:
 # ---- ChatGPT add-in provider block -----------------------------------------
 # NOTE: no `ui_model_label` / `thinking_effort` keys here — both are pinned
 # by agent_model_name via agent_identities.yaml (the add-in's combined
-# "Model and thinking effort" menu, since 2026-08-27). Setting either
-# refuses to run.
+# "Model and thinking effort" menu). Setting either refuses to run.
 chatgpt_excel_agent:
   # true = flip the add-in's "Apply edits automatically" switch on during
   # setup (recommended for unattended runs; verified after clicking).

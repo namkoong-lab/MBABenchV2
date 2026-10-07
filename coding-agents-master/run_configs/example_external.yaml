@@ -11,9 +11,13 @@
 #   python -m coding_agent.run_task --config run_configs/example_external.yaml \
 #       --task-dir ./my_task --results-dir ./results
 #
-# agent_model_name still comes from coding_agent/agent_identities.yaml (it
-# only names the results folder here — no DB row is written); register a
-# new entry there to run a different cli/model/effort.
+# agent_model_name must be a label registered in coding_agent/agent_identities.yaml
+# (it pins cli/model/effort). In external mode it is only written into
+# summary.json — the results folder is named <task_name>_<timestamp>_<pid>.
+# Register a new entry there to run a different cli/model/effort.
 mode: external
+benchmark: v2                   # v2 = the MBABenchV2 experiment (v13 template, pv 113); v1 = BizbenchV1 (v7 template)
 agent_model_name: claudecode_anthropic/claude-fable-5-max
-template_version: v7            # v7 = GUI-pv9 mirror; v8 = v2 rubric mirror; v6/v5 = CLI-wave templates
+# template_version: v13         # optional override; the default follows `benchmark`
+# sandbox:
+#   image: mbabench-coding-agent:v2   # tag must match the identity: default :v2, Forge (codex_tensorblock/*) :v3, Opus 5.5 :v4 — see README "Identities"

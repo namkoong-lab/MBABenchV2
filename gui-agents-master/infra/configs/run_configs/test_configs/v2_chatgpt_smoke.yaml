@@ -56,7 +56,7 @@ chatgpt_web:
   # logs a warning and continues). The smoke test does not need a project,
   # and a project id belongs to ONE account — a pinned id in
   # dispatcher/config_templates/ is the EC2 boxes' account and silently
-  # redirects to the homepage in any other (confirmed live 2026-08-21).
+  # redirects to the homepage in any other.
   project_id: null
   project_slug: null
 
@@ -87,7 +87,8 @@ chatgpt_web:
     max_sec_per_attempt: 1800
 
   browser:
-    # The ChatGPT lane runs its own Chrome on its own port, so a Claude run
-    # on 9223 can continue alongside it.
+    # A second Chrome on its own port, so a Claude run on 9222 can continue
+    # alongside it. The runner auto-launches Chrome on 9222 only — start
+    # this one yourself (see README, "Running Claude + ChatGPT in parallel").
     cdp_port: 9333
     profile_dir: "browser_profiles/chrome-chatgpt"

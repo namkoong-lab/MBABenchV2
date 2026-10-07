@@ -78,10 +78,7 @@ Prompts are the single highest-leverage customization point. Small changes to th
 
 **Task Template** (`prompts/task_template_{source}_v{N}.txt`, `task_template_shared_v{N}.txt` from v12) — Injected per-task to frame the specific work. Kept intentionally short — heavier templates consistently degraded performance by encouraging one-shot mega-batches instead of iterative reasoning.
 
-> **To customize:** Create new versioned files (never edit existing ones used in production). Register in `prompt_versions.py`. Key lessons from optimization:
-> - Keep the task template under 60 lines
-> - Rubric criteria work best when stated near-verbatim, not paraphrased into rules
-> - Completion checklists cause mega-batching — avoid them
+> **To customize:** Create new versioned files (never edit existing ones used in production) and register them in `prompt_versions.py`. Keep the task template under 60 lines; state criteria near-verbatim rather than paraphrased into rules; avoid completion checklists (they cause mega-batching).
 
 ### MCP Server & Tools (customizable)
 
@@ -96,7 +93,7 @@ The MCP server provides the agent's capabilities — everything the model can ac
 - **Cell Write tools** (2) — `edit_cells` (for labels/values), `set_cell_formula` (for formulas). Both trigger LibreOffice auto-recalculation after every write.
 - **Analysis tools** (5) — `get_used_range`, `scan_worksheet_structure`, `summarize_workbook_context`, `describe_worksheet`, `validate_formula`. Help the agent understand the current state of the workbook.
 - **Formatting tools** (3) — `format_cells`, `freeze_panes`, `set_column_width`. Applied in later iterations, after calculation work is done.
-- **Meta tools** (2) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check). The validator's function whitelist (`formula_validator.VALID_EXCEL_FUNCTIONS`) includes every function the house standards recommend — `XLOOKUP`, `XMATCH`, `IFS`, `SWITCH`, `LET` (the last two added with prompt v14; local LibreOffice 25.8 evaluates them).
+- **Meta tools** (2) — `report_mcp_issue` (logs problems), `validate_formula` (pre-write check). The validator's function whitelist (`formula_validator.VALID_EXCEL_FUNCTIONS`) includes every function the house standards recommend (`XLOOKUP`, `XMATCH`, `IFS`, `SWITCH`, `LET`).
 
 > **To customize:** Add new tools for your domain in `excel_mcp_server/tools/`. Each tool is an async function decorated with `@mcp.tool()` that returns a JSON string; follow the existing tools in the same module. Common extensions: adding chart generation, pivot table creation, or domain-specific validation rules.
 
@@ -142,11 +139,11 @@ The LLM provider is selected by the `base_url` parameter. The system auto-detect
 
 **`<MBABenchV2>/config/config.yaml`** — Monorepo config: model API keys (`keys.*`), database URLs (`database.v1_url` / `v2_url`, selected by the batch config's `benchmark` key), S3 credentials (`aws.*`) and optionally the LibreOffice binary (`libreoffice_path`; null auto-detects `soffice` on PATH or the macOS app bundle).
 
-**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `LIBREOFFICE_PATH` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
+**.env** — Optional overrides, loaded from the working directory: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `FORGE_API_KEY` / `LIBREOFFICE_PATH` win over the monorepo config; `DATABASE_URL` / `AWS_*` are the fallback when the monorepo config isn't installed (standalone checkout).
 
 **prompts/v{N}.txt** — Versioned prompt files. Immutable once used in production. New versions are registered in `prompt_versions.py`.
 
-**Prompt attachments** (`PROMPT_VERSIONS[ver]["attachments"]`, v14+; `attachment_names` maps a source to the name delivered in the workspace, v15+: `HOUSE_STANDARDS.md`) — Monorepo-root-relative files the version ships with every workspace; `repo_config.resolve_attachments` turns them into absolute paths at `load_config` time and refuses to start if one is missing. v14 attaches `house_standards/House_Standards_v1.md`: the runners copy it into the workspace, `detect_workspace_files` picks up `*.md` as text context, and `TaskExecutor._assemble_context` embeds the full text under a `HOUSE STANDARDS (<file>)` header — exempt from the reduced-context ladder (it is ~5 KB against a 20 K floor) and placed before the truncatable PDF text. The Excel-tool guard that refuses `.pdf` filenames covers `.md` too. Provenance: `upload_prompts` uploads the file alongside the system prompt (so `prompt_files` reproduces it) and `extra_configs.house_standards = {version, file, sha256}` is computed from the shipped file at run time.
+**Prompt attachments** (`PROMPT_VERSIONS[ver]["attachments"]`, v14+; `attachment_names` maps a source to the name delivered in the workspace, v15+: `HOUSE_STANDARDS.md`) — Monorepo-root-relative files the version ships with every workspace; `repo_config.resolve_attachments` turns them into absolute paths at `load_config` time and refuses to start if one is missing. v14 attaches `house_standards/House_Standards_v1.md`: the runners copy it into the workspace, `detect_workspace_files` picks up every `*.md` as text context, and `TaskExecutor._assemble_context` embeds the full text of each: files named `house_standards*` under a `HOUSE STANDARDS (<file>)` header, any other `.md` under `ATTACHED TEXT (<file>)` — exempt from the reduced-context ladder (it is ~5 KB against a 20 K floor) and placed before the truncatable PDF text. The Excel-tool guard that refuses `.pdf` filenames covers `.md` too. Provenance: `upload_prompts` uploads the file alongside the system prompt (so `prompt_files` reproduces it) and `extra_configs.house_standards = {version, file, sha256}` is computed from the shipped file at run time.
 
 ## Package Structure
 
@@ -169,8 +166,9 @@ excel-cli-agent/
 │   │   └── models.py             # Task, TaskAttempt ORM models
 │   └── prompts/                  # Versioned prompt files (bundled)
 │       ├── system_prompt_v{N}.txt
-│       ├── task_template_fmwc_v{N}.txt
-│       └── task_template_wsp_v{N}.txt
+│       ├── task_template_shared_v{N}.txt   # v12+
+│       ├── task_template_fmwc_v{N}.txt     # v1..v11
+│       └── task_template_wsp_v{N}.txt      # v1..v11
 │
 ├── excel_mcp_server/             # MCP server package
 │   ├── server.py                 # Server entry point, tool registration
@@ -235,6 +233,7 @@ No database, no S3, no cloud credentials needed. Just an API key and local folde
                     │
 3. S3 DOWNLOAD  Download starting files (PDFs, xlsx) to workspace
                 s3://<bucket>/<BizbenchV1|MBABenchV2>/tasks/...
+                Copy the prompt version's attachments (HOUSE_STANDARDS.md)
                     │
 4. EXECUTE      TaskExecutor runs AI reasoning loop:
                   a. Build system prompt + task template
@@ -243,11 +242,9 @@ No database, no S3, no cloud credentials needed. Just an API key and local folde
                   d. Execute tools via MCP server
                   e. Repeat until complete or max_iterations
                     │
-5. S3 UPLOAD    Upload results:
-                  - solution.xlsx
-                  - openai_requests.csv
-                  - task.json
-                  - transcript.md
+5. SAVE/UPLOAD  Copy the attempt package to run_logs/attempt-{model}-{ts}/
+                (workspace files, agent_logs/, prompts/, config/), then
+                upload it to S3 (v2: everything but the non-solution workbooks)
                     │
 6. DB WRITE     Insert TaskAttempt row with:
                   - timing, cost, prompt_version
@@ -345,12 +342,16 @@ task_attempts (WRITE)
 
 ```
 s3://<bucket>/<BizbenchV1|MBABenchV2>/
-├── prompts/{model}_openpyxl/
+├── prompts/{model}_openpyxl/                 # prompt snapshot, both benchmarks
 │   ├── {timestamp}_system_prompt_v{N}.txt
-│   ├── {timestamp}_task_template_fmwc_v{N}.txt
-│   └── {timestamp}_task_template_wsp_v{N}.txt
-└── attempts/{model}_openpyxl/
-    └── task_source={src}/task_id={id}/
+│   └── {timestamp}_task_template_*_v{N}.txt
+└── attempts/
+    ├── cli_agents/{model}/task_id={id}/{timestamp}/   # benchmark v2: one folder per attempt
+    │   ├── solution.xlsx                               # the only workbook uploaded
+    │   ├── agent_logs/   (openai_requests.csv, task_{id}/task.json, transcript.md)
+    │   ├── prompts/      (the exact system prompt + task template)
+    │   └── config/       (the batch config the run was launched with)
+    └── {model}_openpyxl/task_source={src}/task_id={id}/  # benchmark v1: flat keys
         ├── {timestamp}_solution.xlsx
         ├── {timestamp}_task.json
         ├── {timestamp}_openai_requests.csv
@@ -403,9 +404,9 @@ Parameters are set in YAML config files. Items marked with mode indicate which m
 | `recent_history_count` | int | — | registry | Recent tool calls replayed in fresh context. Pinned by the agent identity |
 | `api_timeout_seconds` | int | by effort | both | API call timeout: 60 min for `max`/`xhigh` effort, 240 s for `high`, 180 s otherwise |
 | **Output** | | | | |
-| `workspace_base_dir` | string | required | both | Where fresh workspaces are created |
-| `results_dir` | string | `./results` | local | Where results + attempts.jsonl are saved |
-| `cleanup_workspace` | bool | true | both | Delete workspace after completion |
+| `workspace_base_dir` | string | local `./workspaces`; auto `batch_logs/batch_<ts>/workspaces/` | both | Where fresh workspaces are created |
+| `results_dir` | string | `./results` | local | Where results + attempts.jsonl are saved (`results_dir/<task>/`, overwritten on rerun) |
+| `cleanup_workspace` | bool | local false; auto true | both | Delete workspace after completion |
 | **Trial management** | | | | |
 | `max_trials` | int | 7 | auto | Skip task after N attempts |
 | `trials_since` | string | today | auto | Only count attempts after this date |
@@ -424,16 +425,19 @@ otherwise add a new entry with a new label.
 
 ### Local Mode Example
 
+The v2 experiment settings (`examples/local/test_local.yaml`):
+
 ```yaml
 local_mode: true
 batch_name: "my-run"
 agent_model_name: "openpyxl_openai/gpt-4o-mini"   # entry in agent_identities.yaml
 workspaces:
-  - path: "./my_task_files/"
+  - path: "./my_task_files/"                       # starting *.xlsx + case *.pdf + optional *.md
 workspace_base_dir: "./workspaces"
 results_dir: "./results"
-max_iterations: 30
-prompt_version: "v10"
+prompt_version: "v16"                              # v2 prompt set; `benchmark` is not read in local mode
+max_iterations: 40
+api_timeout_seconds: 3600
 ```
 
 ### Auto Mode Example
@@ -447,7 +451,8 @@ workspace_base_dir: "./workspaces"
 tasks: ["Task-Name"]
 max_trials: 7
 trials_since: "2026-02-05"
-max_iterations: 30
+prompt_version: "v16"
+max_iterations: 40
 ```
 
 ### Credentials
@@ -455,7 +460,7 @@ max_iterations: 30
 Inside the monorepo, everything is read from `<MBABenchV2>/config/config.yaml`
 (`keys.*`, `database.v1_url` / `v2_url`, `aws.*`, `libreoffice_path`). A `.env` in the working
 directory can override the model API key (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or `LIBREOFFICE_PATH`, and supply `DATABASE_URL` / `AWS_*`
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `FORGE_API_KEY`) or `LIBREOFFICE_PATH`, and supply `DATABASE_URL` / `AWS_*`
 for standalone runs where the monorepo config isn't installed.
 
 ## Key Design Patterns
@@ -467,11 +472,3 @@ for standalone runs where the monorepo config isn't installed.
 - **Lazy DB connection**: Database engine is only created when `SessionLocal()` is first called — import doesn't require credentials
 - **Subprocess isolation**: MCP server runs in a separate process, preventing openpyxl state leaks
 - **Prompt versioning**: Immutable versioned files ensure reproducibility across benchmark runs
-
-## Deployment Notes
-
-- **Max 4 concurrent processes per machine** — each spawns its own LibreOffice conversion per recalc (no resident soffice between recalcs, but peak memory during concurrent conversions still adds up).
-- **Credentials**: `<MBABenchV2>/config/config.yaml`; `.env` only for overrides / standalone runs (see Credentials above).
-- **Killing a stuck run**: `kill <PID>`. LibreOffice only lives for the duration of one conversion; a lingering `soffice` after a kill is at most one process.
-- **Logs**: `batch_logs/batch_<timestamp>/` (per-batch reports).
-- **Disk**: workspaces cleaned by default (`cleanup_workspace: true`). Set `false` to inspect solution.xlsx before S3 upload.

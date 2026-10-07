@@ -12,9 +12,8 @@ a warning pointing at `dispatch bootstrap` — re-run that (or set
 
 `spinup` prompts for the instance type unless `--instance-type` is given
 (`-y` or a non-TTY takes `t3.large`). **t3.medium OOMs on ChatGPT-in-Chrome
-runs** — observed 2026-08-22, when Chrome hit 3.2 GiB RSS on the 4 GiB box,
-the OOM killer fired and the host swap-thrashed until sshd stopped answering.
-Use `t3.large` for ChatGPT boxes.
+runs** (Chrome exceeds 3 GiB RSS on the 4 GiB box). Use `t3.large` for
+ChatGPT boxes.
 
 On an alias that is already in `boxes.yaml`, choosing a different type resizes
 the instance in place — it is stopped, retyped and started again, so the root
@@ -200,7 +199,7 @@ Ctrl-C tears down the tunnel and the x11vnc it started; the task keeps running.
 ### Watching several boxes at once
 
 Just run `watch` in a second terminal — the local port scans 5902, 5912, 5922, …
-and takes the first free one, so concurrent sessions no longer collide. The
+and takes the first free one, so concurrent sessions do not collide. The
 `login` family scans 5901, 5911, 5921, …, which is why the stride is 10: the two
 never land on the same port.
 

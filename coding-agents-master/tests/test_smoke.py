@@ -76,8 +76,8 @@ def test_workspace_prompt_and_validation():
         assert len(attempt.manifest) == 1
 
         prompt, pv = build_prompt(cfg, spec, attempt.workspace)
-        assert pv == 107  # default = v7 GUI-pv9 mirror, task-invariant
-        assert "solution.xlsx" in prompt and "Summary" in prompt and "ACCURACY" in prompt
+        assert pv == 113  # benchmark v2 default = v13 template, task-invariant
+        assert "solution.xlsx" in prompt and "Summary" in prompt and "HOUSE_STANDARDS.md" in prompt
         assert (attempt.workspace / "PROMPT.md").exists()
 
         # No solution -> agent_failure

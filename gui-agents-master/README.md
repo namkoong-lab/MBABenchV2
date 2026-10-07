@@ -1,6 +1,6 @@
 # Web Agent Automation
 
-Automated batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT. The system connects to a real Chrome browser via the Chrome DevTools Protocol, navigates to the chat, uploads task files, sends one or more prompts, and downloads the Excel workbooks the model produces.
+Batch execution of AI agents that work *inside the web chat UIs* of Claude.ai and ChatGPT. The runner connects to a real Chrome browser over the Chrome DevTools Protocol, opens a chat, uploads the task files, sends the prompt(s), and downloads the Excel workbook the model produces.
 
 > **Looking at the MBABenchV2 repo as a whole?** The [repository README](../README.md) describes how the four pipelines and the judge fit together.
 
@@ -8,66 +8,62 @@ Automated batch execution of AI agents that work *inside the web chat UIs* of Cl
 
 ## How this compares to `excel-agents-master`
 
-The sibling repo, [`excel-agents-master/`](../excel-agents-master/), runs AI agents *inside Excel Online add-ins* via OneDrive. Same kind of benchmark output, very different runtime.
+The sibling pipeline, [`excel-agents-master/`](../excel-agents-master/), runs AI add-ins *inside Excel Online* via OneDrive. Same kind of output, different runtime.
 
 |  | This repo (`gui-agents-master`) | Sibling (`excel-agents-master`) |
 |---|---|---|
 | **Where the AI runs** | Web chat UI (claude.ai, chatgpt.com) | Excel Online add-in panel |
 | **Required account** | Claude.ai login or ChatGPT Plus/Pro subscription | Microsoft 365 + OneDrive |
-| **Browsers** | Regular Chrome | Regular Chrome, signed in to Microsoft 365 |
-| **Cloud orchestration** | Full EC2 dispatcher in `infra/` for multi-box scaling | None — runs only on your local machine |
+| **Browser** | Regular Chrome | Regular Chrome, signed in to Microsoft 365 |
+| **Cloud orchestration** | EC2 dispatcher in `infra/` for multi-box runs | None — local machine only |
 
 ---
 
 ## One runner, two ways to feed it
 
-`python -m infra.run` is the entry point for every run, local or cloud. What changes between them is the **run config** you hand it — specifically, where tasks come from and where results go.
+`python -m infra.run --run-config <file>` is the entry point for every run. The run config decides where tasks come from and where results go:
 
-| `--run-config` names… | Audience | Tasks come from | Results go to |
+| Run config | Audience | Tasks come from | Results go to |
 |---|---|---|---|
-| a **local** profile (`source.kind: yaml`, `sink.kind: local`) | **Default — everyone** | A YAML file you write | Local disk under `outputs/` |
-| a **cloud** profile (`source.kind: postgres_s3`) | **MBABenchV2 internal team** | Internal Postgres + S3 | S3 + a `task_attempts` row |
+| **Local** — a task-shaped YAML (`source.kind: yaml`, `sink.kind: local`) | Everyone | The YAML you write, pointing at your own workbook | Local disk (`scratch/`, `outputs/attempts.ndjson`) |
+| **DB-backed** — an overlay with `source.kind: postgres_s3` | Teams with the benchmark Postgres + S3 | Postgres `tasks` table + S3 starting files | S3 + a `task_attempts` row (`sink.kind: postgres_s3`) |
 
-Multi-box scaling adds `infra/dispatcher/`, which ssh's into EC2 boxes and invokes the same `infra.run` on each. If you're outside the MBABenchV2 team and want that, the `infra/` code is in the repo for transparency, but it depends on our internal AWS account, Postgres database, and `mbabench` S3 bucket — see the [BYO infrastructure](#byo-infrastructure-external-users) note below. Not turnkey.
+The local path is documented first. The DB-backed path and the EC2 dispatcher follow.
 
 ---
 
 ## Prerequisites
 
-- **Python 3.12+**
-- **[uv](https://docs.astral.sh/uv/)** package manager
-- **Regular Google Chrome** (Chrome Canary v148+ has a CDP compatibility issue with Playwright — stick with the stable channel)
-- **Playwright Chromium browser** binaries (installed below via `playwright install chromium`)
-- **Web GUI login** to your provider — this system uses your existing Claude.ai or ChatGPT browser session, **not** API keys. There's nothing to configure with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
-- For ChatGPT runs: a paid **ChatGPT Plus or Pro subscription**.
+- **Python 3.12+** and **[uv](https://docs.astral.sh/uv/)**
+- **Regular Google Chrome** (stable channel — Canary's CDP breaks Playwright's download handling, see [Troubleshooting](#troubleshooting))
+- **A web login** to your provider: a Claude.ai account, or a ChatGPT Plus/Pro subscription. No API keys are used.
+- **Your own task workbook** (`.xlsx`) and, optionally, a case PDF. The repo ships no sample workbook (`*.xlsx` is gitignored).
 
 ---
 
 ## Install
 
-`gui-agents-master` is a member of the MBABenchV2 uv workspace, so dependencies install from the repo root:
+`gui-agents-master` is a member of the MBABenchV2 uv workspace; dependencies install from the repo root:
 
 ```bash
 git clone <repo-url>
 cd MBABenchV2
 uv sync
 uv run python -m playwright install chromium
-# On Linux only: uv run python -m playwright install-deps chromium
+# Linux only: uv run python -m playwright install-deps chromium
 ```
 
-Every command below runs from `gui-agents-master/`. Prefix them with `uv run` (or activate the workspace environment) so the interpreter is the one `uv sync` provisioned.
+Every command below runs from `gui-agents-master/`, prefixed with `uv run`.
 
 ---
 
-## Quickstart — local (default)
-
-You launch a Chrome browser, log into your provider once, and the runner sends tasks through that browser one at a time.
+## Quickstart — local run
 
 ### 1. Launch Chrome with CDP
 
-The automation connects to a real Chrome browser via the Chrome DevTools Protocol. Launch Chrome with remote debugging enabled, on port 9222 with a dedicated profile directory.
+The runner attaches to Chrome on CDP port **9222**. If nothing is listening there, it launches Chrome itself (`claude_web_agent/browser_manager.py`) with the profile from `<provider>_web.browser.profile_dir` — default `browser_profiles/chrome-claude` for Claude, `browser_profiles/chrome-chatgpt` for ChatGPT, resolved against the repo root and gitignored. **Auto-launch happens on 9222 only.** Any other `cdp_port` requires you to start Chrome yourself (see [Running Claude + ChatGPT in parallel](#running-claude--chatgpt-in-parallel)).
 
-Run these **from the repo root** — the profile lives inside the repo, under the gitignored `browser_profiles/`. The commands below use the Claude lane's profile; for ChatGPT runs swap `chrome-claude` for `chrome-chatgpt`, so each provider keeps its own login. Use regular Chrome, not Canary (see [Troubleshooting](#troubleshooting)).
+To launch it by hand (recommended the first time, so you can log in), run from `gui-agents-master/`; swap `chrome-claude` for `chrome-chatgpt` on ChatGPT runs:
 
 **macOS:**
 ```bash
@@ -105,45 +101,37 @@ google-chrome \
   --remote-allow-origins=*
 ```
 
-The `--user-data-dir` flag creates an isolated Chrome profile. Your login session persists across runs as long as you launch Chrome with the same directory — typically a few weeks until cookies expire. Each parallel browser instance needs its own profile dir (and its own port).
-
-This must agree with `<provider>_web.browser.profile_dir` in the run config, which defaults to `browser_profiles/chrome-claude` / `browser_profiles/chrome-chatgpt`. A relative value there is resolved against the repo root, so it names the same profile no matter where you invoke the runner from.
+`--user-data-dir` is an isolated profile; the login persists there across runs until the cookies expire. It must match `profile_dir` in the run config.
 
 ### 2. Log into the provider
 
-In the Chrome window that just opened:
+In that Chrome window, log in at https://claude.ai or https://chatgpt.com (Plus or Pro). Leave the browser open.
 
-- **For Claude runs**: navigate to https://claude.ai and log in.
-- **For ChatGPT runs**: navigate to https://chatgpt.com and log in (Plus or Pro account).
+### 3. Optional: a project id
 
-Leave the browser open. The runner connects to it.
+Set `<provider>_web.project_id` to start every task chat inside one project. `null` (the default) starts each chat outside any project.
 
-### 3. Configure the project ID (per provider)
-
-Both providers identify a "project" or "workspace" you want each task to start in. Set it in your run config under `<provider>_web.project_id` — the automation uses it to keep all task conversations together and (for ChatGPT) to inherit project-level settings like the default model. Leave it `null` to start each chat outside any project.
-
-**For Claude.ai:** go to https://claude.ai/projects, open (or create) a project, and copy `{project_id}` out of the `https://claude.ai/project/{project_id}` URL.
-
-**For ChatGPT:** open **Projects** in the left sidebar, open (or create) one, and copy the hex `{project_id}` from `https://chatgpt.com/g/g-p-{project_id}-{slug}/project` (the part after `g-p-`). Newer projects have **no `-{slug}` suffix**; that's fine — `chatgpt_web.project_slug` is optional.
+- **Claude.ai:** `{project_id}` from `https://claude.ai/project/{project_id}`.
+- **ChatGPT:** the hex id after `g-p-` in `https://chatgpt.com/g/g-p-{project_id}-{slug}/project`. `project_slug` is optional. A project id belongs to one account; a wrong one redirects to the homepage.
 
 ### 4. Write a run config
 
-A run config is a YAML file under `infra/configs/run_configs/`. If its top level contains task fields (`task_name`, `upload_files`, `tasks`, …) the runner treats the file itself as the task list; everything else in it is overlaid on the project-wide config for that run. Copy [`infra/configs/run_configs/local_run_examples/sample_task.yaml`](infra/configs/run_configs/local_run_examples/sample_task.yaml) and edit:
+Copy [`infra/configs/run_configs/local_run_examples/sample_task.yaml`](infra/configs/run_configs/local_run_examples/sample_task.yaml) (Claude) or [`sample_task_chatgpt.yaml`](infra/configs/run_configs/local_run_examples/sample_task_chatgpt.yaml) and point `upload_files` at your workbook. A file whose top level has task fields (`task_name`, `upload_files`, `tasks`, …) *is* the task list; every other key is overlaid on the project-wide config for that run.
 
 ```yaml
 task_name: "My_Analysis"
 task_source: "my_tasks"
 upload_files:
-  - "data/My_Analysis/problem_statement.pdf"
-  - "data/My_Analysis/data.xlsx"
-solution_name: "My_Analysis_Solution"   # optional
+  - "/path/to/your/task/starting_file.xlsx"
+  - "/path/to/your/task/case.pdf"          # optional
+solution_name: "My_Analysis_Solution"      # optional
 
-# ── below: project-wide overrides for this run ──
+# ── project-wide overrides for this run ──
 benchmark: v2
-prompt_version: 204          # see "Prompts and prompt_version"
+prompt_version: 205          # the default; see "Prompts and prompt_version"
 
 provider:
-  kind: "claude"
+  kind: "claude"             # or "chatgpt"
 
 sink:
   kind: local
@@ -151,143 +139,154 @@ sink:
 
 claude_web:
   model: "opus_4_8"
-  project_id: "your-project-id-here"
+  effort: "max"
+  project_id: null
 ```
 
-`upload_files` paths are relative to `local_files_base` if set, else to the working directory. You supply the starting workbook — the repo ships no sample `.xlsx` (the blanket `*.xlsx` gitignore rule keeps workbooks out), so edit the placeholder path in `sample_task.yaml` before the first run.
-
-To bundle several tasks in one file, use a `tasks:` list instead of top-level task fields — see [`sample_task.yaml`](infra/configs/run_configs/local_run_examples/sample_task.yaml) for the shape.
+Relative `upload_files` paths resolve against `local_files_base` if set, else the working directory; absolute paths are simplest. Use a top-level `tasks:` list to bundle several tasks in one file.
 
 ### 5. Run
 
 ```bash
-# Preview — merges the config, resolves prompts and identity, runs no browser
-uv run python -m infra.run --dry-run \
-  --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
+# Preview — merges the config, resolves prompts and identity, opens no browser
+uv run python -m infra.run --dry-run --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
 
 # For real
-uv run python -m infra.run -y \
-  --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
+uv run python -m infra.run -y --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
 
 # Slice the task list
-uv run python -m infra.run -y --start 0 --end 5 \
-  --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml
+uv run python -m infra.run -y --start 0 --end 5 --run-config <file>
 ```
 
-> **Laptop operators (macOS):** these runs drive a real browser for many minutes per task, and if the Mac sleeps it suspends Chrome and drops Wi-Fi mid-generation — the page closes, the run burns a retry, and the whole prompt sequence restarts. Wrap long runs in `caffeinate` so the machine stays awake:
-> ```bash
-> caffeinate -dimsu uv run python -m infra.run -y --run-config ...
-> ```
+> **macOS laptops:** a sleeping Mac suspends Chrome mid-generation and burns a retry. Wrap long runs: `caffeinate -dimsu uv run python -m infra.run -y --run-config ...`
+
+### 6. Where the output lands
+
+Each attempt gets one working directory, named with the runner's pid so two runners on one machine never share it:
+
+```
+scratch/gui-agents/attempts/<ts>_<task>_p<pid>/
+  solutions/                 # downloaded workbook(s)
+  json_logs/                 # one completion_*.json per agent attempt
+  logs/                      # runtime log + chat transcript
+  prompts_<task>_<ts>.json   # the prompt text actually sent (+ attachments)
+```
+
+- **`sink.kind: local`** — the working directory is **kept** (the sink copies nothing), and one JSON line per attempt is appended to `<sink.output_dir>/attempts.ndjson` (default `outputs/attempts.ndjson`) with the paths to the workbook and logs.
+- **`sink.kind: postgres_s3`** — the contents are uploaded to S3, mirrored under `paths.output_dir` (default `outputs/MBABenchV2/attempts/<agent>/<task>/<ts>_<run_id>/`), and the working directory is **deleted**.
 
 ---
 
-## Quickstart — cloud / EC2 dispatcher
+## DB-backed run (Postgres + S3)
 
-> **For the MBABenchV2 internal team.** The `infra/` directory contains a dispatcher + worker stack for orchestrating Chrome on EC2 boxes against our private Postgres + S3. See [`infra/README.md`](infra/README.md) for the operator guide. **External users:** the same code can drive your own AWS / Postgres / S3 setup, but you'll need to provision them yourself — see [BYO infrastructure](#byo-infrastructure-external-users) below.
+For a team that keeps tasks in the benchmark Postgres schema and starting files in S3. Credentials come from `<repo>/config/config.yaml` (`database.v1_url` / `database.v2_url`, `aws.*`), selected by the run config's `benchmark:`; see the `database:` / `aws:` blocks in [`infra/configs/configs.default.yaml`](infra/configs/configs.default.yaml) for the resolution order. The boto3 default credential chain is deliberately not consulted.
 
-The dispatcher CLI lives at `infra/dispatcher/dispatch.py`. The most-used commands:
+An overlay-shaped run config (no task fields) selects the source, the sink and the provider axes:
 
-```bash
-python -m infra.dispatcher.dispatch status                # who's doing what
-python -m infra.dispatcher.dispatch assign --n 20         # pull 20 tasks from DB, distribute
-python -m infra.dispatcher.dispatch logs <alias> --task 42 -f   # tail a task's journal
-python -m infra.dispatcher.dispatch login <alias>         # re-login when session expires
+```yaml
+benchmark: v2
+source:
+  kind: postgres_s3
+  schema: mbabenchv2
+  filters:
+    task_ids: [1, 2]              # or task_sources: ["jp"]
+    skip_deprecated: true
+    skip_already_attempted: true  # skip tasks this identity already has a non-failed attempt for
+sink:
+  kind: postgres_s3               # or `local` to pull from the DB but write nothing back
+  schema: mbabenchv2
+provider:
+  kind: "claude"
+prompt_version: 205
+claude_web:
+  mode: "chat"
+  model: "fable_5"
+  effort: "max"
 ```
 
-Per-box bring-up (spin up an EC2 instance, install the worker, register it in `dispatcher/boxes.yaml`, a gitignored registry the command writes):
+Examples: [`infra/configs/run_configs/v2_fable5_claude.yaml`](infra/configs/run_configs/v2_fable5_claude.yaml), [`v2_sol56_chatgpt.yaml`](infra/configs/run_configs/v2_sol56_chatgpt.yaml), the `mbabenchv2_run_examples/` folder (local-sink and DB-sink variants), the v1 examples under `bizbenchv1_run_examples/`, and the throwaway smoke tests under `test_configs/` (prompt_version 0). Replace the `project_id` placeholders with ids from your own account, or set them to `null`.
 
 ```bash
-dispatch spinup --alias chatgpt-pro-1 \
-  --config-template infra/dispatcher/config_templates/chatgpt_sol56_chat.yaml
+uv run python -m infra.run --dry-run --run-config infra/configs/run_configs/v2_fable5_claude.yaml
+uv run python -m infra.run -y --task-id 2 --run-config infra/configs/run_configs/v2_fable5_claude.yaml   # one task
+uv run python -m infra.run -y --run-config infra/configs/run_configs/v2_fable5_claude.yaml              # the filtered set
 ```
 
-See [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md) for the full CLI reference and [`infra/README.md`](infra/README.md) for the operator guide.
+Every attempt (success or agent failure) becomes a `task_attempts` row named by the resolved [agent identity](#agent-identity) and the `prompt_version`.
 
-### BYO infrastructure (external users)
+### EC2 dispatcher
 
-To run the dispatcher against your own infrastructure rather than ours, you'd need: an AWS account with EC2 permissions, a Postgres database (we use Neon), and an S3 bucket. The dispatcher and worker code is reusable, but the schema for the `tasks` and `task_attempts` tables, the S3 layout (`s3://<bucket>/<task_path>` with attempts under per-agent folders), and the bootstrap scripts assume the MBABenchV2 conventions. We don't ship a schema migration for external use — the local quickstart is the supported turnkey path for outside use.
+`infra/dispatcher/` spins up EC2 boxes that each run `infra.run` against the same Postgres + S3, with Chrome logged in over VNC. Operator guide: [`infra/README.md`](infra/README.md); CLI reference: [`infra/dispatcher/common_commands.md`](infra/dispatcher/common_commands.md); manual box setup: [`infra/worker/systemd/SETUP.md`](infra/worker/systemd/SETUP.md). Per-box provider/model templates live in [`infra/dispatcher/config_templates/`](infra/dispatcher/config_templates/).
+
+```bash
+python -m infra.dispatcher.dispatch spinup --alias claude-1 --config-template infra/dispatcher/config_templates/claude_fable5_chat.yaml
+python -m infra.dispatcher.dispatch login claude-1        # VNC tunnel to the box's Chrome
+python -m infra.dispatcher.dispatch assign --n 20          # pull 20 eligible tasks, distribute
+python -m infra.dispatcher.dispatch status                 # who's doing what
+```
+
+Running it against your own infrastructure needs an AWS account with EC2 permissions, a Postgres database and an S3 bucket laid out to the MBABenchV2 conventions (`tasks` / `task_attempts` tables, `s3://<bucket>/<task_path>` with attempts under per-agent folders). No schema migration ships for that; the local run is the turnkey path.
 
 ---
 
 ## Configuration reference
 
-Config merges in three layers, later winning, all of them project-wide (there is no per-task override layer):
+Config merges in three layers, later winning, all project-wide:
 
-1. [`infra/configs/configs.default.yaml`](infra/configs/configs.default.yaml) — every knob and its default. This is the canonical schema; a key it doesn't declare is rejected.
-2. `infra/configs/configs.yaml` — your long-lived local overrides (gitignored: DB url, project ids, ports).
+1. [`infra/configs/configs.default.yaml`](infra/configs/configs.default.yaml) — every knob and its default. A key it doesn't declare is rejected.
+2. `infra/configs/configs.yaml` — your long-lived local overrides (gitignored: project ids, ports).
 3. `--run-config <file>` — what to run this time.
 
 ### Prompts and `prompt_version`
 
-The prompt text the agent receives is **not** written in the run config. A run sets `prompt_version`, and [`tasks_configs/prompts/registry.yaml`](tasks_configs/prompts/registry.yaml) maps that number to an ordered list of prompt files, each sent as one chat turn:
+Prompt text is **not** written in the run config. `prompt_version` is resolved through [`tasks_configs/prompts/registry.yaml`](tasks_configs/prompts/registry.yaml) to an ordered list of files, one chat turn each:
 
 | Version | What it sends |
 |---|---|
-| `0` | Infrastructure smoke test — one turn, returns the workbook plus a `TEST SHEET`. Never grade its output. |
-| `1` | Version 0 plus the House Standards attachment, to exercise the attachment path in seconds. Never grade its output. |
-| `9` | The BizbenchV1 (benchmark v1) single-turn payload with the 17-check rubric. |
-| `200` | The v2 3-step set: analyze → build (132-check rubric) → QA + download. |
-| `201` | The same v2 deliverables and rubric folded into one large turn. |
+| `0` | Smoke test — one turn, returns the workbook plus a `TEST SHEET`. Never grade its output. |
+| `1` | Version 0 plus the House Standards attachment, to exercise the attachment path. Never grade. |
+| `9` | The benchmark-v1 single-turn payload (17-check rubric). |
+| `200` | v2 3-step set: analyze → build (132-check rubric) → QA + download. |
+| `201` | 200 folded into one turn. |
 | `202` | 200 + the Questions-sheet convention: answers go into the starting workbook's `Questions` sheet as live formulas. |
-| `203` | 201 + the same Questions-sheet convention, one turn. |
-| `204` | 202 + the house standards: the prompts point at `House_Standards_v1.md`, which the version **attaches**. |
-| `205` | 203 + the same house standards and attachment, one turn. The usual ChatGPT choice. |
+| `203` | 201 + the Questions-sheet convention. |
+| `204` | Rubric-free House Standards set, 3 turns; **attaches** `House_Standards_v1.md`. |
+| `205` | Rubric-free House Standards prompt, one turn; same attachment. **Default.** |
 
-The same number is written to `task_attempts.prompt_version`, so a row always names the text it was produced from. Registry entries are immutable — new text gets a new number, never an edit to an existing one. See [`tasks_configs/prompts/README.md`](tasks_configs/prompts/README.md).
+The same number is written to `task_attempts.prompt_version`. Registry entries are immutable — new text gets a new number. See [`tasks_configs/prompts/README.md`](tasks_configs/prompts/README.md).
 
-**Attachments.** A registry entry may declare `attachments:` — files uploaded to the chat after the task's own starting files, on every task of every run of that version (204 and 205 attach `<monorepo>/house_standards/House_Standards_v1.md`). The version selects them; a run config never names the file, so the recorded `prompt_version` and the files the agent saw cannot disagree. The runner resolves them once at startup and refuses to run if one is missing, lists them in `--dry-run` output (the trailing entries of `upload_files`, and a `prompt_attachments` key), and records each one's name, sha256 and full text in the per-attempt `prompts_*.json` that the sink uploads — evidence, not a pointer.
+**Attachments.** An entry may declare `attachments:` — files uploaded after the task's own starting files on every run of that version (204 and 205 attach `<monorepo>/house_standards/House_Standards_v1.md`). The runner resolves them at startup, refuses to run if one is missing, lists them in `--dry-run` output, and records each one's name, sha256 and text in the per-attempt `prompts_*.json`.
 
-`prompt_version` is the only way to choose prompts. To send different text, add it to the registry under a new version — there is no per-run prompt override.
-
-The pre-registry keys `prompts_file` and `prompts` are **deprecated** and no longer part of the config schema. A config that still sets one loads with a deprecation warning from `infra/configs/loader.py`; both keys are slated for removal.
+There is no per-run prompt override. The pre-registry keys `prompts_file` and `prompts` are deprecated; a config that sets one loads with a warning.
 
 ### `benchmark`
 
-`benchmark: v1 | v2` selects which experiment a run belongs to. It picks the database (BizbenchV1 vs MBABenchV2), the S3 prefix, and the identity namespace — see [Agent identity](#agent-identity). Set it explicitly in every run config.
+`benchmark: v1 | v2` selects the experiment: database, S3 prefix and identity namespace. Set it in every run config.
 
 ### Agent identity
 
-`task_attempts.agent_model_name` and the S3 folder segment are derived from the config fields that change agent output, not written by hand — so a row cannot claim a model the run didn't use. The tables live in [`infra/configs/agent_identity.py`](infra/configs/agent_identity.py) and are **append-only**: existing rows point at existing labels. An axis combination with no entry is refused before the browser opens.
-
-- **v2** bifurcates on model (plus Claude's chat/cowork mode).
-- **v1** additionally bifurcates on every UI axis that wave pinned: Claude effort, ChatGPT mode/intelligence/effort/speed.
-
-### Where output lands
-
-- `paths.scratch_dir` (default `scratch/gui-agents`) — the per-attempt working directory the engine writes into. Deleted once the sink has taken custody of its contents.
-- `paths.output_dir` (default `outputs`) — a **local mirror** of everything the `postgres_s3` sink uploads (workbook, completion JSONs, chat transcript, runtime log, prompts JSON), laid out under the same relative path as the S3 key:
-  ```
-  outputs/MBABenchV2/attempts/claude_haiku_4_5/BasicGrowth/{ts}_{run_id}/
-  ```
-  so the folder can be diffed against the bucket by eye. Mirroring is best-effort — a failure warns and the run continues, since S3 is the record of truth. Set to `""` to disable.
-- `sink.output_dir` — where the `local` sink writes instead. That sink keeps the working directory rather than deleting it, since nothing copied the files elsewhere.
+`task_attempts.agent_model_name` and the S3 folder are derived from the provider axes that change output (mode, model, effort / intelligence / speed), not written by hand. The tables live in [`infra/configs/agent_identity.py`](infra/configs/agent_identity.py) and are append-only; an axis combination with no entry is refused before the browser opens. v2 keys on mode + model (+ effort); v1 additionally on every UI axis.
 
 ### Model selection
 
-Both providers support model selection through the provider's own UI picker. If omitted or `null`, the runner uses whatever is currently active in your session — benchmark runs must pin it, and v2 preflight refuses `null` for Claude.
+Both providers select the model through the provider's own UI picker, by visible label (the label maps are `MODEL_LABELS` in `claude_web_agent/claude_web_agent.py` / `chatgpt_web_agent.py`). `null` keeps the session's current choice; benchmark runs must pin it, and v2 preflight refuses `null` for Claude.
 
-**Claude** (`claude_web.model`) — the labels the agent knows (`MODEL_LABELS` in `claude_web_agent/claude_web_agent.py`): `fable_5_1`, `fable_5`, `opus_5_5`, `opus_5`, `opus_4_8`, `opus_4_7`, `opus_4_6`, `sonnet_5`, `sonnet_4_6`, `haiku_4_5`. Selection matches the whole model token in the claude.ai model menu, so `fable_5` never selects "Fable 5.1". A benchmark run must also name a registered identity (`infra/configs/agent_identity.py`); for v2 those exist for chat `sonnet_4_6` / `opus_4_6` / `opus_4_8` / `haiku_4_5` / `fable_5` and cowork `fable_5` / `fable_5_1` / `opus_5` / `opus_5_5`, all at effort `max`.
+**Claude** (`claude_web`): `model` ∈ `fable_5_1`, `fable_5`, `opus_5_5`, `opus_5`, `opus_4_8`, `opus_4_7`, `opus_4_6`, `sonnet_5`, `sonnet_4_6`, `haiku_4_5`; `effort` ∈ `low | medium | high | xhigh | max`; `mode` ∈ `chat | cowork` (asserted every task; `cowork_approval: auto` for unattended runs).
 
-`claude_web.effort` (`low` | `medium` | `high` | `xhigh` | `max`) drives the reasoning-effort submenu; `claude_web.mode` (`chat` | `cowork`) drives the Chat/Cowork toggle, which persists across sessions and is therefore asserted on every task.
+**ChatGPT** (`chatgpt_web`): `mode` decides which knobs apply.
 
-**ChatGPT** — the composer pill splits into two axes, and which one applies depends on `chatgpt_web.mode`:
-
-| `mode` | Keys that apply | Values |
+| `mode` | Keys | Values |
 |---|---|---|
-| `chat` | `model` + `intelligence` | `model`: `gpt_5_6_sol`, `gpt_5_5`, `gpt_5_4`, `gpt_5_3`, `o3`, or `gpt_6` (the picker's "Latest" radio; the pill must then read `6Pro`) · `intelligence`: `instant`, `medium`, `high`, `xhigh`, `pro` |
+| `chat` | `model` + `intelligence` | `model`: `gpt_5_6_sol`, `gpt_5_5`, `gpt_5_4`, `gpt_5_3`, `o3`, `gpt_6` · `intelligence`: `instant`, `medium`, `high`, `xhigh`, `pro` |
 | `work` | `model` + `effort` + `speed` | `model`: `gpt_6_astra`, `gpt_5_6_sol`, `gpt_5_6_terra`, `gpt_5_6_luna`, `gpt_5_5` · `effort`: `light`, `medium`, `high`, `xhigh`, `max`, `ultra` · `speed`: `standard`, `fast` |
 
-Setting the other mode's key is a misconfiguration; preflight rejects it in `work` mode and the agent warns in `chat` mode.
+Setting the other mode's key is a misconfiguration (preflight error in `work`, warning in `chat`). `model: instant | thinking | pro` are one-axis legacy values that route to `intelligence`; new runs name a model.
 
-`chatgpt_web.model` also accepts three **one-axis** values — `instant`, `thinking`, `pro` — which name an intelligence level rather than a model. They exist so the cohorts already recorded under those labels can be reproduced; the agent routes them to `intelligence` and warns. New runs should name a model and set `intelligence`.
-
-Selection is **by visible label text**, not a fixed element id — neither provider ships a stable `data-testid` on these rows, so if they relabel a picker the thing to update is the label maps in `claude_web_agent/chatgpt_web_agent.py` / `claude_web_agent/claude_web_agent.py`. If a configured label isn't found, the runner logs the available options and falls back to the current default.
-
-> **Heads-up:** if ChatGPT model selection silently fails, a project falls through to its **default** model. Set the project default to something cheap so a missed selection doesn't strand you on Pro Extended, where a single prompt can take 10–50 minutes.
+> If ChatGPT model selection fails, the chat falls through to the project's **default** model. Keep that default cheap.
 
 ### "Continue" auto-retry
 
-If the model finishes responding but no Excel file appears, the engine can automatically send a "Continue" message asking it to complete the task and provide the file. Both providers allow up to 5 continues.
+If the model stops without producing a workbook, the engine sends a "Continue" turn, up to 5 times per provider.
 
 ---
 
@@ -295,123 +294,85 @@ If the model finishes responding but no Excel file appears, the engine can autom
 
 | Flag | Default | Description |
 |---|---|---|
-| `--run-config FILE` | none | Run profile: a task-shaped YAML, or an overlay merged as the 3rd config layer |
-| `--dry-run` | off | Merge the config and print the engine configs; touch no browser |
-| `-y`, `--yes` | off | Skip the interactive "proceed?" confirmation |
-| `--start N` | 0 | Start from task index N |
-| `--end N` | all | Stop at task index N (exclusive) |
-| `--task-id N` | none | Run exactly one task by DB id, re-running it even if an attempt exists |
-| `--skip-if-attempted` | off | Force `skip_already_attempted`, making an already-attempted task a no-op |
+| `--run-config FILE` | none | A task-shaped YAML (local run) or an overlay merged as the 3rd config layer |
+| `--dry-run` | off | Merge, resolve prompts and identity, print the engine configs; no browser |
+| `-y`, `--yes` | off | Skip the "proceed?" confirmation |
+| `--start N` / `--end N` | 0 / all | Slice the task list (`--end` exclusive) |
+| `--task-id N` | none | One task by DB id (postgres_s3 source only), re-run even if attempted |
+| `--skip-if-attempted` | off | Force `skip_already_attempted` |
 | `--timeout SEC` | none | Per-task timeout override |
 | `--auth-precheck` | off | Probe the provider session over CDP first; exit 4 if it's dead |
 
-Exit codes: `0` all attempts succeeded · `1` at least one failed · `2` config/preflight error, nothing attempted · `3` no tasks matched · `4` an environment gate blocked the run.
+Exit codes: `0` all attempts succeeded · `1` at least one failed · `2` config/preflight error · `3` no tasks matched · `4` environment gate blocked the run.
 
 ---
 
 ## Running Claude + ChatGPT in parallel
 
-Run both providers simultaneously using two Chrome instances on different ports.
+Two Chrome instances, two profiles, two ports. The runner auto-launches Chrome on **9222 only**; start the second browser yourself and set its run config's `cdp_port` to match.
 
 ```bash
-# Browser A — port 9222 (Claude)
+# Browser A — port 9222 (Claude; the runner could also launch this one)
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$PWD/browser_profiles/chrome-claude" \
-  --no-first-run --no-default-browser-check \
-  --disable-background-timer-throttling \
-  --disable-backgrounding-occluded-windows \
-  --disable-renderer-backgrounding \
-  '--remote-allow-origins=*' &
+  --remote-debugging-port=9222 --user-data-dir="$PWD/browser_profiles/chrome-claude" \
+  --no-first-run --no-default-browser-check '--remote-allow-origins=*' &
 
-# Browser B — port 9333 (ChatGPT)
+# Browser B — port 9333 (ChatGPT; must be started by hand)
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --remote-debugging-port=9333 \
-  --user-data-dir="$PWD/browser_profiles/chrome-chatgpt" \
-  --no-first-run --no-default-browser-check \
-  --disable-background-timer-throttling \
-  --disable-backgrounding-occluded-windows \
-  --disable-renderer-backgrounding \
-  '--remote-allow-origins=*' &
+  --remote-debugging-port=9333 --user-data-dir="$PWD/browser_profiles/chrome-chatgpt" \
+  --no-first-run --no-default-browser-check '--remote-allow-origins=*' &
 ```
 
-Log into each provider in its own browser, then run both configs in parallel. Each run config must set `<provider>_web.browser.cdp_port` to match its browser:
+In the ChatGPT run config:
+
+```yaml
+chatgpt_web:
+  browser:
+    cdp_port: 9333
+    profile_dir: "browser_profiles/chrome-chatgpt"
+```
+
+Then run both:
 
 ```bash
-uv run python -m infra.run -y --run-config infra/configs/run_configs/v2_fable5_claude.yaml &
-uv run python -m infra.run -y --run-config infra/configs/run_configs/v2_sol56_chatgpt.yaml &
+uv run python -m infra.run -y --run-config <claude-run>.yaml &
+uv run python -m infra.run -y --run-config <chatgpt-run>.yaml &
 wait
-```
-
-> The runner does **not** auto-launch Chrome on non-default ports (anything other than 9222). Start Chrome yourself on ports like 9333, 9334, etc., and set `cdp_port` to match.
-
----
-
-## Output structure
-
-Each attempt gets one working directory and — for the `postgres_s3` sink — one S3 prefix holding everything it produced:
-
-```
-scratch/gui-agents/attempts/{ts}_{task}/     # working dir, deleted after upload
-  solutions/                                 #   downloaded workbooks
-  json_logs/                                 #   one completion_*.json per agent attempt
-  logs/                                      #   runtime log + chat transcript
-  prompts_{task}_{ts}.json                   #   the prompt text actually sent
-
-outputs/MBABenchV2/attempts/{agent}/{task}/{ts}_{run_id}/   # local mirror of the S3 prefix
 ```
 
 ---
 
 ## Tests
 
-Offline checks — no DB, AWS, or browser:
+Offline — no DB, AWS or browser:
 
 ```bash
 uv run python -m pytest tests/
 ```
 
-`tests/test_checked_in_configs.py` loads every run config and dispatcher template in the repo and asserts it still merges, resolves prompts, resolves an identity, and clears preflight. Run it after touching anything under `infra/configs/` or `infra/dispatcher/config_templates/`.
-
-Credential-resolution tests are skipped unless the workspace's monorepo `config` module is importable, since worker boxes deliberately run without it.
+`tests/test_checked_in_configs.py` loads every run config and dispatcher template and asserts it merges, resolves prompts and an identity, and clears preflight. Run it after touching `infra/configs/` or `infra/dispatcher/config_templates/`.
 
 ---
 
 ## Troubleshooting
 
-**Browser session expired.** Re-launch Chrome with the same `--user-data-dir` and log in again. Sessions typically last weeks but can expire after long idle periods.
+**Browser session expired.** Relaunch Chrome with the same `--user-data-dir` and log in again.
 
-**Chrome won't start / "port not open".** Make sure no other Chrome instance is using the same `--user-data-dir`:
-```bash
-lsof -i :9222 -sTCP:LISTEN          # what's on the port
-ps aux | grep remote-debugging-port  # all debugging Chrome instances
-```
+**`Chrome not reachable on CDP port 9222` / `Chrome not running on port N`.** Check with `lsof -i :9222 -sTCP:LISTEN` and `ps aux | grep remote-debugging-port`. The Chrome you launched must use the port in `<provider>_web.browser.cdp_port` and the same `--user-data-dir` you logged in with; on a non-9222 port the runner never launches Chrome for you.
 
-**`Chrome not reachable on CDP port 9222` immediately after launching Chrome.** This is almost always a setup-vs-runtime mismatch — the launch flags and the runner's expectations have drifted. Check that:
-- The Chrome you launched uses `--remote-debugging-port=9222` (or whatever is in `<provider>_web.browser.cdp_port`).
-- The `--user-data-dir` matches what you used for login (sessions are scoped per profile dir).
-- The Chrome binary is regular Chrome, not Canary v148+ (which has a CDP incompatibility — see next entry).
-- For parallel runs, the run config's `cdp_port` matches the actual port that browser is on.
+**`Protocol error (Browser.setDownloadBehavior): Browser context management is not supported`.** Chrome Canary incompatibility — use regular Chrome.
 
-**`Protocol error (Browser.setDownloadBehavior): Browser context management is not supported`.** Chrome Canary v148+ incompatibility — switch to regular Chrome.
+**`0 artifact preview cards found` (ChatGPT).** The model answered in text without producing a workbook. Work mode is the surface that most reliably produces files.
 
-**`0 artifact preview cards found` (ChatGPT).** The model responded with text only and didn't produce an Excel file. Check the conversation in the browser. ChatGPT's non-agentic web UI sometimes describes the model in text instead of producing a workbook; Work mode is the surface that most reliably produces files.
+**`You don't have access to this project` (ChatGPT).** The `project_id` belongs to a different account than the one logged into that browser.
 
-**`You don't have access to this project` (ChatGPT).** The `project_id` in the run config doesn't match the ChatGPT account logged into that browser. Each account has its own project IDs — update the config with the correct ID from your account's project URL.
+**Exit code 2 with `PromptVersionError` or `UnknownAgentCombination`.** The prompt version isn't registered, or the provider axes name no identity. `--dry-run` reproduces both in a second.
 
-**Exit code 2 with a `PromptVersionError` or `UnknownAgentCombination`.** The run config's prompt version isn't in the registry, or its provider axes name no identity. Both fail before the browser opens, by design — `--dry-run` reproduces them in a second.
-
-**Playwright not installed.** If you see `playwright._impl._errors.Error: Executable doesn't exist`:
-```bash
-uv run python -m playwright install chromium
-# Linux: also uv run python -m playwright install-deps chromium
-```
+**Playwright not installed** (`Executable doesn't exist`): `uv run python -m playwright install chromium` (Linux: also `install-deps chromium`).
 
 ---
 
 ## Architecture
-
-The system follows a composable six-layer pipeline. Green components are user-configurable; blue components are stable framework internals.
 
 ![Architecture Diagram](docs/architecture_diagram.png)
 
@@ -420,11 +381,11 @@ The system follows a composable six-layer pipeline. Green components are user-co
 | **Input** | Run configs, prompt registry, task source | `infra/configs/`, `tasks_configs/prompts/`, `task_io/sources/` |
 | **Orchestration** | Config merge, preflight, per-task subprocess, retry | `infra/run.py` |
 | **Engine** | Single-task pipeline (setup → navigate → AI → download) | `claude_web_agent/claude_web_engine.py` |
-| **Navigation** | Browser connects to Chrome and navigates to the provider | `claude_web_agent/browser_manager.py` |
-| **AI Interaction** | Claude, ChatGPT, or your own agent | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
-| **Output** | Validation, JSON logs, upload + local mirror | `claude_web_agent/file_validator.py`, `completion_logger.py`, `task_io/sinks/` |
+| **Navigation** | Chrome CDP connection | `claude_web_agent/browser_manager.py` |
+| **AI interaction** | Claude, ChatGPT, or your own provider | `claude_web_agent/claude_web_agent.py`, `chatgpt_web_agent.py` |
+| **Output** | Validation, JSON logs, sink | `claude_web_agent/file_validator.py`, `completion_logger.py`, `task_io/sinks/` |
 
-> See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full architecture guide and instructions on adding your own provider.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the seams and how to add a provider.
 
 ---
 
@@ -432,12 +393,12 @@ The system follows a composable six-layer pipeline. Green components are user-co
 
 ```
 gui-agents-master/
-├── infra/                            # the runner and its orchestration
-│   ├── run.py                        # entry point — one task per engine subprocess
+├── infra/
+│   ├── run.py                        # entry point — one engine subprocess per task
 │   ├── configs/                      # configs.default.yaml + run_configs/
 │   ├── dispatcher/                   # laptop-side EC2 dispatch CLI + box templates
 │   └── worker/                       # box-side worker loop + systemd units
-├── task_io/                          # the source/sink seam
+├── task_io/
 │   ├── sources/                      # yaml_source.py, postgres_s3.py
 │   └── sinks/                        # local_sink.py, postgres_s3.py
 ├── claude_web_agent/
@@ -447,9 +408,8 @@ gui-agents-master/
 │   ├── browser_manager.py            # Chrome CDP connection
 │   ├── completion_logger.py          # crash-safe JSON logging
 │   ├── file_validator.py             # Excel file validation
-│   ├── task_status.py                # status enums
 │   └── web_agent.py                  # abstract base class
-├── tasks_configs/prompts{,_pv9,_v2,_v3,_v4}/  # prompt payloads + registry.yaml
+├── tasks_configs/prompts{,_pv9,_v2,_v3,_v4}/  # prompt text + registry.yaml
 ├── tools/                            # build_house_standards_prompts.py (generates the 204/205 text)
 ├── tests/                            # offline pytest checks
 ├── docs/                             # architecture diagram + ARCHITECTURE.md

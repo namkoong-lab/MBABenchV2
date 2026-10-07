@@ -13,7 +13,6 @@ are the reference for check authors and reviewers.
 | [recalc.md](recalc.md) | `core/recalc.py`: when formula values come from the file and when from a LibreOffice recalculation; the memory guard; legacy `.xls` |
 | [excel_measurements.md](excel_measurements.md) | behaviour measured by hand in Excel that the rules rest on |
 | [checks/NN.md](checks/) | one note per check, by rubric number: the rule, the maintainer's rulings, the toy gate and corpus results at the time the check was built |
-| [../CHANGELOG_core.md](../CHANGELOG_core.md) | what changed in the shared core and across checks, newest first |
 
 The per-check notes are working records: they quote attempts of the
 maintainers' database by id and refer to working folders (`scratch/`, `out/`,

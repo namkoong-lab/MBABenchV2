@@ -5,11 +5,9 @@ pipelines that attempt them, and the LLM judge that grades the results.
 
 - **Tasks.** Each task is a business case: a starting workbook (usually with a
   case PDF) that the agent must turn into a working financial model, plus a
-  golden solution the judge compares against. The current task set is
-  benchmark **v2** (the `MBABenchV2` database, 101 tasks from one author, the
-  `jp` source). The earlier 206-task wave is benchmark **v1** (`BizbenchV1`,
-  public competition cases); it is closed but every pipeline and the judge can
-  still run against it.
+  golden solution the judge compares against. Benchmark **v2** (`MBABenchV2`,
+  101 tasks, source `jp`) is the current set; **v1** (`BizbenchV1`, 206 public
+  competition cases) is closed but still runnable.
 - **Pipelines.** The same task reaches a model through four surfaces: the
   vendors' chat products in a browser (`gui-agents-master/`), their add-ins
   inside Excel Online (`excel-agents-master/`), raw model APIs driving our
@@ -38,10 +36,10 @@ pipelines that attempt them, and the LLM judge that grades the results.
                               │
                               ▼
             gradings rows + grading bundles (Postgres + S3)
-                              │
-                              ▼
-   scripts/export_good_attempts.py  →  leaderboard manifests;  operation/  →  paper figures
 ```
+
+Every box also has a local form: tasks from a folder, attempts to a folder, the
+judge on a folder (see "Two ways to run").
 
 Every run names its benchmark (`benchmark: v1|v2`, or `--benchmark` for the
 judge). That one key selects the database, the S3 root, the default prompt
@@ -67,9 +65,7 @@ excel-agents-master/       The Claude and ChatGPT add-ins inside Excel Online (O
 cli-agents-master/         Raw model APIs + a local Excel MCP tool server; LibreOffice recalc.
 coding-agents-master/      Claude Code / Codex CLIs, one Docker sandbox per attempt.
 judge/                     The grader: single-pass LLM judge + deterministic checks.
-scripts/export_good_attempts.py
-                           Leaderboard pointer manifests from the database (maintainers).
-operation/                 Result assembly and paper figures (v1/ and v2/); read the database.
+operation/                 Maintainers' analysis scripts (need the benchmark database).
 judge-annotator/           Web app for human annotation of gradings (maintainers' deployment).
 ```
 
@@ -109,6 +105,11 @@ load creates `config/config.yaml` next to it from the defaults; edit that file
 file: they are `${env:VAR}` references that resolve from your shell, or you write
 the values into `config/config.yaml` directly.
 
+**Local runs need no database and no AWS key.** Leave `database.*` and `aws.*`
+unset; the only required values are the model key(s) for the lane and judge you
+run (`keys.*`, or the matching environment variable). The GUI and Excel lanes
+need no key at all, only a signed-in browser.
+
 | key | what it is | used by |
 |---|---|---|
 | `database.v1_url`, `database.v2_url` | Postgres connection strings (`${env:V1_DATABASE_URL}` / `V2_...`) | every DB-backed run; `benchmark` picks one |
@@ -116,7 +117,7 @@ the values into `config/config.yaml` directly.
 | `aws.gui_key_name`, `aws.gui_sg_name`, `aws.gui_ami` | EC2 fleet names for the GUI dispatcher (optional) | `gui-agents-master/infra/dispatcher` |
 | `keys.anthropic_api_key`, `keys.openai_api_key`, `keys.openrouter_api_key`, `keys.gemini_api_key`, `keys.forge_api_key` | model API keys (`${env:...}`); environment variables win when both are set | CLI, coding, judge |
 | `venv_path` | where `setup.sh` puts the environment (`null` = `.venv`) | `setup.sh` |
-| `libreoffice_path` | the `soffice` binary (`null` = find it on PATH or in LibreOffice.app) | CLI pipeline, judge |
+| `libreoffice_path` | the `soffice` binary; `null` = auto-detect (PATH, then `/Applications/LibreOffice.app`) | CLI pipeline, judge |
 
 The GUI and Excel pipelines have a second, member-local layer for machine
 settings such as Chrome ports and OneDrive paths (`infra/configs/configs.yaml`,
@@ -124,15 +125,10 @@ gitignored); their READMEs describe it.
 
 ## Two ways to run
 
-**With the benchmark stores.** Point `database.v2_url` (or `v1_url`) and `aws.*`
-at a Postgres database and bucket with the tables and key layout in
-[docs/data_stores.md](docs/data_stores.md). Tasks come from the `tasks` table,
-attempts are written to `task_attempts` and S3, and the judge grades from the
-database. This is how every recorded experiment ran.
-
-**Locally, without any database or bucket.** Each pipeline and the judge can also
-read tasks from local files and write results to local folders, needing only the
-agent's own access (an API key, or a signed-in browser):
+**Locally, without any database or bucket.** Each pipeline and the judge read
+tasks from local files and write results to local folders. You supply the task
+(a starting workbook plus any case PDF) and the agent's own access (an API key,
+or a signed-in browser):
 
 | component | how | where results land |
 |---|---|---|
@@ -142,57 +138,65 @@ agent's own access (an API key, or a signed-in browser):
 | Excel (`excel-agents-master`) | `source.kind: yaml` + `sink.kind: local`; the task workbook must already sit in OneDrive under the path the engine navigates to | the attempt's working dir under `paths.scratch_dir`, plus `attempts.ndjson` |
 | Judge (`judge/`) | `judge/main_scripts/judge.py -f <folder>` on a folder holding the attempt, the golden solution and optional context | `<folder>/judge_results/` (`scores.json`, `ai_judgement.json`, `det_checks.json`) |
 
-The judge's README describes the folder layout. For a task outside the v2 pool,
-grade with `JUDGE_SKIP_SUITABILITY=1` (every rubric check applies).
+**With your own benchmark stores.** Point `database.v2_url` (or `v1_url`) and
+`aws.*` at a Postgres database and bucket with the tables and key layout in
+[docs/data_stores.md](docs/data_stores.md). Tasks come from the `tasks` table,
+attempts are written to `task_attempts` and S3, and the judge grades from the
+database.
 
 ## Running a pipeline
 
-Each pipeline is launched from its own directory; `CheatSheet.md` has the
-configuration, identity and launch details side by side.
+Launch each pipeline from its own directory. `CheatSheet.md` has the local and
+DB launch commands side by side; each member README has the full reference.
 
 ```bash
-# GUI: Chrome must already be running on the run config's CDP port, signed in to the provider
-cd gui-agents-master && uv run python -m infra.run --run-config infra/configs/run_configs/v2_fable5_claude.yaml --dry-run
+# GUI — supply: your task workbook + case PDF in upload_files; Chrome running on port 9222, signed in to claude.ai / chatgpt.com
+cd gui-agents-master && uv run python -m infra.run --run-config infra/configs/run_configs/local_run_examples/sample_task.yaml --dry-run
+#   DB alternative: a run config with source/sink postgres_s3, e.g. infra/configs/run_configs/v2_fable5_claude.yaml
 
-# Excel: Chrome signed in to Microsoft 365, both add-ins installed, OneDrive provisioned
+# Excel — supply: your workbook already in OneDrive; Chrome signed in to Microsoft 365 with both add-ins installed (scripts/setup_chrome.sh)
 cd excel-agents-master && uv run python -m infra.run --run-config my_run.yaml --dry-run
+#   local: source.kind yaml + sink.kind local in my_run.yaml; DB: source/sink postgres_s3
 
-# CLI: one self-contained batch config; verify the startup banner's database line
-cd cli-agents-master && uv run excel-agent --batch-config my_config.yaml
+# CLI — supply: a folder of task files in workspaces[].path; an API key for the agent_model_name you pick; LibreOffice
+cd cli-agents-master && uv run excel-agent --batch-config examples/local/test_local.yaml
+#   DB alternative: examples/batch_config_template_auto.yaml (auto_mode: true)
 
-# Coding: one invocation = one attempt; Docker must be running
-cd coding-agents-master && uv run python -m coding_agent.run_task --config run_configs/example_v2_claude.yaml --task-id 11
+# Coding — supply: a task folder (task.yaml + starting_files/); ANTHROPIC_API_KEY or OPENAI_API_KEY; Docker running with the sandbox image built
+cd coding-agents-master && uv run python -m coding_agent.run_task --config run_configs/example_external.yaml --task-dir ./my_task --results-dir ./results
+#   DB alternative: run_configs/example_v2_claude.yaml with --task-id N
 ```
 
-Every run logs the database it resolved (for example `Database: MBABenchV2 (from
-config/config.yaml database.v2_url)`) before doing anything; the GUI and Excel
+Every run logs the store it resolved before doing anything; the GUI and Excel
 pipelines also have a `--dry-run` that resolves config, prompts, identity and
 attachments without touching a browser.
 
 ## Grading
 
+Local, one attempt folder (needs only the grader's API key):
+
 ```bash
-# one attempt, the production v2 judge (single conversation, deterministic checks, harness answer check)
+JUDGE_SKIP_SUITABILITY=1 uv run python judge/main_scripts/judge.py --benchmark v2 --single-pass --model openai/gpt-5.6-sol -f <folder>
+```
+
+`judge/README.md` ("Grade a local task folder") gives the folder layout
+(`ai_attempt.xlsx`, `solution/<golden>.xlsx`, optional context) and where each
+pipeline leaves its workbook. `JUDGE_SKIP_SUITABILITY=1` grades every rubric
+check; drop it only for v2 pool tasks with a suitability annotation. Results
+land in `<folder>/judge_results/`.
+
+From the database:
+
+```bash
+# one attempt
 uv run python judge/main_scripts/grade_from_db.py --benchmark v2 --single-pass --attempt-ids 123 --model openai/gpt-5.6-sol
 
 # every valid attempt of the cohorts you name (latest per task, model and prompt version), four at a time;
 # neither driver skips attempts that already have a grading, so a relaunch grades them again
-uv run python judge/main_scripts/grade_with_orchestration.py --benchmark v2 --single-pass --all-tasks --workers 4 --models claude_fable_5_1_cowork_max
+uv run python judge/main_scripts/grade_with_orchestration.py --benchmark v2 --single-pass --all-tasks --workers 4 --models <agent_model_name ...>
 ```
 
-`judge/README.md` covers the judge's design, flags, outputs and version history.
-
-## Leaderboard manifests and paper figures (maintainers)
-
-```bash
-uv run python scripts/export_good_attempts.py      # writes five pointer JSONs next to the script (gitignored)
-```
-
-The export picks, per cohort and task, the attempt that counts and the gradings
-that count for it (ids and S3 paths only). The scripts under `operation/` build
-result tables and the paper's figures from the database; see
-`operation/README.md`. Both need the database and are not part of running an
-experiment.
+`judge/README.md` covers the judge's design, flags and outputs.
 
 ## Tests
 
@@ -210,14 +214,8 @@ uv run python config/python/test_config.py && bash config/bash/test_config.sh
 
 ## Benchmarks v1 and v2
 
-|                | **v1** (BizbenchV1, legacy)                                        | **v2** (MBABenchV2, current)                                                           |
-| -------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| database / S3 root | `BizbenchV1`                                                   | `MBABenchV2`                                                                           |
-| tasks          | 206 public competition cases (`fmwc`, `modeloff`, `wsp`)           | 101 authored cases (`jp`), each with a `Questions` sheet the agent answers in formulas |
-| agent prompts  | the single-turn pv9 prompt with the 17-check rubric                | rubric-free prompts + the house standards attached (GUI/Excel 205, CLI v16, coding v13) |
-| rubric         | 3 categories / 17 checks (`judge/prompts/rubrics/rubric_8.json`)   | 12 categories / 132 checks (`rubric_9.json`), graded by the single-pass judge          |
-
-Prompt registries, identity registries and prompt files are append-only: a
-version that has recorded runs is never edited, so every database row still
-names exactly the text and settings that produced it. Earlier prompt sets stay
-in the repository for that reason even though new runs do not use them.
+`benchmark: v1|v2` (or `--benchmark` for the judge) selects the prompt set and
+the rubric together: v1 = `judge/prompts/rubrics/rubric_8.json` (17 checks),
+v2 = `rubric_9.json` (132 checks, single-pass judge). Prompt and identity
+registries are append-only: never edit an entry that has recorded runs, add a
+new one.

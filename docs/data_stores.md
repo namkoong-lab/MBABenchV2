@@ -9,7 +9,7 @@ Postgres 14+ and any S3-compatible bucket work.
 
 Two benchmarks share the layout, each with its own database and S3 root:
 
-| | `v1` (legacy, closed) | `v2` (the current task set) |
+| | `v1` | `v2` |
 |---|---|---|
 | database name | `BizbenchV1` | `MBABenchV2` |
 | S3 root | `s3://<bucket>/BizbenchV1/` | `s3://<bucket>/MBABenchV2/` |
@@ -32,13 +32,13 @@ Column types are as the code uses them; `JSON` columns hold JSON text or
 |---|---|---|
 | `id` | integer | task id, what `--task-id` / `--task-ids` refer to |
 | `task_name` | varchar(512) | folder name of the task's files in S3 |
-| `task_source` | varchar(100) | `fmwc`, `modeloff`, `wsp` (v1) or `jp` (v2) |
+| `task_source` | varchar(100) | provenance label; also an S3 path segment |
 | `task_starting_files` | JSON | list of `s3://` URIs: the files handed to the agent (one workbook plus any PDFs/text) |
 | `task_solution_files` | JSON | list of `s3://` URIs: the golden solution workbook (plus optional context files) |
 | `deprecated` | boolean (nullable) | true = excluded from every run and every report |
 | `deprecated_reason` | text | |
-| `human_difficulty_measure` | text | v2 only: `Easy`, `Medium`, `Medium-Hard`, `Hard` (the paper scripts group by it) |
-| `case_classification` | jsonb | v2 only: the task taxonomy the paper scripts read (`time_assumption_h`, task type) |
+| `human_difficulty_measure` | text | v2 only, optional: `Easy`, `Medium`, `Medium-Hard`, `Hard` |
+| `case_classification` | jsonb | v2 only, optional: task taxonomy |
 | `ai_time_estimate_min` | numeric | v2 only, optional |
 | `created_at`, `updated_at` | timestamptz | |
 
@@ -91,10 +91,9 @@ Column types are as the code uses them; `JSON` columns hold JSON text or
 ### `judge_annotations` (human review of gradings)
 
 Written by `judge-annotator/` (`grading_id`, `attempt_id`, `annotator`,
-`labels` as jsonb `"Category::Check" -> TP|FP|TN|FN`, `s3_key` of the full
-annotation JSON under `annotations/`); the paper scripts additionally read
-`annotator_id`, `revision` and `created_at` and keep the highest revision per
-grading.
+`annotator_id`, `revision`, `labels` as jsonb `"Category::Check" -> TP|FP|TN|FN`,
+`s3_key` of the full annotation JSON under `annotations/`, `created_at`).
+Optional: only the maintainers' analysis scripts under `operation/` read it.
 
 ## Object-store layout
 

@@ -1,6 +1,6 @@
 # infra — quick start
 
-> **Audience: MBABenchV2 internal team.** This guide assumes access to a Postgres database, the `mbabench` S3 bucket, and an AWS account for the EC2 fleet. **External users:** the local quickstart in [`../README.md`](../README.md) is the supported turnkey path. The dispatcher code below is reusable against your own AWS / Postgres / S3, but you'd need to provision those yourself — see "BYO infrastructure" in the main README.
+> **Audience: operators of a benchmark Postgres + S3 + AWS account.** The local run in [`../README.md`](../README.md) needs none of this. The dispatcher is reusable against your own AWS / Postgres / S3 laid out to the MBABenchV2 conventions.
 
 Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
 [dispatcher/common_commands.md](dispatcher/common_commands.md) (the full
@@ -28,10 +28,10 @@ Operator guide for running gui-agents on EC2 boxes from your laptop. Keep
    there together and the run config's `benchmark:` key picks between them,
    so there is nothing to swap by hand when moving between experiments.
 
-   Credentials no longer live in `infra/configs/configs.yaml` — that file is
-   now purely the box-side run profile. See the `database:` / `aws:` comment
-   blocks in [configs/configs.default.yaml](configs/configs.default.yaml) for
-   the full resolution order.
+   `infra/configs/configs.yaml` holds no credentials — it is the box-side run
+   profile. See the `database:` / `aws:` comment blocks in
+   [configs/configs.default.yaml](configs/configs.default.yaml) for the
+   resolution order.
 3. **AWS key pair + security group** — idempotent bootstrap:
 
    ```bash

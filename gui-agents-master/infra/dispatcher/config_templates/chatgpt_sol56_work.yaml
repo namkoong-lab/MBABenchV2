@@ -30,7 +30,7 @@ chatgpt_web:
   mode: "work"
   model: "gpt_5_6_sol"
   # Work-mode pickers (pill menu > Advanced). "ultra" is the ceiling
-  # (light < medium < high < xhigh < max < ultra); matches the v1 Sol work wave.
+  # (light < medium < high < xhigh < max < ultra).
   effort: "ultra"
   speed: "standard"
   # MUST stay null: intelligence is the chat-mode radio set. Setting it here

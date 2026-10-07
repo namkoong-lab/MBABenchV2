@@ -42,5 +42,5 @@ claude_web:
   # different cohort and needs its own entry in agent_identity.py.
   effort: "max"
   browser:
-    cdp_port: 9223
+    cdp_port: 9223                   # the runner auto-launches Chrome on 9222 only; any other port: start Chrome yourself
     profile_dir: "browser_profiles/chrome-claude"

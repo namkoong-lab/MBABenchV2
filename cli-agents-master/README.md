@@ -39,9 +39,9 @@ every attempt).
 
 | | **local mode** (`local_mode: true`) | **auto mode** (`auto_mode: true`) |
 |---|---|---|
-| tasks from | `workspaces: [{path: ./folder/}]` (each folder: a starting workbook, PDFs/text, any `.md`) | the `tasks` table, by name (`tasks:`) or by filter (`task_filter:`) |
+| tasks from | `workspaces: [{path: ./folder/}]`: one folder per task; the model sees its `*.xlsx` (any name but `solution.xlsx`), `*.pdf` and `*.md`; other files (`.txt` included) are copied but ignored | the `tasks` table, by name (`tasks:`) or by filter (`task_filter:`) |
 | needs | an API key | an API key + `database.<benchmark>_url` + `aws.*` in `config/config.yaml` |
-| results to | `results_dir/<task>/solution.xlsx` (+ transcript, request log) and one line per attempt in `results_dir/attempts.jsonl` | a `task_attempts` row + `solution.xlsx`, `transcript.md`, `openai_requests.csv`, `task.json` under `s3://<bucket>/<root>/attempts/<label>_openpyxl/task_source=<src>/task_id=<id>/` |
+| results to | `results_dir/<task>/solution.xlsx` (+ `transcript.md`, `task.json`, `openai_requests.csv`) and one line per attempt in `results_dir/attempts.jsonl`; a rerun of the same folder overwrites `solution.xlsx` and appends a line | a `task_attempts` row + a local copy in `run_logs/attempt-<model>-<ts>/` + the attempt files under `s3://<bucket>/<root>/attempts/cli_agents/<model>/task_id=<id>/<ts>/` |
 | examples | `examples/local/test_local.yaml` | `examples/batch_config_template_auto.yaml` (every option), `examples/v2/v2_task_corpbond_haiku45.yaml` |
 
 `cli.py` also offers a legacy single-workspace mode (`excel-agent --storage-path DIR --model ...`)
@@ -64,7 +64,7 @@ A batch config is one self-contained YAML; nothing is layered on top. The keys:
 | `max_trials`, `trials_since` | auto | skip a task once it has this many attempts under the label since the date |
 | `max_iterations` | both | model calls per task (default 40) |
 | `api_timeout_seconds` | both | per model call; default 60 min for `max`/`xhigh` effort, 240 s for `high`, 180 s otherwise |
-| `workspace_base_dir`, `results_dir`, `cleanup_workspace` | both / local / both | where workspaces are created, where local results go, whether to delete the workspace after upload |
+| `workspace_base_dir`, `results_dir`, `cleanup_workspace` | both / local / both | where workspaces are created (local default `./workspaces`; auto default `batch_logs/batch_<ts>/workspaces/`), where local results go (default `./results`), whether to delete the workspace afterwards (local default `false`, auto default `true`) |
 | `allow_recalc_fallback` | both | run without LibreOffice (debugging only) |
 | `verbose`, `enable_langfuse` | both | logging |
 
@@ -106,48 +106,50 @@ has recorded rows (the label is what groups rows into a cohort).
 ### Prompt versions
 
 `excel_cli_agent/prompt_versions.py` maps `prompt_version` to a system prompt
-and the per-source task templates in `excel_cli_agent/prompts/`. The integer
-recorded in `task_attempts.prompt_version` is `system version x 100 + template
-version` (v16 = `1609`). Versions are immutable once used; new text is a new
+and a task template in `excel_cli_agent/prompts/`. The integer recorded in
+`task_attempts.prompt_version` (and in `attempts.jsonl`) is `system version x
+100 + template version`. Versions are immutable once used; new text is a new
 number.
 
-| version | benchmark | what it is |
-|---|---|---|
-| `v1`..`v10` | v1 | the development history of the harness prompt; `v10` is the v1 default |
-| `v11` | v1 | the frozen prompts of the v1 benchmark wave (`1105`) |
-| `v12`, `v13`, `v14` | v2 | the v11 harness prompt with the 132-check v2 rubric embedded (generated from the GUI `prompts_v2/`, `prompts_v3/`, `prompts_v4/` sources by `tools/build_v1{2,3,4}_prompts.py`); v13 adds the Questions-sheet answer convention; v14 attaches the House Standards |
-| `v15` | v2 | v14 with every rubric passage removed; the standards delivered as `HOUSE_STANDARDS.md` |
-| `v16` | v2, **default** | v15 minus the five tool-manual passages that contradicted the House Standards, plus one sentence giving the standards precedence; a Gemini variant of the system prompt (`MODEL_SYSTEM_PROMPT_VARIANTS`) is sent to `tensorblock/gemini-3.8-flash` |
+The v2 experiment runs `v16` (`system_prompt_v16.txt` + `task_template_shared_v9.txt`,
+recorded as `1609`), the v2 default; `v10` is the v1 default. `v1`..`v11` carry the
+v1 rubric and `v12`..`v16` are v2 sets, so a config pairing a v1 prompt with
+`benchmark: v2` (or the reverse) fails at startup
+(`EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate cross-benchmark run).
+`tensorblock/gemini-3.8-flash` gets a function-call variant of the v16 system
+prompt (`MODEL_SYSTEM_PROMPT_VARIANTS`); every other model gets the set's file.
 
-A config pairing a v1 prompt with `benchmark: v2` (or the reverse) fails at
-startup; `EXCEL_AGENT_SKIP_RUBRIC_GUARD=1` forces a deliberate cross-benchmark run.
-
-**Attachments.** From v14 a version declares `attachments` (repo-root-relative:
-`house_standards/House_Standards_v1.md`) and, from v15, the name it is delivered
+**Attachments.** `v14`+ declare `attachments` (repo-root-relative:
+`house_standards/House_Standards_v1.md`) and `v15`+ the name it is delivered
 under (`HOUSE_STANDARDS.md`). Both runners copy the file into the workspace and
-fail the task if it is missing; `.md` files in the workspace are embedded in
-every model call under a `HOUSE STANDARDS (<file>)` header (the agent has no
-tool to read them). Provenance: the file is uploaded with the prompt snapshot
-(`prompt_files`) and `extra_configs.house_standards` records `{version, file,
-sha256}` computed at run time.
+fail the task if it is missing. Every `.md` in the workspace is embedded in
+every model call (the agent has no tool to read them): files whose name starts
+with `house_standards` go under a `HOUSE STANDARDS (<file>)` header, any other
+`.md` under `ATTACHED TEXT (<file>)`. Provenance: the file is uploaded with the
+prompt snapshot (`prompt_files`) and `extra_configs.house_standards` records
+`{version, file, sha256}` computed at run time.
 
 ## What gets created
 
 ```text
-<workspace_base_dir>/<task>/
+<workspace_base_dir>/<task>_<run_id>/
+├── <starting files>       # copied from the task folder, plus HOUSE_STANDARDS.md
 ├── solution.xlsx          # the delivered workbook, recalculated after every formula write
 └── agent_logs/
     ├── openai_requests.csv    # one row per model call (tokens, cost, timing)
-    ├── task_execution.log
-    └── iteration_*.json
+    └── task_<id>/
+        ├── task.json
+        └── transcript.md
 batch_logs/batch_<timestamp>/  # under the current working directory
     ├── summary.md
     └── aggregated_metrics.json
 ```
 
-Local mode copies the deliverables to `results_dir/<task>/` and appends one JSON
-line per attempt to `results_dir/attempts.jsonl`; auto mode uploads them and
-writes the `task_attempts` row (the workspace is deleted afterwards unless
+Local mode copies `solution.xlsx`, `transcript.md`, `task.json` and
+`openai_requests.csv` to `results_dir/<task>/` (overwriting a previous run's
+files) and appends one JSON line per attempt to `results_dir/attempts.jsonl`;
+auto mode keeps a full copy in `run_logs/attempt-<model>-<ts>/`, uploads to S3
+and writes the `task_attempts` row (the workspace is deleted afterwards unless
 `cleanup_workspace: false`).
 
 ## Configuration sources

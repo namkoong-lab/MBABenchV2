@@ -95,12 +95,14 @@ Chrome with Chrome DevTools Protocol is recommended because it:
 
 2. Log in to claude.ai or chatgpt.com manually in the browser
 
-3. Run your tasks -- the agent will use the existing session
+3. Run your tasks -- the agent will use the existing session. On port 9222
+   the runner launches Chrome itself if nothing is listening; on any other
+   port you must start it as above.
 
 ## Output Files
 
 Every run gets one working directory (`create_run_directory` in
-`claude_web_engine.py`): under `paths.scratch_dir` (`scratch/gui-agents/attempts/<ts>_<task>/`)
+`claude_web_engine.py`): under `paths.scratch_dir` (`scratch/gui-agents/attempts/<ts>_<task>_p<pid>/`)
 when `infra.run` drives the engine, or a date-stamped folder named with
 `<provider>_web.output.folder_prefix` under `output.base_dir` for a standalone `--config` run.
 

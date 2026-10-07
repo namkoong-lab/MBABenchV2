@@ -38,7 +38,7 @@ provider:
   kind: "chatgpt"
 
 chatgpt_web:
-  project_id: "6a765823969081919fcfdcf8df197953"
+  project_id: "your-chatgpt-project-id"  # hex id from https://chatgpt.com/g/g-p-{id}-{slug}/project; null = no project
   mode: "work"                       # "work" or "chat" — see header
   model: "gpt_5_6_sol"
   effort: "ultra"                    # work-mode max (ignored in chat)
@@ -47,5 +47,5 @@ chatgpt_web:
   # NOTE: these knobs are NOT part of the v2 DB identity — keep them the
   # same for every run recorded under a given identity.
   browser:
-    cdp_port: 9222
+    cdp_port: 9222                   # the runner auto-launches Chrome on 9222 only; any other port: start Chrome yourself
     profile_dir: "browser_profiles/chrome-chatgpt"

@@ -18,7 +18,7 @@ source:
   kind: postgres_s3
   schema: mbabenchv2                 # v2 = MBABenchV2 DB + s3://mbabench/MBABenchV2/
   filters:
-    task_ids: [2]                    # BasicGrowth — small, and has no haiku attempt yet
+    task_ids: [2]                    # BasicGrowth — small
     task_sources: ["jp"]
     skip_deprecated: true
     # false so re-running the smoke test actually re-runs instead of exiting 3
@@ -63,6 +63,7 @@ claude_web:
     max_sec_per_attempt: 1800
 
   browser:
-    # Matches the Chrome launch command in the README quickstart.
+    # Matches the Chrome launch command in the README quickstart; the
+    # runner auto-launches Chrome on 9222 only.
     cdp_port: 9223
     profile_dir: "browser_profiles/chrome-claude"

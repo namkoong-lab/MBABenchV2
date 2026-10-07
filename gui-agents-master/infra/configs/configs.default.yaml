@@ -33,8 +33,8 @@
 #        BizbenchV1/attempts, single-prompt pv9 payloads
 #        (tasks_configs/prompts_pv9/), mode/effort-rich identities.
 #   v2 — MBABenchV2 task set: MBABenchV2 DB (schema "mbabenchv2"),
-#        s3://mbabench/MBABenchV2/attempts, 3-step rubric-v9 prompts
-#        (tasks_configs/prompts_v2/), model-only identities.
+#        s3://mbabench/MBABenchV2/attempts, 2xx prompt versions
+#        (default 205), identities keyed on mode + model (+ effort).
 benchmark:
   value: "v2"                # "v1" | "v2"
   required: true
@@ -67,9 +67,9 @@ agent:
 # ---- Where task files land on disk -----------------------------------------
 paths:
   # Downloaded starting_files land here, as does `attempts/`, where each
-  # attempt gets a working directory for the engine's solutions/, json_logs/
-  # and logs/. That directory is deleted once the sink has uploaded its
-  # contents, so nothing under here is a lasting record.
+  # attempt gets a working directory (<ts>_<task>_p<pid>) for the engine's
+  # solutions/, json_logs/ and logs/. The postgres_s3 sink deletes it after
+  # upload; the `local` sink keeps it (it records paths, copies nothing).
   scratch_dir:
     value: "scratch/gui-agents"
     required: true
@@ -263,8 +263,8 @@ poll:
 #   204    202 + House Standards     (3 turns; attaches House_Standards_v1.md)
 #   205    203 + House Standards     (1 turn;  attaches House_Standards_v1.md)
 #
-# Default 204 = the 3-step set + Questions-sheet answers + the house
-# standards (tasks_configs/prompts_v4/ — see its README). A version may
+# Default 205 = the single-pass set + Questions-sheet answers + the house
+# standards (tasks_configs/prompts/v2_3.txt). A version may
 # declare `attachments` in the registry; those files are uploaded after each
 # task's starting files on every run of that version, and their text is
 # recorded in the attempt's prompts JSON. The version selects them — no run
