@@ -15,7 +15,8 @@ pipelines that attempt them, and the LLM judge that grades the results.
   sandbox (`coding-agents-master/`).
 - **Judge.** One LLM conversation grades every applicable check of a
   132-check, 12-category rubric (`judge/`), with deterministic Python verdicts
-  for the Questions-sheet answers and for 19 formatting and structure checks.
+  for the Questions-sheet answers and for 22 formatting, structure and error
+  checks (judge v15).
 - **House standards.** Every v2 attempt also receives the house
   financial-modelling conventions (`house_standards/`) with its starting files.
 

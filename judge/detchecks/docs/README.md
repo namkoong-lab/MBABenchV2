@@ -1,9 +1,14 @@
 # detchecks documentation
 
 The deterministic rubric checks (`judge/detchecks/`) grade a delivered workbook
-on 19 rubric items before the LLM judge runs; `judge/utils/det_checks.py` is the
-adapter that calls them and overlays their verdicts at scoring. These documents
-are the reference for check authors and reviewers.
+on 22 rubric items before the LLM judge runs (judge v15: No formula errors (22),
+Negatives in parentheses (65) and the new Automatic calculation mode (100) joined
+the 19 of v13); `judge/utils/det_checks.py` is the adapter that calls them and
+overlays their verdicts at scoring. Two checks may be "undecided" for an attempt
+(22: only LibreOffice gap cells show errors; 100: a circular model with iteration
+on) - then the LLM's verdict counts for that attempt and it is told why
+([reader.md](reader.md), "Verdict contract"). These documents are the reference
+for check authors and reviewers.
 
 | document | what it is |
 |---|---|

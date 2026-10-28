@@ -143,10 +143,20 @@ def test_gap_needs_excel_not_allowed_or_unavailable():
     # Excel wanted but not available on the machine: loud error
     raises(lambda: R.ensure_values(p, workdir(), policy(lo_runner=never, excel_allowed=True, excel_available=False)),
            "Excel recalculation required", "not available")
-    # through the engine with Excel off: the value check grades the gap cells as the error they show
+    # through the engine with Excel off (judge v15, Patrick 2026-10-28): the only error cells are gap cells
+    # (B1 uses SCAN / LAMBDA; B2 inherits its #NAME?), so No formula errors is UNDECIDED for this attempt
+    # and tells the LLM which cells are gaps and why; the full gap list survived the plan cache
     v = grade(p, checks=[22, 92], recalc=policy(lo_runner=never, excel_allowed=False))
-    assert v[C22.key]["decision"] == "fail" and v[C22.key]["stats"]["values"]["source"] == "libreoffice"
-    assert v[C22.key]["stats"]["values"]["n_gaps"] == 2 and v[REGISTRY[92].key]["decision"] == "pass"
+    u = v[C22.key]
+    assert u["decision"] == "undecided" and u["mistakes"] == [] and u["stats"]["values"]["source"] == "libreoffice"
+    assert u["stats"]["values"]["n_gaps"] == 2 and v[REGISTRY[92].key]["decision"] == "pass"
+    assert u["stats"]["gap_error_cells"] == 2 and u["stats"]["undecided"]["decided_by"] == "llm", u["stats"]
+    assert u["stats"]["gap_sheets"] == ["S"] and u["stats"]["error_cells"] == 0, u["stats"]
+    note = u["llm_note"]
+    assert "S!B1 shows #NAME? = =SUM(_xlfn.SCAN(" in note and "[LAMBDA, SCAN]" in note, note
+    assert "S!B2 shows #NAME? = =B1*2" in note and "Every other cell of the workbook has been checked by code" in note
+    assert "Judge whether each of these formulas is valid Excel" in note and "2 cell(s)" in note, note
+    assert "undecided" in u["summary"] or "LLM judge decides" in u["summary"], u["summary"]
 
 
 def test_gap_rerouted_to_excel():
@@ -191,6 +201,23 @@ def test_classify_lo_error_table():
     assert cls("MMULT(TRANSPOSE(A1:A3),B1:B3)", "#VALUE!")[0] is True
     assert cls("A1*B1", "#VALUE!", is_array=True)[0] is True
     assert cls("_xlfn.XLOOKUP(1,A1:A3,B1:B3)", "#NAME?")[0] is True            # valid function, LibreOffice still #NAME?
+    # judge v15 (Patrick 2026-10-28): a future function stored WITHOUT _xlfn. is #NAME? in Excel too -> genuine
+    for t in ("XLOOKUP(1,A1:A3,B1:B3)", "LET(_xlpm.x,1,_xlpm.x)", "LAMBDA(_xlpm.x,_xlpm.x)(1)", "IFS(A1>0,1,TRUE,0)",
+              "FILTER(A1:A3,B1:B3)", "SUM(SEQUENCE(3))", "STDEV.S(A1:A3)"):
+        gap, fns, why = cls(t, "#NAME?")
+        assert gap is False and "without the _xlfn. prefix" in why, (t, gap, fns, why)
+    assert cls("XLOOKUP(1,A1:A3,B1:B3)", "#VALUE!")[0] is False                 # whatever LibreOffice shows
+    for t in ("_xlfn.LET(_xlpm.x,1,_xlpm.x)", "_xlfn._xlws.FILTER(A1:A3,B1:B3)", "_xlfn.STDEV.S(A1:A3)",
+              "_xlfn.LAMBDA(_xlpm.x,_xlpm.x)(1)", "SUM(_xlfn.SEQUENCE(3))"):
+        assert cls(t, "#NAME?")[0] is True, t                                   # prefixed: a gap (LibreOffice's problem)
+    assert cls("CUBEVALUE(\"c\",\"m\")", "#NAME?") == (True, ["CUBEVALUE"], "LibreOffice cannot evaluate: CUBEVALUE")
+    assert cls("REGEXTEST(A1,\"x\")", "#NAME?")[0] is False                     # 365 function: needs the prefix
+    assert cls("_xlfn.REGEXTEST(A1,\"x\")", "#NAME?") == (True, ["REGEXTEST"], "LibreOffice cannot evaluate: REGEXTEST")
+    for fn in ("TRANSLATE", "DETECTLANGUAGE", "BINOM.DIST.RANGE", "ECMA.CEILING", "CUBEMEMBER", "RTD", "CALL",
+               "REGISTER.ID", "SQL.REQUEST", "DBCS", "PHONETIC", "THAIDIGIT", "YEN", "REGEXEXTRACT", "REGEXREPLACE"):
+        assert fn in uns and fn in R.EXCEL_FUNCTIONS, fn
+    assert R.LO_VERIFIED_VERSION == "25.8.7" and R.XLFN_REQUIRED <= R.EXCEL_FUNCTIONS
+    assert not (R.XLFN_REQUIRED & {"SUM", "VLOOKUP", "CUBEVALUE", "RTD", "PHONETIC", "BAHTTEXT", "IFERROR", "SUMIFS"})
     assert cls("SUM(A1:A3", "#VALUE!")[0] is True                             # unparseable
     assert cls(None, "#VALUE!")[0] is True
     old = R.lo_unsupported((7, 4))
@@ -199,6 +226,58 @@ def test_classify_lo_error_table():
     assert R.lo_version_of("Microsoft Excel") is None
     assert R.lo_version_of("LibreOffice/7.4.7.2$Linux_AARCH64 LibreOffice_project/40$Build-2") == (7, 4)
     assert "CONUTIFS" not in R.EXCEL_FUNCTIONS and {"XLOOKUP", "SCAN", "REGEXTEST", "NA"} <= R.EXCEL_FUNCTIONS
+
+
+def test_gap_cells_split_the_verdict_v15():
+    """Judge v15 (Patrick 2026-10-28), No formula errors (22) per attempt: (a) a clean workbook whose
+    _xlfn.LET LibreOffice computes -> pass by code; (b) the same plus a real #DIV/0! -> fail by code;
+    (c) a _xlfn.LAMBDA cell only -> undecided, the note names the cell; (d) an unprefixed =XLOOKUP(...)
+    -> genuine #NAME?, fail by code; (e) a gap cell beside a genuine error -> fail by code, the gap cell
+    in stats, never a mistake; a typed error constant and an implicit intersection fail whatever the
+    gaps."""
+    let = "_xlfn.LET(_xlpm.x,A1*2,_xlpm.x+1)"
+    lam = "_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)(A1)"
+    xl = "XLOOKUP(1,A1:A2,A1:A2)"
+
+    def run_lo(cells, lo_cells, checks=(22,)):
+        p = book([("S", sheet(cells))], app=APP_OPX, excel=False)
+        pol = policy(lo_runner=fake_runner({"S": lo_cells}, []))
+        return grade(p, checks=list(checks), recalc=pol)[C22.key]
+
+    # (a)
+    v = run_lo([c("A1", 1), c("B1", 0, f=let)], [c("A1", 1), c("B1", 3, f=let)])
+    assert v["decision"] == "pass" and v["stats"]["decided_by"] == "code" and v["stats"]["gap_error_cells"] == 0, v
+    assert v["stats"]["gap_information"] == "pipeline" and "llm_note" not in v
+    # (b)
+    v = run_lo([c("A1", 1), c("A2", 0), c("B1", 0, f=let), c("B2", 0, f="A1/A2")],
+               [c("A1", 1), c("A2", 0), c("B1", 3, f=let), c("B2", "#DIV/0!", t="e", f="A1/A2")])
+    assert v["decision"] == "fail" and [m["location"] for m in v["mistakes"]] == ["S!B2"], v["mistakes"]
+    assert v["stats"]["decided_by"] == "code"
+    # (c)
+    v = run_lo([c("A1", 1), c("B1", 0, f=lam)], [c("A1", 1), c("B1", "#NAME?", t="e", f=lam)])
+    assert v["decision"] == "undecided" and v["mistakes"] == [] and v["stats"]["gap_error_cells"] == 1, v
+    assert "S!B1 shows #NAME? = =_xlfn.LAMBDA(" in v["llm_note"] and "[LAMBDA]" in v["llm_note"], v["llm_note"]
+    assert v["stats"]["undecided"]["why"].startswith("Only LibreOffice gap cells show errors (1 cell(s)")
+    # (d)
+    v = run_lo([c("A1", 1), c("A2", 2), c("B1", 0, f=xl)], [c("A1", 1), c("A2", 2), c("B1", "#NAME?", t="e", f=xl)])
+    assert v["decision"] == "fail" and [m["location"] for m in v["mistakes"]] == ["S!B1"], v
+    assert v["stats"]["gap_error_cells"] == 0 and v["stats"]["values"]["n_gaps"] == 0, v["stats"]["values"]
+    # (e): the gap cell is reported beside the genuine error, not as a mistake
+    v = run_lo([c("A1", 1), c("B1", 0, f=lam), c("B2", 0, f=xl)],
+               [c("A1", 1), c("B1", "#NAME?", t="e", f=lam), c("B2", "#NAME?", t="e", f=xl)])
+    assert v["decision"] == "fail" and [m["location"] for m in v["mistakes"]] == ["S!B2"], v["mistakes"]
+    assert v["stats"]["gap_error_cells"] == 1 and v["stats"]["error_cells"] == 1, v["stats"]
+    assert "1 LibreOffice gap cell(s) show errors Excel would not (not counted)" in v["summary"], v["summary"]
+    assert v["stats"]["gap_error_examples"] == ["S!B1 #NAME?: =_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)(A1) [LAMBDA]"], v["stats"]
+    # a typed error constant beside a gap cell: fail by code
+    v = run_lo([c("A1", "#N/A", t="e"), c("B1", 0, f=lam)], [c("A1", "#N/A", t="e"), c("B1", "#NAME?", t="e", f=lam)])
+    assert v["decision"] == "fail" and v["stats"]["typed_error_constants"] == 1 and v["stats"]["gap_error_cells"] == 1
+    # an implicit intersection beside a gap cell: fail by code (flagged from the formula text)
+    ii = "A1:A3*2"
+    v = run_lo([c("A1", 1), c("A2", 2), c("A3", 3), c("B1", 0, f=lam), c("C5", 0, f=ii)],
+               [c("A1", 1), c("A2", 2), c("A3", 3), c("B1", "#NAME?", t="e", f=lam), c("C5", 2, f=ii)])
+    assert v["decision"] == "fail" and v["stats"]["implicit_intersection_cells"] == 1, v
+    assert [m["location"] for m in v["mistakes"]] == ["S!C5"] and v["stats"]["gap_error_cells"] == 1
 
 
 def test_no_recalc_policy_keeps_old_behaviour():
@@ -212,7 +291,8 @@ def test_no_recalc_policy_keeps_old_behaviour():
 
 TESTS = [test_excel_saved_file_uses_its_cache, test_libreoffice_copy_no_gaps_cached_once,
          test_genuine_errors_are_not_gaps, test_gap_needs_excel_not_allowed_or_unavailable,
-         test_gap_rerouted_to_excel, test_classify_lo_error_table, test_no_recalc_policy_keeps_old_behaviour]
+         test_gap_rerouted_to_excel, test_classify_lo_error_table, test_gap_cells_split_the_verdict_v15,
+         test_no_recalc_policy_keeps_old_behaviour]
 
 
 def main() -> int:

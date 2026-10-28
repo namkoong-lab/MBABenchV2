@@ -7,7 +7,7 @@ a scored result with the full evidence bundle. It grades either benchmark;
 `--benchmark v1|v2` is the only switch, and it grades a local folder with no
 database at all.
 
-Current judge: **judge_version 14, prompt_version 8** (`single_pass.version` /
+Current judge: **judge_version 15, prompt_version 8** (`single_pass.version` /
 `single_pass.prompt_version` in [project_configs.yaml](project_configs.yaml)),
 single-pass mode, template `prompts/agentic_judge_template_8.yaml`, rubric
 `prompts/rubrics/rubric_9.json`.
@@ -58,9 +58,12 @@ Two files, nothing to copy or edit per run:
   - `judge.*`: the classic 3-stage judge (v1), the formula-cache threshold,
     `retired_checks`, the default grader label, context limits.
   - `agentic_judge.*`: the 12-category agentic judge (frozen at version 4).
-  - `single_pass.*`: the production judge (version 14, template 8).
-  - `det_checks.*`: which rubric numbers Python decides (`live`) or only
-    records (`recorded_only`), and the LibreOffice memory guard.
+  - `single_pass.*`: the production judge (version 15, template 8).
+  - `det_checks.*`: which rubric numbers Python decides (`live`: 22 checks
+    since v15) or only records (`recorded_only`, empty since v15), and the
+    LibreOffice memory guard. Two live checks may be undecided for an
+    attempt (No formula errors (22), Automatic calculation mode (100)):
+    the LLM then decides it, told why (`utils/det_checks.py`).
   - `paths.libreoffice_path`: `null` = find `soffice` (LIBREOFFICE_PATH, then
     `libreoffice_path` in `config/config.yaml`, then PATH, then LibreOffice.app).
 
@@ -87,7 +90,9 @@ is `google/gemini-2.5-pro`, so pass `--model` explicitly.
 From the repo root, `./setup.sh` (uv workspace; installs the judge's
 dependencies and the shared `config` module). LibreOffice is needed for
 `--run-calculation`, for the answer check's recalculation and for the
-deterministic checks on attempts not saved by Excel.
+deterministic checks on attempts not saved by Excel; the list of Excel
+functions it lacks (`detchecks/core/recalc.py`) was verified against
+LibreOffice 25.8.7 - re-run the probe described there after an upgrade.
 
 ## Grade a local task folder (no database, no S3)
 
@@ -261,11 +266,13 @@ with its `grader`: `deterministic` or `llm`), `criteria_scores`, `total_score`,
    records it.
 3. **Deterministic checks first** (`utils/det_checks.py` over
    [detchecks/](detchecks/), documented in `detchecks/docs/`). Python grades
-   the delivered workbook on 19 checks (name manager, colour conventions, zoom,
-   active cell, zeros as dashes, column widths, row heights, merged cells, file
-   extension, volatile functions, whole-column references, hidden sheets, rows
-   and columns, white-on-white text, external links) and records two more (No
-   formula errors, Negatives in parentheses) without deciding them. Formula
+   the delivered workbook on 22 checks (formula errors, name manager, colour
+   conventions, zoom, active cell, negatives in parentheses, zeros as dashes,
+   column widths, row heights, merged cells, file extension, volatile
+   functions, whole-column references, hidden sheets, rows and columns,
+   white-on-white text, external links, calculation mode). Two of them (No
+   formula errors, Automatic calculation mode) may be undecided for an
+   attempt; the LLM then decides that check, told why under it. Formula
    values of a file not saved by Excel come from a LibreOffice recalculation
    (one LibreOffice at a time machine-wide, waiting for free memory, retried
    with doubled timeouts; a run that still fails lists the attempt for re-run).
@@ -296,7 +303,7 @@ with its `grader`: `deterministic` or `llm`), `criteria_scores`, `total_score`,
    they are live and counted. `accuracy_engine.effective` records whether the
    recorded total is `harness`, `llm` or `mixed`.
 
-Rows record `judge_version` 14 and `prompt_version` 8.
+Rows record `judge_version` 15 and `prompt_version` 8.
 
 ## Prompts and rubrics
 
