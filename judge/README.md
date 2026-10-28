@@ -58,9 +58,12 @@ Two files, nothing to copy or edit per run:
   - `judge.*`: the classic 3-stage judge (v1), the formula-cache threshold,
     `retired_checks`, the default grader label, context limits.
   - `agentic_judge.*`: the 12-category agentic judge (frozen at version 4).
-  - `single_pass.*`: the production judge (version 14, template 8).
-  - `det_checks.*`: which rubric numbers Python decides (`live`) or only
-    records (`recorded_only`), and the LibreOffice memory guard.
+  - `single_pass.*`: the production judge (version 15, template 8).
+  - `det_checks.*`: which rubric numbers Python decides (`live`: 22 checks
+    since v15) or only records (`recorded_only`, empty since v15), and the
+    LibreOffice memory guard. Two live checks may be undecided for an
+    attempt (No formula errors (22), Automatic calculation mode (100)):
+    the LLM then decides it, told why (`utils/det_checks.py`).
   - `paths.libreoffice_path`: `null` = find `soffice` (LIBREOFFICE_PATH, then
     `libreoffice_path` in `config/config.yaml`, then PATH, then LibreOffice.app).
 
@@ -87,7 +90,9 @@ is `google/gemini-2.5-pro`, so pass `--model` explicitly.
 From the repo root, `./setup.sh` (uv workspace; installs the judge's
 dependencies and the shared `config` module). LibreOffice is needed for
 `--run-calculation`, for the answer check's recalculation and for the
-deterministic checks on attempts not saved by Excel.
+deterministic checks on attempts not saved by Excel; the list of Excel
+functions it lacks (`detchecks/core/recalc.py`) was verified against
+LibreOffice 25.8.7 - re-run the probe described there after an upgrade.
 
 ## Grade a local task folder (no database, no S3)
 

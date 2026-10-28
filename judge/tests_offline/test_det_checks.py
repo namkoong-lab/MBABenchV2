@@ -59,9 +59,10 @@ RUBRIC = json.loads(RUBRIC_PATH.read_text())
 WEIGHTS = json.loads(WEIGHTS_PATH.read_text())
 FLAT = [(cat, c["name"]) for cat, checks in RUBRIC.items() for c in checks]
 
-# The maintainer's decisions (2026-10-04) — the config must say exactly this.
-LIVE = {29, 47, 49, 50, 51, 61, 62, 66, 69, 70, 73, 74, 77, 80, 87, 92, 93, 94, 95}
-RECORDED_ONLY = {22, 65}
+# The maintainer's decisions (2026-10-04; judge v15 of 2026-10-28: 22, 65 and the new 100 live, nothing
+# recorded only) — the config must say exactly this.
+LIVE = {22, 29, 47, 49, 50, 51, 61, 62, 65, 66, 69, 70, 73, 74, 77, 80, 87, 92, 93, 94, 95, 100}
+RECORDED_ONLY = set()
 
 
 def key(no):
@@ -179,6 +180,8 @@ def test_pins_registry_rubric_weights_and_config():
     assert s.enabled is True, "det_checks.enabled must be true for judge v13"
     assert set(s.live) == LIVE, sorted(set(s.live) ^ LIVE)
     assert set(s.recorded_only) == RECORDED_ONLY
+    assert all(getattr(REGISTRY[n], "live", True) for n in LIVE), "every configured-live check is live in code"
+    assert D.DET_CHECK_NAMES[100] == ("Potential Dangers", "Automatic calculation mode")
     assert s.excel_recalc is False, "Excel recalculation must stay OFF (maintainer 2026-10-04)"
     assert s.libreoffice_path == os.environ[f"{project_prefix()}_PATHS_LIBREOFFICE_PATH"]
     assert s.libreoffice_timeout_s == 600
@@ -199,13 +202,18 @@ def test_config_errors_refuse_to_grade():
         "unpinned": s.__class__(**{**s.__dict__, "live": (23,), "recorded_only": ()}),
         "not live in detchecks": s.__class__(**{**s.__dict__, "live": (65,), "recorded_only": ()}),
     }
-    for what, bad in cases.items():
-        try:
-            D.configured_checks(bad, RUBRIC)
-        except D.DetChecksConfigError as e:
-            assert "(" in str(e), e
-        else:
-            raise AssertionError(f"{what}: no DetChecksConfigError")
+    saved_live = REGISTRY[65].live
+    REGISTRY[65].live = False                            # 65 is live since v15: hold it back for the case
+    try:
+        for what, bad in cases.items():
+            try:
+                D.configured_checks(bad, RUBRIC)
+            except D.DetChecksConfigError as e:
+                assert "(" in str(e), e
+            else:
+                raise AssertionError(f"{what}: no DetChecksConfigError")
+    finally:
+        REGISTRY[65].live = saved_live
     drifted = copy.deepcopy(RUBRIC)
     pd = drifted["Potential Dangers"]
     i = next(i for i, c in enumerate(pd) if c["name"] == "No hidden sheets")
@@ -242,7 +250,7 @@ def test_startup_check():
     assert D.startup_check(RUBRIC_PATH) == "harness"
     assert D.startup_check(RUBRIC_PATH, "llm") == "llm"
     assert D.startup_check("/nonexistent/rubric.json", "off") == "off"       # off reads nothing
-    with env(DET_CHECKS_LIVE="29,65"):
+    with env(DET_CHECKS_LIVE="29,65", DET_CHECKS_RECORDED_ONLY="65"):      # listed twice: live and recorded only
         try:
             D.startup_check(RUBRIC_PATH)
         except D.DetChecksConfigError as e:
@@ -280,25 +288,89 @@ def test_live_fail_and_live_pass():
     # every configured check was graded (no annotation staged, benchmark None: retired rule only)
     assert set(good.summary["graded"]) == LIVE | RECORDED_ONLY and good.summary["not_applicable"] == []
     assert good.summary["checks"][key(92)] == {"check_no": 92, "engine": "harness", "decision": "pass",
-                                              "live": True, "n_mistakes": 0,
+                                              "live": True, "decided_by": "code", "n_mistakes": 0,
                                               "summary": good.harness_verdicts[key(92)]["summary"]}
-    assert bad.mode == "harness" and bad.for_judge()["mode"] == "harness"
+    assert g["decided_by"] == "code" and e["decided_by"] == "code" and "llm_note" not in g
+    assert bad.mode == "harness" and bad.for_judge()["mode"] == "harness" and bad.for_judge()["llm_notes"] == {}
 
 
 def test_recorded_only_check_never_overlays():
+    """Nothing is recorded only under v15, but the config can still hold a live-capable check back."""
     with tempfile.TemporaryDirectory() as tmp, fake_libreoffice():
         root = Path(tmp)
         r = run(make_task(root, negative=True))
         e = r.harness_verdicts[key(65)]
-        assert e["engine"] == "llm" and e["live"] is False and e["decision"] == "fail"
-        assert e["fallback_reason"] == det_api.LIVE_NOTE and e["n_mistakes"] == 1
-        assert r.harness_verdicts[key(22)]["engine"] == "llm"           # the other v3-bucket check
-        # the config can also hold a live-capable check back: 92 recorded only
+        assert e["engine"] == "harness" and e["live"] is True and e["decision"] == "fail" and e["decided_by"] == "code"
+        assert e["fallback_reason"] is None and e["n_mistakes"] == 1
         with env(DET_CHECKS_LIVE="29,47", DET_CHECKS_RECORDED_ONLY="22,65,92"):
             r2 = run(make_task(root, hidden=True))
         e2 = r2.harness_verdicts[key(92)]
         assert e2["engine"] == "llm" and e2["live"] is False and e2["decision"] == "fail"
+        assert e2["fallback_reason"] == det_api.LIVE_NOTE and e2["decided_by"] == "llm"
         assert set(r2.summary["graded"]) == {22, 29, 47, 65, 92}
+        assert r2.summary["checks"][key(92)]["decided_by"] == "llm" and r2.for_judge()["llm_notes"] == {}
+
+
+def test_undecided_verdict_goes_to_the_llm_with_a_note():
+    """Judge v15: a live check that is undecided for THIS attempt (detchecks base.py) becomes an
+    engine "llm" entry with decided_by "llm" and its llm_note; for_judge() carries the note, the
+    overlay leaves the LLM's item alone with agreed None, and the prompt renders the note under
+    that one check."""
+    from detchecks.checks.base import make_undecided
+    from utils import rubric_guidance
+    from utils.prompt_utils import numbered_rubric_checks, render_rubric_checks_flat
+
+    real = det_api.grade
+
+    def fake(path, **kw):
+        out = real(path, **kw)
+        k22 = key(22)
+        if k22 in out:
+            v = make_undecided("Only LibreOffice gap cells show errors (1 cell).",
+                               "S!B1 shows #NAME? = =_xlfn.LAMBDA(...) [LAMBDA]", {"gap_error_cells": 1})
+            v["live"] = True
+            out[k22] = v
+        return out
+
+    with tempfile.TemporaryDirectory() as tmp, fake_libreoffice(), patched_grade(fake):
+        root = Path(tmp)
+        r = run(make_task(root, hidden=True))
+        art = strict_json((Path(r.artefact_path)).read_text())
+    e = r.harness_verdicts[key(22)]
+    assert e["engine"] == "llm" and e["decision"] == "undecided" and e["live"] is True and e["decided_by"] == "llm"
+    assert e["fallback_reason"] == "undecided: Only LibreOffice gap cells show errors (1 cell)." and e["mistakes"] == []
+    assert e["llm_note"].startswith("S!B1 shows #NAME?") and e["n_mistakes"] == 0
+    assert r.summary["checks"][key(22)]["decided_by"] == "llm" and r.summary["checks"][key(22)]["llm_note"] == e["llm_note"]
+    assert r.for_judge()["llm_notes"] == {key(22): e["llm_note"]}
+    assert r.harness_verdicts[key(92)]["decided_by"] == "code" and "llm_note" not in r.harness_verdicts[key(92)]
+    assert art["verdicts"][key(22)]["decision"] == "undecided" and art["verdicts"][key(22)]["llm_note"] == e["llm_note"]
+    # the overlay: the LLM's item stands, provenance says undecided / llm, agreed is None
+    llm = _llm_judgement(fail={22})
+    overlaid, prov = judge._apply_harness_verdicts(llm, r.harness_verdicts, WEIGHTS)
+    p22 = prov[key(22)]
+    assert p22["engine"] == "llm" and p22["decision"] == "undecided" and p22["decided_by"] == "llm"
+    assert p22["llm_decision"] == "fail" and p22["agreed"] is None and p22["fallback_reason"].startswith("undecided:")
+    item = next(i for i in overlaid["Error Checks"] if i["name"] == "No formula errors")
+    assert item["decision"] == "fail" and "decided_by" not in item
+    assert prov[key(92)]["decided_by"] == "code" and prov[key(92)]["agreed"] is not None
+    # the prompt: the note is rendered under check 22 alone, after the static note
+    guidance = rubric_guidance.load_guidance(RUBRIC_PATH)
+    merged = rubric_guidance.with_attempt_notes(guidance, r.for_judge()["llm_notes"])
+    assert merged is not guidance and guidance["checks"][("Error Checks", "No formula errors")] in \
+        merged["checks"][("Error Checks", "No formula errors")]
+    text = render_rubric_checks_flat(numbered_rubric_checks(RUBRIC), merged, guidance_style="standard")
+    plain = render_rubric_checks_flat(numbered_rubric_checks(RUBRIC), guidance, guidance_style="standard")
+    assert text.count(rubric_guidance.ATTEMPT_NOTE_LABEL) == 1 and "S!B1 shows #NAME?" in text
+    block = text.split("Check 22 [Error Checks] No formula errors:")[1].split("\n\nCheck ")[0]
+    assert rubric_guidance.ATTEMPT_NOTE_LABEL in block and "S!B1 shows #NAME?" in block
+    assert rubric_guidance.ATTEMPT_NOTE_LABEL not in plain
+    assert rubric_guidance.with_attempt_notes(guidance, {}) is guidance and rubric_guidance.with_attempt_notes(None, None) is None
+    try:
+        rubric_guidance.with_attempt_notes(guidance, {"no slash": "x"})
+    except rubric_guidance.GuidanceError:
+        pass
+    else:
+        raise AssertionError("a key without a category must be refused")
 
 
 def test_suitability_gate_matches_the_judge():
@@ -395,7 +467,7 @@ def test_artefact_written_in_every_case():
     with tempfile.TemporaryDirectory() as tmp, fake_libreoffice():
         root = Path(tmp)
         cfg = make_task(root)
-        with env(DET_CHECKS_LIVE="29,65"):
+        with env(DET_CHECKS_LIVE="29,65", DET_CHECKS_RECORDED_ONLY="65"):   # listed twice: live and recorded only
             try:
                 run(cfg)
             except D.DetChecksConfigError as e:
@@ -990,10 +1062,16 @@ def _llm_judgement(fail=(), skip=()):
 
 def _det_entry(no, decision, live=True):
     mistakes = [{"location": "'Notes'", "description": "py", "severity": "major"}] if decision == "fail" else []
-    return {"engine": "harness" if live else "llm", "decision": decision, "summary": f"py {no}",
-            "mistakes": mistakes, "fallback_reason": None if live else det_api.LIVE_NOTE,
-            "family": "det_checks", "live": live, "check_no": no, "n_mistakes": len(mistakes),
-            "stats": {"n_mistakes": len(mistakes), "values": {"source": "cache"}}}
+    undecided = decision == "undecided"
+    counts = live and not undecided
+    e = {"engine": "harness" if counts else "llm", "decision": decision, "summary": f"py {no}",
+         "mistakes": mistakes,
+         "fallback_reason": None if counts else (f"undecided: py {no}" if undecided else det_api.LIVE_NOTE),
+         "family": "det_checks", "live": live, "check_no": no, "decided_by": "code" if counts else "llm",
+         "n_mistakes": len(mistakes), "stats": {"n_mistakes": len(mistakes), "values": {"source": "cache"}}}
+    if undecided:
+        e["llm_note"] = f"note {no}"
+    return e
 
 
 FA = "Accuracy/Final calculation accuracy"
@@ -1003,8 +1081,8 @@ HARNESS = {
     key(92): _det_entry(92, "pass"),                  # LLM fails it below
     key(61): _det_entry(61, "fail"),                  # LLM passes it
     key(74): _det_entry(74, "fail"),                  # LLM never recorded it
-    key(65): _det_entry(65, "fail", live=False),      # recorded only; LLM passes
-    key(22): _det_entry(22, "pass", live=False),      # recorded only; LLM fails
+    key(65): _det_entry(65, "fail", live=False),      # recorded only (config); LLM passes
+    key(22): _det_entry(22, "undecided"),             # undecided (v15); LLM fails
 }
 LLM_FAIL = {1, 92, 22}
 
@@ -1023,8 +1101,12 @@ def test_apply_harness_verdicts_with_deterministic_entries():
     assert p65["engine"] == "llm" and p65["decision"] == "fail" and p65["llm_decision"] == "pass"
     assert p65["agreed"] is False and p65["live"] is False and p65["fallback_reason"] == det_api.LIVE_NOTE
     item65 = next(i for i in overlaid["Formatting"] if i["name"] == "Negatives in parentheses")
-    assert item65["decision"] == "pass" and "decided_by" not in item65
-    assert prov[key(22)]["agreed"] is False and prov[key(61)]["agreed"] is False
+    assert item65["decision"] == "pass" and "decided_by" not in item65 and p65["decided_by"] == "llm"
+    # undecided (v15): the LLM's item stands, nothing to agree with
+    p22 = prov[key(22)]
+    assert p22["engine"] == "llm" and p22["decision"] == "undecided" and p22["decided_by"] == "llm"
+    assert p22["agreed"] is None and p22["llm_decision"] == "fail" and p22["fallback_reason"] == "undecided: py 22"
+    assert prov[key(61)]["agreed"] is False and p92["decided_by"] == "code"
     # a check the LLM never recorded is inserted under its rubric number
     item74 = next(i for i in overlaid["Formatting"] if i["name"] == "No merged cells")
     assert item74["check"] == "74" and item74["decided_by"] == "harness" and item74["llm_decision"] is None
@@ -1079,9 +1161,10 @@ def test_finalize_case_switches():
             want = ({FA} if acc == "harness" else set()) | ({key(92), key(61), key(74)} if det == "harness" else set())
             assert counted == want, (acc, det, counted)
             assert not eng["checks"][key(65)]["counted"] and not eng["checks"][key(22)]["counted"]
-            # recorded-only checks always score the LLM's verdict
+            # recorded-only and undecided checks always score the LLM's verdict
             assert sr["check_scores"]["Formatting"]["Negatives in parentheses"]["score"] == 1.0
             assert sr["check_scores"]["Error Checks"]["No formula errors"]["score"] == 0.0
+            assert eng["checks"][key(22)]["decided_by"] == "llm" and eng["checks"][key(92)]["decided_by"] == "code"
             # live checks follow Python only when det_checks counts
             hid = sr["check_scores"]["Potential Dangers"]["No hidden sheets"]["score"]
             assert hid == (1.0 if det == "harness" else 0.0), (acc, det, hid)

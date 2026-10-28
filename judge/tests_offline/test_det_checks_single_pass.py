@@ -244,7 +244,7 @@ def test_end_to_end_live_and_recorded_only():
         assert llm.calls == 2, llm.calls
         assert lo_calls == [], lo_calls
         assert not res["hard_parse_failures"] and not res["missing_scores"] and not res["has_scoring_warnings"]
-        assert res["versions"]["JUDGE_VERSION"] == "14" and res["versions"]["PROMPT_VERSION"] == "8"
+        assert res["versions"]["JUDGE_VERSION"] == "15" and res["versions"]["PROMPT_VERSION"] == "8"
 
         out = Path(res["output_dir"])
         task_folder = Path(res["task_folder"])
@@ -274,16 +274,23 @@ def test_end_to_end_live_and_recorded_only():
             p = eng["checks"][key]
             py, llm_dec = v["decision"], llm.decisions[no]
             assert llm_dec != py
-            assert p["decision"] == py and p["llm_decision"] == llm_dec and p["agreed"] is False
+            assert p["decision"] == py and p["llm_decision"] == llm_dec
+            assert p["agreed"] is (None if py == "undecided" else False)
             assert p["family"] == "det_checks" and p["check_no"] == no and isinstance(p["stats"], dict)
             score = sr["check_scores"][cat][name]["score"]
             item = next(i for i in harness_items[cat] if i["name"] == name)
-            if no in live:
+            if no in live and py != "undecided":
                 assert p["engine"] == "harness" and p["live"] is True and p["counted"] is True, key
-                assert score == (1.0 if py == "pass" else 0.0), (key, score)
+                assert p["decided_by"] == "code" and score == (1.0 if py == "pass" else 0.0), (key, score)
                 assert item["decided_by"] == "harness" and item["llm_decision"] == llm_dec
-            else:                                             # No formula errors (22), Negatives in parentheses (65)
-                assert no in (22, 65)
+            elif py == "undecided":                           # judge v15: the LLM decides this attempt, told why
+                assert p["engine"] == "llm" and p["live"] is True and p["counted"] is False, key
+                assert p["decided_by"] == "llm" and p["fallback_reason"].startswith("undecided:")
+                assert score == (1.0 if llm_dec == "pass" else 0.0), (key, score)
+                assert "decided_by" not in item and item["decision"] == llm_dec
+                assert key in sr["det_checks"]["checks"] and sr["det_checks"]["checks"][key]["llm_note"]
+            else:                                             # recorded only (none under v15 unless configured)
+                assert no in settings.recorded_only
                 assert p["engine"] == "llm" and p["live"] is False and p["counted"] is False, key
                 assert p["fallback_reason"] == "recorded only; the LLM verdict stands at scoring"
                 assert score == (1.0 if llm_dec == "pass" else 0.0), (key, score)

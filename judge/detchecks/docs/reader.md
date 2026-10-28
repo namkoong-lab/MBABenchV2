@@ -44,14 +44,15 @@ verdicts = grade(path, checks=[22], recalc=RecalcPolicy())   # value checks: the
 **Verdict contract.** It is asserted for every check:
 
 ```python
-{"engine": "harness", "decision": "pass" | "fail", "summary": str,
+{"engine": "harness", "decision": "pass" | "fail" | "undecided", "summary": str,
  "mistakes": [{"location": str, "description": str, "severity": "major" | "minor"}],
- "stats": {...}}           # always includes n_mistakes, n_mistakes_listed, mistakes_truncated
+ "stats": {...}[, "llm_note": str]}   # stats always includes n_mistakes, n_mistakes_listed, mistakes_truncated
 ```
 
-- The result is binary: pass ⇔ `mistakes == []`.
+- Decided: pass ⇔ `mistakes == []`.
+- **Undecided (judge v15, Patrick 2026-10-28).** A check whose design names a case code cannot settle returns `"undecided"` for that file alone: no mistakes, `stats["undecided"]` (the why and details) and `llm_note` (required exactly then) - what the LLM judge is told for this attempt; `self.undecided(summary, llm_note, stats, details)` builds it and refuses when a mistake was recorded. The adapter lets the LLM's verdict count for that attempt and renders the note under that one check. Only No formula errors (22) (the only error cells are LibreOffice gap cells) and Automatic calculation mode (100) (a circular model with iteration on needs its disclosure read) use it. It is not a fallback: anything that cannot grade a file still raises.
 - Mistake lists are capped at 25 entries. The total count goes in `stats["n_mistakes"]` and in the summary.
-- **Live switch (2026-10-04).** Every verdict also carries `"live": bool`, from the check's class attribute `live` (default True). All checks run and record verdicts; a verdict with `"live": false` also carries `"live_note": "recorded only; the LLM verdict stands at scoring"` and must not replace the LLM's verdict. Today only Negatives in parentheses (65) is not live (Patrick: OFF until v3). `detchecks.checks.live_numbers()` lists the live checks.
+- **Live switch (2026-10-04).** Every verdict also carries `"live": bool`, from the check's class attribute `live` (default True). All checks run and record verdicts; a verdict with `"live": false` also carries `"live_note": "recorded only; the LLM verdict stands at scoring"` and must not replace the LLM's verdict. Since judge v15 every registered check is live (22 and 65 were held back under v13/v14); the switch stays for the next one. `detchecks.checks.live_numbers()` lists the live checks.
 - **Values provenance.** A verdict of a check with `needs_values` carries `stats["values"]` (`writer`, `source` = `cache` / `libreoffice` / `excel` / `value_path`, `value_path`, gaps, timings) whenever a value source was involved (§6, docs/recalc.md).
 - Keys are `"<Category>/<check name>"`, exactly as in `rubric_9.json`.
 - `location` is either `"'Sheet Name'!A1:C3"` (use `detchecks.core.refs.location(sheet, ref)`) or a bare sheet name for sheet-level findings.

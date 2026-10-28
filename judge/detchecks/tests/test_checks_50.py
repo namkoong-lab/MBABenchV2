@@ -62,8 +62,12 @@ def test_prefilter_rejects_shapes_that_cannot_be_pointers():
                       c("G1", BLACK, "Inputs!B5")]))
     p = book("50_r2_prefilter.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
     v = run(p, 50)
-    assert locs(v) == ["Calc!G1"], locs(v)
-    assert v["stats"]["cells_classified"] == 1, v["stats"]              # only G1 was parsed
+    # v15: B1 (=SUM(Inputs!A1:A5, unbalanced) and G1 (=Inputs!B5) carry a direct reference to Inputs, so 50
+    # charges them by the quick scan without a parse (the same scan 49 trusts to accept green cells); the
+    # texts with an unknown table are parsed, fail to classify, and are skipped under the default
+    assert set(locs(v)) == {"Calc!B1", "Calc!G1"}, locs(v)
+    assert v["stats"]["cells_classified"] == 0 and v["stats"]["cells_charged_by_direct_reference"] == 2, v["stats"]
+    assert v["stats"]["defaults"]["unparsable_formula"]["count"] == 5, v["stats"]["defaults"]
     # a text of pointer shape whose class cannot be worked out still raises (no guess)
     for t in ("Nope[Col]", "-Nope[Col]", "(Nope[Col])", "_xlfn.TOROW(Nope[Col])", "Nope[Col]#"):
         p = book("50_r2_pure_unknown.xlsx", [("Calc", sheet((1, [c("A1", BLACK, t)])), None), ("Inputs", sheet(), None)])
@@ -72,14 +76,16 @@ def test_prefilter_rejects_shapes_that_cannot_be_pointers():
     p = book("50_r2_green.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "Nope[Col]"), c("B1", GREEN, "SUM(Nope[Col]")])), None),
                                   ("Inputs", sheet(), None)])
     assert run(p, 50)["decision"] == "pass"
-    # 49 uses the same scan when a colour is wrong in every class: a grey unbalanced cross-sheet
-    # formula now fails as 'unclassified' instead of raising (it cannot be a pointer and does not
-    # read another workbook); with a '[' it may read another workbook, so that one still raises
+    # 49 charges a colour that is wrong in every class: a grey unbalanced cross-sheet formula fails
+    # as 'unclassified' (v15: whatever it references, grey is wrong; 50 skips what it cannot
+    # classify, so the cell is charged once)
     p = book("50_r2_49_grey.xlsx", [("Calc", sheet((1, [c("A1", GREY50, "SUM(Inputs!A1:A5")])), None), ("Inputs", sheet(), None)])
     v = run(p, 49)
     assert locs(v) == ["Calc!A1"] and v["stats"]["unclassified_offending_cells"] == 1, (locs(v), v["stats"])
     p = book("50_r2_49_grey_tbl.xlsx", [("Calc", sheet((1, [c("A1", GREY50, "SUM(Nope[Col])")])), None)])
-    graded("unparsable_formula", lambda: run(p, 49))
+    v = run(p, 49)            # v15: grey is wrong in every class, so the unclassifiable cell fails 49 (charged once)
+    assert locs(v) == ["Calc!A1"] and v["stats"]["unclassified_offending_cells"] == 1, (locs(v), v["stats"])
+    assert run(p, 50)["decision"] == "pass"
 
 
 TESTS = [test_prefilter_rejects_shapes_that_cannot_be_pointers]
