@@ -83,7 +83,7 @@ Create `detchecks/checks/cNN.py`, subclass `Check`, and add the class to `_CLASS
 | `sheet_kinds` | `("worksheet",)` | sheet kinds whose hooks run: `worksheet`, `chartsheet`, `dialogsheet`, `macrosheet` |
 | `accepts_unparsed` | False | grade files that are not SpreadsheetML (77 only) |
 | `max_mistakes` | 25 | cap on listed mistakes |
-| `live` | True | False: the verdict is recorded only (`"live": false` + `live_note`); the LLM verdict stands at scoring. Only 65 today |
+| `live` | True | False: the verdict is recorded only (`"live": false` + `live_note`); the LLM verdict stands at scoring. None since judge v15 (22 and 65 were, under v13/v14) |
 
 ### 3.2 Hook order
 
