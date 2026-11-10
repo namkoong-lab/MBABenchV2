@@ -47,6 +47,9 @@ def test_fable_5_1_is_its_own_label():
     assert not match("Fable 5.1", "Model: Fable 5 Max")
     assert not match("Fable 5.1", "Fable 5.10")
     assert not match("Fable 5", "Fable 50")
+    assert match("Fable 5.2", "Model: Fable 5.2 Max")
+    assert not match("Fable 5.1", "Model: Fable 5.2 Max")
+    assert not match("Fable 5", "Fable 5.2Newest")
 
 
 @pytest.mark.parametrize("label,text,expected", [
@@ -64,6 +67,7 @@ def test_label_map_knows_both_fables():
     agent_labels = ClaudeWebAgent.MODEL_LABELS
     assert agent_labels["fable_5"] == "Fable 5"
     assert agent_labels["fable_5_1"] == "Fable 5.1"
+    assert agent_labels["fable_5_2"] == "Fable 5.2"
 
 
 def test_fable_5_1_identity_is_cowork_only():

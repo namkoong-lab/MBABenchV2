@@ -273,6 +273,7 @@ class ClaudeWebAgent(WebAgent):
     MODEL_LABELS = {
         "opus_5_5": "Opus 5.5",
         "opus_5": "Opus 5",
+        "fable_5_2": "Fable 5.2",
         "fable_5_1": "Fable 5.1",
         "fable_5": "Fable 5",
         "sonnet_5": "Sonnet 5",
@@ -887,6 +888,35 @@ class ClaudeWebAgent(WebAgent):
                 return True
         return False
 
+    async def _confirm_effort_dialog(self, label: str) -> bool:
+        """Accept the effort warning dialog if picking ``label`` raised one.
+
+        2026-11-10 UI (Fable 5.2 launch): choosing Max opens an alertdialog
+        ("Most tasks don't need Max ... Use Max / Use Medium") and the level
+        does not change until "Use Max" is clicked. Clicks only the button
+        whose text is exactly "Use <label>"; no dialog is a no-op (True).
+        """
+        try:
+            for dlg in await self.page.query_selector_all('[role="alertdialog"]'):
+                if not await dlg.is_visible():
+                    continue
+                for btn in await dlg.query_selector_all("button"):
+                    text = ((await btn.text_content()) or "").strip()
+                    if text.lower() == f"use {label}".lower():
+                        await btn.evaluate(self._JS_CLICK)
+                        await asyncio.sleep(1.0)
+                        logger.info(f"Effort warning dialog accepted ({text!r})")
+                        return True
+                logger.error(
+                    f"Effort dialog open but no 'Use {label}' button: "
+                    f"{((await dlg.inner_text()) or '')[:200]!r}"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"Error handling effort dialog: {e}")
+            return False
+        return True
+
     async def ensure_effort(self, effort: str) -> bool:
         """Set the reasoning-effort level via the Effort flyout.
 
@@ -947,6 +977,7 @@ class ClaudeWebAgent(WebAgent):
 
             await option.evaluate(self._JS_CLICK)
             await asyncio.sleep(0.8)
+            await self._confirm_effort_dialog(label)
 
             # Verify by re-opening and re-reading the option state.
             await self._close_model_dropdown()

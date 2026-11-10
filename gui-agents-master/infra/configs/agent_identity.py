@@ -173,6 +173,11 @@ _V2_CLAUDE_IDENTITIES: dict[tuple, AgentIdentity] = {
     ("cowork", "opus_5_5", "max"): AgentIdentity(
         "claude_opus_5_5_cowork_max", "claude_opus_5_5_cowork_max"
     ),
+    # 2026-11-10: Fable 5.2 in cowork at Max, the 101-task GUI cohort for the
+    # new release. Cowork-only, like Fable 5.1.
+    ("cowork", "fable_5_2", "max"): AgentIdentity(
+        "claude_fable_5_2_cowork_max", "claude_fable_5_2_cowork_max"
+    ),
 }
 
 

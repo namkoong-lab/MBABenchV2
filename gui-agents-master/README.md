@@ -271,7 +271,7 @@ There is no per-run prompt override. The pre-registry keys `prompts_file` and `p
 
 Both providers select the model through the provider's own UI picker, by visible label (the label maps are `MODEL_LABELS` in `claude_web_agent/claude_web_agent.py` / `chatgpt_web_agent.py`). `null` keeps the session's current choice; benchmark runs must pin it, and v2 preflight refuses `null` for Claude.
 
-**Claude** (`claude_web`): `model` ∈ `fable_5_1`, `fable_5`, `opus_5_5`, `opus_5`, `opus_4_8`, `opus_4_7`, `opus_4_6`, `sonnet_5`, `sonnet_4_6`, `haiku_4_5`; `effort` ∈ `low | medium | high | xhigh | max`; `mode` ∈ `chat | cowork` (asserted every task; `cowork_approval: auto` for unattended runs).
+**Claude** (`claude_web`): `model` ∈ `fable_5_2`, `fable_5_1`, `fable_5`, `opus_5_5`, `opus_5`, `opus_4_8`, `opus_4_7`, `opus_4_6`, `sonnet_5`, `sonnet_4_6`, `haiku_4_5`; `effort` ∈ `low | medium | high | xhigh | max`; `mode` ∈ `chat | cowork` (asserted every task; `cowork_approval: auto` for unattended runs).
 
 **ChatGPT** (`chatgpt_web`): `mode` decides which knobs apply.
 
