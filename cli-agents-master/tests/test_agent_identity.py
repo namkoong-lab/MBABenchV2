@@ -20,7 +20,8 @@ FULL = ("model: m, reasoning_effort: null, thinking_budget_tokens: null, "
 def test_seed_registry_loads_and_is_collision_free():
     registry = ai.load_registry()
     assert len(registry) >= 5
-    assert len({i.axes for i in registry.values()}) == len(registry)
+    # one cohort per axis combination, unless a deliberate rerun carries its own replica number
+    assert len({(i.axes, i.replica) for i in registry.values()}) == len(registry)
 
 
 def test_known_label_resolves_with_all_pinned_settings():
@@ -72,6 +73,30 @@ def test_duplicate_axes_rejected(tmp_path):
     reg = tmp_path / "reg.yaml"
     reg.write_text(f"- {{agent_model_name: a, {FULL}}}\n- {{agent_model_name: b, {FULL}}}\n")
     with pytest.raises(ai.AgentIdentityError, match="one combination, one cohort"):
+        ai.load_registry(reg)
+
+
+def test_replica_allows_deliberate_rerun_of_same_settings(tmp_path):
+    reg = tmp_path / "reg.yaml"
+    reg.write_text(f"- {{agent_model_name: a, {FULL}}}\n- {{agent_model_name: a-r2, replica: 2, {FULL}}}\n"
+                   f"- {{agent_model_name: a-r3, replica: 3, {FULL}}}\n")
+    loaded = ai.load_registry(reg)
+    assert loaded["a-r2"].replica == 2 and loaded["a"].replica is None
+    assert "replica" not in loaded["a-r2"].settings()
+
+
+def test_same_replica_number_rejected(tmp_path):
+    reg = tmp_path / "reg.yaml"
+    reg.write_text(f"- {{agent_model_name: a-r2, replica: 2, {FULL}}}\n- {{agent_model_name: b-r2, replica: 2, {FULL}}}\n")
+    with pytest.raises(ai.AgentIdentityError, match="one combination, one cohort"):
+        ai.load_registry(reg)
+
+
+@pytest.mark.parametrize("bad", [1, 0, "2", True])
+def test_bad_replica_rejected(tmp_path, bad):
+    reg = tmp_path / "reg.yaml"
+    reg.write_text(yaml.safe_dump([{**yaml.safe_load(f"{{agent_model_name: a, {FULL}}}"), "replica": bad}]))
+    with pytest.raises(ai.AgentIdentityError, match="'replica' must be"):
         ai.load_registry(reg)
 
 

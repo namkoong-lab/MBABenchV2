@@ -18,7 +18,7 @@ from .repo_config import attachment_extra_configs
 from .mcp_client import ExcelMCPClient
 from .task_executor import ExcelTaskExecutor, TaskStatus
 from .models_config import (DEFAULT_MAX_COMPLETION_TOKENS, DEFAULT_MAX_ITERATIONS, resolve_api_timeout,
-                            resolve_stall_timeout)
+                            resolve_stall_timeout, FORGE_EXPLICIT_CACHE_MODELS)
 
 
 @dataclass
@@ -287,6 +287,9 @@ class BatchRunner:
         stall = resolve_stall_timeout(self.config.get("base_url"), self.config.get("model"))
         if stall:
             limits["stream_stall_seconds"] = stall
+            # 2026-11-11: explicit caching of the system prompt (billing only).
+            if str(self.config.get("model") or "") in FORGE_EXPLICIT_CACHE_MODELS:
+                limits["prompt_cache"] = "explicit: system prompt only"
         return limits
 
     def _recalc_extra_configs(self) -> Dict[str, Any]:

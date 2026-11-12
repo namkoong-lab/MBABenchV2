@@ -213,6 +213,22 @@ def resolve_stall_timeout(
 # either way).
 FORGE_PROMPT_CACHE_KEY_MODELS = {"tensorblock/glm-5.3"}
 
+# 2026-11-11: Forge models whose caching is switched to explicit mode with one
+# breakpoint at the end of the system prompt. GPT-5.6+ models bill a cache
+# WRITE at 1.25x input; in the default (implicit) mode every step's whole prompt
+# is written, but this harness rebuilds the user message each step, so only the
+# system prompt (~9.3k tokens) is ever read back. Forge's usage log for the 573
+# gpt-6-astra calls of 2026-09-22/23 fits exactly: a 9,347-token read at $1/M,
+# the rest written at $12.50/M (x2 past 272k) - about 1.93x the flat $10/$50.
+# Explicit mode writes only the system prompt once (30 min TTL), reads it every
+# step at $1/M, and bills the changing rest as plain input at $10/M: about 19%
+# below implicit on those calls. Probed through Forge 2026-11-11 (<$0.20):
+# chat completions accept top-level prompt_cache_options {mode: explicit} and a
+# prompt_cache_breakpoint on the system text part (write 9,284, then read
+# 9,284 with 0 written; a 2,142-token user message billed as plain input).
+# Billing only - the model sees the same text.
+FORGE_EXPLICIT_CACHE_MODELS = {"tensorblock/gpt-6-astra"}
+
 
 # Iteration cap (one model call per iteration) when a run config names none.
 # 40 is what every v2 API cohort actually ran with; the old fallback of 30

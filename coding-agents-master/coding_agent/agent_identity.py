@@ -48,6 +48,11 @@ class AgentIdentity(NamedTuple):
     extra_args: List[str]
     env: Dict[str, str]
 
+    # Optional, not a pinned setting: marks a deliberate repeat of another entry's
+    # exact settings under its own label (attempt-consistency reruns, 2026-11-11).
+    # Entries may share axes only when their replica numbers differ.
+    replica: Optional[int] = None
+
     @property
     def axes(self) -> AxisKey:
         return (self.cli, self.model, self.effort)
@@ -89,7 +94,10 @@ def _entry_to_identity(entry: Dict[str, Any], where: str) -> AgentIdentity:
         raise AgentIdentityError(f"{where}: cli must be claude|codex, got {values['cli']!r}")
     values["extra_args"] = [str(a) for a in values["extra_args"]]
     values["env"] = {str(k): str(v) for k, v in values["env"].items()}
-    return AgentIdentity(str(label), **values)
+    replica = entry.get("replica")
+    if replica is not None and (isinstance(replica, bool) or not isinstance(replica, int) or replica < 2):
+        raise AgentIdentityError(f"{where}: 'replica' must be an integer >= 2, got {replica!r}")
+    return AgentIdentity(str(label), **values, replica=replica)
 
 
 def load_registry(path: Path = REGISTRY_PATH) -> Dict[str, AgentIdentity]:
@@ -100,7 +108,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> Dict[str, AgentIdentity]:
         raise AgentIdentityError(f"{path}: expected a top-level list of entries")
 
     by_label: Dict[str, AgentIdentity] = {}
-    by_axes: Dict[AxisKey, str] = {}
+    by_axes: Dict[Tuple[AxisKey, Optional[int]], str] = {}
     for i, entry in enumerate(entries):
         where = f"{path.name} entry {i + 1}"
         if not isinstance(entry, dict):
@@ -111,13 +119,15 @@ def load_registry(path: Path = REGISTRY_PATH) -> Dict[str, AgentIdentity]:
                 f"{where}: agent_model_name '{identity.agent_model_name}' "
                 f"already used — labels must be unique"
             )
-        if identity.axes in by_axes:
+        key = (identity.axes, identity.replica)
+        if key in by_axes:
             raise AgentIdentityError(
                 f"{where}: axes {identity.axes} already mapped to "
-                f"'{by_axes[identity.axes]}' — one combination, one cohort"
+                f"'{by_axes[key]}' — one combination, one cohort "
+                f"(a deliberate rerun of the same settings needs its own 'replica: N')"
             )
         by_label[identity.agent_model_name] = identity
-        by_axes[identity.axes] = identity.agent_model_name
+        by_axes[key] = identity.agent_model_name
     return by_label
 
 

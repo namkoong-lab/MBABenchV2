@@ -37,7 +37,8 @@ except ImportError:
 from .mcp_client import ExcelMCPClient
 from .models_config import (DEFAULT_MAX_ITERATIONS, MODEL_PRICING, calculate_cost, resolve_api_timeout, uses_gemini_tool_calls,
                             resolve_stall_timeout,
-                            resolve_context_window, FORGE_PROMPT_CACHE_KEY_MODELS)
+                            resolve_context_window, FORGE_PROMPT_CACHE_KEY_MODELS,
+                            FORGE_EXPLICIT_CACHE_MODELS)
 from .repo_config import repo_value
 
 
@@ -354,6 +355,13 @@ class ExcelTaskExecutor:
         if self.stall_timeout_seconds and str(self.model or "") in FORGE_PROMPT_CACHE_KEY_MODELS:
             return f"mbabench-{task.task_id}"
         return None
+
+    def _forge_explicit_cache(self) -> bool:
+        """Forge models in FORGE_EXPLICIT_CACHE_MODELS only (2026-11-11, GPT-6
+        Astra): cache just the system prompt (explicit mode, one breakpoint)
+        instead of writing every step's whole prompt at 1.25x input. Billing
+        only - the model sees the same text. Every other model is unchanged."""
+        return bool(self.stall_timeout_seconds) and str(self.model or "") in FORGE_EXPLICIT_CACHE_MODELS
 
     def _gemini_tool_declarations(self) -> List[Dict[str, Any]]:
         """The Excel tools as function declarations, straight from the tool
@@ -1928,6 +1936,13 @@ EXECUTION HISTORY:
                     cache_key = self._forge_prompt_cache_key(task)
                     if cache_key:
                         request_data.setdefault("extra_body", {})["prompt_cache_key"] = cache_key
+
+                    if self._forge_explicit_cache():
+                        # Same system text as one text part carrying the breakpoint.
+                        request_data["messages"][0] = {"role": "system", "content": [
+                            {"type": "text", "text": system_prompt,
+                             "prompt_cache_breakpoint": {"mode": "explicit"}}]}
+                        request_data.setdefault("extra_body", {})["prompt_cache_options"] = {"mode": "explicit"}
 
                     # Note: We rely on _extract_json() and _parse_jsonl_response() to handle
                     # any preamble text (e.g., "Wait: ...") that GPT-5 with reasoning may output.

@@ -83,6 +83,20 @@ def main() -> int:
         "cli must be")
     print("OK  duplicate labels / axes and incomplete entries are refused")
 
+    # A deliberate rerun of the same settings is allowed under its own label only
+    # with distinct replica numbers; the replica is not a pinned setting.
+    rep = GOOD + GOOD.split("- agent_model_name: b")[0].replace("a/claude-x-max", "a/claude-x-max-r2") \
+        .replace("  cli: claude\n", "  replica: 2\n  cli: claude\n", 1)
+    reg2 = load_registry(_registry(rep))
+    assert reg2["a/claude-x-max-r2"].replica == 2 and reg2["a/claude-x-max"].replica is None
+    assert "replica" not in reg2["a/claude-x-max-r2"].settings()
+    _expect(lambda: load_registry(_registry(rep + rep.split("- agent_model_name: a/claude-x-max-r2")[1]
+                                            .join(["- agent_model_name: a/claude-x-max-r2b", ""]))),
+            "already mapped")
+    _expect(lambda: load_registry(_registry(rep.replace("replica: 2", "replica: 1"))), "'replica' must be")
+    assert load_registry(REGISTRY_PATH)["codex_tensorblock/gpt-6-astra-xhigh-r3"].replica == 3
+    print("OK  replicas: distinct numbers allowed, same number / replica 1 refused")
+
     # load_config builds AgentConfig from the identity and refuses stale keys.
     cfg = load_config(ROOT / "run_configs" / "example_codex.yaml")
     assert cfg.agent.cli == "codex" and cfg.agent.model == "gpt-5.6-sol" and cfg.agent.effort == "xhigh"

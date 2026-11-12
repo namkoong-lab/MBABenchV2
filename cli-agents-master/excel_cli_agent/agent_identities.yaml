@@ -366,3 +366,33 @@
   fresh_context_mode: true
   enhanced_excel_context: true
   recent_history_count: 3
+
+# ---------------------------------------------------------------------------
+# 2026-11-11 (Pat): attempt-consistency reruns. GPT-6 Astra xhigh rerun twice on the 30 Stage 2 tasks
+# (2 3 4 5 6 7 10 11 16 22 28 29 30 42 49 51 52 53 55 56 63 66 71 72 74 76 77 80 81 83) next to the
+# original openpyxl_openai/gpt-6-astra-xhigh (26 of the 30) and openpyxl_tensorblock/gpt-6-astra-xhigh
+# (tasks 4 49 52 56) attempts. Separate labels (-r2, -r3) so the paper scripts, which take the newest
+# grading per label and task, never pick these up in place of the originals. Settings identical to
+# openpyxl_tensorblock/gpt-6-astra-xhigh (TensorBlock route, Forge credits, Pat 2026-11-10: "we have to do
+# everything through tensorblock"); only billing differs: FORGE_EXPLICIT_CACHE_MODELS in models_config.py.
+- agent_model_name: openpyxl_tensorblock/gpt-6-astra-xhigh-r2
+  replica: 2
+  model: tensorblock/gpt-6-astra
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3
+
+- agent_model_name: openpyxl_tensorblock/gpt-6-astra-xhigh-r3
+  replica: 3
+  model: tensorblock/gpt-6-astra
+  reasoning_effort: xhigh
+  thinking_budget_tokens: null
+  max_completion_tokens: 128000
+  base_url: https://api.forge.tensorblock.co/v1
+  fresh_context_mode: true
+  enhanced_excel_context: true
+  recent_history_count: 3

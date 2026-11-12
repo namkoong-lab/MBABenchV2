@@ -397,3 +397,38 @@
     # ~8 GLM lanes; the relay's default 8 retries give up after ~5 min and Codex then ends the attempt on
     # the 429. 60 retries (60 s apart after the first few) ride out an hour, as the cli pipeline does.
     TRAJ_RETRY_429_MAX: "60"
+
+# ---------------------------------------------------------------------------
+# 2026-11-11 (Pat): attempt-consistency reruns. GPT-6 Astra xhigh rerun twice on the 30 Stage 2 tasks
+# (2 3 4 5 6 7 10 11 16 22 28 29 30 42 49 51 52 53 55 56 63 66 71 72 74 76 77 80 81 83) next to the
+# original codex_openai/gpt-6-astra-xhigh attempts. Separate labels (-r2, -r3) so the paper scripts, which
+# take the newest grading per label and task, never pick these up in place of the originals.
+# Same CLI, model id, effort and extra_args as codex_openai/gpt-6-astra-xhigh (so Codex 0.155.1 on image v3
+# uses its built-in GPT-6 Astra prompt and tools, as the originals did); only the route differs: TensorBlock
+# Forge, billed to Forge credits. Probed 2026-11-11 (<$0.35): Forge's /v1/responses accepts the bare id
+# "gpt-6-astra" and the originals' exact request shape (additional_tools namespaces incl. the multi-agent
+# collaboration tools, custom exec tool, reasoning.encrypted_content); billing = OpenAI list (input $10,
+# cache read $1, cache write $12.50, output $50) and append-only turns read the previous turn from cache.
+# Infra-only env: 900 s silent-upstream cut (the cli pipeline's Forge stall limit for this model; the
+# originals' longest call was 144 s) and 60 x 429 retries for Forge quota bursts, as for GLM.
+- agent_model_name: codex_tensorblock/gpt-6-astra-xhigh-r2
+  replica: 2                        # same settings as codex_openai/gpt-6-astra-xhigh, deliberate rerun
+  cli: codex
+  model: gpt-6-astra
+  effort: xhigh
+  extra_args: []
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "900"
+    TRAJ_RETRY_429_MAX: "60"
+
+- agent_model_name: codex_tensorblock/gpt-6-astra-xhigh-r3
+  replica: 3                        # same settings as codex_openai/gpt-6-astra-xhigh, deliberate rerun
+  cli: codex
+  model: gpt-6-astra
+  effort: xhigh
+  extra_args: []
+  env:
+    TRAJ_UPSTREAM: https://api.forge.tensorblock.co
+    TRAJ_UPSTREAM_TIMEOUT: "900"
+    TRAJ_RETRY_429_MAX: "60"

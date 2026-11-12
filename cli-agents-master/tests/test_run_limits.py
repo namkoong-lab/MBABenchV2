@@ -195,7 +195,26 @@ def test_astra_through_forge_gets_fifteen_silent_minutes_and_nothing_else_change
     runner.config = {"reasoning_effort": "xhigh", "max_iterations": 40, "base_url": forge_url,
                      "model": "tensorblock/gpt-6-astra"}
     assert runner._run_limit_extra_configs() == {"max_iterations": 40, "api_timeout_seconds": 3600,
-                                                 "stream_stall_seconds": 900}
+                                                 "stream_stall_seconds": 900,
+                                                 "prompt_cache": "explicit: system prompt only"}
+
+
+def test_astra_through_forge_caches_only_the_system_prompt():
+    """2026-11-11: GPT-6 Astra on Forge uses explicit caching (one breakpoint after the
+    system prompt) instead of writing every step's whole prompt at 1.25x input. Billing
+    only; every other model, and Astra on the direct endpoint, stays implicit."""
+    import os
+    os.environ.setdefault("FORGE_API_KEY", "test-key")
+    forge_url = "https://api.forge.tensorblock.co/v1"
+    make = lambda model, url: ExcelTaskExecutor(excel_client=type("C", (), {"storage_path": "/tmp"})(), api_key="k",
+                                                model=model, reasoning_effort="xhigh", base_url=url)
+    assert make("tensorblock/gpt-6-astra", forge_url)._forge_explicit_cache() is True
+    assert make("tensorblock/glm-5.3", forge_url)._forge_explicit_cache() is False
+    assert make("gpt-6-astra", "https://api.openai.com/v1")._forge_explicit_cache() is False
+    runner = BatchRunner.__new__(BatchRunner)
+    runner.config = {"reasoning_effort": "xhigh", "max_iterations": 40, "base_url": forge_url,
+                     "model": "tensorblock/grok-4.6"}
+    assert "prompt_cache" not in runner._run_limit_extra_configs()
 
 
 def test_a_forge_429_or_5xx_is_retried_in_the_open_and_nothing_else_is(monkeypatch):
