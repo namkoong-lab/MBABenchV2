@@ -306,7 +306,7 @@ def test_49_rules():
         (1, [c("A1", BLUE, "B2*C2"),             # OWN blue -> fail
              c("B1", GREEN, "Calc!B2*2"),        # self-qualified OWN in green -> fail (49/T3)
              c("C1", GREEN, "Inputs!B5*C3"),     # CROSS green -> pass
-             c("D1", BLUE, "Inputs!B5*C3"),      # CROSS blue -> fail
+             c("D1", BLUE, "Inputs!B5*C3"),      # CROSS blue -> 50's business since v15 (was 49's)
              c("E1", BLACK, "Inputs!B5"),        # POINTER black -> 49 passes (50's business)
              c("F1", BLUE, "Inputs!B5"),         # POINTER blue -> not judged by 49 (50 fails it; ruling 2026-10-03)
              c("G1", RED, "[1]Prices!A1"),       # EXTERNAL red -> pass
@@ -325,12 +325,13 @@ def test_49_rules():
     v = run(p, 49)
     assert v["decision"] == "fail"
     # rectangles are grouped per (reason, colour): A1 blue and B1 green stay separate
-    assert sorted(locs(v)) == sorted(["Calc!A1", "Calc!B1", "Calc!D1", "Calc!I1", "Calc!G2", "Calc!H2",
-                                      "Calc!J2"]), locs(v)
+    assert sorted(locs(v)) == sorted(["Calc!A1", "Calc!B1", "Calc!I1", "Calc!G2", "Calc!H2", "Calc!J2"]), locs(v)
     st = v["stats"]
-    assert st["offending_cells"] == 7, st
-    assert st["offending_cells_by_reason"] == {"own": 6, "cross": 1}, st
+    assert st["offending_cells"] == 6, st
+    assert st["offending_cells_by_reason"] == {"own": 6}, st
     assert st["pointer_cells_left_to_check_50"] == 1 and st["external_cells_left_to_check_51"] == 1, st
+    assert st["cross_cells_left_to_check_50"] == 1, st                 # D1 (C1 is green: accepted unparsed)
+    assert set(locs(run(p, 50))) == {"Calc!D1", "Calc!E1", "Calc!F1"}, locs(run(p, 50))   # D1 cross, E1 / F1 pointers
     txt = " ".join(m["description"] for m in v["mistakes"])
     assert "grey (808080)" in txt and "blue (0000FF)" in txt and "=B2*C2" in txt
 
@@ -410,7 +411,7 @@ def test_50_rules():
              c("C1", ACC6, "Inputs!B7"),                  # theme accent6 70AD47 -> green -> pass (50/T4)
              c("D1", ACC1, "_xlfn.TOROW(Inputs!$C$5:$C$40)"),   # accent1 blue TOROW pull -> fail (50/T4 Fail)
              c("E1", BLACK, "'Calc'!G66+Calc!G85"),       # self-qualified own sheet: not a link (50/T3)
-             c("F1", BLACK, "Inputs!B5*C3"),              # calculation: black is fine
+             c("F1", BLACK, "Inputs!B5*C3"),              # cross-sheet calculation in black -> fail (v15 rule)
              c("G1", BLACK, "[1]Prices!A1"),              # external pointer: 51's business
              c("H1", BLACK, "-Inputs!B8"),                # sign-flipped link -> fail
              c("I1", BLACK, "WACC"),                      # name on another sheet -> fail
@@ -429,9 +430,13 @@ def test_50_rules():
     p = book("50_rules.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)],
              names=[("WACC", "Inputs!$B$3", None)], ext_links=1, tables={1: [("Tbl", "A1:A4", "Col")]})
     v = run(p, 50)
-    assert set(locs(v)) == {"Calc!A1", "Calc!D1", "Calc!H1:J1", "Calc!L1", "Calc!A3", "Calc!A5:A7"}, locs(v)
-    d = " ".join(m["description"] for m in v["mistakes"])
-    assert "blue (4472C4)" in d and "white (FFFFFF)" in d
+    assert set(locs(v)) == {"Calc!A1", "Calc!D1", "Calc!F1", "Calc!H1:J1", "Calc!L1", "Calc!A3", "Calc!A5:A7"}, locs(v)
+    d = {m["location"]: m["description"] for m in v["mistakes"]}
+    assert "blue (4472C4)" in d["Calc!D1"] and "white (FFFFFF)" in d["Calc!L1"]
+    assert "calculation that references another sheet; font black (000000), must be green" in d["Calc!F1"], d["Calc!F1"]
+    assert "link to another sheet" in d["Calc!A1"], d["Calc!A1"]
+    assert v["stats"]["offending_cells_by_reason"] == {"pointer": 10, "cross": 1}, v["stats"]
+    assert "1 calculation(s)" in v["summary"] and "10 pure link(s)" in v["summary"], v["summary"]
 
 
 def test_50_shared_child_off_grid_and_pass():
@@ -443,13 +448,24 @@ def test_50_shared_child_off_grid_and_pass():
                  (6, [c("C6", BLACK, "", fattrs=' t="shared" si="1"')]))
     p = book("50_shared.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
     v = run(p, 50)
-    assert locs(v) == ["Calc!C2", "Calc!C5:C6"], locs(v)
+    # v15: the off-grid child =Inputs!#REF! still references Inputs, so it is a black cross-sheet formula
+    assert locs(v) == ["Calc!C2", "Calc!C5:C6", "Calc!C3"], locs(v)
     assert "=Inputs!A2" in v["mistakes"][1]["description"] or "=Inputs!A1" in v["mistakes"][1]["description"]
-    # no pointer at all -> pass, whatever the calculations' colours
-    p = book("50_pass.xlsx", [("Calc", sheet((1, [c("A1", BLUE, "B1*2"), c("B1", BLACK, "Inputs!A1*2"),
-                                                  c("C1", GREEN, "Inputs!A1")])), None), ("Inputs", sheet(), None)])
+    assert "calculation that references another sheet" in v["mistakes"][2]["description"], v["mistakes"][2]
+    # no formula reads another sheet in a wrong colour -> pass, whatever the own-sheet formulas' colours
+    p = book("50_pass.xlsx", [("Calc", sheet((1, [c("A1", BLUE, "B1*2"), c("B1", GREEN, "Inputs!A1*2"),
+                                                  c("C1", GREEN, "Inputs!A1"), c("D1", BLACK, "SUM(B1:C1)"),
+                                                  c("E1", BLACK, "Calc!B1*2")])), None),
+                              ("Inputs", sheet(), None)])
     v = run(p, 50)
     assert v["decision"] == "pass", v
+    # D1 never leaves its sheet (not parsed); the self-qualified E1 is parsed and found OWN (49's)
+    assert v["stats"]["cells_classified"] == 1 and v["stats"]["own_sheet_cells_left_to_check_49"] == 1, v["stats"]
+    # ... and a black cross-sheet calculation among own-sheet formulas fails on its own (v15)
+    p = book("50_cross_black.xlsx", [("Calc", sheet((1, [c("A1", BLUE, "B1*2"), c("B1", BLACK, "Inputs!A1*2"),
+                                                         c("C1", GREEN, "Inputs!A1")])), None), ("Inputs", sheet(), None)])
+    v = run(p, 50)
+    assert locs(v) == ["Calc!B1"] and v["stats"]["offending_cells_by_reason"] == {"cross": 1}, v
 
 
 # ============================================================================ check 51
@@ -520,7 +536,7 @@ def test_structured_refs_with_commas_are_pointers():
                       c("G2", BLACK, "Tbl[[#This Row],[Col]]*2")]))
     p = book("50_struct_commas.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)],
              tables={1: [("Tbl", "A1:A4", "Col")]})
-    assert set(locs(run(p, 50))) == {"Calc!A2:D2", "Calc!E2"}, locs(run(p, 50))
+    assert set(locs(run(p, 50))) == {"Calc!A2:D2", "Calc!E2", "Calc!G2"}, locs(run(p, 50))   # G2: black CROSS (v15)
     assert locs(run(p, 49)) == []                             # the blue pointer E2 is 50's only
 
 
@@ -549,7 +565,7 @@ def test_bare_table_name():
     p = book("49_bare_table.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)],
              tables={1: [("Tbl", "A1:A4", "Col")]})
     assert run(p, 49)["decision"] == "pass", locs(run(p, 49))
-    assert set(locs(run(p, 50))) == {"Calc!B1", "Calc!D1"}, locs(run(p, 50))
+    assert set(locs(run(p, 50))) == {"Calc!B1", "Calc!D1", "Calc!F1"}, locs(run(p, 50))   # F1: =SUM(Tbl)*2 black (v15)
 
 
 def test_unresolved_colour_raises_only_where_needed():
@@ -583,11 +599,15 @@ def test_unknown_scope_names_raise_only_where_needed():
     data = sheet((1, [c("A1", BLACK, "Ptr*2"), c("B1", GREEN, "Ptr*2+Inputs!A1"), c("C1", BLUE, "Ptr*2"),
                       c("D1", BLACK, "XB*2+[1]Prices!A2"), c("E1", RED, "XB*2+[1]Prices!A2")]))
     p = book("badscope_ref.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)], names=names, ext_links=1)
-    assert locs(run(p, 49)) == ["Calc!C1"]                     # blue fails whatever Ptr is
-    assert run(p, 50)["decision"] == "pass"                    # no pure name: no pointer possible
+    v = run(p, 49)
+    assert locs(v) == ["Calc!C1"]                              # blue fails whatever Ptr is (reason "unsure", v15)
+    assert v["stats"]["offending_cells_by_reason"] == {"unsure": 1} and "wrong either way" in v["mistakes"][0]["description"]
+    # v15: the black =Ptr*2 (A1) reads Inputs or nothing depending on the scope -> 50 cannot decide (no fallback);
+    # the blue one (C1) is 49's charge, the direct externals are 51's
+    raises(lambda: run(p, 50), "cannot be decided", "A1")
     assert locs(run(p, 51)) == ["Calc!D1"]                     # reads [1] directly anyway
     for f_, n, needle in (("Ptr", 50, "whether it is a link"), ("Ptr*2", 49, "cannot be decided"),
-                          ("XB*2", 51, "may read another workbook")):
+                          ("Ptr*2", 50, "cannot be decided"), ("XB*2", 51, "may read another workbook")):
         fam = GREEN if n == 49 else BLACK
         p = book(f"badscope_{n}.xlsx", [("Calc", sheet((1, [c("A1", fam, f_)])), None), ("Inputs", sheet(), None)],
                  names=names, ext_links=1)
@@ -623,11 +643,17 @@ def test_49_colour_wrong_in_every_class_needs_no_class():
     assert "could not be worked out" in d["Calc!A1"] and "only its own sheet" in d["Calc!C1"], d
     assert v["stats"]["unclassified_offending_cells"] == 2 and v["stats"]["offending_cells_by_reason"] == \
         {"unclassified": 2, "own": 1}, v["stats"]
-    # since 2026-10-03 a non-black pointer / external is not 49's business, so a grey formula that
-    # might be one ('[' could be a workbook reference) needs its class: unclassifiable -> raise
+    # v15: grey is wrong in every class (OWN here, CROSS / POINTER under 50, EXTERNAL under 51), so a grey formula
+    # that cannot be classified fails here whatever its text ('[' included); 50 and 51 skip it, so it is charged
+    # once.  Green needs the class (OWN fails, the rest pass) and a green one is skipped (default); red is right
+    # for an external link, so a red one that may read another workbook needs its class too
     p = book("49_grey_unknown_table.xlsx", [("Calc", sheet((1, [c("A1", GREY50, "SUM(Nope[Col])")])), None)])
-    graded("unparsable_formula", lambda: run(p, 49), "table 'Nope' is not defined")
+    v = run(p, 49)
+    assert locs(v) == ["Calc!A1"] and v["stats"]["unclassified_offending_cells"] == 1, (locs(v), v["stats"])
+    assert run(p, 50)["decision"] == "pass" and run(p, 51)["decision"] == "pass"
     p = book("49_green_unknown_table.xlsx", [("Calc", sheet((1, [c("A1", GREEN, "SUM(Nope[Col])")])), None)])
+    graded("unparsable_formula", lambda: run(p, 49), "table 'Nope' is not defined")
+    p = book("49_red_unknown_table.xlsx", [("Calc", sheet((1, [c("A1", RED, "SUM(Nope[Col])")])), None)])
     graded("unparsable_formula", lambda: run(p, 49), "table 'Nope' is not defined")
 
 
@@ -782,9 +808,9 @@ def test_pointers_judged_only_by_50():
                       c("F1", BLUE, "[1]Prices!A1"), c("G1", GREEN, "[1]Prices!A1")]))
     p = book("pointers_50_only.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)], ext_links=1)
     v = grade(p, checks=[49, 50, 51])
-    assert locs(v[K49]) == ["Calc!D1", "Calc!E1"], locs(v[K49])            # cross calcs blue / white
-    assert locs(v[K50]) == ["Calc!A1", "Calc!B1", "Calc!C1"] or set(locs(v[K50])) == {"Calc!A1", "Calc!B1", "Calc!C1"}, \
-        locs(v[K50])
+    assert locs(v[K49]) == [], locs(v[K49])                               # v15: cross calcs blue / white are 50's
+    assert set(locs(v[K50])) == {"Calc!A1", "Calc!B1", "Calc!C1", "Calc!D1", "Calc!E1"}, locs(v[K50])
+    assert v[K50]["stats"]["offending_cells_by_reason"] == {"pointer": 3, "cross": 2}, v[K50]["stats"]
     assert set(locs(v[K51])) == {"Calc!F1:G1"} or set(locs(v[K51])) == {"Calc!F1", "Calc!G1"}, locs(v[K51])
     # an unresolvable font colour on a pointer does not matter to 49 (it does to 50)
     p = book("pointer_bad_colour.xlsx", [("Calc", sheet((1, [c("A1", BADTHEME, "Inputs!B5")])), None), ("Inputs", sheet(), None)])
@@ -859,26 +885,41 @@ def test_hyperlink_guarded_navigation_cells():
 def test_49_indirect_unknown_wording():
     """Finding 49-R2-3 (wording): a blue / red / grey cell whose only possible other-sheet reading
     is an INDIRECT address built from cell contents fails either way, so the address is not
-    read and the mistake must not claim the formula uses only its own sheet."""
+    read and the mistake must not claim the formula uses only its own sheet.  v15: a CROSS cell
+    (literal or direct reference to Inputs) is 50's; a BLACK =INDIRECT(A20) has its address read
+    by 50 (A20 names Inputs -> a black cross-sheet formula -> fails 50)."""
     data = sheet((1, [c("A1", BLUE, "INDIRECT(A20)"),              # address 'Inputs!B5' never read: reason 'indirect'
-                      c("B1", BLUE, 'INDIRECT("Inputs!B5")'),      # literal address: CROSS, blue fails
+                      c("B1", BLUE, 'INDIRECT("Inputs!B5")'),      # literal address: CROSS, blue -> 50 fails it
                       c("C1", GREEN, "INDIRECT(A20)"),             # green: the address cell is read -> reads Inputs, fine
                       c("D1", BLUE, "Inputs!B5"),                  # written pointer: 50's business
                       c("E1", RED, "INDIRECT(A20&B20)*2"),         # computed address, red: wrong either way
-                      c("F1", BLACK, "INDIRECT(A20)"),             # black: never looked at
-                      c("G1", BLUE, "INDIRECT(A20)+Inputs!B1")]),  # reads Inputs directly: CROSS
+                      c("F1", BLACK, "INDIRECT(A20)"),             # black: 50 reads A20 -> reads Inputs -> must be green
+                      c("G1", BLUE, "INDIRECT(A20)+Inputs!B1")]),  # reads Inputs directly: CROSS -> 50
                  (20, [cstr("A20", "Inputs!B5"), cstr("B20", "x")]))
     p = book("49_indirect_wording.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
     v = run(p, 49)
-    assert set(locs(v)) == {"Calc!A1", "Calc!B1", "Calc!E1", "Calc!G1"}, locs(v)
+    assert set(locs(v)) == {"Calc!A1", "Calc!E1"}, locs(v)
     d = {m["location"]: m["description"] for m in v["mistakes"]}
     assert "INDIRECT address is built from cell contents" in d["Calc!A1"] and "wrong either way" in d["Calc!A1"], d
     assert "only its own sheet" not in d["Calc!A1"] and "only its own sheet" not in d["Calc!E1"], d
-    assert "reading another sheet" in d["Calc!B1"] and "reading another sheet" in d["Calc!G1"], d
     st = v["stats"]
-    assert st["offending_cells_by_reason"] == {"indirect": 2, "cross": 2}, st
+    assert st["offending_cells_by_reason"] == {"indirect": 2}, st
     assert st["indirect_address_cells_read"] == 1 and st["pointer_cells_left_to_check_50"] == 1, st
-    assert run(p, 50)["decision"] == "fail" and locs(run(p, 50)) == ["Calc!D1"], locs(run(p, 50))
+    assert st["cross_cells_left_to_check_50"] == 2, st                                     # B1, G1
+    v = run(p, 50)
+    assert set(locs(v)) == {"Calc!B1", "Calc!D1", "Calc!F1", "Calc!G1"}, locs(v)
+    d = {m["location"]: m["description"] for m in v["mistakes"]}
+    assert "calculation that references another sheet" in d["Calc!B1"] and "must be green" in d["Calc!F1"], d
+    assert v["stats"]["indirect_address_cells_read"] == 1 and v["stats"]["own_sheet_cells_left_to_check_49"] == 2, \
+        v["stats"]                                                                          # A1, E1 left to 49
+    # the black INDIRECT whose address stays on its own sheet, or is held in a formula cell, is fine / skipped
+    data = sheet((1, [c("A1", BLACK, "INDIRECT(A20)*2"), c("B1", BLACK, "INDIRECT(B20)*2"),
+                      c("C1", BLACK, "INDIRECT(C20&D20)")]),
+                 (20, [cstr("A20", "C5"), c("B20", BLACK, '"Inputs!B"&2', t="str", v="Inputs!B2"), cstr("C20", "In"),
+                       cstr("D20", "puts!B5")]))
+    p = book("50_indirect_black.xlsx", [("Calc", data, None), ("Inputs", sheet(), None)])
+    v = graded("indirect_address_unknown", lambda: run(p, 50), "Calc!B20")
+    assert v["decision"] == "pass" and v["stats"]["defaults"]["indirect_address_unknown"]["count"] == 2, v["stats"]
 
 
 def test_near_empty_attempt_no_gate():
@@ -944,12 +985,14 @@ def test_conditional_format_font_colour_excuses():
     assert set(locs(v)) == {"Cover!D5:F5"}, locs(v)
     assert v["stats"]["cf_excused"]["count"] == 1 and "Cover!C5" in v["stats"]["cf_excused"]["examples"][0], v["stats"]
     # 49: an own-sheet formula in blue painted black -> excused; painted green -> not (OWN needs black);
-    # a CROSS calculation in blue painted green -> excused (black or green accepted)
+    # a CROSS calculation in blue painted green -> 50's since v15, excused there (green accepted)
     data = sheet((1, [c("A1", BLUE, "B1*2"), c("B1", BLUE, "C1*2"), c("C1", BLUE, "Inputs!B5*2")]))
     p = book("cf_49.xlsx", [("Calc", data + cf("A1", DXF_BLACK) + cf("B1", DXF_GREEN) + cf("C1", DXF_GREEN), None), inputs])
     v = run(p, 49)
     assert locs(v) == ["Calc!B1"], locs(v)
-    assert v["stats"]["cf_excused"]["count"] == 2, v["stats"]
+    assert v["stats"]["cf_excused"]["count"] == 1, v["stats"]
+    v = run(p, 50)
+    assert v["decision"] == "pass" and v["stats"]["cf_excused"]["count"] == 1, v["stats"]
     # one-directional: a base-correct green pointer painted red by a CF rule still passes 50
     p = book("cf_onedir.xlsx", [("Cover", sheet((1, [c("A1", GREEN, "Inputs!B5")])) + cf("A1", DXF_RED), None), inputs])
     v = run(p, 50)

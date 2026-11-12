@@ -24,7 +24,7 @@ caches under the trust policy (reader.md §6).
 | 2 | Any other writer (openpyxl, XlsxWriter, LibreOffice, ChatGPT / unknown) → **LibreOffice recalculation copy**, whatever the file's size: `soffice --headless --convert-to xlsx`, private profile per run with threaded calculation OFF, OpenCL OFF, `OOXMLRecalcMode = 0` (always recalculate on load, otherwise LibreOffice keeps the agent's caches), macros off, `--norestore`, one process, `lo_timeout_s` (600 s default), under the memory guard below (one LibreOffice at a time, memory wait, retries with the timeout doubled; then `LibreOfficeUnavailable`). Same sheet names. |
 | 3 | **Gap scan** (`find_gaps`): every formula cell whose LibreOffice value is `#NAME?` or `#VALUE!` is classified (`classify_lo_error`, table below). Any gap → the file **needs Excel**. No gap → the copy is used with `errors_vetted=True`: its `#NAME?` / `#VALUE!` are genuine Excel errors and trusted values. |
 | 4 | Gaps and `policy.excel_allowed` and Excel available → **Excel recalculation copy** (`excel_recalc`): open read-only, links not updated, alerts off, `CalculateFullRebuild`, save a copy as .xlsx, close without saving the original, quit Excel if it was not running before. → source `excel`. |
-| 5 | Gaps and Excel **off** (`excel_allowed=False`, the default since 2026-10-04 evening) → the LibreOffice copy is used **as displayed** (`errors_vetted=True`): the cells LibreOffice could not compute keep their `#NAME?`/`#VALUE!`, value checks see an error value (not a number, not a zero, not a negative) and skip them, exactly as judge v12 effectively did. The gap list and a note stay in `stats["values"]`. Gaps and Excel **on** but not available / failing → `GradingError("Excel recalculation required: ...")`; only value checks fail. |
+| 5 | Gaps and Excel **off** (`excel_allowed=False`, the default since 2026-10-04 evening) → the LibreOffice copy is used **as displayed** (`errors_vetted=True`): the cells LibreOffice could not compute keep their `#NAME?`/`#VALUE!`, value checks see an error value (not a number, not a zero, not a negative) and skip them, exactly as judge v12 effectively did. The gap list and a note stay in `stats["values"]`; since judge v15 the FULL gap set (`ValuePlan.gap_cells`, `gap_cell_set()`, kept in `meta.json`) reaches the checks as `Package.provenance.gap_cells`, and No formula errors (22) is **undecided** for an attempt whose only error cells are gaps (the LLM decides, told which cells; docs/checks/22.md). Gaps and Excel **on** but not available / failing → `GradingError("Excel recalculation required: ...")`; only value checks fail. |
 
 Cache: `workdir/<sha256 of the delivered file>/{libreoffice,excel}/<name>.xlsx` + `meta.json`, so a
 file is recalculated once per pipeline run (a LibreOffice copy with gaps is kept and reused when
@@ -110,11 +110,22 @@ A LibreOffice `#NAME?` / `#VALUE!` on a formula cell is a **gap** (Excel may com
 
 - the formula calls a function LibreOffice lacks (`LO_UNSUPPORTED_ALWAYS`: LAMBDA MAP REDUCE SCAN
   MAKEARRAY BYROW BYCOL ISOMITTED GROUPBY PIVOTBY PERCENTOF TRIMRANGE IMAGE ANCHORARRAY SINGLE
-  STOCKHISTORY FIELDVALUE ARRAYTOTEXT VALUETOTEXT PY; on builds before 24.8 also XLOOKUP XMATCH
-  FILTER SORT SORTBY UNIQUE SEQUENCE RANDARRAY LET; before 25.8 also CHOOSECOLS CHOOSEROWS DROP
-  EXPAND HSTACK VSTACK TAKE TEXTAFTER TEXTBEFORE TEXTSPLIT TOCOL TOROW WRAPCOLS WRAPROWS REGEXTEST
-  REGEXEXTRACT REGEXREPLACE), uses a spill reference (`A1#`, `ANCHORARRAY`), calls a defined name
-  (a LAMBDA), or uses a defined name whose definition uses such a function;
+  STOCKHISTORY FIELDVALUE ARRAYTOTEXT VALUETOTEXT PY, and since judge v15 TRANSLATE DETECTLANGUAGE
+  BINOM.DIST.RANGE ECMA.CEILING the seven CUBE functions RTD CALL REGISTER.ID SQL.REQUEST DBCS
+  PHONETIC THAIDIGIT YEN REGEXTEST REGEXEXTRACT REGEXREPLACE; on builds before 24.8 also XLOOKUP
+  XMATCH FILTER SORT SORTBY UNIQUE SEQUENCE RANDARRAY LET; before 25.8 also CHOOSECOLS CHOOSEROWS
+  DROP EXPAND HSTACK VSTACK TAKE TEXTAFTER TEXTBEFORE TEXTSPLIT TOCOL TOROW WRAPCOLS WRAPROWS), uses
+  a spill reference (`A1#`, `ANCHORARRAY`), calls a defined name (a LAMBDA), or uses a defined name
+  whose definition uses such a function.  The lists were verified against LibreOffice 25.8.7
+  (`LO_VERIFIED_VERSION`) on 2026-10-28 with a probe workbook of 527 Excel function names (one row
+  per function, `=NAME()` and `=_xlfn.NAME()`, recalculated through `libreoffice_recalc`; `#NAME?`
+  in both columns = unsupported): re-run it on every LibreOffice upgrade. A function missing from
+  the list is a false fail; one wrongly on it only costs code coverage, so err toward inclusion;
+- **not** when a future function is stored without its `_xlfn.` prefix (`=XLOOKUP(...)`,
+  `=LET(...)`, `=LAMBDA(...)` written by a sloppy tool; `XLFN_REQUIRED`, a conservative list of the
+  functions Excel 2010+ prefixes): Excel shows `#NAME?` too until the cell is re-entered, so that is
+  **genuine** whatever LibreOffice lacks (judge v15, Patrick 2026-10-28; answers Q2 of
+  docs/checks/22.md). `_xlfn._xlws.FILTER` / `SORT` are the stored forms LibreOffice computes;
 - `#NAME?` although every called function is a valid Excel function (`EXCEL_FUNCTIONS`, 533 names)
   and every name is defined: LibreOffice does not know it ("unknown function → #NAME?");
 - `#VALUE!` on an array formula, or on a plain formula that holds a multi-cell range, a whole

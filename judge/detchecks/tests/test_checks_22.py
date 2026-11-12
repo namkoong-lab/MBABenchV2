@@ -214,7 +214,8 @@ def test_cached_errors_fail_and_trapped_or_text_pass():
     assert "=A1/A2" in v["mistakes"][0]["description"]
     v = run(book([("S", sheet([c("A1", 1), c("B2", 0, f="IFERROR(A1/0,0)"), c("B3", "#N/A", f='"#N/A"'), c("B4", "#REF!")]))]))
     assert v["decision"] == "pass", locs(v)
-    assert v["stats"]["formula_cells"] == 2 and v["live"] is False   # 22 stays with the LLM (Patrick 2026-10-04)
+    assert v["stats"]["formula_cells"] == 2 and v["live"] is True    # live since judge v15 (Patrick 2026-10-28)
+    assert v["stats"]["decided_by"] == "code" and v["stats"]["gap_information"] == "none"
 
 
 def test_typed_error_constant_broken_ref_misspelling():
@@ -355,14 +356,22 @@ def test_value_path_copy_supplies_values():
 
 
 def test_live_flag_on_verdicts():
+    """Judge v15: No formula errors (22) and Negatives in parentheses (65) are live (Patrick 2026-10-26 /
+    2026-10-28); the per-check switch and its note stay for the next recorded-only check."""
     p = book([("S", sheet([c("A1", 1)]))])
     v = grade(p, checks=[22, 65, 92])
-    assert v[C22.key]["live"] is False and v[C22.key]["live_note"] == "recorded only; the LLM verdict stands at scoring"
-    k65 = REGISTRY[65].key
-    assert v[k65]["live"] is False and v[k65]["live_note"] == "recorded only; the LLM verdict stands at scoring"
-    assert v[REGISTRY[92].key]["live"] is True
+    for n in (22, 65, 92):
+        assert v[REGISTRY[n].key]["live"] is True and "live_note" not in v[REGISTRY[n].key], n
     from detchecks.checks import live_numbers
-    assert 65 not in live_numbers() and 22 not in live_numbers() and 92 in live_numbers()
+    assert {22, 65, 92} <= set(live_numbers())
+    saved = C22.live
+    C22.live = False
+    try:
+        v = grade(p, checks=[22])[C22.key]
+        assert v["live"] is False and v["live_note"] == "recorded only; the LLM verdict stands at scoring"
+        assert 22 not in live_numbers()
+    finally:
+        C22.live = saved
 
 
 def test_grouping_and_summary():
